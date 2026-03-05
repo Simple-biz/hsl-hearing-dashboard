@@ -347,9 +347,23 @@ export async function autoAssignAll(options: {
   distributionMode: "priority" | "balanced" | "workload";
   totalLimit: number | null;
   excludeRescheduled: boolean;
+  sendEmail?: boolean;
 }) {
-  const { batchAssign } = await import("@/lib/auto-assign");
-  return batchAssign(options);
+  const { batchAssign, sendAssignmentNotifications } =
+    await import("@/lib/auto-assign");
+  const result = await batchAssign(options);
+
+  // Send minimal-alert notifications if requested
+  if (options.sendEmail && result.breakdown.length > 0) {
+    const emailResult = await sendAssignmentNotifications(result.breakdown);
+    return {
+      ...result,
+      emailsSent: emailResult.sent,
+      emailsFailed: emailResult.failed,
+    };
+  }
+
+  return { ...result, emailsSent: 0, emailsFailed: 0 };
 }
 
 // ── Unassign All ──
