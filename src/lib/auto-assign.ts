@@ -583,3 +583,60 @@ export async function batchAssign(options: {
 
   return result;
 }
+
+// ══════════════════════════════════════════════════════════════
+// SEND MINIMAL ASSIGNMENT NOTIFICATIONS (post batch-assign)
+// ══════════════════════════════════════════════════════════════
+export async function sendAssignmentNotifications(
+  breakdown: { name: string; rep_type: string; count: number }[],
+): Promise<{ sent: number; failed: number }> {
+  const webhookUrl = process.env.N8N_WEBHOOK_URL;
+  const webhookSecret = process.env.N8N_WEBHOOK_SECRET;
+  const dashboardUrl =
+    process.env.NEXT_PUBLIC_APP_URL || "https://hearings.hogansmith.com";
+
+  if (!webhookUrl) return { sent: 0, failed: 0 };
+
+  let sent = 0;
+  let failed = 0;
+
+  // Get email addresses for reps in the breakdown
+  for (const rep of breakdown) {
+    const { rows } = await db.query(
+      "SELECT email FROM representatives WHERE name = $1 AND is_active = true AND email IS NOT NULL AND email != ''",
+      [rep.name],
+    );
+    if (rows.length === 0 || !rows[0].email) {
+      failed++;
+      continue;
+    }
+
+    try {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (webhookSecret) headers["X-Webhook-Secret"] = webhookSecret;
+
+      const response = await fetch(webhookUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          email_type: "hearing_alert_minimal",
+          to_email: rows[0].email,
+          to_name: rep.name,
+          hearing_count: rep.count,
+          month_filter: "recent",
+          dashboard_url: dashboardUrl,
+          source: "hsl_hearing_system",
+          sent_at: new Date().toISOString(),
+        }),
+      });
+      if (response.ok) sent++;
+      else failed++;
+    } catch {
+      failed++;
+    }
+  }
+
+  return { sent, failed };
+}

@@ -75,6 +75,8 @@ export function AutoAssignModal({
     failed: number;
     breakdown: { name: string; rep_type: string; count: number }[];
     failures: { hearing_id: number; reason: string }[];
+    emailsSent?: number;
+    emailsFailed?: number;
   } | null>(null);
   const resultRef = useRef<HTMLDivElement>(null);
 
@@ -141,6 +143,7 @@ export function AutoAssignModal({
         distributionMode,
         totalLimit: totalLimit ? parseInt(totalLimit) : null,
         excludeRescheduled,
+        sendEmail,
       });
       setResult(res);
     } catch (e) {
