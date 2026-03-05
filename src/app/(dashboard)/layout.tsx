@@ -12,7 +12,7 @@ export default async function DashboardLayout({
   const session = await requireAuth();
 
   const cookieStore = await cookies();
-  const defaultOpen = cookieStore.get("sidebar:state")?.value !== "false";
+  const defaultOpen = cookieStore.get("sidebar:state")?.value === "true";
 
   return (
     <SidebarProvider defaultOpen={defaultOpen}>

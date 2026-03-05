@@ -25,10 +25,10 @@ import {
 import { cn } from "@/lib/utils";
 import { canEditField, type UserRole } from "@/lib/roles";
 import { AppHeader } from "@/components/layout/app-header";
+import { DashboardNav } from "@/components/layout/dashboard-nav";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-// import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
@@ -41,8 +41,15 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  AddHearingModal,
+  EmailAllModal,
+  AutoAssignModal,
+  UnassignAllModal,
+} from "@/components/modals";
 import { updateHearing } from "./actions";
 import type {
   HearingRow,
@@ -209,36 +216,148 @@ function InlineCheck({
     </div>
   );
 }
-function InlineRepSelect({
-  value,
-  reps,
-  onChange,
-  editable = true,
-}: {
-  value: number | null;
-  reps: RepRow[];
-  onChange: (v: number | null) => void;
-  editable?: boolean;
-}) {
-  if (!editable) {
-    const rep = reps.find((r) => r.id === Number(value));
-    return <span className="text-xs">{rep?.name || "-"}</span>;
+// ── Rep badge (read-only, colored by type — matches old dashboard) ──
+const REP_BADGE_COLORS: Record<string, string> = {
+  "in-house":
+    "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
+  internal_advocates:
+    "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
+  contract:
+    "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+  external_advocates:
+    "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+};
+
+function RepBadge({ hearing }: { hearing: HearingRow }) {
+  if (hearing.assigned_rep_id && hearing.rep_name) {
+    const isInternal =
+      hearing.rep_type === "in-house" ||
+      hearing.rep_type === "internal_advocates";
+    const icon = isInternal ? "🏠" : "📋";
+    const colorClass =
+      REP_BADGE_COLORS[hearing.rep_type || ""] ||
+      "bg-muted text-muted-foreground";
+    return (
+      <span
+        className={cn(
+          "inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-semibold",
+          colorClass,
+        )}
+      >
+        {icon} {hearing.rep_name}
+      </span>
+    );
+  }
+  if (hearing.assignment_status === "wd_never_assigned") {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-md bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+        📋 WD - Never Assigned
+      </span>
+    );
+  }
+  if (hearing.assignment_status === "withdrawal") {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-md bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-800 dark:bg-red-900/40 dark:text-red-300">
+        🚫 Withdrawal
+      </span>
+    );
   }
   return (
-    <select
-      value={value != null ? String(value) : ""}
-      onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
-      className="h-7 w-full min-w-35 rounded-md border border-transparent bg-transparent px-1 text-xs transition-colors hover:border-border hover:bg-muted/50 focus:border-ring focus:outline-none"
-    >
-      <option value="">- Unassigned -</option>
-      {reps
-        .filter((r) => r.is_active)
-        .map((r) => (
-          <option key={r.id} value={String(r.id)}>
-            {r.name}
-          </option>
-        ))}
-    </select>
+    <span className="inline-flex items-center rounded-md bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-800 dark:bg-red-900/40 dark:text-red-300">
+      —
+    </span>
+  );
+}
+
+// ── Actions menu (context-sensitive like old dashboard) ──
+function ActionMenu({
+  hearing,
+  userRole,
+  onUpdate,
+}: {
+  hearing: HearingRow;
+  userRole: UserRole;
+  onUpdate: (id: number, field: string, value: UpdateValue) => void;
+}) {
+  const isAdmin = !["rep", "staff"].includes(userRole);
+  const isUnassigned = !hearing.assigned_rep_id && !hearing.assignment_status;
+  const isAssigned = !!hearing.assigned_rep_id;
+  const hasStatus = !!hearing.assignment_status;
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-6 w-6">
+          <MoreHorizontal className="h-3.5 w-3.5" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-44">
+        {isAdmin && (
+          <>
+            {isUnassigned && (
+              <>
+                <DropdownMenuItem className="text-xs">
+                  📋 Assign
+                </DropdownMenuItem>
+                <DropdownMenuItem className="text-xs">
+                  ⚡ Auto-Assign
+                </DropdownMenuItem>
+              </>
+            )}
+            {isAssigned && (
+              <>
+                <DropdownMenuItem className="text-xs">
+                  📧 Send Email
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="text-xs"
+                  onClick={() => onUpdate(hearing.id, "assigned_rep_id", null)}
+                >
+                  🔄 Unassign
+                </DropdownMenuItem>
+                <DropdownMenuItem className="text-xs">
+                  🚫 Withdrawal
+                </DropdownMenuItem>
+              </>
+            )}
+            {hasStatus && !isAssigned && (
+              <>
+                <DropdownMenuItem className="text-xs">
+                  📋 Change Assignment
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="text-xs"
+                  onClick={() => onUpdate(hearing.id, "assigned_rep_id", null)}
+                >
+                  🔄 Clear Status
+                </DropdownMenuItem>
+              </>
+            )}
+            <DropdownMenuSeparator />
+          </>
+        )}
+        <DropdownMenuItem className="text-xs">
+          {isAdmin ? (
+            <>
+              <Pencil className="mr-2 h-3.5 w-3.5" /> Edit
+            </>
+          ) : (
+            <>
+              <Eye className="mr-2 h-3.5 w-3.5" /> View
+            </>
+          )}
+        </DropdownMenuItem>
+        <DropdownMenuItem className="text-xs">📝 Activity Log</DropdownMenuItem>
+        {isAdmin && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem className="text-xs text-destructive">
+              <Trash2 className="mr-2 h-3.5 w-3.5" /> Delete
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -1020,7 +1139,7 @@ function HearingCard({
               </p>
             )}
             <p className="mt-0.5 text-xs text-muted-foreground">
-              #{hearing.id} {hearing.ssn_last_4 ? `x${hearing.ssn_last_4}` : ""}
+              #{hearing.id} {hearing.ssn_last_4 ? `${hearing.ssn_last_4}` : ""}
             </p>
           </div>
           <StatusBadge
@@ -1101,7 +1220,6 @@ function HearingCard({
 function HearingTable({
   hearings,
   userRole,
-  representatives,
   onUpdate,
   sortKey,
   sortDir,
@@ -1110,7 +1228,6 @@ function HearingTable({
 }: {
   hearings: HearingRow[];
   userRole: UserRole;
-  representatives: RepRow[];
   onUpdate: (id: number, field: string, value: UpdateValue) => void;
   sortKey: string;
   sortDir: "asc" | "desc";
@@ -1127,14 +1244,7 @@ function HearingTable({
     const editable = canEditField(userRole, col.key);
     switch (col.key) {
       case "assigned_rep_id":
-        return (
-          <InlineRepSelect
-            value={hearing.assigned_rep_id}
-            reps={representatives}
-            onChange={(val) => onUpdate(hearing.id, "assigned_rep_id", val)}
-            editable={editable}
-          />
-        );
+        return <RepBadge hearing={hearing} />;
       case "hearing_date":
         return (
           <span className="text-xs tabular-nums">
@@ -1156,29 +1266,16 @@ function HearingTable({
       case "ssn_last_4":
         return (
           <span className="text-xs font-mono text-muted-foreground">
-            {hearing.ssn_last_4 ? `x${hearing.ssn_last_4}` : "-"}
+            {hearing.ssn_last_4 ? `${hearing.ssn_last_4}` : "-"}
           </span>
         );
       case "actions":
         return (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-6 w-6">
-                <MoreHorizontal className="h-3.5 w-3.5" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-36">
-              <DropdownMenuItem className="text-xs">
-                <Eye className="mr-2 h-3.5 w-3.5" /> View
-              </DropdownMenuItem>
-              <DropdownMenuItem className="text-xs">
-                <Pencil className="mr-2 h-3.5 w-3.5" /> Edit
-              </DropdownMenuItem>
-              <DropdownMenuItem className="text-xs text-destructive">
-                <Trash2 className="mr-2 h-3.5 w-3.5" /> Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <ActionMenu
+            hearing={hearing}
+            userRole={userRole}
+            onUpdate={onUpdate}
+          />
         );
       case "location":
         return (
@@ -1393,6 +1490,10 @@ export function DashboardClient({
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [, startTransition] = useTransition();
   const [postHrgHearing, setPostHrgHearing] = useState<HearingRow | null>(null);
+  const [showAddHearing, setShowAddHearing] = useState(false);
+  const [showEmailAll, setShowEmailAll] = useState(false);
+  const [showAutoAssign, setShowAutoAssign] = useState(false);
+  const [showUnassignAll, setShowUnassignAll] = useState(false);
 
   const handleSort = useCallback(
     (key: string) => {
@@ -1523,6 +1624,7 @@ export function DashboardClient({
           if (field === "assigned_rep_id") {
             const rep = representatives.find((r) => r.id === Number(value));
             updated.rep_name = rep?.name ?? null;
+            updated.rep_type = rep?.rep_type ?? null;
           }
           if (field === "mr_team_id") {
             const team = mrTeams.find((t) => t.id === Number(value));
@@ -1552,6 +1654,12 @@ export function DashboardClient({
     [representatives, mrTeams, postHrgHearing],
   );
 
+  const isAdmin = !["rep", "staff"].includes(userRole);
+
+  const handleRefresh = () => {
+    window.location.reload();
+  };
+
   return (
     <>
       <AppHeader
@@ -1565,6 +1673,51 @@ export function DashboardClient({
         }
       />
       <div className="flex min-w-0 flex-col gap-3 p-3 sm:gap-4 sm:p-4 lg:p-6">
+        {/* Navbar with page links + action buttons (matches old dashboard) */}
+        <DashboardNav userRole={userRole}>
+          {isAdmin && (
+            <>
+              <Button
+                size="sm"
+                className="h-7 gap-1.5 text-[11px]"
+                onClick={() => setShowEmailAll(true)}
+              >
+                📧 Email All
+              </Button>
+              <Button
+                size="sm"
+                className="h-7 gap-1.5 text-[11px] bg-purple-600 hover:bg-purple-700"
+                onClick={() => setShowAutoAssign(true)}
+              >
+                ⚡ Auto-Assign All
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                className="h-7 gap-1.5 text-[11px]"
+                onClick={() => setShowUnassignAll(true)}
+              >
+                🗑️ Unassign All
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 text-[11px] text-emerald-600 border-emerald-300 hover:bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:hover:bg-emerald-950"
+                onClick={() => setShowAddHearing(true)}
+              >
+                + Add Hearing
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 text-[11px]"
+              >
+                📊 CSV Compare
+              </Button>
+            </>
+          )}
+        </DashboardNav>
+
         <StatsRow hearings={hearings} userRole={userRole} />
         <FilterBar
           filters={filters}
@@ -1700,7 +1853,6 @@ export function DashboardClient({
           <HearingTable
             hearings={paginated}
             userRole={userRole}
-            representatives={representatives}
             onUpdate={handleUpdate}
             sortKey={sortKey}
             sortDir={sortDir}
@@ -1716,6 +1868,28 @@ export function DashboardClient({
           hearing={postHrgHearing}
           onClose={() => setPostHrgHearing(null)}
           onSave={handleUpdate}
+        />
+      )}
+
+      {/* Action Modals */}
+      {showAddHearing && (
+        <AddHearingModal
+          onClose={() => setShowAddHearing(false)}
+          onSuccess={handleRefresh}
+        />
+      )}
+      {showEmailAll && <EmailAllModal onClose={() => setShowEmailAll(false)} />}
+      {showAutoAssign && (
+        <AutoAssignModal
+          representatives={representatives}
+          onClose={() => setShowAutoAssign(false)}
+          onSuccess={handleRefresh}
+        />
+      )}
+      {showUnassignAll && (
+        <UnassignAllModal
+          onClose={() => setShowUnassignAll(false)}
+          onSuccess={handleRefresh}
         />
       )}
     </>
