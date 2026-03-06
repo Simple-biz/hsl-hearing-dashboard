@@ -314,7 +314,7 @@ export function UnassignAllModal({
                   <div className="max-h-87.5 overflow-y-auto rounded-lg border bg-card">
                     {filteredPreview.map((h) => {
                       const dateStr = new Date(
-                        h.hearing_date,
+                        h.hearing_date + "T12:00:00",
                       ).toLocaleDateString("en-US", {
                         month: "short",
                         day: "numeric",
