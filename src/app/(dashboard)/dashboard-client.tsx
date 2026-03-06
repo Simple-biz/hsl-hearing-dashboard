@@ -1,6 +1,14 @@
 "use client";
 
-import { useState, useMemo, useCallback, useTransition } from "react";
+import {
+  useState,
+  useMemo,
+  useCallback,
+  useTransition,
+  useRef,
+  // useEffect,
+} from "react";
+import { createPortal } from "react-dom";
 import {
   Download,
   Search,
@@ -31,26 +39,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
   AddHearingModal,
   EmailAllModal,
   AutoAssignModal,
   UnassignAllModal,
 } from "@/components/modals";
-import { updateHearing } from "./actions";
+import { updateHearing, deleteHearing, autoAssignSingle } from "./actions";
 import type {
   HearingRow,
   RepRow,
@@ -112,6 +106,28 @@ function parseNotes(raw: string | null): PostHrgNote[] {
 }
 
 // ── Color maps ──
+const SEL =
+  "h-8 rounded-md border border-input bg-card px-2 text-xs cursor-pointer focus:outline-none focus:ring-1 focus:ring-ring";
+const SEL_SM =
+  "h-7 rounded-md border border-input bg-card px-2 text-xs cursor-pointer focus:outline-none focus:ring-1 focus:ring-ring";
+
+// ── Safe date parsing (avoids UTC midnight → local timezone day shift) ──
+function parseDate(dateStr: string): Date {
+  // "2026-05-01" → Date at noon UTC so it stays May 1 in any timezone
+  return new Date(dateStr + "T12:00:00");
+}
+function fmtDate(dateStr: string, opts?: Intl.DateTimeFormatOptions): string {
+  return parseDate(dateStr).toLocaleDateString(
+    "en-US",
+    opts || { month: "short", day: "numeric", year: "2-digit" },
+  );
+}
+function getDateMonth(dateStr: string): number {
+  return parseDate(dateStr).getMonth();
+}
+function getDateYear(dateStr: string): number {
+  return parseDate(dateStr).getFullYear();
+}
 const DECISION_COLORS: Record<string, string> = {
   "Fully Favorable":
     "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400",
@@ -154,6 +170,17 @@ const TEAM_COLORS: Record<string, string> = {
 const RFC_COLORS: Record<string, string> = {
   Sent: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400",
   Received: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
+};
+const MOA_COLORS: Record<string, string> = {
+  "Get Phone Permission":
+    "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400",
+  "Case is Ready":
+    "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400",
+  "In Person Florida":
+    "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
+  Phone:
+    "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400",
+  OVH: "bg-cyan-100 text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-400",
 };
 
 function StatusBadge({
@@ -200,20 +227,80 @@ function InlineCheck({
   checked,
   onToggle,
   editable = true,
+  color = "green",
 }: {
   checked: boolean;
   onToggle: (v: boolean) => void;
   editable?: boolean;
+  color?: "green" | "purple";
 }) {
+  const accent = color === "purple" ? "accent-purple-600" : "accent-green-600";
   return (
     <div className="flex items-center justify-center">
-      <Checkbox
+      <input
+        type="checkbox"
         checked={checked}
-        onCheckedChange={(v) => editable && onToggle(v === true)}
+        onChange={(e) => editable && onToggle(e.target.checked)}
         disabled={!editable}
-        className="h-4 w-4"
+        className={cn(
+          "h-4 w-4 rounded cursor-pointer",
+          accent,
+          !editable && "opacity-50 cursor-not-allowed",
+        )}
       />
     </div>
+  );
+}
+
+function InlineDropdown({
+  value,
+  options,
+  onSave,
+  editable,
+  colorMap,
+  placeholder = "-",
+}: {
+  value: string | number | null;
+  options: { value: string; label: string }[];
+  onSave: (v: string | null) => void;
+  editable: boolean;
+  colorMap?: Record<string, string>;
+  placeholder?: string;
+}) {
+  if (!editable) {
+    const display =
+      options.find((o) => o.value === String(value ?? ""))?.label ||
+      (value ? String(value) : null);
+    if (colorMap && display)
+      return <StatusBadge value={display} colorMap={colorMap} />;
+    return (
+      <span className="text-xs text-muted-foreground">
+        {display || placeholder}
+      </span>
+    );
+  }
+  const currentLabel =
+    options.find((o) => o.value === String(value ?? ""))?.label || null;
+  const currentColor = colorMap && currentLabel ? colorMap[currentLabel] : null;
+  return (
+    <select
+      value={value != null ? String(value) : ""}
+      onChange={(e) => onSave(e.target.value || null)}
+      className={cn(
+        "h-6 w-full rounded border px-1 text-[11px] font-medium cursor-pointer transition-colors",
+        "focus:outline-none focus:ring-1 focus:ring-blue-400",
+        currentColor
+          ? cn(currentColor, "border-transparent")
+          : "border-transparent bg-transparent hover:border-border text-foreground",
+      )}
+    >
+      <option value="">{placeholder}</option>
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
   );
 }
 // ── Rep badge (read-only, colored by type — matches old dashboard) ──
@@ -270,94 +357,339 @@ function RepBadge({ hearing }: { hearing: HearingRow }) {
 }
 
 // ── Actions menu (context-sensitive like old dashboard) ──
+// ── Withdrawal types (matches old dashboard) ──
+const WITHDRAWAL_TYPES = [
+  "Withdrawal",
+  "Withdrawal - No Contact",
+  "Withdrawal - SGA",
+  "Withdrawal - Client Terminated Rep",
+  "Withdrawal - In-Person",
+  "Withdrawal - Client Working/ Doing Better/WD Hrg Req",
+  "Withdrawal - UFD",
+  "Withdrawal - Receiving Benefits",
+  "Withdrawal - Misc",
+];
+
+// ── Actions menu (context-sensitive like old dashboard) ──
 function ActionMenu({
   hearing,
   userRole,
   onUpdate,
+  onDelete,
+  representatives,
+  onEdit,
+  onAutoAssign,
 }: {
   hearing: HearingRow;
   userRole: UserRole;
   onUpdate: (id: number, field: string, value: UpdateValue) => void;
+  onDelete: (id: number) => void;
+  representatives: RepRow[];
+  onEdit: (h: HearingRow) => void;
+  onAutoAssign: (id: number) => void;
 }) {
   const isAdmin = !["rep", "staff"].includes(userRole);
   const isUnassigned = !hearing.assigned_rep_id && !hearing.assignment_status;
   const isAssigned = !!hearing.assigned_rep_id;
   const hasStatus = !!hearing.assignment_status;
+  const [showAssign, setShowAssign] = useState(false);
+  const [showWithdrawal, setShowWithdrawal] = useState(false);
+
+  const [menuOpen, setMenuOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+
+  const openMenu = () => {
+    if (btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      const menuH = 250; // estimated max menu height
+      const spaceBelow = window.innerHeight - r.bottom;
+      const top =
+        spaceBelow < menuH ? Math.max(8, r.top - menuH) : r.bottom + 4;
+      setPos({ top, left: Math.min(r.right, window.innerWidth - 200) });
+    }
+    setMenuOpen(true);
+  };
+
+  const handleWithdrawal = (type: string) => {
+    onUpdate(hearing.id, "assignment_status", "withdrawal");
+    onUpdate(hearing.id, "hearing_decision_status", type);
+    setShowWithdrawal(false);
+  };
+
+  const menuAction = (fn: () => void) => () => {
+    fn();
+    setMenuOpen(false);
+  };
+
+  const openSub = (setter: (v: boolean) => void) => () => {
+    setMenuOpen(false);
+    if (btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      const subH = 350; // estimated sub-popover height
+      const spaceBelow = window.innerHeight - r.bottom;
+      const top = spaceBelow < subH ? Math.max(8, r.top - subH) : r.bottom + 4;
+      setPos({ top, left: Math.min(r.right - 288, window.innerWidth - 300) });
+    }
+    setter(true);
+  };
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="h-6 w-6">
-          <MoreHorizontal className="h-3.5 w-3.5" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-44">
-        {isAdmin && (
+    <>
+      <Button
+        ref={btnRef}
+        variant="ghost"
+        size="icon"
+        className="h-6 w-6"
+        onClick={openMenu}
+      >
+        <MoreHorizontal className="h-3.5 w-3.5" />
+      </Button>
+
+      {/* Main menu — portal */}
+      {menuOpen &&
+        !showAssign &&
+        !showWithdrawal &&
+        createPortal(
           <>
-            {isUnassigned && (
-              <>
-                <DropdownMenuItem className="text-xs">
-                  📋 Assign
-                </DropdownMenuItem>
-                <DropdownMenuItem className="text-xs">
-                  ⚡ Auto-Assign
-                </DropdownMenuItem>
-              </>
-            )}
-            {isAssigned && (
-              <>
-                <DropdownMenuItem className="text-xs">
-                  📧 Send Email
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className="text-xs"
-                  onClick={() => onUpdate(hearing.id, "assigned_rep_id", null)}
-                >
-                  🔄 Unassign
-                </DropdownMenuItem>
-                <DropdownMenuItem className="text-xs">
-                  🚫 Withdrawal
-                </DropdownMenuItem>
-              </>
-            )}
-            {hasStatus && !isAssigned && (
-              <>
-                <DropdownMenuItem className="text-xs">
-                  📋 Change Assignment
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className="text-xs"
-                  onClick={() => onUpdate(hearing.id, "assigned_rep_id", null)}
-                >
-                  🔄 Clear Status
-                </DropdownMenuItem>
-              </>
-            )}
-            <DropdownMenuSeparator />
-          </>
+            <div
+              className="fixed inset-0 z-100"
+              onClick={() => setMenuOpen(false)}
+            />
+            <div
+              className="fixed z-101 w-48 max-h-[calc(100vh-16px)] overflow-y-auto rounded-lg border bg-card py-1 shadow-xl"
+              style={{ top: pos.top, left: pos.left - 192 }}
+            >
+              {isAdmin && (
+                <>
+                  {isUnassigned && (
+                    <>
+                      <button
+                        onClick={openSub(setShowAssign)}
+                        className="flex w-full items-center px-3 py-1.5 text-xs hover:bg-muted/50"
+                      >
+                        📋 Assign
+                      </button>
+                      <button
+                        onClick={menuAction(() => onAutoAssign(hearing.id))}
+                        className="flex w-full items-center px-3 py-1.5 text-xs hover:bg-muted/50"
+                      >
+                        ⚡ Auto-Assign
+                      </button>
+                    </>
+                  )}
+                  {isAssigned && (
+                    <>
+                      <button
+                        onClick={menuAction(() => {})}
+                        className="flex w-full items-center px-3 py-1.5 text-xs hover:bg-muted/50"
+                      >
+                        📧 Send Email
+                      </button>
+                      <button
+                        onClick={menuAction(() =>
+                          onUpdate(hearing.id, "assigned_rep_id", null),
+                        )}
+                        className="flex w-full items-center px-3 py-1.5 text-xs hover:bg-muted/50"
+                      >
+                        🔄 Unassign
+                      </button>
+                      <button
+                        onClick={openSub(setShowWithdrawal)}
+                        className="flex w-full items-center justify-between px-3 py-1.5 text-xs hover:bg-muted/50"
+                      >
+                        🚫 Withdrawal <ChevronRight className="h-3 w-3" />
+                      </button>
+                    </>
+                  )}
+                  {hasStatus && !isAssigned && (
+                    <>
+                      <button
+                        onClick={openSub(setShowAssign)}
+                        className="flex w-full items-center px-3 py-1.5 text-xs hover:bg-muted/50"
+                      >
+                        📋 Change Assignment
+                      </button>
+                      <button
+                        onClick={menuAction(() => {
+                          onUpdate(hearing.id, "assignment_status", null);
+                          onUpdate(hearing.id, "assigned_rep_id", null);
+                        })}
+                        className="flex w-full items-center px-3 py-1.5 text-xs hover:bg-muted/50"
+                      >
+                        🔄 Clear Status
+                      </button>
+                    </>
+                  )}
+                  <div className="my-1 border-t" />
+                </>
+              )}
+              <button
+                onClick={menuAction(() => onEdit(hearing))}
+                className="flex w-full items-center px-3 py-1.5 text-xs hover:bg-muted/50"
+              >
+                {isAdmin ? (
+                  <>
+                    <Pencil className="mr-2 h-3.5 w-3.5" /> Edit
+                  </>
+                ) : (
+                  <>
+                    <Eye className="mr-2 h-3.5 w-3.5" /> View
+                  </>
+                )}
+              </button>
+              <button
+                onClick={menuAction(() => {})}
+                className="flex w-full items-center px-3 py-1.5 text-xs hover:bg-muted/50"
+              >
+                📝 Activity Log
+              </button>
+              {isAdmin && (
+                <>
+                  <div className="my-1 border-t" />
+                  <button
+                    onClick={menuAction(() => {
+                      if (
+                        confirm(
+                          `Delete hearing #${hearing.id} (${hearing.claimant})?`,
+                        )
+                      )
+                        onDelete(hearing.id);
+                    })}
+                    className="flex w-full items-center px-3 py-1.5 text-xs text-destructive hover:bg-muted/50"
+                  >
+                    <Trash2 className="mr-2 h-3.5 w-3.5" /> Delete
+                  </button>
+                </>
+              )}
+            </div>
+          </>,
+          document.body,
         )}
-        <DropdownMenuItem className="text-xs">
-          {isAdmin ? (
-            <>
-              <Pencil className="mr-2 h-3.5 w-3.5" /> Edit
-            </>
-          ) : (
-            <>
-              <Eye className="mr-2 h-3.5 w-3.5" /> View
-            </>
-          )}
-        </DropdownMenuItem>
-        <DropdownMenuItem className="text-xs">📝 Activity Log</DropdownMenuItem>
-        {isAdmin && (
+
+      {/* Withdrawal submenu — portal */}
+      {showWithdrawal &&
+        createPortal(
           <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem className="text-xs text-destructive">
-              <Trash2 className="mr-2 h-3.5 w-3.5" /> Delete
-            </DropdownMenuItem>
-          </>
+            <div
+              className="fixed inset-0 z-100"
+              onClick={() => setShowWithdrawal(false)}
+            />
+            <div
+              className="fixed z-101 w-72 max-h-[calc(100vh-16px)] overflow-y-auto rounded-lg border bg-card p-1 shadow-xl"
+              style={{ top: pos.top, left: pos.left - 288 }}
+            >
+              <div className="px-3 py-2 border-b">
+                <p className="text-xs font-semibold">🚫 Withdrawal Type</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  {hearing.claimant} —{" "}
+                  {fmtDate(hearing.hearing_date, {
+                    month: "short",
+                    day: "numeric",
+                  })}
+                </p>
+              </div>
+              {WITHDRAWAL_TYPES.map((wt) => (
+                <button
+                  key={wt}
+                  onClick={() => handleWithdrawal(wt)}
+                  className="flex w-full items-center px-3 py-1.5 text-xs text-left hover:bg-muted/50 rounded transition-colors"
+                >
+                  {wt}
+                </button>
+              ))}
+              <div className="border-t mt-1 pt-1 px-1">
+                <button
+                  onClick={() => {
+                    onUpdate(
+                      hearing.id,
+                      "assignment_status",
+                      "wd_never_assigned",
+                    );
+                    setShowWithdrawal(false);
+                  }}
+                  className="flex w-full items-center px-3 py-1.5 text-xs text-left hover:bg-muted/50 rounded text-amber-700 font-medium"
+                >
+                  WD - Never Assigned
+                </button>
+              </div>
+            </div>
+          </>,
+          document.body,
         )}
-      </DropdownMenuContent>
-    </DropdownMenu>
+
+      {/* Assign popover — portal */}
+      {showAssign &&
+        createPortal(
+          <>
+            <div
+              className="fixed inset-0 z-100"
+              onClick={() => setShowAssign(false)}
+            />
+            <div
+              className="fixed z-101 w-72 max-h-[calc(100vh-16px)] overflow-y-auto rounded-lg border bg-card p-4 shadow-xl"
+              style={{ top: pos.top, left: pos.left - 288 }}
+            >
+              <p className="mb-0.5 text-xs font-semibold">📋 Assign</p>
+              <p className="mb-2 text-[10px] text-muted-foreground">
+                {hearing.claimant} —{" "}
+                {fmtDate(hearing.hearing_date, {
+                  month: "short",
+                  day: "numeric",
+                })}
+              </p>
+              <select
+                className="h-9 w-full rounded border bg-card px-2 text-sm"
+                autoFocus
+                onChange={(e) => {
+                  if (e.target.value) {
+                    onUpdate(
+                      hearing.id,
+                      "assigned_rep_id",
+                      Number(e.target.value),
+                    );
+                    onUpdate(hearing.id, "assignment_status", null);
+                    setShowAssign(false);
+                  }
+                }}
+              >
+                <option value="">Select representative...</option>
+                <optgroup label="Internal">
+                  {representatives
+                    .filter(
+                      (r) => r.is_active && r.rep_type === "internal_advocates",
+                    )
+                    .map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name}
+                      </option>
+                    ))}
+                </optgroup>
+                <optgroup label="External">
+                  {representatives
+                    .filter(
+                      (r) => r.is_active && r.rep_type === "external_advocates",
+                    )
+                    .map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name}
+                      </option>
+                    ))}
+                </optgroup>
+              </select>
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-2 h-7 w-full text-xs"
+                onClick={() => setShowAssign(false)}
+              >
+                Cancel
+              </Button>
+            </div>
+          </>,
+          document.body,
+        )}
+    </>
   );
 }
 
@@ -467,7 +799,7 @@ function PostHrgModal({
             <span>
               Hearing:{" "}
               <span className="font-medium text-foreground">
-                {new Date(hearing.hearing_date).toLocaleDateString("en-US", {
+                {fmtDate(hearing.hearing_date, {
                   month: "short",
                   day: "numeric",
                   year: "numeric",
@@ -681,9 +1013,9 @@ function StatsRow({
     (h) => h.hearing_date >= today && h.hearing_date <= next7,
   ).length;
   const thisMonth = hearings.filter((h) => {
-    const d = new Date(h.hearing_date);
     return (
-      d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
+      getDateMonth(h.hearing_date) === now.getMonth() &&
+      getDateYear(h.hearing_date) === now.getFullYear()
     );
   });
   const isRep = userRole === "rep";
@@ -760,28 +1092,18 @@ function StatsRow({
 function FilterBar({
   filters,
   onFilterChange,
-  // totalCount,
-  // filteredCount,
-  // representatives,
-  // mrTeams,
-  // configOptions,
   repCounts,
   nextUnassigned,
   userRole,
 }: {
   filters: HearingFilters;
   onFilterChange: (f: HearingFilters) => void;
-  totalCount: number;
-  filteredCount: number;
-  representatives: RepRow[];
-  mrTeams: MrTeamRow[];
-  configOptions: ConfigOptionRow[];
   repCounts: RepWithCount[];
   nextUnassigned: NextUnassignedRow | null;
   userRole: UserRole;
 }) {
   const update = (key: keyof HearingFilters, value: string) => {
-    const v = value === "__all__" ? "" : value;
+    const v = value;
     const next = { ...filters, [key]: v };
     // Date presets auto-fill dateFrom/dateTo
     if (key === "datePreset") {
@@ -856,18 +1178,6 @@ function FilterBar({
     filters.assignmentStatus,
     filters.datePreset,
   ].filter(Boolean).length;
-  // const decisionOptions = configOptions.filter(
-  //   (c) => c.option_type === "hearing_decision_status",
-  // );
-  // const mrStatusOptions = configOptions.filter(
-  //   (c) => c.option_type === "medical_record_status",
-  // );
-  // const unassignedCount = useMemo(
-  //   () =>
-  //     totalCount -
-  //     representatives.filter((r) => r.is_active).reduce((sum) => sum, 0),
-  //   [totalCount, representatives],
-  // );
   const isAdmin = !["rep", "staff"].includes(userRole);
 
   return (
@@ -885,94 +1195,76 @@ function FilterBar({
         </div>
 
         {isAdmin && (
-          <Select
-            value={filters.repId || "__all__"}
-            onValueChange={(v) => update("repId", v)}
+          <select
+            className={SEL + " min-w-40"}
+            value={filters.repId || ""}
+            onChange={(e) => update("repId", e.target.value)}
           >
-            <SelectTrigger className="h-8 w-auto min-w-40 text-xs">
-              <SelectValue placeholder="All Reps" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">All Reps</SelectItem>
-              <SelectItem value="unassigned">Unassigned</SelectItem>
-              <SelectItem value="wd_never_assigned">
-                WD - Never Assigned
-              </SelectItem>
-              <SelectItem value="withdrawal">Withdrawal</SelectItem>
-              {repCounts.map((r) => (
-                <SelectItem key={r.id} value={String(r.id)}>
-                  {r.name} ({r.hearing_count})
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            <option value="">All Reps</option>
+            <option value="unassigned">Unassigned</option>
+            <option value="wd_never_assigned">WD - Never Assigned</option>
+            <option value="withdrawal">Withdrawal</option>
+            {repCounts.map((r) => (
+              <option key={r.id} value={String(r.id)}>
+                {r.name} ({r.hearing_count})
+              </option>
+            ))}
+          </select>
         )}
 
-        <Select
-          value={filters.year || "__all__"}
-          onValueChange={(v) => update("year", v)}
+        <select
+          className={SEL + " min-w-25"}
+          value={filters.year || ""}
+          onChange={(e) => update("year", e.target.value)}
         >
-          <SelectTrigger className="h-8 w-auto min-w-25 text-xs">
-            <SelectValue placeholder="All Years" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">All Years</SelectItem>
-            {[2024, 2025, 2026, 2027].map((y) => (
-              <SelectItem key={y} value={String(y)}>
-                {y}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+          <option value="">All Years</option>
+          {[2024, 2025, 2026, 2027].map((y) => (
+            <option key={y} value={String(y)}>
+              {y}
+            </option>
+          ))}
+        </select>
 
-        <Select
-          value={filters.month || "__all__"}
-          onValueChange={(v) => update("month", v)}
+        <select
+          className={SEL + " min-w-30"}
+          value={filters.month || ""}
+          onChange={(e) => update("month", e.target.value)}
         >
-          <SelectTrigger className="h-8 w-auto min-w-30 text-xs">
-            <SelectValue placeholder="All Months" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">All Months</SelectItem>
-            {[
-              "Jan",
-              "Feb",
-              "Mar",
-              "Apr",
-              "May",
-              "Jun",
-              "Jul",
-              "Aug",
-              "Sep",
-              "Oct",
-              "Nov",
-              "Dec",
-            ].map((m, i) => (
-              <SelectItem key={i} value={String(i + 1)}>
-                {m}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+          <option value="">All Months</option>
+          {[
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec",
+          ].map((m, i) => (
+            <option key={i} value={String(i + 1)}>
+              {m}
+            </option>
+          ))}
+        </select>
 
-        <Select
-          value={filters.datePreset || "__all__"}
-          onValueChange={(v) => update("datePreset", v)}
+        <select
+          className={SEL + " min-w-32.5"}
+          value={filters.datePreset || ""}
+          onChange={(e) => update("datePreset", e.target.value)}
         >
-          <SelectTrigger className="h-8 w-auto min-w-32.5 text-xs">
-            <SelectValue placeholder="All Dates" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">All Dates</SelectItem>
-            <SelectItem value="today">Today</SelectItem>
-            <SelectItem value="tomorrow">Tomorrow</SelectItem>
-            <SelectItem value="this-week">This Week</SelectItem>
-            <SelectItem value="next-week">Next Week</SelectItem>
-            <SelectItem value="this-month">This Month</SelectItem>
-            <SelectItem value="next-30">Next 30 Days</SelectItem>
-            <SelectItem value="custom">Custom Range...</SelectItem>
-          </SelectContent>
-        </Select>
+          <option value="">All Dates</option>
+          <option value="today">Today</option>
+          <option value="tomorrow">Tomorrow</option>
+          <option value="this-week">This Week</option>
+          <option value="next-week">Next Week</option>
+          <option value="this-month">This Month</option>
+          <option value="next-30">Next 30 Days</option>
+          <option value="custom">Custom Range...</option>
+        </select>
 
         {filters.datePreset === "custom" && (
           <div className="flex items-center gap-1.5">
@@ -1149,12 +1441,8 @@ function HearingCard({
         </div>
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
           <span className="tabular-nums">
-            {new Date(hearing.hearing_date).toLocaleDateString("en-US", {
-              month: "short",
-              day: "numeric",
-              year: "2-digit",
-            })}{" "}
-            at {hearing.converted_time_est?.slice(0, 5)} {hearing.time_zone}
+            {fmtDate(hearing.hearing_date)} at{" "}
+            {hearing.converted_time_est?.slice(0, 5)} {hearing.time_zone}
           </span>
           {hearing.city && (
             <span>
@@ -1221,19 +1509,75 @@ function HearingTable({
   hearings,
   userRole,
   onUpdate,
+  onDelete,
   sortKey,
   sortDir,
   onSort,
   onOpenPostHrg,
+  onEdit,
+  onAutoAssign,
+  configOptions,
+  representatives,
+  mrTeams,
+  repDocsAssignees,
 }: {
   hearings: HearingRow[];
   userRole: UserRole;
   onUpdate: (id: number, field: string, value: UpdateValue) => void;
+  onDelete: (id: number) => void;
   sortKey: string;
   sortDir: "asc" | "desc";
   onSort: (key: string) => void;
   onOpenPostHrg: (h: HearingRow) => void;
+  onEdit: (h: HearingRow) => void;
+  onAutoAssign: (id: number) => void;
+  configOptions: ConfigOptionRow[];
+  representatives: RepRow[];
+  mrTeams: MrTeamRow[];
+  repDocsAssignees: RepDocsAssigneeRow[];
 }) {
+  // Build option lists for dropdowns
+  const moaOptions = configOptions
+    .filter((o) => o.option_type === "manner_of_appearance")
+    .map((o) => ({ value: o.option_value, label: o.option_value }));
+  const decisionOptions = configOptions
+    .filter((o) => o.option_type === "hearing_decision_status")
+    .map((o) => ({ value: o.option_value, label: o.option_value }));
+  const mrStatusOptions = configOptions
+    .filter((o) => o.option_type === "medical_record_status")
+    .map((o) => ({ value: o.option_value, label: o.option_value }));
+  const rfcOptions = configOptions
+    .filter((o) => o.option_type === "rfc_status")
+    .map((o) => ({ value: o.option_value, label: o.option_value }));
+  const briefOptions = configOptions
+    .filter((o) => o.option_type === "brief_assignment")
+    .map((o) => ({ value: o.option_value, label: o.option_value }));
+  const docsAssigneeOptions = repDocsAssignees.map((d) => ({
+    value: d.name,
+    label: d.name,
+  }));
+  const teamOptions = mrTeams.map((t) => ({
+    value: String(t.id),
+    label: t.team_name,
+  }));
+
+  // If no config options loaded for a field, provide sensible defaults
+  const moaFallback =
+    moaOptions.length > 0
+      ? moaOptions
+      : [
+          { value: "Phone", label: "Phone" },
+          { value: "In Person", label: "In Person" },
+          { value: "OVH", label: "OVH" },
+        ];
+  const rfcFallback =
+    rfcOptions.length > 0
+      ? rfcOptions
+      : [
+          { value: "Sent", label: "Sent" },
+          { value: "Received", label: "Received" },
+        ];
+
   const evenBg = "bg-white dark:bg-zinc-950";
   const oddBg = "bg-zinc-50 dark:bg-zinc-900";
   const headerBg = "bg-zinc-100 dark:bg-zinc-900";
@@ -1248,11 +1592,7 @@ function HearingTable({
       case "hearing_date":
         return (
           <span className="text-xs tabular-nums">
-            {new Date(hearing.hearing_date).toLocaleDateString("en-US", {
-              month: "short",
-              day: "numeric",
-              year: "2-digit",
-            })}
+            {fmtDate(hearing.hearing_date)}
           </span>
         );
       case "hearing_time":
@@ -1275,6 +1615,10 @@ function HearingTable({
             hearing={hearing}
             userRole={userRole}
             onUpdate={onUpdate}
+            onDelete={onDelete}
+            representatives={representatives}
+            onEdit={onEdit}
+            onAutoAssign={onAutoAssign}
           />
         );
       case "location":
@@ -1293,36 +1637,71 @@ function HearingTable({
         );
       case "manner_of_appearance":
         return (
-          <span className="text-xs">{hearing.manner_of_appearance || "-"}</span>
+          <InlineDropdown
+            value={hearing.manner_of_appearance}
+            options={moaFallback}
+            onSave={(v) => onUpdate(hearing.id, "manner_of_appearance", v)}
+            editable={editable}
+            colorMap={MOA_COLORS}
+          />
         );
       case "rep_docs_assigned_to":
         return (
-          <span className="text-xs">{hearing.rep_docs_assigned_to || "-"}</span>
+          <InlineDropdown
+            value={hearing.rep_docs_assigned_to}
+            options={docsAssigneeOptions}
+            onSave={(v) => onUpdate(hearing.id, "rep_docs_assigned_to", v)}
+            editable={editable}
+          />
         );
       case "mr_team_id":
         return (
-          <TeamBadge
-            name={hearing.mr_team_name}
-            color={hearing.mr_team_color}
+          <InlineDropdown
+            value={hearing.mr_team_id}
+            options={teamOptions}
+            onSave={(v) =>
+              onUpdate(hearing.id, "mr_team_id", v ? Number(v) : null)
+            }
+            editable={editable}
+            placeholder="-"
           />
         );
       case "medical_record_status":
         return (
-          <StatusBadge
+          <InlineDropdown
             value={hearing.medical_record_status}
+            options={mrStatusOptions}
+            onSave={(v) => onUpdate(hearing.id, "medical_record_status", v)}
+            editable={editable}
             colorMap={MR_STATUS_COLORS}
           />
         );
       case "rfc_status":
-        return <StatusBadge value={hearing.rfc_status} colorMap={RFC_COLORS} />;
+        return (
+          <InlineDropdown
+            value={hearing.rfc_status}
+            options={rfcFallback}
+            onSave={(v) => onUpdate(hearing.id, "rfc_status", v)}
+            editable={editable}
+            colorMap={RFC_COLORS}
+          />
+        );
       case "brief_assigned_to":
         return (
-          <span className="text-xs">{hearing.brief_assigned_to || "-"}</span>
+          <InlineDropdown
+            value={hearing.brief_assigned_to}
+            options={briefOptions}
+            onSave={(v) => onUpdate(hearing.id, "brief_assigned_to", v)}
+            editable={editable}
+          />
         );
       case "hearing_decision_status":
         return (
-          <StatusBadge
+          <InlineDropdown
             value={hearing.hearing_decision_status}
+            options={decisionOptions}
+            onSave={(v) => onUpdate(hearing.id, "hearing_decision_status", v)}
+            editable={editable}
             colorMap={DECISION_COLORS}
           />
         );
@@ -1478,6 +1857,7 @@ export function DashboardClient({
   representatives,
   mrTeams,
   configOptions,
+  repDocsAssignees,
   repCounts,
   nextUnassigned,
   userRole,
@@ -1522,13 +1902,10 @@ export function DashboardClient({
       if (filters.dateTo && h.hearing_date > filters.dateTo) return false;
       if (
         filters.month &&
-        String(new Date(h.hearing_date).getMonth() + 1) !== filters.month
+        String(getDateMonth(h.hearing_date) + 1) !== filters.month
       )
         return false;
-      if (
-        filters.year &&
-        String(new Date(h.hearing_date).getFullYear()) !== filters.year
-      )
+      if (filters.year && String(getDateYear(h.hearing_date)) !== filters.year)
         return false;
       if (filters.repId) {
         if (filters.repId === "unassigned") {
@@ -1654,6 +2031,140 @@ export function DashboardClient({
     [representatives, mrTeams, postHrgHearing],
   );
 
+  const handleDelete = useCallback(async (hearingId: number) => {
+    setHearings((prev) => prev.filter((h) => h.id !== hearingId));
+    startTransition(async () => {
+      try {
+        await deleteHearing(hearingId);
+      } catch (e) {
+        console.error("Delete failed:", e);
+      }
+    });
+  }, []);
+
+  const [editHearing, setEditHearing] = useState<HearingRow | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
+  const editFormRef = useRef<HTMLFormElement>(null);
+
+  const handleEdit = useCallback((hearing: HearingRow) => {
+    setEditHearing(hearing);
+  }, []);
+
+  const handleEditSave = async () => {
+    if (!editHearing || !editFormRef.current) return;
+    setEditSaving(true);
+    try {
+      const fd = new FormData(editFormRef.current);
+      const original = editHearing as unknown as Record<string, unknown>;
+      const textFields = [
+        "claimant",
+        "ssn_last_4",
+        "claim_type",
+        "hearing_date",
+        "hearing_time",
+        "time_zone",
+        "alj",
+        "city",
+        "state",
+        "claimant_location",
+        "representative_location",
+        "medical_expert",
+        "vocational_expert",
+        "status_date",
+        "entered_hearing_level_date",
+        "download_type",
+      ];
+      const boolFields = [
+        "task_assigned",
+        "rep_docs_complete",
+        "fee_agreement_complete",
+        "five_day_notice",
+        "phi_sheet_complete",
+      ];
+
+      for (const key of textFields) {
+        const val = fd.get(key) as string | null;
+        const newVal = val === "" ? null : val;
+        if (original[key] !== newVal)
+          await updateHearing(editHearing.id, key, newVal);
+      }
+      for (const key of boolFields) {
+        const checked = fd.get(key) === "on";
+        if (original[key] !== checked)
+          await updateHearing(editHearing.id, key, checked);
+      }
+
+      // Refresh from server
+      window.location.reload();
+    } catch (e) {
+      console.error("Save failed:", e);
+      alert("Save failed");
+    }
+    setEditSaving(false);
+  };
+
+  // Auto-assign loading state
+  const [autoAssignStatus, setAutoAssignStatus] = useState<{
+    hearingId: number;
+    state: "loading" | "success" | "error";
+    message: string;
+  } | null>(null);
+
+  const handleAutoAssign = useCallback(
+    async (hearingId: number) => {
+      const hearing = hearings.find((h) => h.id === hearingId);
+      setAutoAssignStatus({
+        hearingId,
+        state: "loading",
+        message: `Finding best rep for ${hearing?.claimant || `#${hearingId}`}...`,
+      });
+      try {
+        const result = await autoAssignSingle(hearingId);
+        if (result.success) {
+          const rep = representatives.find((r) => r.name === result.rep_name);
+          if (rep) {
+            setHearings((prev) =>
+              prev.map((h) =>
+                h.id === hearingId
+                  ? {
+                      ...h,
+                      assigned_rep_id: rep.id,
+                      rep_name: rep.name,
+                      rep_type: rep.rep_type,
+                      assignment_status: null,
+                    }
+                  : h,
+              ),
+            );
+          }
+          // Count current assignments for that rep
+          const repCount =
+            hearings.filter((h) => h.rep_name === result.rep_name).length + 1;
+          setAutoAssignStatus({
+            hearingId,
+            state: "success",
+            message: `Assigned to ${result.rep_name} (${repCount} total)`,
+          });
+        } else {
+          setAutoAssignStatus({
+            hearingId,
+            state: "error",
+            message: result.message || "No eligible reps",
+          });
+        }
+      } catch {
+        setAutoAssignStatus({
+          hearingId,
+          state: "error",
+          message: "Auto-assign failed",
+        });
+      }
+      // Auto-dismiss after 3 seconds
+      setTimeout(() => setAutoAssignStatus(null), 3000);
+    },
+    [representatives, hearings],
+  );
+
   const isAdmin = !["rep", "staff"].includes(userRole);
 
   const handleRefresh = () => {
@@ -1722,11 +2233,6 @@ export function DashboardClient({
         <FilterBar
           filters={filters}
           onFilterChange={setFilters}
-          totalCount={hearings.length}
-          filteredCount={filtered.length}
-          representatives={representatives}
-          mrTeams={mrTeams}
-          configOptions={configOptions}
           repCounts={repCounts}
           nextUnassigned={nextUnassigned}
           userRole={userRole}
@@ -1768,26 +2274,20 @@ export function DashboardClient({
             >
               <ChevronLeft className="h-3.5 w-3.5" />
             </Button>
-            <Select
+            <select
+              className={SEL_SM + " min-w-17.5"}
               value={String(page)}
-              onValueChange={(v) => setPage(Number(v))}
+              onChange={(e) => setPage(Number(e.target.value))}
             >
-              <SelectTrigger className="h-7 w-auto min-w-17.5 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {Array.from(
-                  {
-                    length: Math.max(1, Math.ceil(filtered.length / pageSize)),
-                  },
-                  (_, i) => (
-                    <SelectItem key={i + 1} value={String(i + 1)}>
-                      Page {i + 1}
-                    </SelectItem>
-                  ),
-                )}
-              </SelectContent>
-            </Select>
+              {Array.from(
+                { length: Math.max(1, Math.ceil(filtered.length / pageSize)) },
+                (_, i) => (
+                  <option key={i + 1} value={String(i + 1)}>
+                    Page {i + 1}
+                  </option>
+                ),
+              )}
+            </select>
             <Button
               variant="outline"
               size="icon"
@@ -1797,24 +2297,20 @@ export function DashboardClient({
             >
               <ChevronRight className="h-3.5 w-3.5" />
             </Button>
-            <Select
+            <select
+              className={SEL_SM + " min-w-21.25"}
               value={String(pageSize)}
-              onValueChange={(v) => {
-                setPageSize(Number(v));
+              onChange={(e) => {
+                setPageSize(Number(e.target.value));
                 setPage(1);
               }}
             >
-              <SelectTrigger className="h-7 w-auto min-w-21.25 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {[25, 50, 100, 200, 500].map((s) => (
-                  <SelectItem key={s} value={String(s)}>
-                    {s} / page
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              {[25, 50, 100, 200, 500].map((s) => (
+                <option key={s} value={String(s)}>
+                  {s} / page
+                </option>
+              ))}
+            </select>
           </div>
         </div>
 
@@ -1854,10 +2350,17 @@ export function DashboardClient({
             hearings={paginated}
             userRole={userRole}
             onUpdate={handleUpdate}
+            onDelete={handleDelete}
             sortKey={sortKey}
             sortDir={sortDir}
             onSort={handleSort}
             onOpenPostHrg={setPostHrgHearing}
+            onEdit={handleEdit}
+            onAutoAssign={handleAutoAssign}
+            configOptions={configOptions}
+            representatives={representatives}
+            mrTeams={mrTeams}
+            repDocsAssignees={repDocsAssignees}
           />
         </div>
       </div>
@@ -1892,6 +2395,489 @@ export function DashboardClient({
           onSuccess={handleRefresh}
         />
       )}
+
+      {/* Edit hearing modal */}
+      {editHearing &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+            onClick={() => setEditHearing(null)}
+          >
+            <div
+              className="w-full max-w-lg max-h-[85vh] flex flex-col rounded-xl border bg-card shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between border-b bg-muted/50 px-5 py-4 shrink-0">
+                <h2 className="text-sm font-semibold">
+                  {isAdmin ? "✏️ Edit Hearing" : "👁️ View Hearing"} #
+                  {editHearing.id}
+                </h2>
+                <button
+                  onClick={() => setEditHearing(null)}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <XIcon className="h-5 w-5" />
+                </button>
+              </div>
+              <form
+                ref={editFormRef}
+                className="flex-1 overflow-y-auto p-5 space-y-4"
+              >
+                <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Basic Info
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                      Claimant *
+                    </label>
+                    {isAdmin ? (
+                      <input
+                        name="claimant"
+                        className="h-9 w-full rounded border bg-card px-2 text-sm"
+                        defaultValue={editHearing.claimant ?? ""}
+                      />
+                    ) : (
+                      <p className="text-sm font-medium">
+                        {editHearing.claimant}
+                      </p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                      SSN (Last 4)
+                    </label>
+                    {isAdmin ? (
+                      <input
+                        name="ssn_last_4"
+                        className="h-9 w-full rounded border bg-card px-2 text-sm"
+                        maxLength={4}
+                        defaultValue={editHearing.ssn_last_4 ?? ""}
+                      />
+                    ) : (
+                      <p className="text-sm">{editHearing.ssn_last_4 || "-"}</p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                      Claim Type
+                    </label>
+                    {isAdmin ? (
+                      <select
+                        name="claim_type"
+                        className="h-9 w-full rounded border bg-card px-2 text-sm"
+                        defaultValue={editHearing.claim_type ?? ""}
+                      >
+                        <option value="">Select</option>
+                        {[
+                          "Title II",
+                          "Title XVI",
+                          "Overpayment",
+                          "Concurrent Title II",
+                          "Concurrent",
+                          "DIB",
+                          "SSI",
+                        ].map((v) => (
+                          <option key={v} value={v}>
+                            {v}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <p className="text-sm">{editHearing.claim_type || "-"}</p>
+                    )}
+                  </div>
+                </div>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground pt-2">
+                  Hearing Details
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                      Date *
+                    </label>
+                    {isAdmin ? (
+                      <input
+                        name="hearing_date"
+                        type="date"
+                        className="h-9 w-full rounded border bg-card px-2 text-sm"
+                        defaultValue={editHearing.hearing_date ?? ""}
+                      />
+                    ) : (
+                      <p className="text-sm tabular-nums">
+                        {editHearing.hearing_date}
+                      </p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                      Time *
+                    </label>
+                    {isAdmin ? (
+                      <input
+                        name="hearing_time"
+                        type="time"
+                        className="h-9 w-full rounded border bg-card px-2 text-sm"
+                        defaultValue={editHearing.hearing_time ?? ""}
+                      />
+                    ) : (
+                      <p className="text-sm tabular-nums">
+                        {editHearing.hearing_time}
+                      </p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                      Timezone *
+                    </label>
+                    {isAdmin ? (
+                      <select
+                        name="time_zone"
+                        className="h-9 w-full rounded border bg-card px-2 text-sm"
+                        defaultValue={editHearing.time_zone ?? ""}
+                      >
+                        <option value="">Select</option>
+                        {[
+                          ["ET", "Eastern"],
+                          ["CT", "Central"],
+                          ["MT", "Mountain"],
+                          ["PT", "Pacific"],
+                          ["HA", "Hawaii"],
+                          ["MSTA", "AZ"],
+                        ].map(([v, l]) => (
+                          <option key={v} value={v}>
+                            {l}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <p className="text-sm">{editHearing.time_zone}</p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                      ALJ
+                    </label>
+                    {isAdmin ? (
+                      <input
+                        name="alj"
+                        className="h-9 w-full rounded border bg-card px-2 text-sm"
+                        defaultValue={editHearing.alj ?? ""}
+                      />
+                    ) : (
+                      <p className="text-sm">{editHearing.alj || "-"}</p>
+                    )}
+                  </div>
+                </div>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground pt-2">
+                  Location
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                      City
+                    </label>
+                    {isAdmin ? (
+                      <input
+                        name="city"
+                        className="h-9 w-full rounded border bg-card px-2 text-sm"
+                        defaultValue={editHearing.city ?? ""}
+                      />
+                    ) : (
+                      <p className="text-sm">{editHearing.city || "-"}</p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                      State
+                    </label>
+                    {isAdmin ? (
+                      <input
+                        name="state"
+                        className="h-9 w-full rounded border bg-card px-2 text-sm"
+                        maxLength={2}
+                        defaultValue={editHearing.state ?? ""}
+                      />
+                    ) : (
+                      <p className="text-sm">{editHearing.state || "-"}</p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                      Claimant Location
+                    </label>
+                    {isAdmin ? (
+                      <input
+                        name="claimant_location"
+                        className="h-9 w-full rounded border bg-card px-2 text-sm"
+                        defaultValue={editHearing.claimant_location ?? ""}
+                      />
+                    ) : (
+                      <p className="text-sm">
+                        {editHearing.claimant_location || "-"}
+                      </p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                      Rep Location
+                    </label>
+                    {isAdmin ? (
+                      <input
+                        name="representative_location"
+                        className="h-9 w-full rounded border bg-card px-2 text-sm"
+                        defaultValue={editHearing.representative_location ?? ""}
+                      />
+                    ) : (
+                      <p className="text-sm">
+                        {editHearing.representative_location || "-"}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground pt-2">
+                  Additional
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                      Medical Expert
+                    </label>
+                    {isAdmin ? (
+                      <input
+                        name="medical_expert"
+                        className="h-9 w-full rounded border bg-card px-2 text-sm"
+                        defaultValue={editHearing.medical_expert ?? ""}
+                      />
+                    ) : (
+                      <p className="text-sm">
+                        {editHearing.medical_expert || "-"}
+                      </p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                      Vocational Expert
+                    </label>
+                    {isAdmin ? (
+                      <input
+                        name="vocational_expert"
+                        className="h-9 w-full rounded border bg-card px-2 text-sm"
+                        defaultValue={editHearing.vocational_expert ?? ""}
+                      />
+                    ) : (
+                      <p className="text-sm">
+                        {editHearing.vocational_expert || "-"}
+                      </p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                      Status Date
+                    </label>
+                    {isAdmin ? (
+                      <input
+                        name="status_date"
+                        type="date"
+                        className="h-9 w-full rounded border bg-card px-2 text-sm"
+                        defaultValue={editHearing.status_date ?? ""}
+                      />
+                    ) : (
+                      <p className="text-sm">
+                        {editHearing.status_date || "-"}
+                      </p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                      Entered Hearing Level
+                    </label>
+                    {isAdmin ? (
+                      <input
+                        name="entered_hearing_level_date"
+                        type="date"
+                        className="h-9 w-full rounded border bg-card px-2 text-sm"
+                        defaultValue={
+                          editHearing.entered_hearing_level_date ?? ""
+                        }
+                      />
+                    ) : (
+                      <p className="text-sm">
+                        {editHearing.entered_hearing_level_date || "-"}
+                      </p>
+                    )}
+                  </div>
+                  <div className="col-span-2">
+                    <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
+                      Download Type
+                    </label>
+                    {isAdmin ? (
+                      <select
+                        name="download_type"
+                        className="h-9 w-full rounded border bg-card px-2 text-sm"
+                        defaultValue={editHearing.download_type ?? ""}
+                      >
+                        <option value="">Select</option>
+                        {[
+                          "Exhibited",
+                          "Exhibited & All",
+                          "No Exhibited",
+                          "No Exhibited & All",
+                          "No SSN Match",
+                          "Exhibited & No SSN Match",
+                          "No SSN Match & All",
+                          "OCR Pre-processing",
+                          "Failed & All",
+                          "All",
+                          "In ERE Queue...",
+                          "No Exhibited & Completed",
+                          "No Exhibited & No SSN Match",
+                        ].map((v) => (
+                          <option key={v} value={v}>
+                            {v}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <p className="text-sm">
+                        {editHearing.download_type || "-"}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <div className="grid grid-cols-5 gap-2 pt-2 border-t">
+                  {(
+                    [
+                      "task_assigned",
+                      "rep_docs_complete",
+                      "fee_agreement_complete",
+                      "five_day_notice",
+                      "phi_sheet_complete",
+                    ] as const
+                  ).map((field) => {
+                    const labels: Record<string, string> = {
+                      task_assigned: "Task",
+                      rep_docs_complete: "Docs",
+                      fee_agreement_complete: "Fee",
+                      five_day_notice: "5-Day",
+                      phi_sheet_complete: "PHI",
+                    };
+                    return (
+                      <label
+                        key={field}
+                        className="flex flex-col items-center gap-1 text-[10px] text-muted-foreground"
+                      >
+                        <input
+                          type="checkbox"
+                          name={field}
+                          defaultChecked={editHearing[field]}
+                          className="h-4 w-4 accent-green-600"
+                          disabled={!isAdmin}
+                        />
+                        {labels[field]}
+                      </label>
+                    );
+                  })}
+                </div>
+              </form>
+              <div className="flex items-center justify-between border-t bg-muted/50 px-5 py-3 shrink-0">
+                <div>
+                  {isAdmin && (
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      className="h-8 text-xs"
+                      onClick={() => {
+                        if (confirm(`Delete hearing #${editHearing.id}?`)) {
+                          handleDelete(editHearing.id);
+                          setEditHearing(null);
+                        }
+                      }}
+                    >
+                      🗑️ Delete
+                    </Button>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 text-xs"
+                    onClick={() => setEditHearing(null)}
+                  >
+                    Cancel
+                  </Button>
+                  {isAdmin && (
+                    <Button
+                      size="sm"
+                      className="h-8 text-xs"
+                      onClick={handleEditSave}
+                      disabled={editSaving}
+                    >
+                      {editSaving ? "Saving..." : "💾 Save"}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+
+      {/* Auto-assign toast */}
+      {autoAssignStatus &&
+        createPortal(
+          <div
+            className={cn(
+              "fixed bottom-6 right-6 z-200 flex items-center gap-3 rounded-lg border px-4 py-3 shadow-lg",
+              autoAssignStatus.state === "loading" &&
+                "bg-blue-50 border-blue-200 dark:bg-blue-950/50 dark:border-blue-800",
+              autoAssignStatus.state === "success" &&
+                "bg-emerald-50 border-emerald-200 dark:bg-emerald-950/50 dark:border-emerald-800",
+              autoAssignStatus.state === "error" &&
+                "bg-red-50 border-red-200 dark:bg-red-950/50 dark:border-red-800",
+            )}
+          >
+            {autoAssignStatus.state === "loading" && (
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" />
+            )}
+            {autoAssignStatus.state === "success" && (
+              <span className="text-lg text-emerald-600">✓</span>
+            )}
+            {autoAssignStatus.state === "error" && (
+              <span className="text-lg text-red-600">✕</span>
+            )}
+            <div>
+              <p
+                className={cn(
+                  "text-sm font-medium",
+                  autoAssignStatus.state === "loading" &&
+                    "text-blue-800 dark:text-blue-300",
+                  autoAssignStatus.state === "success" &&
+                    "text-emerald-800 dark:text-emerald-300",
+                  autoAssignStatus.state === "error" &&
+                    "text-red-800 dark:text-red-300",
+                )}
+              >
+                {autoAssignStatus.state === "loading"
+                  ? "⚡ Auto-Assigning..."
+                  : autoAssignStatus.state === "success"
+                    ? "⚡ Assigned!"
+                    : "⚡ Failed"}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {autoAssignStatus.message}
+              </p>
+            </div>
+            <button
+              onClick={() => setAutoAssignStatus(null)}
+              className="ml-2 text-muted-foreground hover:text-foreground"
+            >
+              <XIcon className="h-3.5 w-3.5" />
+            </button>
+          </div>,
+          document.body,
+        )}
     </>
   );
 }

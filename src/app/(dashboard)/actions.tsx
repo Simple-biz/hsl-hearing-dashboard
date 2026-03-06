@@ -37,6 +37,14 @@ export interface HearingRow {
   rep_type: string | null;
   mr_team_name: string | null;
   mr_team_color: string | null;
+  // Edit modal fields
+  claimant_location: string | null;
+  representative_location: string | null;
+  medical_expert: string | null;
+  vocational_expert: string | null;
+  status_date: string | null;
+  entered_hearing_level_date: string | null;
+  download_type: string | null;
 }
 
 export interface RepRow {
@@ -121,6 +129,9 @@ export async function fetchDashboardData(
           h.fee_agreement_complete, h.five_day_notice,
           h.rfc_status, h.phi_sheet_complete, h.post_hrg_review,
           h.post_hrg_notes, h.post_hrg_deadline::text,
+          h.claimant_location, h.representative_location,
+          h.medical_expert, h.vocational_expert,
+          h.status_date::text, h.entered_hearing_level_date::text, h.download_type,
           r.name AS rep_name,
           r.rep_type AS rep_type,
           t.team_name AS mr_team_name,
@@ -202,6 +213,8 @@ export async function updateHearing(
     "brief_assigned_to",
     "rep_docs_assigned_to",
     "rfc_status",
+    "manner_of_appearance",
+    "assignment_status",
     "task_assigned",
     "rep_docs_complete",
     "fee_agreement_complete",
@@ -210,6 +223,24 @@ export async function updateHearing(
     "post_hrg_review",
     "post_hrg_notes",
     "post_hrg_deadline",
+    // Edit modal fields
+    "claimant",
+    "ssn_last_4",
+    "claim_type",
+    "hearing_date",
+    "hearing_time",
+    "time_zone",
+    "converted_time_est",
+    "alj",
+    "city",
+    "state",
+    "claimant_location",
+    "representative_location",
+    "medical_expert",
+    "vocational_expert",
+    "status_date",
+    "entered_hearing_level_date",
+    "download_type",
   ];
 
   if (!ALLOWED_FIELDS.includes(field)) {
@@ -220,6 +251,20 @@ export async function updateHearing(
     value,
     hearingId,
   ]);
+}
+
+export async function deleteHearing(hearingId: number) {
+  await db.query("DELETE FROM hearings WHERE id = $1", [hearingId]);
+}
+
+export async function autoAssignSingle(hearingId: number) {
+  const { assignSingleHearing } = await import("@/lib/auto-assign");
+  // Get all active rep IDs
+  const { rows } = await db.query(
+    "SELECT id FROM representatives WHERE is_active = true",
+  );
+  const repIds = rows.map((r) => r.id as number);
+  return assignSingleHearing(hearingId, repIds, "priority");
 }
 
 // ── Timezone conversion (same logic as old PHP dashboard) ──
@@ -394,6 +439,79 @@ export async function autoAssignAll(options: {
   return { ...result, emailsSent: 0, emailsFailed: 0 };
 }
 
+// ── Get unassigned hearing IDs for chunked processing ──
+export async function getUnassignedHearingIds(
+  monthFilter: string,
+  excludeRescheduled: boolean,
+) {
+  let where =
+    "assigned_rep_id IS NULL AND (assignment_status IS NULL OR assignment_status = '')";
+  const params: unknown[] = [];
+  let paramIdx = 1;
+
+  if (monthFilter === "future") {
+    where += " AND hearing_date >= CURRENT_DATE";
+  } else if (monthFilter !== "all" && monthFilter) {
+    // Use date range instead of to_char to avoid any timezone issues
+    const [yr, mo] = monthFilter.split("-").map(Number);
+    const firstDay = `${monthFilter}-01`;
+    const lastDay = `${yr}-${String(mo).padStart(2, "0")}-${String(new Date(yr, mo, 0).getDate()).padStart(2, "0")}`;
+    where += ` AND hearing_date >= $${paramIdx}::date AND hearing_date <= $${paramIdx + 1}::date`;
+    params.push(firstDay, lastDay);
+    paramIdx += 2;
+  }
+  if (excludeRescheduled) {
+    where += " AND claimant NOT LIKE '%(Rescheduled%'";
+  }
+
+  const { rows } = await db.query(
+    `SELECT id FROM hearings WHERE ${where} ORDER BY hearing_date ASC, converted_time_est ASC`,
+    params,
+  );
+  return rows.map((r) => r.id as number);
+}
+
+// ── Auto-assign a chunk of hearings (for progress reporting) ──
+export async function autoAssignChunk(
+  hearingIds: number[],
+  selectedRepIds: number[],
+  distributionMode: "priority" | "balanced" | "workload",
+) {
+  const { assignSingleHearing } = await import("@/lib/auto-assign");
+
+  // Fetch claimant names for this chunk
+  const { rows: hearingRows } = await db.query(
+    "SELECT id, claimant FROM hearings WHERE id = ANY($1)",
+    [hearingIds],
+  );
+  const nameMap = new Map(
+    hearingRows.map((r) => [r.id as number, r.claimant as string]),
+  );
+
+  const results: {
+    hearingId: number;
+    claimant: string;
+    success: boolean;
+    repName?: string;
+    repType?: string;
+    reason?: string;
+  }[] = [];
+
+  for (const id of hearingIds) {
+    const res = await assignSingleHearing(id, selectedRepIds, distributionMode);
+    results.push({
+      hearingId: id,
+      claimant: nameMap.get(id) || `#${id}`,
+      success: res.success,
+      repName: res.rep_name ?? undefined,
+      repType: res.rep_type ?? undefined,
+      reason: res.success ? undefined : (res.message ?? "Unknown"),
+    });
+  }
+
+  return results;
+}
+
 // ── Unassign All ──
 export async function unassignAll(options: {
   monthFilter: string;
@@ -466,12 +584,17 @@ export async function getUnassignedCount(
   let where =
     "assigned_rep_id IS NULL AND (assignment_status IS NULL OR assignment_status = '')";
   const params: string[] = [];
+  let paramIdx = 1;
 
   if (monthFilter === "future") {
     where += " AND hearing_date >= CURRENT_DATE";
   } else if (monthFilter !== "all" && monthFilter) {
-    where += " AND to_char(hearing_date, 'YYYY-MM') = $1";
-    params.push(monthFilter);
+    const [yr, mo] = monthFilter.split("-").map(Number);
+    const firstDay = `${monthFilter}-01`;
+    const lastDay = `${yr}-${String(mo).padStart(2, "0")}-${String(new Date(yr, mo, 0).getDate()).padStart(2, "0")}`;
+    where += ` AND hearing_date >= $${paramIdx}::date AND hearing_date <= $${paramIdx + 1}::date`;
+    params.push(firstDay, lastDay);
+    paramIdx += 2;
   }
 
   if (excludeRescheduled) {
