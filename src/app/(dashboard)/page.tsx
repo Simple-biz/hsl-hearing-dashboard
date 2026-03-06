@@ -5,7 +5,7 @@ import { DashboardClient } from "./dashboard-client";
 
 export default async function DashboardPage() {
   const session = await requireAuth();
-  const data = await fetchDashboardData();
+  const data = await fetchDashboardData(session.user.role, session.user.email);
 
   return (
     <DashboardClient
