@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import { AppHeader } from "@/components/layout/app-header";
-import { Card, CardContent } from "@/components/ui/card";
+// import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Shield, UserPlus, Search } from "lucide-react";
+// import { Shield, UserPlus, Search } from "lucide-react";
+import { UserPlus, Search } from "lucide-react";
 
 interface UserRow {
   id: number;
