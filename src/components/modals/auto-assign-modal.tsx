@@ -11,7 +11,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { X, Zap, Loader2 } from "lucide-react";
-import { autoAssignAll, getUnassignedCount } from "@/app/(dashboard)/actions";
+import {
+  autoAssignAll,
+  getUnassignedCount,
+  getUnassignedHearingIds,
+  autoAssignChunk,
+} from "@/app/(dashboard)/actions";
 import type { RepRow } from "@/app/(dashboard)/actions";
 
 function getMonthOptions() {
@@ -45,7 +50,6 @@ interface RepState {
   name: string;
   rep_type: string;
   selected: boolean;
-  maxLimit: string;
 }
 
 export function AutoAssignModal({
@@ -94,7 +98,6 @@ export function AutoAssignModal({
         name: r.name,
         rep_type: r.rep_type,
         selected: true,
-        maxLimit: "",
       })),
   );
 
@@ -120,12 +123,9 @@ export function AutoAssignModal({
     setRepStates((p) =>
       p.map((r) => (r.id === id ? { ...r, selected: !r.selected } : r)),
     );
-  const setRepMax = (id: number, value: string) =>
-    setRepStates((p) =>
-      p.map((r) => (r.id === id ? { ...r, maxLimit: value } : r)),
-    );
   const toggleAll = (v: boolean) =>
     setRepStates((p) => p.map((r) => ({ ...r, selected: v })));
+  const maxLimitRefs = useRef<Record<number, HTMLInputElement | null>>({});
 
   const effectiveCount = useMemo(() => {
     if (unassignedCount === null) return 0;
@@ -133,23 +133,153 @@ export function AutoAssignModal({
     return limit > 0 && limit < unassignedCount ? limit : unassignedCount;
   }, [unassignedCount, totalLimit]);
 
+  // Live progress state
+  const [progress, setProgress] = useState<{
+    total: number;
+    processed: number;
+    assigned: number;
+    failed: number;
+    currentRep: string;
+    log: { claimant: string; repName?: string; success: boolean }[];
+  } | null>(null);
+  const abortRef = useRef(false);
+
   const handleRun = async () => {
     if (selectedCount === 0) return;
     setRunning(true);
+    abortRef.current = false;
+
+    const selRepIds = repStates.filter((r) => r.selected).map((r) => r.id);
+    const limit = totalLimit ? parseInt(totalLimit) : null;
+
     try {
-      const res = await autoAssignAll({
+      // Get all unassigned hearing IDs
+      let hearingIds = await getUnassignedHearingIds(
         monthFilter,
-        selectedRepIds: repStates.filter((r) => r.selected).map((r) => r.id),
-        distributionMode,
-        totalLimit: totalLimit ? parseInt(totalLimit) : null,
         excludeRescheduled,
-        sendEmail,
+      );
+      if (limit && limit > 0 && limit < hearingIds.length)
+        hearingIds = hearingIds.slice(0, limit);
+
+      setProgress({
+        total: hearingIds.length,
+        processed: 0,
+        assigned: 0,
+        failed: 0,
+        currentRep: "",
+        log: [],
       });
-      setResult(res);
+
+      const CHUNK_SIZE = 5;
+      const allBreakdown: Record<string, { count: number; type: string }> = {};
+      const allFailures: { hearingId: number; reason: string }[] = [];
+      let totalAssigned = 0;
+      let totalFailed = 0;
+
+      for (let i = 0; i < hearingIds.length; i += CHUNK_SIZE) {
+        if (abortRef.current) break;
+        const chunk = hearingIds.slice(i, i + CHUNK_SIZE);
+        const results = await autoAssignChunk(
+          chunk,
+          selRepIds,
+          distributionMode,
+        );
+
+        const newLog: {
+          claimant: string;
+          repName?: string;
+          success: boolean;
+        }[] = [];
+        for (const r of results) {
+          if (r.success && r.repName) {
+            totalAssigned++;
+            if (!allBreakdown[r.repName])
+              allBreakdown[r.repName] = { count: 0, type: r.repType || "" };
+            allBreakdown[r.repName].count++;
+            newLog.push({
+              claimant: r.claimant,
+              repName: r.repName,
+              success: true,
+            });
+          } else {
+            totalFailed++;
+            allFailures.push({
+              hearingId: r.hearingId,
+              reason: r.reason || "Unknown",
+            });
+            newLog.push({ claimant: r.claimant, success: false });
+          }
+        }
+
+        setProgress((p) =>
+          p
+            ? {
+                ...p,
+                processed: Math.min(i + CHUNK_SIZE, hearingIds.length),
+                assigned: totalAssigned,
+                failed: totalFailed,
+                currentRep:
+                  results.find((r) => r.success)?.repName || p.currentRep,
+                log: [...p.log, ...newLog].slice(-20), // Keep last 20 entries
+              }
+            : null,
+        );
+      }
+
+      // Build final result matching existing result format
+      const breakdown = Object.entries(allBreakdown).map(([name, v]) => ({
+        name,
+        rep_type: v.type,
+        count: v.count,
+      }));
+
+      // Send emails if requested
+      let emailsSent = 0;
+      if (sendEmail && breakdown.length > 0) {
+        try {
+          const res = await autoAssignAll({
+            monthFilter: "__skip__",
+            selectedRepIds: selRepIds,
+            distributionMode,
+            totalLimit: 0,
+            excludeRescheduled,
+            sendEmail: true,
+          });
+          emailsSent = res.emailsSent ?? 0;
+        } catch {
+          /* email send failed, non-critical */
+        }
+      }
+
+      setResult({
+        assigned: totalAssigned,
+        failed: totalFailed,
+        total: totalAssigned + totalFailed,
+        internal: breakdown
+          .filter(
+            (b) =>
+              b.rep_type === "internal_advocates" || b.rep_type === "in-house",
+          )
+          .reduce((s, b) => s + b.count, 0),
+        external: breakdown
+          .filter(
+            (b) =>
+              b.rep_type === "external_advocates" || b.rep_type === "contract",
+          )
+          .reduce((s, b) => s + b.count, 0),
+        breakdown,
+        failures: allFailures.map((f) => ({
+          hearing_id: f.hearingId,
+          reason: f.reason,
+        })),
+        emailsSent,
+        emailsFailed: 0,
+      });
     } catch (e) {
       console.error(e);
     } finally {
       setRunning(false);
+      setProgress(null);
     }
   };
 
@@ -253,14 +383,15 @@ export function AutoAssignModal({
         >
           {rep.name}
         </span>
-        <Input
+        <input
           type="number"
-          value={rep.maxLimit}
-          onChange={(e) => setRepMax(rep.id, e.target.value)}
+          ref={(el) => {
+            maxLimitRefs.current[rep.id] = el;
+          }}
+          defaultValue=""
           placeholder="Max"
           min={0}
-          className="h-7 w-14 text-[11px] text-center px-1 bg-muted/50"
-          title="Max hearings for this rep"
+          className="h-7 w-14 rounded border bg-muted/50 text-[11px] text-center px-1 focus:outline-none focus:ring-1 focus:ring-ring"
           disabled={!rep.selected}
         />
       </div>
@@ -273,7 +404,7 @@ export function AutoAssignModal({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-170 rounded-xl border bg-card shadow-2xl"
+        className="relative w-full max-w-170 rounded-xl border bg-card shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header — gray bg like old dashboard */}
@@ -578,6 +709,84 @@ export function AutoAssignModal({
             )}
           </div>
         </div>
+
+        {/* Live progress overlay — floats on top of modal */}
+        {running && progress && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 rounded-xl">
+            <div className="w-[90%] max-w-sm rounded-xl border bg-card p-5 shadow-2xl space-y-3">
+              <div className="text-center">
+                <p className="text-sm font-semibold">
+                  ⚡ Auto-Assigning Hearings
+                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {progress.processed} of {progress.total} processed
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <div className="h-2.5 w-full rounded-full bg-muted overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-purple-600 transition-all duration-300"
+                      style={{
+                        width:
+                          progress.total > 0
+                            ? `${Math.round((progress.processed / progress.total) * 100)}%`
+                            : "0%",
+                      }}
+                    ></div>
+                  </div>
+                </div>
+                <span className="text-xs font-bold tabular-nums">
+                  {progress.total > 0
+                    ? Math.round((progress.processed / progress.total) * 100)
+                    : 0}
+                  %
+                </span>
+              </div>
+              <div className="flex items-center justify-center gap-5 text-xs">
+                <span className="text-emerald-600 font-semibold">
+                  ✓ {progress.assigned}
+                </span>
+                <span className="text-red-600 font-semibold">
+                  ✕ {progress.failed}
+                </span>
+                <span className="text-muted-foreground">
+                  {progress.total - progress.processed} left
+                </span>
+              </div>
+              {progress.log.length > 0 && (
+                <div className="max-h-25 overflow-y-auto rounded border bg-muted/30 px-2.5 py-1.5 text-[10px] font-mono leading-relaxed">
+                  {progress.log
+                    .slice(-10)
+                    .reverse()
+                    .map((entry, i) => (
+                      <div
+                        key={i}
+                        className={
+                          entry.success
+                            ? "text-emerald-700 dark:text-emerald-400"
+                            : "text-red-500 dark:text-red-400"
+                        }
+                      >
+                        {entry.success ? "✓" : "✕"} {entry.claimant}{" "}
+                        {entry.success ? `→ ${entry.repName}` : ""}
+                      </div>
+                    ))}
+                </div>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 w-full text-xs text-red-600 border-red-300 hover:bg-red-50"
+                onClick={() => {
+                  abortRef.current = true;
+                }}
+              >
+                ⏹ Stop
+              </Button>
+            </div>
+          </div>
+        )}
 
         {/* Footer — gray bg like old dashboard */}
         <div className="flex items-center justify-end gap-3 border-t bg-muted/50 px-6 py-4">
