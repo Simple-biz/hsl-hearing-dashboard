@@ -77,7 +77,33 @@ export interface RepWithCount extends RepRow {
   hearing_count: number;
 }
 
-export async function fetchDashboardData() {
+export async function fetchDashboardData(
+  userRole?: string,
+  userEmail?: string,
+) {
+  // If rep, find their rep ID and filter hearings
+  let repFilter = "";
+  if (userRole === "rep" && userEmail) {
+    const { rows: repRows } = await db.query(
+      "SELECT id FROM representatives WHERE email = $1 AND is_active = true LIMIT 1",
+      [userEmail],
+    );
+    if (repRows.length > 0) {
+      repFilter = ` WHERE h.assigned_rep_id = ${repRows[0].id}`;
+    } else {
+      // Rep not found - return empty
+      return {
+        hearings: [],
+        representatives: [],
+        mrTeams: [],
+        configOptions: [],
+        repDocsAssignees: [],
+        nextUnassigned: null,
+        repCounts: [],
+      };
+    }
+  }
+
   const results = await Promise.all([
     db.query(`
         SELECT
@@ -102,6 +128,7 @@ export async function fetchDashboardData() {
         FROM hearings h
         LEFT JOIN representatives r ON r.id = h.assigned_rep_id
         LEFT JOIN mr_teams t ON t.id = h.mr_team_id
+        ${repFilter}
         ORDER BY
           CASE WHEN h.claimant_link IS NULL OR h.claimant_link = '' THEN 0 ELSE 1 END ASC,
           CASE WHEN h.claimant_link IS NULL OR h.claimant_link = '' THEN h.id ELSE NULL END DESC,
@@ -155,8 +182,9 @@ export async function fetchDashboardData() {
     mrTeams: teamsRes.rows as MrTeamRow[],
     configOptions: configRes.rows as ConfigOptionRow[],
     repDocsAssignees: assigneesRes.rows as RepDocsAssigneeRow[],
-    nextUnassigned: (nextUnassignedRes.rows[0] as NextUnassignedRow) ?? null,
-    repCounts: repCountsRes.rows as RepWithCount[],
+    nextUnassigned:
+      (nextUnassignedRes.rows[0] as NextUnassignedRow | undefined) ?? null,
+    repCounts: (repCountsRes.rows as RepWithCount[]) ?? [],
   };
 }
 
@@ -244,7 +272,7 @@ export async function addHearing(form: {
       manner_of_appearance
     ) VALUES (
       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-      NULLIF($15, ''), NULLIF($16, ''), NULLIF($17, ''), NULLIF($18, '')
+      NULLIF($15, '')::date, NULLIF($16, '')::date, NULLIF($17, ''), NULLIF($18, '')
     ) RETURNING id`,
     [
       form.claimant,
