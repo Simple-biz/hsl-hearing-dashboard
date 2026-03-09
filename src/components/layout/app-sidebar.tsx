@@ -210,7 +210,7 @@ export function AppSidebar({
       </SidebarContent>
 
       {/* ── Footer: Theme toggle + User ── */}
-      <SidebarFooter>
+      <SidebarFooter className="pb-8">
         <SidebarMenu>
           {/* Theme toggle row */}
           <SidebarMenuItem>
