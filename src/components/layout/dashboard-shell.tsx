@@ -27,7 +27,7 @@ export function DashboardShell({
         userName={userName}
         userEmail={userEmail}
       />
-      <SidebarInset className="overflow-hidden">
+      <SidebarInset>
         <div className="flex min-w-0 flex-1 flex-col">{children}</div>
       </SidebarInset>
     </SidebarProvider>
