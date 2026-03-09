@@ -177,6 +177,16 @@ export async function saveAvailability(
       );
     }
   }
+  const { logAction } = await import("@/lib/activity-log");
+  const { rows: repRows } = await db.query(
+    "SELECT name FROM representatives WHERE id = $1",
+    [repId],
+  );
+  const repName = repRows[0]?.name || "Unknown";
+  await logAction(
+    "schedule_updated",
+    `${repName} schedule ${lockSchedule ? "locked" : "saved"} for ${yearMonth}`,
+  );
 }
 
 export async function unlockSchedule(repId: number, yearMonth: string) {
@@ -192,6 +202,15 @@ export async function unlockSchedule(repId: number, yearMonth: string) {
     "UPDATE rep_availability SET schedule_locked = false WHERE rep_id = $1 AND availability_date BETWEEN $2 AND $3",
     [repId, firstDay, lastDay],
   );
+  const { logAction } = await import("@/lib/activity-log");
+  const { rows: rr } = await db.query(
+    "SELECT name FROM representatives WHERE id = $1",
+    [repId],
+  );
+  await logAction(
+    "schedule_updated",
+    `${rr[0]?.name || "Unknown"} schedule unlocked for ${yearMonth}`,
+  );
 }
 
 export async function resetSchedule(repId: number, yearMonth: string) {
@@ -206,6 +225,15 @@ export async function resetSchedule(repId: number, yearMonth: string) {
   await db.query(
     "DELETE FROM rep_availability WHERE rep_id = $1 AND availability_date BETWEEN $2 AND $3",
     [repId, firstDay, lastDay],
+  );
+  const { logAction } = await import("@/lib/activity-log");
+  const { rows: rr } = await db.query(
+    "SELECT name FROM representatives WHERE id = $1",
+    [repId],
+  );
+  await logAction(
+    "schedule_updated",
+    `${rr[0]?.name || "Unknown"} schedule reset for ${yearMonth}`,
   );
 }
 

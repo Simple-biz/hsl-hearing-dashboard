@@ -43,6 +43,8 @@ import {
   EmailAllModal,
   AutoAssignModal,
   UnassignAllModal,
+  ActivityLogModal,
+  RepStatsModal,
 } from "@/components/modals";
 import {
   updateHearing,
@@ -287,21 +289,31 @@ function InlineDropdown({
   const currentLabel =
     options.find((o) => o.value === String(value ?? ""))?.label || null;
   const currentColor = colorMap && currentLabel ? colorMap[currentLabel] : null;
+
   return (
     <select
       value={value != null ? String(value) : ""}
       onChange={(e) => onSave(e.target.value || null)}
       className={cn(
-        "h-6 w-full rounded border px-1 text-[11px] font-medium cursor-pointer transition-colors",
+        "h-6 w-full rounded border px-1 text-[11px] font-semibold cursor-pointer transition-colors",
         "focus:outline-none focus:ring-1 focus:ring-blue-400",
         currentColor
           ? cn(currentColor, "border-transparent")
           : "border-transparent bg-transparent hover:border-border text-foreground",
       )}
     >
-      <option value="">{placeholder}</option>
+      <option
+        value=""
+        className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 font-normal"
+      >
+        {placeholder}
+      </option>
       {options.map((o) => (
-        <option key={o.value} value={o.value}>
+        <option
+          key={o.value}
+          value={o.value}
+          className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 font-normal"
+        >
           {o.label}
         </option>
       ))}
@@ -1936,6 +1948,8 @@ export function DashboardClient({
   const [showEmailAll, setShowEmailAll] = useState(false);
   const [showAutoAssign, setShowAutoAssign] = useState(false);
   const [showUnassignAll, setShowUnassignAll] = useState(false);
+  const [showActivityLog, setShowActivityLog] = useState(false);
+  const [showRepStats, setShowRepStats] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -2356,6 +2370,7 @@ export function DashboardClient({
                   variant="outline"
                   size="sm"
                   className="h-7 gap-1.5 text-xs"
+                  onClick={() => setShowActivityLog(true)}
                 >
                   <ClipboardList className="h-3.5 w-3.5" /> Activity Log
                 </Button>
@@ -2363,6 +2378,7 @@ export function DashboardClient({
                   variant="outline"
                   size="sm"
                   className="h-7 gap-1.5 text-xs"
+                  onClick={() => setShowRepStats(true)}
                 >
                   <BarChart3 className="h-3.5 w-3.5" /> Rep Stats
                 </Button>
@@ -2513,6 +2529,10 @@ export function DashboardClient({
           onSuccess={() => fetchPage(filters, page, pageSize, sortKey, sortDir)}
         />
       )}
+      {showActivityLog && (
+        <ActivityLogModal onClose={() => setShowActivityLog(false)} />
+      )}
+      {showRepStats && <RepStatsModal onClose={() => setShowRepStats(false)} />}
 
       {/* Edit hearing modal */}
       {editHearing &&

@@ -44,6 +44,7 @@ export async function saveRep(data: {
   weekly_limit: number;
   hearing_restriction: string;
 }) {
+  const { logAction } = await import("@/lib/activity-log");
   if (data.id) {
     await db.query(
       `UPDATE representatives SET name=$1, email=$2, rep_type=$3, priority=$4,
@@ -59,6 +60,7 @@ export async function saveRep(data: {
         data.id,
       ],
     );
+    await logAction("rep_updated", `${data.name} updated`);
     return data.id;
   } else {
     const { rows } = await db.query(
@@ -74,6 +76,7 @@ export async function saveRep(data: {
         data.hearing_restriction || "none",
       ],
     );
+    await logAction("rep_created", `${data.name} added as ${data.rep_type}`);
     return rows[0].id as number;
   }
 }
@@ -83,10 +86,25 @@ export async function toggleRepActive(repId: number, active: boolean) {
     active,
     repId,
   ]);
+  const { logAction } = await import("@/lib/activity-log");
+  const { rows } = await db.query(
+    "SELECT name FROM representatives WHERE id = $1",
+    [repId],
+  );
+  await logAction(
+    "rep_updated",
+    `${rows[0]?.name || "Unknown"} ${active ? "activated" : "deactivated"}`,
+  );
 }
 
 export async function deleteRep(repId: number) {
+  const { logAction } = await import("@/lib/activity-log");
+  const { rows } = await db.query(
+    "SELECT name FROM representatives WHERE id = $1",
+    [repId],
+  );
   await db.query("DELETE FROM representatives WHERE id = $1", [repId]);
+  await logAction("rep_deleted", `${rows[0]?.name || "Unknown"} deleted`);
 }
 
 export async function updateHearingRestriction(
@@ -96,6 +114,15 @@ export async function updateHearingRestriction(
   await db.query(
     "UPDATE representatives SET hearing_restriction = $1 WHERE id = $2",
     [restriction, repId],
+  );
+  const { logAction } = await import("@/lib/activity-log");
+  const { rows } = await db.query(
+    "SELECT name FROM representatives WHERE id = $1",
+    [repId],
+  );
+  await logAction(
+    "rep_updated",
+    `${rows[0]?.name || "Unknown"} hearing restriction set to ${restriction}`,
   );
 }
 
@@ -165,12 +192,26 @@ export async function revokeRepToken(repId: number) {
     "UPDATE rep_schedule_tokens SET is_active = false WHERE rep_id = $1 AND is_active = true",
     [repId],
   );
+  const { logAction } = await import("@/lib/activity-log");
+  const { rows } = await db.query(
+    "SELECT name FROM representatives WHERE id = $1",
+    [repId],
+  );
+  await logAction(
+    "token_revoked",
+    `${rows[0]?.name || "Unknown"} schedule link revoked`,
+  );
   return { success: true, revoked: rowCount || 0 };
 }
 
 export async function revokeAllTokens() {
   const { rowCount } = await db.query(
     "UPDATE rep_schedule_tokens SET is_active = false WHERE is_active = true",
+  );
+  const { logAction } = await import("@/lib/activity-log");
+  await logAction(
+    "token_revoked",
+    `All schedule links revoked (${rowCount || 0} tokens)`,
   );
   return { success: true, revokedCount: rowCount || 0 };
 }
