@@ -2,11 +2,11 @@
 
 import {
   useState,
-  useMemo,
+  // useMemo,
   useCallback,
   useTransition,
   useRef,
-  // useEffect,
+  useEffect,
 } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -44,7 +44,12 @@ import {
   AutoAssignModal,
   UnassignAllModal,
 } from "@/components/modals";
-import { updateHearing, deleteHearing, autoAssignSingle } from "./actions";
+import {
+  updateHearing,
+  deleteHearing,
+  autoAssignSingle,
+  fetchHearingsPage,
+} from "./actions";
 import type {
   HearingRow,
   RepRow,
@@ -122,12 +127,12 @@ function fmtDate(dateStr: string, opts?: Intl.DateTimeFormatOptions): string {
     opts || { month: "short", day: "numeric", year: "2-digit" },
   );
 }
-function getDateMonth(dateStr: string): number {
-  return parseDate(dateStr).getMonth();
-}
-function getDateYear(dateStr: string): number {
-  return parseDate(dateStr).getFullYear();
-}
+// function getDateMonth(dateStr: string): number {
+//   return parseDate(dateStr).getMonth();
+// }
+// function getDateYear(dateStr: string): number {
+//   return parseDate(dateStr).getFullYear();
+// }
 const DECISION_COLORS: Record<string, string> = {
   "Fully Favorable":
     "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400",
@@ -723,10 +728,12 @@ function PostHrgModal({
   hearing,
   onClose,
   onSave,
+  userName,
 }: {
   hearing: HearingRow;
   onClose: () => void;
   onSave: (id: number, field: string, value: UpdateValue) => void;
+  userName: string;
 }) {
   const notes = parseNotes(hearing.post_hrg_notes);
   const [newNote, setNewNote] = useState("");
@@ -737,11 +744,7 @@ function PostHrgModal({
     if (!newNote.trim()) return;
     setSaving(true);
     const updated: PostHrgNote[] = [
-      {
-        user: "Current User",
-        date: new Date().toISOString(),
-        note: newNote.trim(),
-      },
+      { user: userName, date: new Date().toISOString(), note: newNote.trim() },
       ...notes,
     ];
     await onSave(hearing.id, "post_hrg_notes", JSON.stringify(updated));
@@ -985,77 +988,61 @@ function PostHrgCell({
 // STAT CARDS — gradient, matching original
 // ══════════════════════════════════════════════════════════════
 function StatsRow({
-  hearings,
+  stats,
   userRole,
 }: {
-  hearings: HearingRow[];
+  stats: {
+    total: number;
+    assigned: number;
+    unassigned: number;
+    wdStatus: number;
+    next7Days: number;
+    thisMonth: number;
+  };
   userRole: UserRole;
 }) {
-  const { today, next7, now } = useMemo(() => {
-    const n = new Date();
-    return {
-      today: n.toISOString().split("T")[0],
-      next7: new Date(n.getTime() + 7 * 86400000).toISOString().split("T")[0],
-      now: n,
-    };
-  }, []);
-  const total = hearings.length;
-  const assigned = hearings.filter((h) => h.assigned_rep_id !== null).length;
-  const unassigned = hearings.filter(
-    (h) =>
-      !h.assigned_rep_id &&
-      (!h.assignment_status || h.assignment_status === ""),
-  ).length;
-  const wdStatus = hearings.filter(
-    (h) => h.assignment_status && h.assignment_status !== "",
-  ).length;
-  const next7Days = hearings.filter(
-    (h) => h.hearing_date >= today && h.hearing_date <= next7,
-  ).length;
-  const thisMonth = hearings.filter((h) => {
-    return (
-      getDateMonth(h.hearing_date) === now.getMonth() &&
-      getDateYear(h.hearing_date) === now.getFullYear()
-    );
-  });
   const isRep = userRole === "rep";
   const adminCards = [
-    { label: "Total", value: total, gradient: "from-indigo-500 to-purple-600" },
+    {
+      label: "Total",
+      value: stats.total,
+      gradient: "from-indigo-500 to-purple-600",
+    },
     {
       label: "Assigned",
-      value: assigned,
+      value: stats.assigned,
       gradient: "from-emerald-500 to-green-400",
     },
     {
       label: "Unassigned",
-      value: unassigned,
+      value: stats.unassigned,
       gradient: "from-pink-400 to-rose-500",
     },
     {
       label: "WD/Status",
-      value: wdStatus,
+      value: stats.wdStatus,
       gradient: "from-amber-500 to-amber-600",
     },
     {
       label: "Next 7 Days",
-      value: next7Days,
+      value: stats.next7Days,
       gradient: "from-blue-400 to-cyan-400",
     },
   ];
   const repCards = [
     {
       label: "My Total Hearings",
-      value: total,
+      value: stats.total,
       gradient: "from-emerald-500 to-green-400",
     },
     {
       label: "My Upcoming",
-      value: hearings.filter((h) => h.hearing_date >= today).length,
+      value: stats.next7Days,
       gradient: "from-blue-400 to-cyan-400",
     },
     {
       label: "This Month",
-      value: thisMonth.length,
+      value: stats.thisMonth,
       gradient: "from-indigo-500 to-purple-600",
     },
   ];
@@ -1332,6 +1319,7 @@ interface ColumnDef {
   frozen?: boolean;
 }
 const COL_W = {
+  checkbox: 36,
   assigned_rep_id: 155,
   hearing_date: 88,
   hearing_time: 78,
@@ -1339,17 +1327,24 @@ const COL_W = {
   ssn_last_4: 62,
   actions: 44,
 };
-const LEFT = {
-  assigned_rep_id: 0,
-  hearing_date: COL_W.assigned_rep_id,
-  hearing_time: COL_W.assigned_rep_id + COL_W.hearing_date,
-  claimant: COL_W.assigned_rep_id + COL_W.hearing_date + COL_W.hearing_time,
+const LEFT: Record<string, number> = {
+  checkbox: 0,
+  assigned_rep_id: COL_W.checkbox,
+  hearing_date: COL_W.checkbox + COL_W.assigned_rep_id,
+  hearing_time: COL_W.checkbox + COL_W.assigned_rep_id + COL_W.hearing_date,
+  claimant:
+    COL_W.checkbox +
+    COL_W.assigned_rep_id +
+    COL_W.hearing_date +
+    COL_W.hearing_time,
   ssn_last_4:
+    COL_W.checkbox +
     COL_W.assigned_rep_id +
     COL_W.hearing_date +
     COL_W.hearing_time +
     COL_W.claimant,
   actions:
+    COL_W.checkbox +
     COL_W.assigned_rep_id +
     COL_W.hearing_date +
     COL_W.hearing_time +
@@ -1357,6 +1352,7 @@ const LEFT = {
     COL_W.ssn_last_4,
 };
 const ALL_COLUMNS: ColumnDef[] = [
+  { key: "checkbox", label: "", w: COL_W.checkbox, frozen: true },
   {
     key: "assigned_rep_id",
     label: "Representative",
@@ -1520,6 +1516,11 @@ function HearingTable({
   representatives,
   mrTeams,
   repDocsAssignees,
+  selectedIds,
+  onToggleSelect,
+  onToggleAll,
+  scrollRef,
+  onScrollSync,
 }: {
   hearings: HearingRow[];
   userRole: UserRole;
@@ -1535,6 +1536,11 @@ function HearingTable({
   representatives: RepRow[];
   mrTeams: MrTeamRow[];
   repDocsAssignees: RepDocsAssigneeRow[];
+  selectedIds: Set<number>;
+  onToggleSelect: (id: number) => void;
+  onToggleAll: () => void;
+  scrollRef: React.RefObject<HTMLDivElement | null>;
+  onScrollSync: () => void;
 }) {
   // Build option lists for dropdowns
   const moaOptions = configOptions
@@ -1578,15 +1584,27 @@ function HearingTable({
           { value: "Received", label: "Received" },
         ];
 
+  const isAdmin = !["rep", "staff"].includes(userRole);
+  const allSelected =
+    hearings.length > 0 && hearings.every((h) => selectedIds.has(h.id));
+
   const evenBg = "bg-white dark:bg-zinc-950";
   const oddBg = "bg-zinc-50 dark:bg-zinc-900";
   const headerBg = "bg-zinc-100 dark:bg-zinc-900";
   const lastFrozenKey = "actions";
-  const getLeftPos = (key: string): number | undefined =>
-    (LEFT as Record<string, number | undefined>)[key];
+  const getLeftPos = (key: string): number | undefined => LEFT[key];
   const renderCell = (hearing: HearingRow, col: ColumnDef) => {
     const editable = canEditField(userRole, col.key);
     switch (col.key) {
+      case "checkbox":
+        return isAdmin ? (
+          <input
+            type="checkbox"
+            checked={selectedIds.has(hearing.id)}
+            onChange={() => onToggleSelect(hearing.id)}
+            className="h-4 w-4 accent-purple-600 cursor-pointer"
+          />
+        ) : null;
       case "assigned_rep_id":
         return <RepBadge hearing={hearing} />;
       case "hearing_date":
@@ -1741,108 +1759,143 @@ function HearingTable({
         return <span className="text-xs">-</span>;
     }
   };
+
+  // Calculate total table width for the scrollbar
+  // const tableWidth = ALL_COLUMNS.reduce((s, c) => s + c.w, 0);
+
   return (
-    <div className="w-full overflow-hidden rounded-lg border">
-      <div className="overflow-x-auto">
-        <table className="w-max min-w-full border-collapse text-sm">
-          <thead>
-            <tr>
-              {ALL_COLUMNS.map((col) => {
-                const leftPos = getLeftPos(col.key);
-                const isLF = col.key === lastFrozenKey;
-                return (
-                  <th
-                    key={col.key}
-                    className={cn(
-                      "h-10 whitespace-nowrap border-b-2 border-border px-2 text-left text-[11px] font-bold uppercase tracking-wide text-foreground/80",
-                      headerBg,
-                      col.sortable &&
-                        "cursor-pointer select-none hover:text-foreground",
-                      col.frozen && "sticky z-20",
-                      isLF &&
-                        "shadow-[inset_-3px_0_0_0_rgba(59,130,246,0.35),4px_0_8px_-3px_rgba(0,0,0,0.12)] dark:shadow-[inset_-3px_0_0_0_rgba(96,165,250,0.4),4px_0_8px_-3px_rgba(0,0,0,0.5)]",
-                    )}
-                    style={{
-                      width: col.w,
-                      minWidth: col.w,
-                      ...(leftPos !== undefined ? { left: leftPos } : {}),
-                    }}
-                    onClick={() => col.sortable && onSort(col.key)}
-                  >
-                    <div className="flex items-center gap-1">
-                      {col.label}
-                      {col.sortable &&
-                        sortKey === col.key &&
-                        (sortDir === "asc" ? (
-                          <ChevronUp className="h-3 w-3" />
-                        ) : (
-                          <ChevronDown className="h-3 w-3" />
-                        ))}
-                    </div>
-                  </th>
-                );
-              })}
-            </tr>
-          </thead>
-          <tbody>
-            {hearings.length === 0 ? (
+    <>
+      <div className="w-full overflow-hidden rounded-lg border">
+        <div
+          ref={scrollRef}
+          className="overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+          onScroll={onScrollSync}
+          onWheel={(e) => {
+            if (e.shiftKey) {
+              e.currentTarget.scrollLeft += e.deltaY;
+              e.preventDefault();
+            }
+          }}
+        >
+          <table className="w-max min-w-full border-collapse text-sm">
+            <thead>
               <tr>
-                <td
-                  colSpan={ALL_COLUMNS.length}
-                  className="h-32 text-center text-sm text-muted-foreground"
-                >
-                  No hearings found.
-                </td>
+                {ALL_COLUMNS.map((col) => {
+                  const leftPos = getLeftPos(col.key);
+                  const isLF = col.key === lastFrozenKey;
+                  return (
+                    <th
+                      key={col.key}
+                      className={cn(
+                        "h-10 whitespace-nowrap border-b-2 border-border px-2 text-left text-[11px] font-bold uppercase tracking-wide text-foreground/80",
+                        headerBg,
+                        col.sortable &&
+                          "cursor-pointer select-none hover:text-foreground",
+                        col.frozen && "sticky z-20",
+                        isLF &&
+                          "shadow-[inset_-3px_0_0_0_rgba(59,130,246,0.35),4px_0_8px_-3px_rgba(0,0,0,0.12)] dark:shadow-[inset_-3px_0_0_0_rgba(96,165,250,0.4),4px_0_8px_-3px_rgba(0,0,0,0.5)]",
+                      )}
+                      style={{
+                        width: col.w,
+                        minWidth: col.w,
+                        ...(leftPos !== undefined ? { left: leftPos } : {}),
+                      }}
+                      onClick={() => col.sortable && onSort(col.key)}
+                    >
+                      <div className="flex items-center gap-1">
+                        {col.key === "checkbox" && isAdmin ? (
+                          <input
+                            type="checkbox"
+                            checked={allSelected}
+                            onChange={onToggleAll}
+                            className="h-4 w-4 accent-purple-600 cursor-pointer"
+                          />
+                        ) : (
+                          col.label
+                        )}
+                        {col.sortable &&
+                          sortKey === col.key &&
+                          (sortDir === "asc" ? (
+                            <ChevronUp className="h-3 w-3" />
+                          ) : (
+                            <ChevronDown className="h-3 w-3" />
+                          ))}
+                      </div>
+                    </th>
+                  );
+                })}
               </tr>
-            ) : (
-              hearings.map((h, ri) => {
-                const rb = ri % 2 === 0 ? evenBg : oddBg;
-                return (
-                  <tr
-                    key={h.id}
-                    className={cn(
-                      "group border-b border-border/40 last:border-0",
-                      rb,
-                    )}
+            </thead>
+            <tbody>
+              {hearings.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={ALL_COLUMNS.length}
+                    className="h-32 text-center text-sm text-muted-foreground"
                   >
-                    {ALL_COLUMNS.map((col) => {
-                      const lp = getLeftPos(col.key);
-                      const isLF = col.key === lastFrozenKey;
-                      return (
-                        <td
-                          key={col.key}
-                          className={cn(
-                            "px-2 py-1.5",
-                            col.frozen && cn("sticky z-10", rb),
-                            isLF &&
-                              "shadow-[inset_-3px_0_0_0_rgba(59,130,246,0.35),4px_0_8px_-3px_rgba(0,0,0,0.12)] dark:shadow-[inset_-3px_0_0_0_rgba(96,165,250,0.4),4px_0_8px_-3px_rgba(0,0,0,0.5)]",
-                          )}
-                          style={{
-                            width: col.w,
-                            minWidth: col.w,
-                            ...(lp !== undefined ? { left: lp } : {}),
-                          }}
-                        >
-                          {renderCell(h, col)}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
+                    No hearings found.
+                  </td>
+                </tr>
+              ) : (
+                hearings.map((h, ri) => {
+                  const rb = ri % 2 === 0 ? evenBg : oddBg;
+                  return (
+                    <tr
+                      key={h.id}
+                      className={cn(
+                        "group border-b border-border/40 last:border-0",
+                        rb,
+                      )}
+                    >
+                      {ALL_COLUMNS.map((col) => {
+                        const lp = getLeftPos(col.key);
+                        const isLF = col.key === lastFrozenKey;
+                        return (
+                          <td
+                            key={col.key}
+                            className={cn(
+                              "px-2 py-1.5",
+                              col.frozen && cn("sticky z-10", rb),
+                              isLF &&
+                                "shadow-[inset_-3px_0_0_0_rgba(59,130,246,0.35),4px_0_8px_-3px_rgba(0,0,0,0.12)] dark:shadow-[inset_-3px_0_0_0_rgba(96,165,250,0.4),4px_0_8px_-3px_rgba(0,0,0,0.5)]",
+                            )}
+                            style={{
+                              width: col.w,
+                              minWidth: col.w,
+                              ...(lp !== undefined ? { left: lp } : {}),
+                            }}
+                          >
+                            {renderCell(h, col)}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 
 // ══════════════════════════════════════════════════════════════
-// MAIN
+// MAIN — SERVER-SIDE PAGINATION
 // ══════════════════════════════════════════════════════════════
 interface DashboardClientProps {
-  hearings: HearingRow[];
+  initialHearings: HearingRow[];
+  initialTotalFiltered: number;
+  totalCount: number;
+  stats: {
+    total: number;
+    assigned: number;
+    unassigned: number;
+    wdStatus: number;
+    next7Days: number;
+    thisMonth: number;
+  };
   representatives: RepRow[];
   mrTeams: MrTeamRow[];
   configOptions: ConfigOptionRow[];
@@ -1850,10 +1903,15 @@ interface DashboardClientProps {
   repCounts: RepWithCount[];
   nextUnassigned: NextUnassignedRow | null;
   userRole: UserRole;
+  userEmail: string;
+  userName: string;
 }
 
 export function DashboardClient({
-  hearings: initialHearings,
+  initialHearings,
+  initialTotalFiltered,
+  totalCount,
+  stats,
   representatives,
   mrTeams,
   configOptions,
@@ -1861,136 +1919,107 @@ export function DashboardClient({
   repCounts,
   nextUnassigned,
   userRole,
+  userEmail,
+  userName,
 }: DashboardClientProps) {
   const [filters, setFilters] = useState<HearingFilters>(EMPTY_FILTERS);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
   const [hearings, setHearings] = useState(initialHearings);
-  const [sortKey, setSortKey] = useState(""); // empty = use DB order
+  const [totalFiltered, setTotalFiltered] = useState(initialTotalFiltered);
+  const [sortKey, setSortKey] = useState("");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [loading, setLoading] = useState(false);
   const [, startTransition] = useTransition();
   const [postHrgHearing, setPostHrgHearing] = useState<HearingRow | null>(null);
   const [showAddHearing, setShowAddHearing] = useState(false);
   const [showEmailAll, setShowEmailAll] = useState(false);
   const [showAutoAssign, setShowAutoAssign] = useState(false);
   const [showUnassignAll, setShowUnassignAll] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const handleSort = useCallback(
-    (key: string) => {
-      if (sortKey === key) {
-        setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-      } else {
-        setSortKey(key);
-        setSortDir("asc");
+  // Server-side fetch
+  const fetchPage = useCallback(
+    async (
+      f: HearingFilters,
+      p: number,
+      ps: number,
+      sk: string,
+      sd: "asc" | "desc",
+    ) => {
+      setLoading(true);
+      try {
+        const res = await fetchHearingsPage({
+          page: p,
+          pageSize: ps,
+          search: f.search || undefined,
+          dateFrom: f.dateFrom || undefined,
+          dateTo: f.dateTo || undefined,
+          month: f.month || undefined,
+          year: f.year || undefined,
+          repId: f.repId || undefined,
+          decisionStatus: f.decisionStatus || undefined,
+          mrTeamId: f.mrTeamId || undefined,
+          medicalRecordStatus: f.medicalRecordStatus || undefined,
+          assignmentStatus: f.assignmentStatus || undefined,
+          datePreset: f.datePreset || undefined,
+          sortKey: sk || undefined,
+          sortDir: sk ? sd : undefined,
+          userRole,
+          userEmail,
+        });
+        setHearings(res.hearings);
+        setTotalFiltered(res.totalFiltered);
+      } catch (e) {
+        console.error("Fetch failed:", e);
       }
+      setLoading(false);
     },
-    [sortKey],
+    [userRole, userEmail],
   );
 
-  const filtered = useMemo(() => {
-    return hearings.filter((h) => {
-      if (filters.search) {
-        const q = filters.search.toLowerCase();
-        if (
-          ![h.claimant, h.ssn_last_4, h.alj, h.city, h.rep_name]
-            .filter(Boolean)
-            .some((v) => v!.toLowerCase().includes(q))
-        )
-          return false;
-      }
-      if (filters.dateFrom && h.hearing_date < filters.dateFrom) return false;
-      if (filters.dateTo && h.hearing_date > filters.dateTo) return false;
-      if (
-        filters.month &&
-        String(getDateMonth(h.hearing_date) + 1) !== filters.month
-      )
-        return false;
-      if (filters.year && String(getDateYear(h.hearing_date)) !== filters.year)
-        return false;
-      if (filters.repId) {
-        if (filters.repId === "unassigned") {
-          if (
-            h.assigned_rep_id ||
-            (h.assignment_status && h.assignment_status !== "")
-          )
-            return false;
-        } else if (filters.repId === "wd_never_assigned") {
-          if (h.assignment_status !== "wd_never_assigned") return false;
-        } else if (filters.repId === "withdrawal") {
-          if (h.assignment_status !== "withdrawal") return false;
-        } else {
-          if (String(h.assigned_rep_id) !== filters.repId) return false;
-        }
-      }
-      if (
-        filters.decisionStatus &&
-        h.hearing_decision_status !== filters.decisionStatus
-      )
-        return false;
-      if (filters.mrTeamId && String(h.mr_team_id) !== filters.mrTeamId)
-        return false;
-      if (
-        filters.medicalRecordStatus &&
-        h.medical_record_status !== filters.medicalRecordStatus
-      )
-        return false;
-      if (filters.assignmentStatus) {
-        if (filters.assignmentStatus === "assigned" && !h.assigned_rep_id)
-          return false;
-        if (filters.assignmentStatus === "unassigned" && h.assigned_rep_id)
-          return false;
-        if (
-          filters.assignmentStatus === "wd_never_assigned" &&
-          h.assignment_status !== "wd_never_assigned"
-        )
-          return false;
-        if (
-          filters.assignmentStatus === "withdrawal" &&
-          h.assignment_status !== "withdrawal"
-        )
-          return false;
-      }
-      return true;
-    });
-  }, [hearings, filters]);
+  // Debounced filter change
+  const handleFilterChange = useCallback(
+    (newFilters: HearingFilters) => {
+      setFilters(newFilters);
+      setPage(1);
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        fetchPage(newFilters, 1, pageSize, sortKey, sortDir);
+      }, 300);
+    },
+    [fetchPage, pageSize, sortKey, sortDir],
+  );
 
-  // Sort: empty sortKey = preserve DB order (two-tier: no claimant_link first, then by date)
-  const sorted = useMemo(() => {
-    if (!sortKey) return filtered;
-    return [...filtered].sort((a, b) => {
-      let aVal: string | number | boolean | null = null;
-      let bVal: string | number | boolean | null = null;
-      if (sortKey === "assigned_rep_id") {
-        aVal = a.rep_name;
-        bVal = b.rep_name;
-      } else if (sortKey === "location") {
-        aVal = a.city;
-        bVal = b.city;
-      } else {
-        aVal = a[sortKey as keyof HearingRow] as
-          | string
-          | number
-          | boolean
-          | null;
-        bVal = b[sortKey as keyof HearingRow] as
-          | string
-          | number
-          | boolean
-          | null;
-      }
-      return (
-        (sortDir === "asc" ? 1 : -1) *
-        String(aVal ?? "").localeCompare(String(bVal ?? ""), undefined, {
-          numeric: true,
-        })
-      );
-    });
-  }, [filtered, sortKey, sortDir]);
+  // Instant page/pageSize/sort change
+  const handlePageChange = useCallback(
+    (p: number) => {
+      setPage(p);
+      fetchPage(filters, p, pageSize, sortKey, sortDir);
+    },
+    [fetchPage, filters, pageSize, sortKey, sortDir],
+  );
+  const handlePageSizeChange = useCallback(
+    (ps: number) => {
+      setPageSize(ps);
+      setPage(1);
+      fetchPage(filters, 1, ps, sortKey, sortDir);
+    },
+    [fetchPage, filters, sortKey, sortDir],
+  );
+  const handleSort = useCallback(
+    (key: string) => {
+      const newDir =
+        sortKey === key ? (sortDir === "asc" ? "desc" : "asc") : "asc";
+      setSortKey(key);
+      setSortDir(newDir as "asc" | "desc");
+      fetchPage(filters, page, pageSize, key, newDir as "asc" | "desc");
+    },
+    [sortKey, sortDir, fetchPage, filters, page, pageSize],
+  );
 
-  const paginated = useMemo(() => {
-    const s = (page - 1) * pageSize;
-    return sorted.slice(s, s + pageSize);
-  }, [sorted, page, pageSize]);
+  const totalPages = Math.max(1, Math.ceil(totalFiltered / pageSize));
 
   const handleUpdate = useCallback(
     async (hearingId: number, field: string, value: UpdateValue) => {
@@ -2011,7 +2040,6 @@ export function DashboardClient({
           return updated;
         }),
       );
-      // Also update the modal hearing if open
       if (
         postHrgHearing?.id === hearingId &&
         (field === "post_hrg_notes" || field === "post_hrg_deadline")
@@ -2033,6 +2061,7 @@ export function DashboardClient({
 
   const handleDelete = useCallback(async (hearingId: number) => {
     setHearings((prev) => prev.filter((h) => h.id !== hearingId));
+    setTotalFiltered((p) => p - 1);
     startTransition(async () => {
       try {
         await deleteHearing(hearingId);
@@ -2093,9 +2122,9 @@ export function DashboardClient({
         if (original[key] !== checked)
           await updateHearing(editHearing.id, key, checked);
       }
-
-      // Refresh from server
-      window.location.reload();
+      // Refetch current page to reflect changes
+      await fetchPage(filters, page, pageSize, sortKey, sortDir);
+      setEditHearing(null);
     } catch (e) {
       console.error("Save failed:", e);
       alert("Save failed");
@@ -2137,7 +2166,6 @@ export function DashboardClient({
               ),
             );
           }
-          // Count current assignments for that rep
           const repCount =
             hearings.filter((h) => h.rep_name === result.rep_name).length + 1;
           setAutoAssignStatus({
@@ -2159,7 +2187,6 @@ export function DashboardClient({
           message: "Auto-assign failed",
         });
       }
-      // Auto-dismiss after 3 seconds
       setTimeout(() => setAutoAssignStatus(null), 3000);
     },
     [representatives, hearings],
@@ -2167,15 +2194,92 @@ export function DashboardClient({
 
   const isAdmin = !["rep", "staff"].includes(userRole);
 
-  const handleRefresh = () => {
-    window.location.reload();
-  };
+  // const handleRefresh = () => {
+  //   fetchPage(filters, page, pageSize, sortKey, sortDir);
+  // };
+
+  // Scroll sync for sticky horizontal scrollbar
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+  const fakeScrollRef = useRef<HTMLDivElement>(null);
+  const scrollSyncing = useRef(false);
+  const tableWidth = ALL_COLUMNS.reduce((s, c) => s + c.w, 0);
+  const [tableContainerWidth, setTableContainerWidth] = useState(0);
+
+  useEffect(() => {
+    const el = tableScrollRef.current;
+    if (!el) return;
+    const obs = new ResizeObserver((entries) => {
+      for (const entry of entries)
+        setTableContainerWidth(entry.contentRect.width);
+    });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+
+  const handleTableScroll = useCallback(() => {
+    if (scrollSyncing.current) return;
+    scrollSyncing.current = true;
+    if (tableScrollRef.current && fakeScrollRef.current)
+      fakeScrollRef.current.scrollLeft = tableScrollRef.current.scrollLeft;
+    requestAnimationFrame(() => {
+      scrollSyncing.current = false;
+    });
+  }, []);
+
+  const handleFakeScroll = useCallback(() => {
+    if (scrollSyncing.current) return;
+    scrollSyncing.current = true;
+    if (tableScrollRef.current && fakeScrollRef.current)
+      tableScrollRef.current.scrollLeft = fakeScrollRef.current.scrollLeft;
+    requestAnimationFrame(() => {
+      scrollSyncing.current = false;
+    });
+  }, []);
+
+  // Bulk selection
+  const toggleSelect = useCallback((id: number) => {
+    setSelectedIds((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  }, []);
+  const toggleAll = useCallback(() => {
+    setSelectedIds((prev) =>
+      prev.size === hearings.length
+        ? new Set()
+        : new Set(hearings.map((h) => h.id)),
+    );
+  }, [hearings]);
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+
+  const handleBulkUnassign = useCallback(async () => {
+    if (!confirm(`Unassign ${selectedIds.size} hearings?`)) return;
+    const ids = Array.from(selectedIds);
+    for (const id of ids) {
+      await updateHearing(id, "assigned_rep_id", null);
+    }
+    setSelectedIds(new Set());
+    fetchPage(filters, page, pageSize, sortKey, sortDir);
+  }, [selectedIds, filters, page, pageSize, sortKey, sortDir, fetchPage]);
+
+  const handleBulkDelete = useCallback(async () => {
+    if (!confirm(`Delete ${selectedIds.size} hearings? This cannot be undone.`))
+      return;
+    const ids = Array.from(selectedIds);
+    for (const id of ids) {
+      await deleteHearing(id);
+    }
+    setSelectedIds(new Set());
+    fetchPage(filters, page, pageSize, sortKey, sortDir);
+  }, [selectedIds, filters, page, pageSize, sortKey, sortDir, fetchPage]);
 
   return (
     <>
       <AppHeader
         title="Hearing Dashboard"
-        subtitle={`${hearings.length} total hearings`}
+        subtitle={`${totalCount} total hearings`}
         actions={
           <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs">
             <Download className="h-3.5 w-3.5" />
@@ -2229,10 +2333,10 @@ export function DashboardClient({
           )}
         </DashboardNav>
 
-        <StatsRow hearings={hearings} userRole={userRole} />
+        <StatsRow stats={stats} userRole={userRole} />
         <FilterBar
           filters={filters}
-          onFilterChange={setFilters}
+          onFilterChange={handleFilterChange}
           repCounts={repCounts}
           nextUnassigned={nextUnassigned}
           userRole={userRole}
@@ -2241,10 +2345,9 @@ export function DashboardClient({
         {/* Pagination bar — above table like old dashboard, with Activity Log + Rep Stats */}
         <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-card px-3 py-2">
           <span className="text-xs text-muted-foreground tabular-nums">
-            Showing {filtered.length === 0 ? 0 : (page - 1) * pageSize + 1}-
-            {Math.min(page * pageSize, filtered.length)} of {filtered.length}
-            {filtered.length !== hearings.length &&
-              ` (filtered from ${hearings.length})`}
+            Showing {totalFiltered === 0 ? 0 : (page - 1) * pageSize + 1}-
+            {Math.min(page * pageSize, totalFiltered)} of {totalFiltered}
+            {totalFiltered !== totalCount && ` (filtered from ${totalCount})`}
           </span>
           <div className="ml-auto flex items-center gap-2">
             {userRole !== "rep" && (
@@ -2270,40 +2373,34 @@ export function DashboardClient({
               size="icon"
               className="h-7 w-7"
               disabled={page <= 1}
-              onClick={() => setPage(page - 1)}
+              onClick={() => handlePageChange(page - 1)}
             >
               <ChevronLeft className="h-3.5 w-3.5" />
             </Button>
             <select
               className={SEL_SM + " min-w-17.5"}
               value={String(page)}
-              onChange={(e) => setPage(Number(e.target.value))}
+              onChange={(e) => handlePageChange(Number(e.target.value))}
             >
-              {Array.from(
-                { length: Math.max(1, Math.ceil(filtered.length / pageSize)) },
-                (_, i) => (
-                  <option key={i + 1} value={String(i + 1)}>
-                    Page {i + 1}
-                  </option>
-                ),
-              )}
+              {Array.from({ length: Math.max(1, totalPages) }, (_, i) => (
+                <option key={i + 1} value={String(i + 1)}>
+                  Page {i + 1}
+                </option>
+              ))}
             </select>
             <Button
               variant="outline"
               size="icon"
               className="h-7 w-7"
-              disabled={page >= Math.ceil(filtered.length / pageSize)}
-              onClick={() => setPage(page + 1)}
+              disabled={page >= totalPages}
+              onClick={() => handlePageChange(page + 1)}
             >
               <ChevronRight className="h-3.5 w-3.5" />
             </Button>
             <select
               className={SEL_SM + " min-w-21.25"}
               value={String(pageSize)}
-              onChange={(e) => {
-                setPageSize(Number(e.target.value));
-                setPage(1);
-              }}
+              onChange={(e) => handlePageSizeChange(Number(e.target.value))}
             >
               {[25, 50, 100, 200, 500].map((s) => (
                 <option key={s} value={String(s)}>
@@ -2318,7 +2415,7 @@ export function DashboardClient({
         <div className="hidden items-center gap-2 text-[10px] text-muted-foreground md:flex">
           <span>Left columns frozen</span>
           <span className="text-border">|</span>
-          <span>Scroll right for more columns</span>
+          <span>Shift + scroll to pan right</span>
           {userRole !== "rep" && (
             <>
               <span className="text-border">|</span>
@@ -2328,8 +2425,13 @@ export function DashboardClient({
         </div>
 
         {/* Mobile: Cards */}
-        <div className="flex flex-col gap-2 md:hidden">
-          {paginated.map((h) => (
+        <div
+          className={cn(
+            "relative flex flex-col gap-2 md:hidden",
+            loading && "opacity-50 pointer-events-none",
+          )}
+        >
+          {hearings.map((h) => (
             <HearingCard
               key={h.id}
               hearing={h}
@@ -2338,16 +2440,26 @@ export function DashboardClient({
               onOpenPostHrg={setPostHrgHearing}
             />
           ))}
-          {paginated.length === 0 && (
+          {hearings.length === 0 && !loading && (
             <div className="py-12 text-center text-sm text-muted-foreground">
               No hearings found.
             </div>
           )}
         </div>
         {/* Desktop: Table */}
-        <div className="hidden min-w-0 md:block">
+        <div
+          className={cn(
+            "relative hidden min-w-0 md:block",
+            loading && "opacity-50 pointer-events-none",
+          )}
+        >
+          {loading && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center">
+              <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+            </div>
+          )}
           <HearingTable
-            hearings={paginated}
+            hearings={hearings}
             userRole={userRole}
             onUpdate={handleUpdate}
             onDelete={handleDelete}
@@ -2361,6 +2473,11 @@ export function DashboardClient({
             representatives={representatives}
             mrTeams={mrTeams}
             repDocsAssignees={repDocsAssignees}
+            selectedIds={selectedIds}
+            onToggleSelect={toggleSelect}
+            onToggleAll={toggleAll}
+            scrollRef={tableScrollRef}
+            onScrollSync={handleTableScroll}
           />
         </div>
       </div>
@@ -2371,6 +2488,7 @@ export function DashboardClient({
           hearing={postHrgHearing}
           onClose={() => setPostHrgHearing(null)}
           onSave={handleUpdate}
+          userName={userName}
         />
       )}
 
@@ -2378,7 +2496,7 @@ export function DashboardClient({
       {showAddHearing && (
         <AddHearingModal
           onClose={() => setShowAddHearing(false)}
-          onSuccess={handleRefresh}
+          onSuccess={() => fetchPage(filters, page, pageSize, sortKey, sortDir)}
         />
       )}
       {showEmailAll && <EmailAllModal onClose={() => setShowEmailAll(false)} />}
@@ -2386,13 +2504,13 @@ export function DashboardClient({
         <AutoAssignModal
           representatives={representatives}
           onClose={() => setShowAutoAssign(false)}
-          onSuccess={handleRefresh}
+          onSuccess={() => fetchPage(filters, page, pageSize, sortKey, sortDir)}
         />
       )}
       {showUnassignAll && (
         <UnassignAllModal
           onClose={() => setShowUnassignAll(false)}
-          onSuccess={handleRefresh}
+          onSuccess={() => fetchPage(filters, page, pageSize, sortKey, sortDir)}
         />
       )}
 
@@ -2820,6 +2938,84 @@ export function DashboardClient({
                 </div>
               </div>
             </div>
+          </div>,
+          document.body,
+        )}
+
+      {/* Fixed horizontal scrollbar — always at viewport bottom */}
+      {/* Fixed horizontal scrollbar — thick and visible */}
+      {tableContainerWidth > 0 &&
+        tableWidth > tableContainerWidth &&
+        createPortal(
+          <div
+            ref={fakeScrollRef}
+            onScroll={handleFakeScroll}
+            style={{
+              bottom: selectedIds.size > 0 ? 48 : 0,
+              left: "var(--sidebar-width, 0px)",
+              height: 28,
+              scrollbarWidth: "auto",
+              scrollbarColor: "#71717a #e4e4e7",
+            }}
+            className="fixed right-0 z-80 overflow-x-scroll overflow-y-hidden border-t-2 border-zinc-300 bg-zinc-200 dark:border-zinc-700 dark:bg-zinc-800 [&::-webkit-scrollbar]:h-5 [&::-webkit-scrollbar-track]:bg-zinc-200 dark:[&::-webkit-scrollbar-track]:bg-zinc-800 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-4 [&::-webkit-scrollbar-thumb]:border-solid [&::-webkit-scrollbar-thumb]:border-transparent [&::-webkit-scrollbar-thumb]:bg-zinc-500 [&::-webkit-scrollbar-thumb]:bg-clip-padding dark:[&::-webkit-scrollbar-thumb]:bg-zinc-500 hover:[&::-webkit-scrollbar-thumb]:bg-zinc-600 dark:hover:[&::-webkit-scrollbar-thumb]:bg-zinc-400"
+          >
+            <div style={{ width: tableWidth, height: 1 }} />
+          </div>,
+          document.body,
+        )}
+
+      {/* Bulk action bar — fixed at bottom when rows selected */}
+      {selectedIds.size > 0 &&
+        createPortal(
+          <div className="fixed bottom-0 left-0 right-0 z-90 flex items-center justify-between gap-3 border-t bg-card px-6 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.1)]">
+            <div className="flex items-center gap-3">
+              <span className="flex h-7 items-center rounded-md bg-purple-100 px-3 text-xs font-bold text-purple-700 dark:bg-purple-900/40 dark:text-purple-300">
+                {selectedIds.size} selected
+              </span>
+              <Button
+                size="sm"
+                className="h-7 gap-1.5 text-[11px] bg-purple-600 hover:bg-purple-700"
+                onClick={() => {
+                  /* TODO: bulk auto-assign via chunks */
+                }}
+              >
+                ⚡ Auto-Assign
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 text-[11px]"
+                onClick={handleBulkUnassign}
+              >
+                🔄 Unassign
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                className="h-7 gap-1.5 text-[11px]"
+                onClick={handleBulkDelete}
+              >
+                🗑️ Delete
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 text-[11px]"
+                onClick={() => {
+                  /* TODO: bulk email */
+                }}
+              >
+                📧 Email Selected
+              </Button>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-[11px]"
+              onClick={clearSelection}
+            >
+              ✕ Clear
+            </Button>
           </div>,
           document.body,
         )}
