@@ -85,11 +85,19 @@ export interface RepWithCount extends RepRow {
   hearing_count: number;
 }
 
+export interface DashboardStats {
+  total: number;
+  assigned: number;
+  unassigned: number;
+  wdStatus: number;
+  next7Days: number;
+  thisMonth: number;
+}
+
 export async function fetchDashboardData(
   userRole?: string,
   userEmail?: string,
 ) {
-  // If rep, find their rep ID and filter hearings
   let repFilter = "";
   if (userRole === "rep" && userEmail) {
     const { rows: repRows } = await db.query(
@@ -99,53 +107,35 @@ export async function fetchDashboardData(
     if (repRows.length > 0) {
       repFilter = ` WHERE h.assigned_rep_id = ${repRows[0].id}`;
     } else {
-      // Rep not found - return empty
       return {
-        hearings: [],
-        representatives: [],
-        mrTeams: [],
-        configOptions: [],
-        repDocsAssignees: [],
-        nextUnassigned: null,
-        repCounts: [],
+        totalCount: 0,
+        stats: {
+          total: 0,
+          assigned: 0,
+          unassigned: 0,
+          wdStatus: 0,
+          next7Days: 0,
+          thisMonth: 0,
+        } as DashboardStats,
+        representatives: [] as RepRow[],
+        mrTeams: [] as MrTeamRow[],
+        configOptions: [] as ConfigOptionRow[],
+        repDocsAssignees: [] as RepDocsAssigneeRow[],
+        nextUnassigned: null as NextUnassignedRow | null,
+        repCounts: [] as RepWithCount[],
       };
     }
   }
 
-  const results = await Promise.all([
-    db.query(`
-        SELECT
-          h.id, h.claimant, h.ssn_last_4, h.claim_type,
-          h.hearing_date::text, h.hearing_time::text, h.time_zone,
-          h.converted_time_est::text,
-          h.city, h.state, h.alj, h.manner_of_appearance,
-          h.hearing_decision_status,
-          h.assigned_rep_id,
-          h.mr_team_id,
-          h.brief_assigned_to, h.medical_record_status,
-          h.medical_record_link, h.claimant_link,
-          NULLIF(h.assignment_status::text, '') AS assignment_status,
-          h.task_assigned, h.rep_docs_complete, h.rep_docs_assigned_to,
-          h.fee_agreement_complete, h.five_day_notice,
-          h.rfc_status, h.phi_sheet_complete, h.post_hrg_review,
-          h.post_hrg_notes, h.post_hrg_deadline::text,
-          h.claimant_location, h.representative_location,
-          h.medical_expert, h.vocational_expert,
-          h.status_date::text, h.entered_hearing_level_date::text, h.download_type,
-          r.name AS rep_name,
-          r.rep_type AS rep_type,
-          t.team_name AS mr_team_name,
-          t.team_color AS mr_team_color
-        FROM hearings h
-        LEFT JOIN representatives r ON r.id = h.assigned_rep_id
-        LEFT JOIN mr_teams t ON t.id = h.mr_team_id
-        ${repFilter}
-        ORDER BY
-          CASE WHEN h.claimant_link IS NULL OR h.claimant_link = '' THEN 0 ELSE 1 END ASC,
-          CASE WHEN h.claimant_link IS NULL OR h.claimant_link = '' THEN h.id ELSE NULL END DESC,
-          CASE WHEN h.claimant_link IS NOT NULL AND h.claimant_link != '' THEN h.hearing_date ELSE NULL END ASC,
-          CASE WHEN h.claimant_link IS NOT NULL AND h.claimant_link != '' THEN h.converted_time_est ELSE NULL END ASC
-      `),
+  const [
+    repsRes,
+    teamsRes,
+    configRes,
+    assigneesRes,
+    nextUnassignedRes,
+    repCountsRes,
+    statsRes,
+  ] = await Promise.all([
     db.query(
       "SELECT id, name, email, rep_type, is_active FROM representatives ORDER BY name",
     ),
@@ -158,44 +148,279 @@ export async function fetchDashboardData(
     db.query(
       "SELECT id, name, is_active FROM rep_docs_assignees WHERE is_active = true ORDER BY display_order",
     ),
-    db.query(
-      `SELECT id, claimant, hearing_date::text, converted_time_est::text
-         FROM hearings
-         WHERE assigned_rep_id IS NULL
-           AND (assignment_status IS NULL OR assignment_status = '')
-           AND hearing_date >= CURRENT_DATE
-         ORDER BY hearing_date ASC, converted_time_est ASC
-         LIMIT 1`,
-    ),
-    db.query(
-      `SELECT r.id, r.name, COUNT(h.id)::int AS hearing_count
-         FROM representatives r
-         LEFT JOIN hearings h ON h.assigned_rep_id = r.id
-         WHERE r.is_active = true
-         GROUP BY r.id, r.name
-         ORDER BY r.name`,
-    ),
+    db.query(`SELECT id, claimant, hearing_date::text, converted_time_est::text FROM hearings
+      WHERE assigned_rep_id IS NULL AND (assignment_status IS NULL OR assignment_status = '') AND hearing_date >= CURRENT_DATE
+      ORDER BY hearing_date ASC, converted_time_est ASC LIMIT 1`),
+    db.query(`SELECT r.id, r.name, COUNT(h.id)::int AS hearing_count FROM representatives r
+      LEFT JOIN hearings h ON h.assigned_rep_id = r.id WHERE r.is_active = true GROUP BY r.id, r.name ORDER BY r.name`),
+    db.query(`
+      SELECT
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE assigned_rep_id IS NOT NULL)::int AS assigned,
+        COUNT(*) FILTER (WHERE assigned_rep_id IS NULL AND (assignment_status IS NULL OR assignment_status = ''))::int AS unassigned,
+        COUNT(*) FILTER (WHERE assignment_status IS NOT NULL AND assignment_status != '')::int AS wd_status,
+        COUNT(*) FILTER (WHERE hearing_date >= CURRENT_DATE AND hearing_date <= CURRENT_DATE + 7)::int AS next_7_days,
+        COUNT(*) FILTER (WHERE to_char(hearing_date, 'YYYY-MM') = to_char(CURRENT_DATE, 'YYYY-MM'))::int AS this_month
+      FROM hearings h ${repFilter}
+    `),
   ]);
 
-  const [
-    hearingsRes,
-    repsRes,
-    teamsRes,
-    configRes,
-    assigneesRes,
-    nextUnassignedRes,
-    repCountsRes,
-  ] = results;
-
+  const s = statsRes.rows[0];
   return {
-    hearings: hearingsRes.rows as HearingRow[],
+    totalCount: s.total as number,
+    stats: {
+      total: s.total,
+      assigned: s.assigned,
+      unassigned: s.unassigned,
+      wdStatus: s.wd_status,
+      next7Days: s.next_7_days,
+      thisMonth: s.this_month,
+    } as DashboardStats,
     representatives: repsRes.rows as RepRow[],
     mrTeams: teamsRes.rows as MrTeamRow[],
     configOptions: configRes.rows as ConfigOptionRow[],
     repDocsAssignees: assigneesRes.rows as RepDocsAssigneeRow[],
     nextUnassigned:
       (nextUnassignedRes.rows[0] as NextUnassignedRow | undefined) ?? null,
-    repCounts: (repCountsRes.rows as RepWithCount[]) ?? [],
+    repCounts: repCountsRes.rows as RepWithCount[],
+  };
+}
+
+// ── Server-side paginated hearings fetch ──
+export interface FetchPageParams {
+  page: number;
+  pageSize: number;
+  search?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  month?: string;
+  year?: string;
+  repId?: string;
+  decisionStatus?: string;
+  mrTeamId?: string;
+  medicalRecordStatus?: string;
+  assignmentStatus?: string;
+  datePreset?: string;
+  sortKey?: string;
+  sortDir?: "asc" | "desc";
+  userRole?: string;
+  userEmail?: string;
+}
+
+export async function fetchHearingsPage(
+  params: FetchPageParams,
+): Promise<{ hearings: HearingRow[]; totalFiltered: number }> {
+  const conditions: string[] = [];
+  const values: unknown[] = [];
+  let idx = 1;
+
+  // Rep filter
+  if (params.userRole === "rep" && params.userEmail) {
+    const { rows } = await db.query(
+      "SELECT id FROM representatives WHERE email = $1 AND is_active = true LIMIT 1",
+      [params.userEmail],
+    );
+    if (rows.length > 0) {
+      conditions.push(`h.assigned_rep_id = $${idx}`);
+      values.push(rows[0].id);
+      idx++;
+    } else return { hearings: [], totalFiltered: 0 };
+  }
+
+  // Search
+  if (params.search) {
+    conditions.push(
+      `(h.claimant ILIKE $${idx} OR h.ssn_last_4 ILIKE $${idx} OR h.alj ILIKE $${idx} OR h.city ILIKE $${idx} OR r.name ILIKE $${idx})`,
+    );
+    values.push(`%${params.search}%`);
+    idx++;
+  }
+
+  // Date presets
+  if (params.datePreset && params.datePreset !== "custom") {
+    const today = new Date().toISOString().split("T")[0];
+    const addDays = (d: Date, n: number) => {
+      const r = new Date(d);
+      r.setDate(r.getDate() + n);
+      return r.toISOString().split("T")[0];
+    };
+    const d = new Date();
+    switch (params.datePreset) {
+      case "today":
+        conditions.push(`h.hearing_date = $${idx}::date`);
+        values.push(today);
+        idx++;
+        break;
+      case "tomorrow":
+        conditions.push(`h.hearing_date = $${idx}::date`);
+        values.push(addDays(d, 1));
+        idx++;
+        break;
+      case "this-week": {
+        const dow = d.getDay();
+        conditions.push(
+          `h.hearing_date >= $${idx}::date AND h.hearing_date <= $${idx + 1}::date`,
+        );
+        values.push(addDays(d, -dow), addDays(d, 6 - dow));
+        idx += 2;
+        break;
+      }
+      case "next-week": {
+        const dow = d.getDay();
+        const s = addDays(d, 7 - dow);
+        conditions.push(
+          `h.hearing_date >= $${idx}::date AND h.hearing_date <= $${idx + 1}::date`,
+        );
+        values.push(s, addDays(new Date(s + "T12:00:00"), 6));
+        idx += 2;
+        break;
+      }
+      case "this-month": {
+        const first = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+        const last = new Date(d.getFullYear(), d.getMonth() + 1, 0)
+          .toISOString()
+          .split("T")[0];
+        conditions.push(
+          `h.hearing_date >= $${idx}::date AND h.hearing_date <= $${idx + 1}::date`,
+        );
+        values.push(first, last);
+        idx += 2;
+        break;
+      }
+      case "next-30":
+        conditions.push(
+          "h.hearing_date >= CURRENT_DATE AND h.hearing_date <= CURRENT_DATE + 30",
+        );
+        break;
+    }
+  }
+  if (params.dateFrom) {
+    conditions.push(`h.hearing_date >= $${idx}::date`);
+    values.push(params.dateFrom);
+    idx++;
+  }
+  if (params.dateTo) {
+    conditions.push(`h.hearing_date <= $${idx}::date`);
+    values.push(params.dateTo);
+    idx++;
+  }
+
+  // Month/Year
+  if (params.month) {
+    conditions.push(`EXTRACT(MONTH FROM h.hearing_date) = $${idx}`);
+    values.push(parseInt(params.month));
+    idx++;
+  }
+  if (params.year) {
+    conditions.push(`EXTRACT(YEAR FROM h.hearing_date) = $${idx}`);
+    values.push(parseInt(params.year));
+    idx++;
+  }
+
+  // Rep
+  if (params.repId) {
+    if (params.repId === "unassigned")
+      conditions.push(
+        "h.assigned_rep_id IS NULL AND (h.assignment_status IS NULL OR h.assignment_status = '')",
+      );
+    else if (params.repId === "wd_never_assigned")
+      conditions.push("h.assignment_status = 'wd_never_assigned'");
+    else if (params.repId === "withdrawal")
+      conditions.push("h.assignment_status = 'withdrawal'");
+    else {
+      conditions.push(`h.assigned_rep_id = $${idx}`);
+      values.push(parseInt(params.repId));
+      idx++;
+    }
+  }
+
+  // Status
+  if (params.decisionStatus) {
+    conditions.push(`h.hearing_decision_status = $${idx}`);
+    values.push(params.decisionStatus);
+    idx++;
+  }
+  if (params.mrTeamId) {
+    conditions.push(`h.mr_team_id = $${idx}`);
+    values.push(parseInt(params.mrTeamId));
+    idx++;
+  }
+  if (params.medicalRecordStatus) {
+    conditions.push(`h.medical_record_status = $${idx}`);
+    values.push(params.medicalRecordStatus);
+    idx++;
+  }
+  if (params.assignmentStatus) {
+    if (params.assignmentStatus === "assigned")
+      conditions.push("h.assigned_rep_id IS NOT NULL");
+    else if (params.assignmentStatus === "unassigned")
+      conditions.push("h.assigned_rep_id IS NULL");
+    else {
+      conditions.push(`h.assignment_status = $${idx}`);
+      values.push(params.assignmentStatus);
+      idx++;
+    }
+  }
+
+  const where =
+    conditions.length > 0 ? "WHERE " + conditions.join(" AND ") : "";
+
+  // Sort
+  let orderBy: string;
+  if (params.sortKey) {
+    const dir = params.sortDir === "desc" ? "DESC" : "ASC";
+    const colMap: Record<string, string> = {
+      assigned_rep_id: "r.name",
+      location: "h.city",
+      hearing_date: "h.hearing_date",
+      claimant: "h.claimant",
+      alj: "h.alj",
+      hearing_decision_status: "h.hearing_decision_status",
+    };
+    const col = colMap[params.sortKey] || `h.${params.sortKey}`;
+    orderBy = `ORDER BY ${col} ${dir} NULLS LAST`;
+  } else {
+    orderBy = `ORDER BY
+      CASE WHEN h.claimant_link IS NULL OR h.claimant_link = '' THEN 0 ELSE 1 END ASC,
+      CASE WHEN h.claimant_link IS NULL OR h.claimant_link = '' THEN h.id ELSE NULL END DESC,
+      CASE WHEN h.claimant_link IS NOT NULL AND h.claimant_link != '' THEN h.hearing_date ELSE NULL END ASC,
+      CASE WHEN h.claimant_link IS NOT NULL AND h.claimant_link != '' THEN h.converted_time_est ELSE NULL END ASC`;
+  }
+
+  const [countRes, dataRes] = await Promise.all([
+    db.query(
+      `SELECT COUNT(*)::int AS count FROM hearings h LEFT JOIN representatives r ON r.id = h.assigned_rep_id ${where}`,
+      values,
+    ),
+    db.query(
+      `
+      SELECT h.id, h.claimant, h.ssn_last_4, h.claim_type,
+        h.hearing_date::text, h.hearing_time::text, h.time_zone, h.converted_time_est::text,
+        h.city, h.state, h.alj, h.manner_of_appearance, h.hearing_decision_status,
+        h.assigned_rep_id, h.mr_team_id, h.brief_assigned_to, h.medical_record_status,
+        h.medical_record_link, h.claimant_link,
+        NULLIF(h.assignment_status::text, '') AS assignment_status,
+        h.task_assigned, h.rep_docs_complete, h.rep_docs_assigned_to,
+        h.fee_agreement_complete, h.five_day_notice, h.rfc_status, h.phi_sheet_complete,
+        h.post_hrg_review, h.post_hrg_notes, h.post_hrg_deadline::text,
+        h.claimant_location, h.representative_location,
+        h.medical_expert, h.vocational_expert,
+        h.status_date::text, h.entered_hearing_level_date::text, h.download_type,
+        r.name AS rep_name, r.rep_type AS rep_type,
+        t.team_name AS mr_team_name, t.team_color AS mr_team_color
+      FROM hearings h
+      LEFT JOIN representatives r ON r.id = h.assigned_rep_id
+      LEFT JOIN mr_teams t ON t.id = h.mr_team_id
+      ${where} ${orderBy}
+      LIMIT $${idx} OFFSET $${idx + 1}
+    `,
+      [...values, params.pageSize, (params.page - 1) * params.pageSize],
+    ),
+  ]);
+
+  return {
+    hearings: dataRes.rows as HearingRow[],
+    totalFiltered: countRes.rows[0].count as number,
   };
 }
 
