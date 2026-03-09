@@ -429,6 +429,7 @@ export async function updateHearing(
   field: string,
   value: string | number | boolean | null,
 ) {
+  const { logAction, getClaimantName } = await import("@/lib/activity-log");
   // Whitelist allowed fields to prevent SQL injection
   const ALLOWED_FIELDS = [
     "assigned_rep_id",
@@ -476,20 +477,56 @@ export async function updateHearing(
     value,
     hearingId,
   ]);
+
+  // Log the update
+  const claimant = await getClaimantName(hearingId);
+  if (field === "assigned_rep_id" && value) {
+    const { rows } = await db.query(
+      "SELECT name FROM representatives WHERE id = $1",
+      [value],
+    );
+    await logAction(
+      "hearing_assigned",
+      `${claimant} assigned to ${rows[0]?.name || "unknown"}`,
+    );
+  } else if (field === "assigned_rep_id" && !value) {
+    await logAction("hearing_unassigned", `${claimant} unassigned`);
+  } else if (field === "assignment_status") {
+    await logAction(
+      "withdrawal",
+      `${claimant} status changed to ${value || "cleared"}`,
+    );
+  } else {
+    await logAction(
+      "hearing_updated",
+      `${claimant}: ${field.replace(/_/g, " ")} updated`,
+    );
+  }
 }
 
 export async function deleteHearing(hearingId: number) {
+  const { logAction, getClaimantName } = await import("@/lib/activity-log");
+  const claimant = await getClaimantName(hearingId);
   await db.query("DELETE FROM hearings WHERE id = $1", [hearingId]);
+  await logAction("hearing_deleted", `${claimant} deleted`);
 }
 
 export async function autoAssignSingle(hearingId: number) {
   const { assignSingleHearing } = await import("@/lib/auto-assign");
-  // Get all active rep IDs
+  const { logAction, getClaimantName } = await import("@/lib/activity-log");
   const { rows } = await db.query(
     "SELECT id FROM representatives WHERE is_active = true",
   );
   const repIds = rows.map((r) => r.id as number);
-  return assignSingleHearing(hearingId, repIds, "priority");
+  const result = await assignSingleHearing(hearingId, repIds, "priority");
+  const claimant = await getClaimantName(hearingId);
+  if (result.success) {
+    await logAction(
+      "hearing_auto_assigned",
+      `${claimant} auto-assigned to ${result.rep_name}`,
+    );
+  }
+  return result;
 }
 
 // ── Timezone conversion (same logic as old PHP dashboard) ──
@@ -566,6 +603,12 @@ export async function addHearing(form: {
     ],
   );
 
+  const { logAction } = await import("@/lib/activity-log");
+  await logAction(
+    "hearing_created",
+    `${form.claimant} added (${form.hearing_date})`,
+  );
+
   return rows[0].id as number;
 }
 
@@ -634,6 +677,12 @@ export async function emailAllReps(monthFilter: string) {
       }
     }
   }
+
+  const { logAction } = await import("@/lib/activity-log");
+  await logAction(
+    "email_sent",
+    `Batch email sent to ${emailsSent} reps (${monthFilter})`,
+  );
 
   return { reps: rows, count: rows.length, emailsSent, emailsFailed };
 }
@@ -798,6 +847,12 @@ export async function unassignAll(options: {
     params,
   );
 
+  const { logAction } = await import("@/lib/activity-log");
+  await logAction(
+    "hearing_unassigned",
+    `Bulk unassign: ${rowCount ?? 0} hearings unassigned`,
+  );
+
   return { unassigned: rowCount ?? 0 };
 }
 
@@ -947,5 +1002,198 @@ export async function getEmailPreviewStats(monthFilter: string) {
     total_hearings: number;
     unique_reps: number;
     with_email: number;
+  };
+}
+
+// ── Activity Log ──
+export interface ActivityLogEntry {
+  id: number;
+  action: string;
+  description: string;
+  user_name: string | null;
+  created_at: string;
+  ip_address: string | null;
+}
+
+export async function fetchActivityLog(params: {
+  page: number;
+  pageSize: number;
+  category?: string;
+  dateRange?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  userId?: string;
+}): Promise<{
+  entries: ActivityLogEntry[];
+  total: number;
+  users: { id: number; name: string }[];
+}> {
+  const conditions: string[] = [];
+  const values: unknown[] = [];
+  let idx = 1;
+
+  // Category filter
+  if (params.category && params.category !== "all") {
+    const catMap: Record<string, string[]> = {
+      assignments: [
+        "hearing_assigned",
+        "hearing_unassigned",
+        "hearing_auto_assigned",
+        "withdrawal",
+      ],
+      emails: ["email_sent", "hearing_alert_minimal"],
+      fields: ["hearing_updated", "hearing_edited"],
+      hearings: ["hearing_created", "hearing_deleted", "hearing_imported"],
+      schedule: ["schedule_updated"],
+      reps: ["rep_created", "rep_updated", "rep_deleted", "token_revoked"],
+    };
+    const actions = catMap[params.category];
+    if (actions) {
+      conditions.push(`a.action = ANY($${idx})`);
+      values.push(actions);
+      idx++;
+    }
+  }
+
+  // Date filter
+  if (params.dateRange === "today") {
+    conditions.push("a.created_at >= CURRENT_DATE");
+  } else if (params.dateRange === "this_week") {
+    conditions.push("a.created_at >= date_trunc('week', CURRENT_DATE)");
+  } else if (params.dateRange === "this_month") {
+    conditions.push("a.created_at >= date_trunc('month', CURRENT_DATE)");
+  } else if (params.dateRange === "custom" && params.dateFrom) {
+    conditions.push(`a.created_at >= $${idx}::date`);
+    values.push(params.dateFrom);
+    idx++;
+    if (params.dateTo) {
+      conditions.push(`a.created_at <= $${idx}::date + 1`);
+      values.push(params.dateTo);
+      idx++;
+    }
+  }
+
+  // User filter
+  if (params.userId) {
+    conditions.push(`a.user_id = $${idx}`);
+    values.push(parseInt(params.userId));
+    idx++;
+  }
+
+  const where =
+    conditions.length > 0 ? "WHERE " + conditions.join(" AND ") : "";
+
+  const [countRes, dataRes, usersRes] = await Promise.all([
+    db.query(
+      `SELECT COUNT(*)::int AS count FROM activity_log a ${where}`,
+      values,
+    ),
+    db.query(
+      `
+      SELECT a.id, a.action,
+             CASE
+               WHEN a.description ~ 'Hearing #[0-9]+' THEN
+                 regexp_replace(a.description, 'Hearing #([0-9]+)', COALESCE((
+                   SELECT h.claimant FROM hearings h WHERE h.id = (regexp_match(a.description, 'Hearing #([0-9]+)'))[1]::int
+                 ), 'Unknown'))
+               ELSE a.description
+             END AS description,
+             u.full_name AS user_name,
+             a.created_at::text, a.ip_address
+      FROM activity_log a
+      LEFT JOIN users u ON u.id = a.user_id
+      ${where}
+      ORDER BY a.created_at DESC
+      LIMIT $${idx} OFFSET $${idx + 1}
+    `,
+      [...values, params.pageSize, (params.page - 1) * params.pageSize],
+    ),
+    db.query(
+      "SELECT id, full_name AS name FROM users WHERE is_active = true ORDER BY full_name",
+    ),
+  ]);
+
+  return {
+    entries: dataRes.rows as ActivityLogEntry[],
+    total: countRes.rows[0].count as number,
+    users: usersRes.rows as { id: number; name: string }[],
+  };
+}
+
+// ── Rep Stats ──
+export interface RepStatRow {
+  id: number;
+  name: string;
+  rep_type: string;
+  assigned_count: number;
+}
+
+export async function fetchRepStats(params: {
+  dateRange?: string;
+  dateFrom?: string;
+  dateTo?: string;
+}): Promise<{
+  stats: RepStatRow[];
+  totals: {
+    total: number;
+    internal: number;
+    external: number;
+    repCount: number;
+  };
+}> {
+  let dateCondition = "";
+  const values: unknown[] = [];
+
+  if (params.dateRange === "today") {
+    dateCondition = "AND h.assignment_timestamp >= CURRENT_DATE";
+  } else if (params.dateRange === "this_week") {
+    dateCondition =
+      "AND h.assignment_timestamp >= date_trunc('week', CURRENT_DATE)";
+  } else if (params.dateRange === "this_month") {
+    dateCondition =
+      "AND h.assignment_timestamp >= date_trunc('month', CURRENT_DATE)";
+  } else if (params.dateRange === "custom" && params.dateFrom) {
+    dateCondition = "AND h.assignment_timestamp >= $1::date";
+    values.push(params.dateFrom);
+    if (params.dateTo) {
+      dateCondition += " AND h.assignment_timestamp <= $2::date + 1";
+      values.push(params.dateTo);
+    }
+  }
+
+  const { rows } = await db.query(
+    `
+    SELECT r.id, r.name, r.rep_type,
+           COUNT(h.id)::int AS assigned_count
+    FROM representatives r
+    LEFT JOIN hearings h ON h.assigned_rep_id = r.id ${dateCondition}
+    WHERE r.is_active = true
+    GROUP BY r.id, r.name, r.rep_type
+    ORDER BY assigned_count DESC, r.name
+  `,
+    values,
+  );
+
+  const stats = rows as RepStatRow[];
+  const total = stats.reduce((s, r) => s + r.assigned_count, 0);
+  const internal = stats
+    .filter(
+      (r) => r.rep_type === "internal_advocates" || r.rep_type === "in-house",
+    )
+    .reduce((s, r) => s + r.assigned_count, 0);
+  const external = stats
+    .filter(
+      (r) => r.rep_type === "external_advocates" || r.rep_type === "contract",
+    )
+    .reduce((s, r) => s + r.assigned_count, 0);
+
+  return {
+    stats,
+    totals: {
+      total,
+      internal,
+      external,
+      repCount: stats.filter((r) => r.assigned_count > 0).length,
+    },
   };
 }
