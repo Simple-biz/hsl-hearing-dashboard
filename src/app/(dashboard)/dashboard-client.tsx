@@ -1780,7 +1780,7 @@ function HearingTable({
       <div className="w-full overflow-hidden rounded-lg border">
         <div
           ref={scrollRef}
-          className="overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+          className="hide-scrollbar overflow-x-auto"
           onScroll={onScrollSync}
           onWheel={(e) => {
             if (e.shiftKey) {

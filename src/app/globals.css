@@ -117,6 +117,18 @@ body {
 }
 
 /* Scrollbar — main content area */
+
+/* Utility to fully hide scrollbar on specific elements */
+.hide-scrollbar::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+.hide-scrollbar {
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
+}
+
 ::-webkit-scrollbar {
   width: 12px;
   height: 12px;
