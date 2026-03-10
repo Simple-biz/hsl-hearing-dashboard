@@ -17,17 +17,20 @@ import {
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { StatCard, StatCardGrid } from "@/components/stat-card";
 import { getReportsData } from "./action";
 import type {
   MonthlyTrend,
   HearingStatus,
-  //   AssignedRep,
+  AssignedRep,
   RepStatusRow,
-  StatCard as StatCardData,
+  StatCard,
   ReportsData,
   ReportsFilters,
 } from "./action";
+import { ReportMonthlyDetailsModal  } from "@/components/modals/report-monthly-details-modal";
+import { ReportStatusSummaryModal   } from "@/components/modals/report-status-summary-modal";
+import { ReportAssignedCasesModal   } from "@/components/modals/report-assigned-cases-modal";
+import { ReportMatrixModal          } from "@/components/modals/report-matrix-modal";
 
 Chart.register(...registerables, ChartDataLabels);
 
@@ -78,7 +81,7 @@ const tooltipBase = {
 
 function MonthlyTrendChart({ monthly }: { monthly: MonthlyTrend[] }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const chartRef = useRef<Chart | null>(null);
+  const chartRef  = useRef<Chart | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -174,13 +177,9 @@ function MonthlyTrendChart({ monthly }: { monthly: MonthlyTrend[] }) {
   return <canvas ref={canvasRef} />;
 }
 
-function StatusDonutChart({
-  hearingStatus,
-}: {
-  hearingStatus: HearingStatus[];
-}) {
+function StatusDonutChart({ hearingStatus }: { hearingStatus: HearingStatus[] }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const chartRef = useRef<Chart | null>(null);
+  const chartRef  = useRef<Chart | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -331,14 +330,16 @@ function exportRepMatrixCsv(repStatusRows: RepStatusRow[]) {
   const rows = repStatusRows.map((row) =>
     [
       `"${row.rep}"`,
-      ...cols.map((c) => String(row[c as keyof RepStatusRow] ?? 0)),
-    ].join(","),
+      ...cols.map((c) =>
+        String(row[c as keyof RepStatusRow] ?? 0)
+      ),
+    ].join(",")
   );
   const csv = [header, ...rows].join("\n");
   const blob = new Blob([csv], { type: "text/csv" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href     = url;
   a.download = `rep-status-matrix-${new Date().toISOString().slice(0, 10)}.csv`;
   a.click();
   URL.revokeObjectURL(url);
@@ -346,12 +347,12 @@ function exportRepMatrixCsv(repStatusRows: RepStatusRow[]) {
 
 // ─── Win rate helper ──────────────────────────────────────────────────────────
 
-function computeWinRate(statCards: StatCardData[]): string {
+function computeWinRate(statCards: StatCard[]): string {
   const parse = (label: string) => {
     const card = statCards.find((c) => c.label === label);
     return parseInt((card?.value ?? "0").replace(/,/g, ""), 10);
   };
-  const fav = parse("Favorable");
+  const fav   = parse("Favorable");
   const unfav = parse("Unfavorable");
   const denom = fav + unfav;
   if (denom === 0) return "—";
@@ -365,21 +366,21 @@ type Props = Omit<ReportsData, never>; // all fields from ReportsData
 // ─── Client Component ─────────────────────────────────────────────────────────
 
 export function ReportsClient({
-  monthly: initialMonthly,
+  monthly:       initialMonthly,
   hearingStatus: initialHearingStatus,
-  assignedReps: initialAssignedReps,
+  assignedReps:  initialAssignedReps,
   repStatusRows: initialRepStatusRows,
-  statCards: initialStatCards,
+  statCards:     initialStatCards,
   allMonths,
   allReps,
 }: Props) {
   // ── Data state (updated on Apply / Reset) ──────────────────────────────────
   const [data, setData] = useState<ReportsData>({
-    monthly: initialMonthly,
+    monthly:       initialMonthly,
     hearingStatus: initialHearingStatus,
-    assignedReps: initialAssignedReps,
+    assignedReps:  initialAssignedReps,
     repStatusRows: initialRepStatusRows,
-    statCards: initialStatCards,
+    statCards:     initialStatCards,
     allMonths,
     allReps,
   });
@@ -388,17 +389,24 @@ export function ReportsClient({
   const [pending, setPending] = useState<ReportsFilters>(EMPTY_FILTERS);
 
   // ── Whether any filter is active (controls "active" indicator) ─────────────
-  const [activeFilters, setActiveFilters] =
-    useState<ReportsFilters>(EMPTY_FILTERS);
+  const [activeFilters, setActiveFilters] = useState<ReportsFilters>(EMPTY_FILTERS);
 
   const [isPending, startTransition] = useTransition();
 
+  // ── Modal open state ────────────────────────────────────────────────────────
+  const [monthlyModalOpen,  setMonthlyModalOpen]  = useState(false);
+  const [statusModalOpen,   setStatusModalOpen]   = useState(false);
+  const [assignedModalOpen, setAssignedModalOpen] = useState(false);
+  const [matrixModalOpen,   setMatrixModalOpen]   = useState(false);
+
   const isFiltered =
-    !!activeFilters.quickSelect || !!activeFilters.month || !!activeFilters.rep;
+    !!activeFilters.quickSelect ||
+    !!activeFilters.month ||
+    !!activeFilters.rep;
 
   // ── Derived values ──────────────────────────────────────────────────────────
   const maxHearings = Math.max(1, ...data.assignedReps.map((r) => r.hearings));
-  const winRate = computeWinRate(data.statCards);
+  const winRate     = computeWinRate(data.statCards);
 
   // ── Handlers ────────────────────────────────────────────────────────────────
 
@@ -422,7 +430,7 @@ export function ReportsClient({
   const updatePending = useCallback(
     (key: keyof ReportsFilters, value: string) =>
       setPending((prev) => ({ ...prev, [key]: value })),
-    [],
+    []
   );
 
   return (
@@ -435,6 +443,7 @@ export function ReportsClient({
       {/* ── Filter Bar ─────────────────────────────────────────────────────── */}
       <div className="border-b border-border bg-card px-6 py-3">
         <div className="flex items-end gap-4 flex-wrap">
+
           {/* Quick Select */}
           <FilterSelect
             label="Quick Select"
@@ -495,32 +504,35 @@ export function ReportsClient({
               disabled={isPending}
               className="flex items-center gap-2 px-4 py-1.5 border border-border hover:bg-muted rounded-lg text-sm text-muted-foreground transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              <RefreshCw
-                size={13}
-                className={isPending ? "animate-spin" : ""}
-              />
+              <RefreshCw size={13} className={isPending ? "animate-spin" : ""} />
               Reset
             </button>
           </div>
         </div>
       </div>
 
-      <div
-        className={cn(
-          "p-6 space-y-4",
-          isPending && "opacity-60 pointer-events-none",
-        )}
-      >
+      <div className={cn("p-6 space-y-4", isPending && "opacity-60 pointer-events-none")}>
+
         {/* ── Stat Cards ──────────────────────────────────────────────────── */}
-        <StatCardGrid className="grid-cols-8">
+        <div className="grid grid-cols-8 gap-3">
           {data.statCards.map((c) => (
-            <StatCard
+            <div
               key={c.label}
-              variant="solid"
-              label={c.label}
-              value={c.value}
-              bg={c.bg}
-            />
+              className={cn(
+                "relative overflow-hidden rounded-xl p-4 text-white",
+                c.bg
+              )}
+            >
+              <div className="absolute -right-4 -top-4 h-24 w-24 rounded-full bg-white/10" />
+              <div className="relative z-10">
+                <p className="text-[10px] font-semibold tracking-widest uppercase opacity-80 mb-1">
+                  {c.label}
+                </p>
+                <p className="text-3xl font-bold tabular-nums leading-none">
+                  {c.value}
+                </p>
+              </div>
+            </div>
           ))}
 
           {/* Win Rate — computed from live stat cards */}
@@ -535,10 +547,11 @@ export function ReportsClient({
               Favorable / (Fav + Unfav)
             </p>
           </div>
-        </StatCardGrid>
+        </div>
 
         {/* ── Three-panel row ─────────────────────────────────────────────── */}
         <div className="grid grid-cols-3 gap-4">
+
           {/* Monthly Trend */}
           <div className="bg-card border border-border rounded-xl p-5">
             <CardHeader
@@ -548,8 +561,8 @@ export function ReportsClient({
               title="Monthly Hearing Trend"
               subtitle="Volume + outcomes by month"
             >
-              <GhostBtn icon={Eye} label="View Details" />
-              <GhostBtn icon={Download} label="Export" />
+              <GhostBtn icon={Eye}      label="View Details" onClick={() => setMonthlyModalOpen(true)}  />
+              <GhostBtn icon={Download} label="Export"       />
             </CardHeader>
             <div className="h-64">
               <MonthlyTrendChart monthly={data.monthly} />
@@ -565,7 +578,7 @@ export function ReportsClient({
               title="Assigned Cases"
               subtitle="Cases per representative"
             >
-              <GhostBtn icon={Eye} label="View All" />
+              <GhostBtn icon={Eye} label="View All" onClick={() => setAssignedModalOpen(true)} />
             </CardHeader>
             <div className="space-y-2 overflow-y-auto max-h-64">
               {data.assignedReps.length === 0 ? (
@@ -609,10 +622,10 @@ export function ReportsClient({
               title="Status Distribution"
               subtitle="Outcome breakdown"
             >
-              <GhostBtn icon={Eye} label="View Details" />
+              <GhostBtn icon={Eye} label="View Details" onClick={() => setStatusModalOpen(true)} />
             </CardHeader>
             <div className="flex gap-5 items-center">
-              <div className="w-56 h-56 shrink-0">
+              <div className="w-56 h-56 flex-shrink-0">
                 <StatusDonutChart hearingStatus={data.hearingStatus} />
               </div>
               <div className="flex-1 flex flex-col gap-1.5">
@@ -623,7 +636,7 @@ export function ReportsClient({
                   >
                     <div className="flex items-center gap-2 min-w-0">
                       <span
-                        className="w-2.5 h-2.5 rounded-full shrink-0"
+                        className="w-2.5 h-2.5 rounded-full flex-shrink-0"
                         style={{ backgroundColor: d.color }}
                       />
                       <span className="text-[11px] text-muted-foreground whitespace-nowrap">
@@ -652,7 +665,7 @@ export function ReportsClient({
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <GhostBtn icon={Eye} label="View Details" />
+              <GhostBtn icon={Eye}      label="View Details" onClick={() => setMatrixModalOpen(true)} />
               <GhostBtn
                 icon={Download}
                 label="Export CSV"
@@ -692,10 +705,8 @@ export function ReportsClient({
                         key={col}
                         className={cn(
                           "px-3 py-2 text-left text-[10px] font-semibold whitespace-nowrap uppercase tracking-wide",
-                          col === "rep"
-                            ? "text-foreground"
-                            : "text-muted-foreground",
-                          col === "Total" ? "text-amber-600 text-center" : "",
+                          col === "rep"   ? "text-foreground"              : "text-muted-foreground",
+                          col === "Total" ? "text-amber-600 text-center"   : ""
                         )}
                       >
                         {col === "rep" ? "Representative" : col}
@@ -710,44 +721,28 @@ export function ReportsClient({
                       className="border-b border-border/50 hover:bg-muted/50 transition-colors"
                     >
                       {STATUS_COLS.map((col) => {
-                        const val = row[col as keyof RepStatusRow];
-                        const isRep = col === "rep";
+                        const val     = row[col as keyof RepStatusRow];
+                        const isRep   = col === "rep";
                         const isTotal = col === "Total";
-                        const numVal = typeof val === "number" ? val : 0;
-                        const isFav = col === "Favorable" && numVal > 0;
+                        const numVal  = typeof val === "number" ? val : 0;
+                        const isFav   = col === "Favorable"   && numVal > 0;
                         const isUnfav = col === "Unfavorable" && numVal > 0;
-                        const isHigh = !isRep && !isTotal && numVal >= 50;
-                        const isMed =
-                          !isRep && !isTotal && numVal >= 15 && numVal < 50;
+                        const isHigh  = !isRep && !isTotal && numVal >= 50;
+                        const isMed   = !isRep && !isTotal && numVal >= 15 && numVal < 50;
 
                         return (
                           <td
                             key={col}
                             className={cn(
                               "px-3 py-2.5 tabular-nums",
-                              isRep && "font-medium text-foreground",
-                              isTotal &&
-                                "font-bold text-amber-600 text-center bg-amber-50",
-                              isFav && "text-emerald-600 font-semibold",
+                              isRep   && "font-medium text-foreground",
+                              isTotal && "font-bold text-amber-600 text-center bg-amber-50",
+                              isFav   && "text-emerald-600 font-semibold",
                               isUnfav && "text-red-500 font-semibold",
-                              isHigh &&
-                                !isFav &&
-                                !isUnfav &&
-                                "text-blue-600 font-semibold",
-                              isMed &&
-                                !isFav &&
-                                !isUnfav &&
-                                "text-foreground/80",
-                              !isRep &&
-                                !isTotal &&
-                                !isFav &&
-                                !isUnfav &&
-                                !isHigh &&
-                                !isMed &&
-                                "text-muted-foreground",
-                              numVal === 0 &&
-                                !isRep &&
-                                "text-muted-foreground/40",
+                              isHigh  && !isFav && !isUnfav && "text-blue-600 font-semibold",
+                              isMed   && !isFav && !isUnfav && "text-foreground/80",
+                              !isRep && !isTotal && !isFav && !isUnfav && !isHigh && !isMed && "text-muted-foreground",
+                              numVal === 0 && !isRep && "text-muted-foreground/40"
                             )}
                           >
                             {numVal === 0 && !isRep ? "—" : val}
@@ -762,6 +757,28 @@ export function ReportsClient({
           )}
         </div>
       </div>
+
+      {/* ── Modals ──────────────────────────────────────────────────────── */}
+      <ReportMonthlyDetailsModal
+        open={monthlyModalOpen}
+        onClose={() => setMonthlyModalOpen(false)}
+        monthly={data.monthly}
+      />
+      <ReportStatusSummaryModal
+        open={statusModalOpen}
+        onClose={() => setStatusModalOpen(false)}
+        hearingStatus={data.hearingStatus}
+      />
+      <ReportAssignedCasesModal
+        open={assignedModalOpen}
+        onClose={() => setAssignedModalOpen(false)}
+        assignedReps={data.assignedReps}
+      />
+      <ReportMatrixModal
+        open={matrixModalOpen}
+        onClose={() => setMatrixModalOpen(false)}
+        repStatusRows={data.repStatusRows}
+      />
     </>
   );
 }
