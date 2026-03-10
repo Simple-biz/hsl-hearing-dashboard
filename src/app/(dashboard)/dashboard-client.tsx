@@ -31,6 +31,7 @@ import {
   BarChart3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { StatCard, StatCardGrid } from "@/components/stat-card";
 import { canEditField, type UserRole } from "@/lib/roles";
 import { AppHeader } from "@/components/layout/app-header";
 import { DashboardNav } from "@/components/layout/dashboard-nav";
@@ -1060,30 +1061,20 @@ function StatsRow({
   ];
   const cards = isRep ? repCards : adminCards;
   return (
-    <div
-      className={cn(
-        "grid gap-3",
-        isRep ? "grid-cols-3" : "grid-cols-2 sm:grid-cols-3 lg:grid-cols-5",
-      )}
+    <StatCardGrid
+      className={
+        isRep ? "grid-cols-3" : "grid-cols-2 sm:grid-cols-3 lg:grid-cols-5"
+      }
     >
       {cards.map((card) => (
-        <div
+        <StatCard
           key={card.label}
-          className={cn(
-            "relative overflow-hidden rounded-xl bg-linear-to-br p-5 text-white",
-            card.gradient,
-          )}
-        >
-          <div className="absolute -right-4 -top-4 h-24 w-24 rounded-full bg-white/10" />
-          <p className="text-[13px] font-medium uppercase opacity-90">
-            {card.label}
-          </p>
-          <p className="mt-2 text-3xl font-bold tabular-nums leading-none">
-            {card.value.toLocaleString()}
-          </p>
-        </div>
+          label={card.label}
+          value={card.value}
+          gradient={card.gradient}
+        />
       ))}
-    </div>
+    </StatCardGrid>
   );
 }
 
