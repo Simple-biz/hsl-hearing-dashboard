@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { X, Download, Users, ChevronDown, ChevronRight, Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { AssignedRep, MonthlyTrend } from "@/app/reports/action";
+import type { AssignedRep, MonthlyTrend } from "@/app/(dashboard)/reports/action";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -169,7 +169,7 @@ export function ReportAssignedCasesModal({
       <div className="bg-card rounded-xl shadow-2xl w-full max-w-xl max-h-[88vh] flex flex-col overflow-hidden border border-border">
 
         {/* ── Header ─────────────────────────────────────────────────────── */}
-        <div className="flex items-center justify-between px-5 py-3.5 bg-blue-600 flex-shrink-0 gap-2 flex-wrap">
+        <div className="flex items-center justify-between px-5 py-3.5 bg-blue-600 flex-shrink-0 gap-2">
           <div className="flex items-center gap-2 text-white">
             <Users size={18} />
             <h2 className="text-sm font-semibold">Assigned Cases by Representative</h2>
@@ -231,7 +231,7 @@ export function ReportAssignedCasesModal({
                   const hasMultiple = rep.months.length > 1;
 
                   return (
-                    <>
+                    <React.Fragment key={rep.name}>
                       {/* Rep header row */}
                       <tr
                         key={`hdr-${rep.name}`}
@@ -306,7 +306,7 @@ export function ReportAssignedCasesModal({
                           </td>
                         </tr>
                       )}
-                    </>
+                    </React.Fragment>
                   );
                 })}
               </tbody>
