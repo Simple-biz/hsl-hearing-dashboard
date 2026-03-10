@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/select";
 import { X, Search, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { StatCard, StatCardGrid } from "@/components/stat-card";
 import type { UserRole } from "@/lib/roles";
 import {
   saveRep,
@@ -256,49 +257,42 @@ export function RepDashboardClient({
         </DashboardNav>
 
         {/* Summary cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        <StatCardGrid className="grid-cols-2 sm:grid-cols-5">
           {[
             {
               label: "Total Reps",
               value: total,
-              g: "from-indigo-500 to-purple-600",
+              gradient: "from-indigo-500 to-purple-600",
             },
             {
               label: "Internal",
               value: internal,
-              g: "from-emerald-500 to-green-400",
+              gradient: "from-emerald-500 to-green-400",
             },
             {
               label: "External",
               value: external,
-              g: "from-amber-500 to-amber-600",
+              gradient: "from-amber-500 to-amber-600",
             },
             {
               label: "In-House",
               value: inHouse,
-              g: "from-blue-400 to-cyan-400",
+              gradient: "from-blue-400 to-cyan-400",
             },
             {
               label: "Active",
               value: active,
-              g: "from-green-500 to-emerald-400",
+              gradient: "from-green-500 to-emerald-400",
             },
           ].map((c) => (
-            <div
+            <StatCard
               key={c.label}
-              className={cn(
-                "relative overflow-hidden rounded-xl bg-linear-to-br p-4 text-white",
-                c.g,
-              )}
-            >
-              <div className="absolute -right-3 -top-3 h-16 w-16 rounded-full bg-white/10" />
-              <p className="text-xs font-medium uppercase opacity-90">
-                {c.label}
-              </p>
-              <p className="mt-1 text-2xl font-bold tabular-nums">{c.value}</p>
-            </div>
+              label={c.label}
+              value={c.value}
+              gradient={c.gradient}
+            />
           ))}
-        </div>
+        </StatCardGrid>
 
         {/* Filters */}
         <div className="flex flex-wrap items-center gap-2">

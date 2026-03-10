@@ -6,6 +6,7 @@ import { DashboardNav } from "@/components/layout/dashboard-nav";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { StatCard, StatCardGrid } from "@/components/stat-card";
 import { Separator } from "@/components/ui/separator";
 import {
   Search,
@@ -182,41 +183,35 @@ function UsersTab({
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-3 gap-3">
-        <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-              <Users className="h-5 w-5 text-primary" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{users.length}</p>
-              <p className="text-xs text-muted-foreground">Total Users</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-500/10">
-              <Shield className="h-5 w-5 text-emerald-600" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{active.length}</p>
-              <p className="text-xs text-muted-foreground">Active</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-zinc-500/10">
-              <KeyRound className="h-5 w-5 text-zinc-500" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{inactive.length}</p>
-              <p className="text-xs text-muted-foreground">Inactive</p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      <StatCardGrid className="grid-cols-3">
+        <StatCard
+          variant="icon"
+          label="Total Users"
+          value={users.length}
+          icon={Users}
+          iconColor="text-primary"
+          iconBg="bg-primary/10"
+          cardBg="bg-primary/5 dark:bg-primary/10"
+        />
+        <StatCard
+          variant="icon"
+          label="Active"
+          value={active.length}
+          icon={Shield}
+          iconColor="text-emerald-600"
+          iconBg="bg-emerald-500/10"
+          cardBg="bg-emerald-50 dark:bg-emerald-950/30"
+        />
+        <StatCard
+          variant="icon"
+          label="Inactive"
+          value={inactive.length}
+          icon={KeyRound}
+          iconColor="text-zinc-500"
+          iconBg="bg-zinc-500/10"
+          cardBg="bg-zinc-50 dark:bg-zinc-900/50"
+        />
+      </StatCardGrid>
 
       <div className="flex items-center gap-3">
         <div className="relative max-w-xs flex-1">
