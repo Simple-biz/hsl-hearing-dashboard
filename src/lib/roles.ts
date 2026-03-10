@@ -43,7 +43,7 @@ export const PAGE_ACCESS: Record<string, UserRole[]> = {
   schedule: ["admin", "manager", "hearings_admin", "hearings_agent", "rep"],
   admin: ["admin"],
   api_keys: ["admin"],
-  settings: ["admin", "manager"],
+  settings: ["admin", "manager", "hearings_admin", "mr_admin", "mr_lead"],
 };
 
 // Hearing fields each role can edit (inline editing)
