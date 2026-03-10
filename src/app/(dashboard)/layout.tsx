@@ -1,6 +1,7 @@
 import { DashboardShell } from "@/components/layout/dashboard-shell";
 import type { UserRole } from "@/lib/roles";
 import { requireAuth } from "@/lib/session";
+import { redirect } from "next/navigation";
 
 export default async function DashboardLayout({
   children,
@@ -8,6 +9,11 @@ export default async function DashboardLayout({
   children: React.ReactNode;
 }) {
   const session = await requireAuth();
+
+  // Force password change redirect
+  if (session.user.forcePasswordChange) {
+    redirect("/change-password");
+  }
 
   return (
     <DashboardShell

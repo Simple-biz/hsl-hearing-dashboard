@@ -1,7 +1,9 @@
 "use client";
 
 import { AppHeader } from "@/components/layout/app-header";
-import { BarChart3, TrendingUp, PieChart, Calendar } from "lucide-react";
+// import { BarChart3, TrendingUp, PieChart, Calendar } from "lucide-react";
+import { BarChart3, TrendingUp, PieChart } from "lucide-react";
+
 import { cn } from "@/lib/utils";
 
 const MONTHS = [
