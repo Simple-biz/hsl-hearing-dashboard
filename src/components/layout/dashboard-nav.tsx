@@ -17,7 +17,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Rep Schedule", href: "/schedule", page: "schedule" },
   { label: "Reports", href: "/reports", page: "reports" },
   { label: "MR Pivot", href: "/medical-records", page: "medical_records" },
-  { label: "Settings", href: "/admin", page: "admin" },
+  { label: "Settings", href: "/settings", page: "settings" },
   { label: "Admin", href: "/admin", page: "admin" },
 ];
 

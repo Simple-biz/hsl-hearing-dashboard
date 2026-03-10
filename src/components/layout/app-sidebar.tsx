@@ -12,6 +12,7 @@ import {
   Users,
   Calendar,
   Shield,
+  Settings,
   Key,
   Stethoscope,
   LogOut,
@@ -114,6 +115,12 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "System",
     items: [
+      {
+        label: "Settings",
+        href: "/settings",
+        icon: Settings,
+        page: "settings",
+      },
       { label: "Admin", href: "/admin", icon: Shield, page: "admin" },
       { label: "API Keys", href: "/api-keys", icon: Key, page: "api_keys" },
     ],
