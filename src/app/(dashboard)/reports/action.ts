@@ -41,18 +41,30 @@ export interface StatCard {
   bg: string;
 }
 
+export interface ReportsFilters {
+  /** Preset date range bucket */
+  quickSelect?: "All Time" | "Last 30 Days" | "Last 90 Days" | "This Year" | "";
+  /** Single month string matching MonthlyTrend.month, e.g. "Jan '25" */
+  month?: string;
+  /** Rep name matching AssignedRep.name */
+  rep?: string;
+}
+
 export interface ReportsData {
   monthly: MonthlyTrend[];
   hearingStatus: HearingStatus[];
   assignedReps: AssignedRep[];
   repStatusRows: RepStatusRow[];
   statCards: StatCard[];
+  /** All unique month labels across the full dataset — used to populate the Month filter */
+  allMonths: string[];
+  /** All rep names across the full dataset — used to populate the Rep filter */
+  allReps: string[];
 }
 
-// ─── Data Fetching ────────────────────────────────────────────────────────────
+// ─── Raw data helpers (replace bodies with db.query() when live) ──────────────
 
-export async function getMonthlyTrends(): Promise<MonthlyTrend[]> {
-  // TODO: replace with db.query when live data is ready
+async function fetchAllMonthly(): Promise<MonthlyTrend[]> {
   return [
     { month: "Oct '24",  count: 3,   favorable: 0,   unfavorable: 0  },
     { month: "Nov '24",  count: 14,  favorable: 2,   unfavorable: 1  },
@@ -75,8 +87,7 @@ export async function getMonthlyTrends(): Promise<MonthlyTrend[]> {
   ];
 }
 
-export async function getHearingStatuses(): Promise<HearingStatus[]> {
-  // TODO: replace with db.query when live data is ready
+async function fetchAllHearingStatuses(): Promise<HearingStatus[]> {
   return [
     { status: "Continued",        count: 20, color: "#3b82f6" },
     { status: "Dismissal",        count: 10, color: "#ec4899" },
@@ -92,8 +103,7 @@ export async function getHearingStatuses(): Promise<HearingStatus[]> {
   ];
 }
 
-export async function getAssignedReps(): Promise<AssignedRep[]> {
-  // TODO: replace with db.query when live data is ready
+async function fetchAllAssignedReps(): Promise<AssignedRep[]> {
   return [
     { name: "Sarah Johnson",   hearings: 238 },
     { name: "Michael Chen",    hearings: 196 },
@@ -104,17 +114,18 @@ export async function getAssignedReps(): Promise<AssignedRep[]> {
   ];
 }
 
-export async function getRepStatusRows(): Promise<RepStatusRow[]> {
-  // TODO: replace with db.query when live data is ready
+async function fetchAllRepStatusRows(): Promise<RepStatusRow[]> {
   return [
     { rep: "Sarah Johnson",   Continued: 2,  Dismissal: 3, Favorable: 33, "Good Cause": 2, OTR: 0, Pending: 22, "Post HRG": 15, Scheduled: 90, Unfavorable: 44, Withdrawal: 27, Total: 238 },
     { rep: "Michael Chen",    Continued: 0,  Dismissal: 4, Favorable: 62, "Good Cause": 0, OTR: 0, Pending: 4,  "Post HRG": 3,  Scheduled: 27, Unfavorable: 77, Withdrawal: 19, Total: 196 },
     { rep: "Emily Rodriguez", Continued: 0,  Dismissal: 0, Favorable: 0,  "Good Cause": 0, OTR: 1, Pending: 1,  "Post HRG": 0,  Scheduled: 18, Unfavorable: 3,  Withdrawal: 2,  Total: 23  },
+    { rep: "James Wilson",    Continued: 5,  Dismissal: 2, Favorable: 80, "Good Cause": 1, OTR: 0, Pending: 30, "Post HRG": 12, Scheduled: 95, Unfavorable: 40, Withdrawal: 11, Total: 276 },
+    { rep: "Linda Park",      Continued: 1,  Dismissal: 1, Favorable: 45, "Good Cause": 0, OTR: 0, Pending: 15, "Post HRG": 8,  Scheduled: 48, Unfavorable: 18, Withdrawal: 6,  Total: 142 },
+    { rep: "David Torres",    Continued: 0,  Dismissal: 0, Favorable: 22, "Good Cause": 0, OTR: 0, Pending: 10, "Post HRG": 5,  Scheduled: 30, Unfavorable: 15, Withdrawal: 7,  Total: 89  },
   ];
 }
 
-export async function getStatCards(): Promise<StatCard[]> {
-  // TODO: replace with db.query when live data is ready
+async function fetchAllStatCards(): Promise<StatCard[]> {
   return [
     { label: "Total Hearings", value: "5,484", bg: "bg-violet-600"  },
     { label: "Assigned",       value: "4,117", bg: "bg-emerald-500" },
@@ -126,15 +137,58 @@ export async function getStatCards(): Promise<StatCard[]> {
   ];
 }
 
-export async function getReportsData(): Promise<ReportsData> {
+// ─── Public API ───────────────────────────────────────────────────────────────
+
+/**
+ * Fetches all reports data, optionally filtered.
+ *
+ * When the backing data source is a real DB, replace the fetch* helpers above
+ * with parameterised db.query() calls and push filtering to SQL WHERE clauses.
+ * The filter interface and call-sites in the client component stay identical.
+ */
+export async function getReportsData(
+  filters: ReportsFilters = {}
+): Promise<ReportsData> {
   const [monthly, hearingStatus, assignedReps, repStatusRows, statCards] =
     await Promise.all([
-      getMonthlyTrends(),
-      getHearingStatuses(),
-      getAssignedReps(),
-      getRepStatusRows(),
-      getStatCards(),
+      fetchAllMonthly(),
+      fetchAllHearingStatuses(),
+      fetchAllAssignedReps(),
+      fetchAllRepStatusRows(),
+      fetchAllStatCards(),
     ]);
 
-  return { monthly, hearingStatus, assignedReps, repStatusRows, statCards };
+  // Derive option lists from the *full* unfiltered sets so the dropdowns
+  // always show every choice regardless of active filters.
+  const allMonths = monthly.map((m) => m.month);
+  const allReps   = assignedReps.map((r) => r.name);
+
+  // ── Apply filters ──────────────────────────────────────────────────────────
+  // TODO: when live, replace these in-memory filters with DB WHERE clauses.
+
+  const filteredMonthly = filters.month
+    ? monthly.filter((m) => m.month === filters.month)
+    : monthly;
+
+  const filteredReps = filters.rep
+    ? assignedReps.filter((r) => r.name === filters.rep)
+    : assignedReps;
+
+  const filteredRepRows = filters.rep
+    ? repStatusRows.filter((r) => r.rep === filters.rep)
+    : repStatusRows;
+
+  // quickSelect is a date-range preset; with live data this maps to a
+  // WHERE hearing_date BETWEEN x AND y. Stub: treated same as "All Time".
+  // TODO: implement date-range slicing once DB query is wired.
+
+  return {
+    monthly: filteredMonthly,
+    hearingStatus,   // status distribution is always the full cross-section
+    assignedReps: filteredReps,
+    repStatusRows: filteredRepRows,
+    statCards,       // aggregate cards reflect the full dataset for now
+    allMonths,
+    allReps,
+  };
 }
