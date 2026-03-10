@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition, useCallback } from "react";
+import { useEffect, useRef, useState, useTransition, useCallback, forwardRef, useImperativeHandle } from "react";
 import { Chart, registerables } from "chart.js";
 import ChartDataLabels from "chartjs-plugin-datalabels";
 import { AppHeader } from "@/components/layout/app-header";
@@ -79,9 +79,25 @@ const tooltipBase = {
 
 // ─── Charts ───────────────────────────────────────────────────────────────────
 
-function MonthlyTrendChart({ monthly }: { monthly: MonthlyTrend[] }) {
+export interface MonthlyTrendChartHandle {
+  exportChart: () => void;
+}
+
+const MonthlyTrendChart = forwardRef<MonthlyTrendChartHandle, { monthly: MonthlyTrend[] }>(
+  function MonthlyTrendChart({ monthly }, ref) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const chartRef  = useRef<Chart | null>(null);
+
+  useImperativeHandle(ref, () => ({
+    exportChart() {
+      const chart = chartRef.current;
+      if (!chart) return;
+      const link     = document.createElement("a");
+      link.download  = `monthly-trend-${new Date().toISOString().slice(0, 10)}.png`;
+      link.href      = chart.toBase64Image();
+      link.click();
+    },
+  }));
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -175,7 +191,7 @@ function MonthlyTrendChart({ monthly }: { monthly: MonthlyTrend[] }) {
   }, [monthly]);
 
   return <canvas ref={canvasRef} />;
-}
+});
 
 function StatusDonutChart({ hearingStatus }: { hearingStatus: HearingStatus[] }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -399,6 +415,9 @@ export function ReportsClient({
   const [assignedModalOpen, setAssignedModalOpen] = useState(false);
   const [matrixModalOpen,   setMatrixModalOpen]   = useState(false);
 
+  // ── Monthly chart ref  ──────────────────────────────────────────────────────
+  const monthlyChartRef = useRef<MonthlyTrendChartHandle>(null);
+
   const isFiltered =
     !!activeFilters.quickSelect ||
     !!activeFilters.month ||
@@ -562,10 +581,10 @@ export function ReportsClient({
               subtitle="Volume + outcomes by month"
             >
               <GhostBtn icon={Eye}      label="View Details" onClick={() => setMonthlyModalOpen(true)}  />
-              <GhostBtn icon={Download} label="Export"       />
+              <GhostBtn icon={Download} label="Export"       onClick={() => monthlyChartRef.current?.exportChart()} />
             </CardHeader>
             <div className="h-64">
-              <MonthlyTrendChart monthly={data.monthly} />
+              <MonthlyTrendChart ref={monthlyChartRef} monthly={data.monthly} />
             </div>
           </div>
 
@@ -773,6 +792,7 @@ export function ReportsClient({
         open={assignedModalOpen}
         onClose={() => setAssignedModalOpen(false)}
         assignedReps={data.assignedReps}
+        monthly={data.monthly}
       />
       <ReportMatrixModal
         open={matrixModalOpen}
