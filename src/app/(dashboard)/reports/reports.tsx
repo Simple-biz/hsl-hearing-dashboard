@@ -39,12 +39,18 @@ const tooltipBase = {
 // ─── Charts ───────────────────────────────────────────────────────────────────
 
 function MonthlyTrendChart({ monthly }: { monthly: MonthlyTrend[] }) {
-  const canvasRef = useRef(null);
-  const chartRef  = useRef(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const chartRef  = useRef<Chart | null>(null);
 
   useEffect(() => {
-    if (chartRef.current) chartRef.current.destroy();
-    chartRef.current = new Chart(canvasRef.current, {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    if (chartRef.current) {
+      chartRef.current.destroy();
+    }
+
+    chartRef.current = new Chart(canvas, {
       data: {
         labels: monthly.map((d) => d.month),
         datasets: [
@@ -110,19 +116,28 @@ function MonthlyTrendChart({ monthly }: { monthly: MonthlyTrend[] }) {
       },
       plugins: [ChartDataLabels],
     });
-    return () => chartRef.current?.destroy();
+    
+    return () => {
+      chartRef.current?.destroy();
+    };
   }, [monthly]);
 
   return <canvas ref={canvasRef} />;
 }
 
 function StatusDonutChart({ hearingStatus }: { hearingStatus: HearingStatus[] }) {
-  const canvasRef = useRef(null);
-  const chartRef  = useRef(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const chartRef  = useRef<Chart | null>(null);
 
   useEffect(() => {
-    if (chartRef.current) chartRef.current.destroy();
-    chartRef.current = new Chart(canvasRef.current, {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    if (chartRef.current) {
+      chartRef.current.destroy();
+    }
+
+    chartRef.current = new Chart(canvas, {
       type: "doughnut",
       data: {
         labels: hearingStatus.map((d) => d.status),
@@ -145,7 +160,10 @@ function StatusDonutChart({ hearingStatus }: { hearingStatus: HearingStatus[] })
         },
       },
     });
-    return () => chartRef.current?.destroy();
+
+    return () => {
+      chartRef.current?.destroy();
+    };
   }, [hearingStatus]);
 
   return <canvas ref={canvasRef} />;
@@ -255,9 +273,15 @@ export function ReportsClient({
         {/* ── Stat Cards ─────────────────────────────────────────── */}
         <div className="grid grid-cols-8 gap-3">
           {statCards.map((c) => (
-            <div key={c.label} className={cn("rounded-xl p-4 text-white", c.bg)}>
-              <p className="text-[10px] font-semibold tracking-widest uppercase opacity-80 mb-1">{c.label}</p>
-              <p className="text-3xl font-bold tabular-nums leading-none">{c.value}</p>
+            <div 
+              key={c.label} 
+              className={cn("relative overflow-hidden rounded-xl p-4 text-white", c.bg)}
+            >
+              <div className="absolute -right-4 -top-4 h-24 w-24 rounded-full bg-white/10" />
+              <div className="relative z-10">
+                <p className="text-[10px] font-semibold tracking-widest uppercase opacity-80 mb-1">{c.label}</p>
+                <p className="text-3xl font-bold tabular-nums leading-none">{c.value}</p>
+              </div>
             </div>
           ))}
           {/* Win Rate uses the standard card token */}
