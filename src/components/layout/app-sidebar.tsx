@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { signOut } from "next-auth/react";
 import {
   LayoutDashboard,
@@ -16,6 +16,7 @@ import {
   Key,
   Stethoscope,
   LogOut,
+  KeyRound,
   ChevronsUpDown,
 } from "lucide-react";
 import { canAccessPage, type UserRole } from "@/lib/roles";
@@ -143,6 +144,7 @@ export function AppSidebar({
   ...props
 }: AppSidebarProps) {
   const pathname = usePathname();
+  const router = useRouter();
 
   const initials = userName
     .split(" ")
@@ -271,6 +273,12 @@ export function AppSidebar({
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => router.push("/change-password")}
+                >
+                  <KeyRound className="mr-2 h-4 w-4" />
+                  Change Password
+                </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => signOut({ callbackUrl: "/login" })}
                 >
