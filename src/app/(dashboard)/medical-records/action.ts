@@ -152,24 +152,28 @@ export async function getMrPivotPageData(): Promise<MrPivotPageData> {
 export async function getHearingsPaginated(
   filters: HearingFilters
 ): Promise<PaginatedHearingsResult> {
-  // TODO: replace with parameterised DB query
-  const page = Math.max(1, filters.page ?? 1);
-  const perPage = filters.per_page === "all" ? 50 : Math.min(500, (filters.per_page as number) ?? 50);
-  const STUB_TOTAL = 48;
+  // TODO: replace with parameterised DB query — stub filters in-memory for now
 
-  const hearings: Hearing[] = Array.from(
-    { length: Math.min(perPage, Math.max(0, STUB_TOTAL - (page - 1) * perPage)) },
-    (_, i) => ({
-      id: (page - 1) * perPage + i + 1,
-      claimant: `Claimant ${(page - 1) * perPage + i + 1}`,
-      hearing_date: `2026-0${(i % 3) + 1}-${String((i % 28) + 1).padStart(2, "0")}`,
+  // Build the full stub dataset (144 rows across 3 months)
+  const MONTHS = ["2025-12", "2026-01", "2026-02", "2026-03"];
+  const REPS = ["Sarah Johnson", "Michael Chen", "Emily Rodriguez", "James Wilson", "Linda Park"];
+
+  const allHearings: Hearing[] = Array.from({ length: 144 }, (_, i) => {
+    const monthIdx = i % MONTHS.length;
+    const day = String((i % 28) + 1).padStart(2, "0");
+    const teamIdx = i % 6;
+    const team = STUB_TEAMS[teamIdx];
+    return {
+      id: i + 1,
+      claimant: `Claimant ${i + 1}`,
+      hearing_date: `${MONTHS[monthIdx]}-${day}`,
       converted_time_est: i % 2 === 0 ? "10:00 AM" : "02:30 PM",
       assigned_rep_id: (i % 5) + 1,
-      rep_name: ["Sarah Johnson", "Michael Chen", "Emily Rodriguez", "James Wilson", "Linda Park"][i % 5],
-      mr_team_id: (i % 6) + 1,
-      mr_team_name: STUB_TEAMS[i % 6]?.team_name ?? null,
-      mr_team_color: STUB_TEAMS[i % 6]?.team_color ?? null,
-      mr_team_type: STUB_TEAMS[i % 6]?.team_type ?? null,
+      rep_name: REPS[i % 5],
+      mr_team_id: team?.id ?? null,
+      mr_team_name: team?.team_name ?? null,
+      mr_team_color: team?.team_color ?? null,
+      mr_team_type: team?.team_type ?? null,
       medical_record_status: MR_STATUS_OPTIONS[i % MR_STATUS_OPTIONS.length],
       hearing_decision_status: HEARING_DECISION_OPTIONS[i % 4],
       manner_of_hearing: MANNER_OPTIONS[i % MANNER_OPTIONS.length],
@@ -180,16 +184,68 @@ export async function getHearingsPaginated(
       post_hrg_deadline: i % 4 === 2 ? "2026-04-01" : null,
       mr_worksheet_link: i % 2 === 0 ? "https://docs.google.com/spreadsheets/stub" : null,
       mr_team_assigned_at: null,
-    })
-  );
+    };
+  });
+
+  // ── Apply filters ─────────────────────────────────────────────────────────
+  let filtered = allHearings;
+
+  if (filters.search?.trim()) {
+    const q = filters.search.toLowerCase();
+    filtered = filtered.filter((h) => h.claimant.toLowerCase().includes(q) || h.rep_name?.toLowerCase().includes(q));
+  }
+  if (filters.month_filter) {
+    filtered = filtered.filter((h) => h.hearing_date.startsWith(filters.month_filter!));
+  }
+  if (filters.team_filter) {
+    if (filters.team_filter === "unassigned") {
+      filtered = filtered.filter((h) => !h.mr_team_id);
+    } else {
+      filtered = filtered.filter((h) => String(h.mr_team_id) === String(filters.team_filter));
+    }
+  }
+  if (filters.status_filter) {
+    if (filters.status_filter === "unassigned") {
+      filtered = filtered.filter((h) => !h.medical_record_status);
+    } else {
+      filtered = filtered.filter((h) => h.medical_record_status === filters.status_filter);
+    }
+  }
+  if (filters.assignment_filter) {
+    if (filters.assignment_filter === "no_specialist")  filtered = filtered.filter((h) => !h.mr_team_id);
+    if (filters.assignment_filter === "no_task")        filtered = filtered.filter((h) => !h.task_assigned);
+    if (filters.assignment_filter === "no_both")        filtered = filtered.filter((h) => !h.mr_team_id && !h.task_assigned);
+  }
+  if (filters.date_from) filtered = filtered.filter((h) => h.hearing_date >= filters.date_from!);
+  if (filters.date_to)   filtered = filtered.filter((h) => h.hearing_date <= filters.date_to!);
+
+  // Sort
+  filtered.sort((a, b) => filters.sort_order === "desc"
+    ? b.hearing_date.localeCompare(a.hearing_date)
+    : a.hearing_date.localeCompare(b.hearing_date));
+
+  // Stats on filtered set
+  const stats = {
+    total:       filtered.length,
+    complete:    filtered.filter((h) => h.medical_record_status === "Complete").length,
+    in_progress: filtered.filter((h) => h.medical_record_status === "In Progress").length,
+    ready:       filtered.filter((h) => h.medical_record_status === "Ready").length,
+    not_started: filtered.filter((h) => h.medical_record_status === "Not Started").length,
+    urgent:      filtered.filter((h) => h.medical_record_status === "URGENT! NEEDS ATTENTION").length,
+  };
+
+  // Paginate
+  const page = Math.max(1, filters.page ?? 1);
+  const perPage = filters.per_page === "all" ? filtered.length : Math.min(500, (filters.per_page as number) ?? 50);
+  const paginated = filtered.slice((page - 1) * perPage, page * perPage);
 
   return {
-    hearings,
-    total: STUB_TOTAL,
+    hearings: paginated,
+    total: filtered.length,
     page,
     per_page: perPage,
-    total_pages: Math.ceil(STUB_TOTAL / perPage),
-    stats: { total: STUB_TOTAL, complete: 12, in_progress: 9, ready: 8, not_started: 16, urgent: 3 },
+    total_pages: Math.max(1, Math.ceil(filtered.length / perPage)),
+    stats,
   };
 }
 

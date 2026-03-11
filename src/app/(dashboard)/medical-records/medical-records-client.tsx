@@ -78,7 +78,36 @@ const HRG_STATUS_CLS: Record<string, string> = {
   "Dismissal":            "bg-red-100 text-red-700",
 };
 
-// ─── Stat Card ────────────────────────────────────────────────────────────────
+// ─── CSV Export ───────────────────────────────────────────────────────────────
+
+function exportToCsv(filename: string, rows: string[][]) {
+  const csv = rows.map((r) => r.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportHearingsToCsv(hearings: Hearing[]) {
+  const headers = ["ID", "Claimant", "Rep", "Hearing Date", "Time", "MR Team", "MR Status", "HRG Decision", "MOA", "Task", "Credited", "5-Day", "Post HRG", "Worksheet"];
+  const rows = hearings.map((h) => [
+    h.id, h.claimant, h.rep_name ?? "", h.hearing_date, h.converted_time_est ?? "",
+    h.mr_team_name ?? "", h.medical_record_status ?? "", h.hearing_decision_status ?? "",
+    h.manner_of_hearing ?? "", h.task_assigned ? "Yes" : "No", h.credited ? "Yes" : "No",
+    h.five_day_letter ? "Yes" : "No", h.post_hrg_status ?? "", h.mr_worksheet_link ?? "",
+  ]);
+  exportToCsv(`hearings-export-${new Date().toISOString().slice(0, 10)}.csv`, [headers, ...rows] as string[][]);
+}
+
+function exportPivotToCsv(rows: MrStatusByTeam[]) {
+  const headers = ["MR Specialist", ...STATUS_COLUMNS, "Grand Total"];
+  const dataRows = rows.map((r) => {
+    const rowTotal = STATUS_COLUMNS.reduce((s, col) => s + (r.statuses[col] ?? 0), 0);
+    return [r.team, ...STATUS_COLUMNS.map((col) => r.statuses[col] ?? 0), rowTotal];
+  });
+  exportToCsv(`mr-status-pivot-${new Date().toISOString().slice(0, 10)}.csv`, [headers, ...dataRows] as string[][]);
+}
 
 function SummaryCard({ label, value, bg, onClick }: { label: string; value: number | string; bg: string; onClick?: () => void }) {
   return (
@@ -742,7 +771,7 @@ export function MrPivotClient(data: MrPivotPageData) {
                 className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground transition-colors">
                 <BarChart3 size={12} />Stats
               </button>
-              <button className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition-colors">
+              <button onClick={() => exportHearingsToCsv(hearings)} className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition-colors">
                 <Download size={12} />Export
               </button>
               <button onClick={() => setShowHearings(true)}
@@ -850,7 +879,7 @@ export function MrPivotClient(data: MrPivotPageData) {
           <div className="bg-card border border-border rounded-xl overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30">
               <span className="text-sm font-bold text-foreground">📊 Medical Records Status</span>
-              <button className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition-colors">
+              <button onClick={() => exportPivotToCsv(data.mrStatusByTeam)} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition-colors">
                 <Download size={12} />Export CSV
               </button>
             </div>
