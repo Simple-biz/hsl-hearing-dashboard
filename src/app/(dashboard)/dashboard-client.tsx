@@ -52,6 +52,11 @@ import {
   deleteHearing,
   autoAssignSingle,
   fetchHearingsPage,
+  bulkAutoAssignSelected,
+  bulkEmailSelected,
+  fetchAllHearingsForCompare,
+  importChronicleEntries,
+  exportHearingsCsv,
 } from "./actions";
 import type {
   HearingRow,
@@ -1941,6 +1946,7 @@ export function DashboardClient({
   const [showUnassignAll, setShowUnassignAll] = useState(false);
   const [showActivityLog, setShowActivityLog] = useState(false);
   const [showRepStats, setShowRepStats] = useState(false);
+  const [showCsvCompare, setShowCsvCompare] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -2286,7 +2292,47 @@ export function DashboardClient({
         title="Hearing Dashboard"
         subtitle={`${totalCount} total hearings`}
         actions={
-          <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5 text-xs"
+            onClick={async () => {
+              try {
+                const csvRows = await exportHearingsCsv({
+                  ...filters,
+                  page: 1,
+                  pageSize: 999999,
+                  sortKey,
+                  sortDir,
+                });
+                if (!csvRows.length) {
+                  alert("No data to export");
+                  return;
+                }
+                const headers = Object.keys(csvRows[0]);
+                const csv = [
+                  headers.join(","),
+                  ...csvRows.map((r) =>
+                    headers
+                      .map(
+                        (h) =>
+                          `"${String((r as Record<string, string>)[h] || "").replace(/"/g, '""')}"`,
+                      )
+                      .join(","),
+                  ),
+                ].join("\n");
+                const blob = new Blob([csv], { type: "text/csv" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `hearings-export-${new Date().toISOString().split("T")[0]}.csv`;
+                a.click();
+                URL.revokeObjectURL(url);
+              } catch {
+                alert("Export failed");
+              }
+            }}
+          >
             <Download className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Export</span>
           </Button>
@@ -2331,6 +2377,7 @@ export function DashboardClient({
                 variant="outline"
                 size="sm"
                 className="h-7 gap-1.5 text-[11px]"
+                onClick={() => setShowCsvCompare(true)}
               >
                 📊 CSV Compare
               </Button>
@@ -2524,6 +2571,14 @@ export function DashboardClient({
         <ActivityLogModal onClose={() => setShowActivityLog(false)} />
       )}
       {showRepStats && <RepStatsModal onClose={() => setShowRepStats(false)} />}
+      {showCsvCompare && (
+        <CsvCompareModal
+          onClose={() => {
+            setShowCsvCompare(false);
+            fetchPage(filters, page, pageSize, sortKey, sortDir);
+          }}
+        />
+      )}
 
       {/* Edit hearing modal */}
       {editHearing &&
@@ -2986,8 +3041,36 @@ export function DashboardClient({
               <Button
                 size="sm"
                 className="h-7 gap-1.5 text-[11px] bg-purple-600 hover:bg-purple-700"
-                onClick={() => {
-                  /* TODO: bulk auto-assign via chunks */
+                onClick={async () => {
+                  if (
+                    !confirm(
+                      `Auto-assign ${selectedIds.size} selected hearings?`,
+                    )
+                  )
+                    return;
+                  const ids = Array.from(selectedIds);
+                  setAutoAssignStatus({
+                    hearingId: 0,
+                    state: "loading",
+                    message: `Assigning ${ids.length} hearings...`,
+                  });
+                  try {
+                    const result = await bulkAutoAssignSelected(ids);
+                    setAutoAssignStatus({
+                      hearingId: 0,
+                      state: "success",
+                      message: `${result.assigned} assigned, ${result.failed} failed`,
+                    });
+                    setSelectedIds(new Set());
+                    fetchPage(filters, page, pageSize, sortKey, sortDir);
+                  } catch (e: unknown) {
+                    setAutoAssignStatus({
+                      hearingId: 0,
+                      state: "error",
+                      message: e instanceof Error ? e.message : "Failed",
+                    });
+                  }
+                  setTimeout(() => setAutoAssignStatus(null), 4000);
                 }}
               >
                 ⚡ Auto-Assign
@@ -3012,8 +3095,23 @@ export function DashboardClient({
                 variant="outline"
                 size="sm"
                 className="h-7 gap-1.5 text-[11px]"
-                onClick={() => {
-                  /* TODO: bulk email */
+                onClick={async () => {
+                  if (
+                    !confirm(
+                      `Email reps for ${selectedIds.size} selected hearings?`,
+                    )
+                  )
+                    return;
+                  const ids = Array.from(selectedIds);
+                  try {
+                    const result = await bulkEmailSelected(ids);
+                    alert(
+                      `Emailed ${result.emailsSent} reps (${result.emailsFailed} failed${result.skippedNoRep > 0 ? `, ${result.skippedNoRep} unassigned` : ""})`,
+                    );
+                    setSelectedIds(new Set());
+                  } catch (e: unknown) {
+                    alert(e instanceof Error ? e.message : "Email failed");
+                  }
                 }}
               >
                 📧 Email Selected
@@ -3086,5 +3184,540 @@ export function DashboardClient({
           document.body,
         )}
     </>
+  );
+}
+
+// ── CSV Compare Modal ──────────────────────────────────────────────────────
+
+interface ChronicleEntry {
+  claimant: string;
+  ssn: string;
+  claimType: string;
+  hearingDate: string;
+  time: string;
+  timeZone: string;
+  claimantLocation: string;
+  repLocation: string;
+  alj: string;
+  medExpert: string;
+  vocExpert: string;
+  statusDate: string;
+  enteredDate: string;
+}
+
+type CompareCategory = "new" | "rescheduled" | "duplicate";
+
+function CsvCompareModal({ onClose }: { onClose: () => void }) {
+  const [file, setFile] = useState<File | null>(null);
+  const [status, setStatus] = useState<{
+    msg: string;
+    type: "loading" | "success" | "error";
+  } | null>(null);
+  const [dbCount, setDbCount] = useState<number | null>(null);
+  const [results, setResults] = useState<{
+    newEntries: (ChronicleEntry & { _cat: "new" })[];
+    rescheduled: (ChronicleEntry & {
+      _cat: "rescheduled";
+      prevDate: string;
+      prevClaimant: string;
+    })[];
+    duplicates: (ChronicleEntry & { _cat: "duplicate" })[];
+  } | null>(null);
+  const [activeTab, setActiveTab] = useState<CompareCategory>("new");
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<{
+    imported: number;
+    skipped: number;
+  } | null>(null);
+
+  // Load DB count on mount
+  useEffect(() => {
+    fetchAllHearingsForCompare().then((d) => setDbCount(d.totalCount));
+  }, []);
+
+  const stripSuffix = (name: string) =>
+    name.replace(/\s*\([^)]+\)\s*$/g, "").trim();
+
+  const normalizeTime = (t: string) => {
+    if (!t) return "";
+    const m = t.match(/(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)?/i);
+    if (!m) return t.toLowerCase().replace(/\s+/g, "");
+    let h = parseInt(m[1], 10);
+    const ampm = (m[3] || "").toUpperCase();
+    if (ampm === "PM" && h < 12) h += 12;
+    if (ampm === "AM" && h === 12) h = 0;
+    return `${String(h).padStart(2, "0")}:${m[2]}`;
+  };
+
+  const normalizeDate = (d: string) => {
+    if (!d) return "";
+    // YYYY-MM-DD
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+    // MM/DD/YYYY
+    const m = d.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+    if (m) {
+      const y = m[3].length === 2 ? `20${m[3]}` : m[3];
+      return `${y}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`;
+    }
+    return d;
+  };
+
+  const parseChronicleDateTime = (dt: string) => {
+    if (!dt) return { date: "", time: "" };
+    const parts = dt.trim().split(/\s+/);
+    const datePart = normalizeDate(parts[0] || "");
+    const timePart = parts.slice(1).join(" ");
+    return { date: datePart, time: timePart };
+  };
+
+  const handleCompare = async () => {
+    if (!file) return;
+    setStatus({ msg: "Loading hearings from database...", type: "loading" });
+    setResults(null);
+    setImportResult(null);
+
+    try {
+      const { hearings: dbHearings } = await fetchAllHearingsForCompare();
+      setDbCount(dbHearings.length);
+
+      // Build lookup maps from DB
+      const exactMap = new Map<string, boolean>();
+      const personMap = new Map<string, { date: string; claimant: string }[]>();
+
+      for (const h of dbHearings) {
+        const base = stripSuffix(h.claimant || "").toLowerCase();
+        const ssn = (h.ssn_last_4 || "").trim();
+        const date = h.hearing_date || "";
+        const time = normalizeTime(
+          h.hearing_time || h.converted_time_est || "",
+        );
+
+        if (base && ssn) {
+          exactMap.set(`${base}|${ssn}|${date}|${time}`, true);
+          const pk = `${base}|${ssn}`;
+          if (!personMap.has(pk)) personMap.set(pk, []);
+          personMap.get(pk)!.push({ date, claimant: h.claimant });
+        }
+      }
+
+      setStatus({ msg: "Parsing Chronicle CSV...", type: "loading" });
+
+      // Parse CSV
+      const text = await file.text();
+      const lines = text.split(/\r?\n/);
+      const headers = lines[0]
+        .split(",")
+        .map((h) => h.trim().replace(/^"|"$/g, ""));
+
+      const col = (row: string[], name: string) => {
+        const idx = headers.findIndex((h) =>
+          h.toLowerCase().includes(name.toLowerCase()),
+        );
+        return idx >= 0 ? (row[idx] || "").trim().replace(/^"|"$/g, "") : "";
+      };
+
+      const newEntries: (ChronicleEntry & { _cat: "new" })[] = [];
+      const rescheduled: (ChronicleEntry & {
+        _cat: "rescheduled";
+        prevDate: string;
+        prevClaimant: string;
+      })[] = [];
+      const duplicates: (ChronicleEntry & { _cat: "duplicate" })[] = [];
+
+      for (let i = 1; i < lines.length; i++) {
+        if (!lines[i].trim()) continue;
+        // Simple CSV parse (handles basic quoting)
+        const row =
+          lines[i]
+            .match(/(".*?"|[^,]*)/g)
+            ?.map((c) => c.trim().replace(/^"|"$/g, "")) || [];
+
+        const firstName = col(row, "client_firstName");
+        const lastName = col(row, "client_lastName");
+        const fullName = `${firstName} ${lastName}`.trim();
+        if (!fullName || fullName === " ") continue;
+        const ssn = col(row, "client_last4Ssn");
+        const { date: hDate, time: hTime } = parseChronicleDateTime(
+          col(row, "hearingScheduledDatetime"),
+        );
+
+        let claimType = col(row, "claimType");
+        if (claimType.includes("TITLE 2") && claimType.includes("TITLE 16"))
+          claimType = "Concurrent";
+        else if (claimType.includes("TITLE 2")) claimType = "Title II";
+        else if (claimType.includes("TITLE 16")) claimType = "Title XVI";
+
+        const entry: ChronicleEntry = {
+          claimant: fullName,
+          ssn,
+          claimType,
+          hearingDate: hDate,
+          time: hTime,
+          timeZone: "ET",
+          claimantLocation: col(row, "aljLocation") || "By Phone",
+          repLocation: col(row, "aljLocation") || "By Phone",
+          alj: col(row, "aljFullName"),
+          medExpert: col(row, "medicalExpert"),
+          vocExpert: col(row, "vocationalExpert"),
+          statusDate: col(row, "statusDate"),
+          enteredDate: col(row, "hearingRequestDate"),
+        };
+
+        const nameLower = fullName.toLowerCase();
+        const normTime = normalizeTime(hTime);
+        const normDate = normalizeDate(hDate);
+
+        // Exact duplicate?
+        if (exactMap.has(`${nameLower}|${ssn}|${normDate}|${normTime}`)) {
+          duplicates.push({ ...entry, _cat: "duplicate" });
+          continue;
+        }
+
+        // Rescheduled? (same person, different date)
+        const pk = `${nameLower}|${ssn}`;
+        if (personMap.has(pk)) {
+          const prev = personMap
+            .get(pk)!
+            .sort((a, b) => b.date.localeCompare(a.date))[0];
+          rescheduled.push({
+            ...entry,
+            _cat: "rescheduled",
+            prevDate: prev.date,
+            prevClaimant: prev.claimant,
+          });
+          continue;
+        }
+
+        newEntries.push({ ...entry, _cat: "new" });
+      }
+
+      setResults({ newEntries, rescheduled, duplicates });
+      const total = newEntries.length + rescheduled.length + duplicates.length;
+      setStatus({
+        msg: `Compared ${total} entries: ${newEntries.length} new, ${rescheduled.length} rescheduled, ${duplicates.length} duplicates`,
+        type: "success",
+      });
+      setActiveTab(
+        newEntries.length > 0
+          ? "new"
+          : rescheduled.length > 0
+            ? "rescheduled"
+            : "duplicate",
+      );
+    } catch (e: unknown) {
+      setStatus({
+        msg: e instanceof Error ? e.message : "Compare failed",
+        type: "error",
+      });
+    }
+  };
+
+  const handleImport = async () => {
+    if (!results) return;
+    const toImport = [...results.newEntries, ...results.rescheduled].map(
+      (e) => ({
+        claimant:
+          e._cat === "rescheduled" ? `${e.claimant} (Rescheduled)` : e.claimant,
+        ssn_last_4: e.ssn,
+        claim_type: e.claimType,
+        hearing_date: e.hearingDate,
+        hearing_time: e.time,
+        time_zone: e.timeZone,
+        claimant_location: e.claimantLocation,
+        representative_location: e.repLocation,
+        alj: e.alj,
+        medical_expert: e.medExpert,
+        vocational_expert: e.vocExpert,
+        status_date: e.statusDate,
+        entered_hearing_level_date: e.enteredDate,
+      }),
+    );
+    if (!toImport.length) return;
+    setImporting(true);
+    try {
+      const result = await importChronicleEntries(toImport);
+      setImportResult(result);
+    } catch {
+      setImportResult({ imported: 0, skipped: toImport.length });
+    }
+    setImporting(false);
+  };
+
+  const migrateCount = results
+    ? results.newEntries.length + results.rescheduled.length
+    : 0;
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-4xl max-h-[90vh] flex flex-col rounded-xl border bg-card shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between border-b bg-muted/50 px-5 py-4 shrink-0">
+          <div>
+            <h2 className="text-sm font-semibold">
+              📊 CSV Compare — Chronicle Legal
+            </h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Upload a Chronicle CSV export to compare against{" "}
+              {dbCount?.toLocaleString() ?? "..."} hearings in DB
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <XIcon className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {/* Upload */}
+          <div className="flex items-center gap-3">
+            <label className="flex-1 flex items-center gap-3 rounded-lg border-2 border-dashed px-4 py-3 cursor-pointer hover:bg-muted/30 transition-colors">
+              <span className="text-lg">📁</span>
+              <div className="flex-1">
+                <p className="text-sm font-medium">
+                  {file ? file.name : "Choose Chronicle CSV file"}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {file
+                    ? `${(file.size / 1024).toFixed(1)} KB`
+                    : "Export from Chronicle Legal → Upload here"}
+                </p>
+              </div>
+              <input
+                type="file"
+                accept=".csv"
+                className="hidden"
+                onChange={(e) => {
+                  setFile(e.target.files?.[0] || null);
+                  setResults(null);
+                  setImportResult(null);
+                }}
+              />
+            </label>
+            <Button
+              size="sm"
+              disabled={!file || status?.type === "loading"}
+              onClick={handleCompare}
+              className="h-10 gap-1.5"
+            >
+              {status?.type === "loading" ? (
+                <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+              ) : (
+                <Search className="h-3.5 w-3.5" />
+              )}
+              Compare
+            </Button>
+          </div>
+
+          {/* Status */}
+          {status && (
+            <div
+              className={cn(
+                "rounded-lg px-4 py-2.5 text-sm",
+                status.type === "loading" &&
+                  "bg-blue-50 text-blue-800 border border-blue-200 dark:bg-blue-950/30 dark:text-blue-300 dark:border-blue-800",
+                status.type === "success" &&
+                  "bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800",
+                status.type === "error" &&
+                  "bg-red-50 text-red-800 border border-red-200 dark:bg-red-950/30 dark:text-red-300 dark:border-red-800",
+              )}
+            >
+              {status.msg}
+            </div>
+          )}
+
+          {/* Results */}
+          {results && (
+            <>
+              {/* Summary stats */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="rounded-lg border bg-emerald-50/50 p-3 text-center dark:bg-emerald-950/20">
+                  <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-400 tabular-nums">
+                    {results.newEntries.length}
+                  </p>
+                  <p className="text-xs text-muted-foreground">New</p>
+                </div>
+                <div className="rounded-lg border bg-blue-50/50 p-3 text-center dark:bg-blue-950/20">
+                  <p className="text-2xl font-bold text-blue-700 dark:text-blue-400 tabular-nums">
+                    {results.rescheduled.length}
+                  </p>
+                  <p className="text-xs text-muted-foreground">Rescheduled</p>
+                </div>
+                <div className="rounded-lg border bg-amber-50/50 p-3 text-center dark:bg-amber-950/20">
+                  <p className="text-2xl font-bold text-amber-700 dark:text-amber-400 tabular-nums">
+                    {results.duplicates.length}
+                  </p>
+                  <p className="text-xs text-muted-foreground">Duplicates</p>
+                </div>
+              </div>
+
+              {/* Tabs */}
+              <div className="flex items-center gap-1.5 border-b">
+                {[
+                  {
+                    key: "new" as const,
+                    label: "New",
+                    count: results.newEntries.length,
+                    color: "text-emerald-600",
+                  },
+                  {
+                    key: "rescheduled" as const,
+                    label: "Rescheduled",
+                    count: results.rescheduled.length,
+                    color: "text-blue-600",
+                  },
+                  {
+                    key: "duplicate" as const,
+                    label: "Duplicates",
+                    count: results.duplicates.length,
+                    color: "text-amber-600",
+                  },
+                ].map((t) => (
+                  <button
+                    key={t.key}
+                    onClick={() => setActiveTab(t.key)}
+                    className={cn(
+                      "flex items-center gap-1.5 pb-2 px-3 text-xs font-medium border-b-2 transition-colors",
+                      activeTab === t.key
+                        ? "border-primary text-primary"
+                        : "border-transparent text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {t.label}{" "}
+                    <span
+                      className={cn(
+                        "tabular-nums",
+                        activeTab !== t.key && t.color,
+                      )}
+                    >
+                      ({t.count})
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              {/* Table */}
+              <div className="overflow-auto max-h-75 rounded-lg border">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10">
+                    <tr>
+                      <th className="px-2 py-1.5 text-left font-semibold">
+                        Claimant
+                      </th>
+                      <th className="px-2 py-1.5 text-left font-semibold">
+                        SSN
+                      </th>
+                      <th className="px-2 py-1.5 text-left font-semibold">
+                        Type
+                      </th>
+                      <th className="px-2 py-1.5 text-left font-semibold">
+                        Date
+                      </th>
+                      <th className="px-2 py-1.5 text-left font-semibold">
+                        Time
+                      </th>
+                      <th className="px-2 py-1.5 text-left font-semibold">
+                        ALJ
+                      </th>
+                      {activeTab === "rescheduled" && (
+                        <th className="px-2 py-1.5 text-left font-semibold">
+                          Previous Date
+                        </th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {(activeTab === "new"
+                      ? results.newEntries
+                      : activeTab === "rescheduled"
+                        ? results.rescheduled
+                        : results.duplicates
+                    ).map((entry, i) => (
+                      <tr key={i} className="hover:bg-muted/30">
+                        <td className="px-2 py-1.5 font-medium">
+                          {entry.claimant}
+                        </td>
+                        <td className="px-2 py-1.5 text-muted-foreground tabular-nums">
+                          {entry.ssn || "—"}
+                        </td>
+                        <td className="px-2 py-1.5">
+                          {entry.claimType || "—"}
+                        </td>
+                        <td className="px-2 py-1.5 tabular-nums">
+                          {entry.hearingDate}
+                        </td>
+                        <td className="px-2 py-1.5 tabular-nums">
+                          {entry.time || "—"}
+                        </td>
+                        <td className="px-2 py-1.5">{entry.alj || "—"}</td>
+                        {activeTab === "rescheduled" && "prevDate" in entry && (
+                          <td className="px-2 py-1.5 text-muted-foreground tabular-nums">
+                            {entry.prevDate}
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                    {(activeTab === "new"
+                      ? results.newEntries
+                      : activeTab === "rescheduled"
+                        ? results.rescheduled
+                        : results.duplicates
+                    ).length === 0 && (
+                      <tr>
+                        <td
+                          colSpan={7}
+                          className="py-6 text-center text-muted-foreground"
+                        >
+                          No entries in this category
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Import result */}
+              {importResult && (
+                <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800">
+                  ✅ Imported {importResult.imported} hearings
+                  {importResult.skipped > 0 &&
+                    ` (${importResult.skipped} skipped)`}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between border-t px-5 py-3 shrink-0">
+          <Button variant="outline" size="sm" onClick={onClose}>
+            Close
+          </Button>
+          {results && migrateCount > 0 && !importResult && (
+            <Button
+              size="sm"
+              className="gap-1.5"
+              disabled={importing}
+              onClick={handleImport}
+            >
+              {importing ? (
+                <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+              ) : (
+                "🚀"
+              )}
+              Migrate {migrateCount} to Hearings
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
