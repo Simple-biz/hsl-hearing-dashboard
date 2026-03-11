@@ -2,6 +2,7 @@
 // Maps all 13 roles to their allowed actions and visible columns
 
 export type UserRole =
+  | "system_admin"
   | "admin"
   | "manager"
   | "staff"
@@ -19,6 +20,7 @@ export type UserRole =
 // Pages each role can access
 export const PAGE_ACCESS: Record<string, UserRole[]> = {
   dashboard: [
+    "system_admin",
     "admin",
     "manager",
     "staff",
@@ -33,24 +35,65 @@ export const PAGE_ACCESS: Record<string, UserRole[]> = {
     "post_hearing_admin",
     "post_hearing_staff",
   ],
-  rep_dashboard: ["admin", "manager", "hearings_admin", "rep"],
-  import: ["admin", "manager", "hearings_admin"],
-  medical_records: ["admin", "manager", "mr_admin", "mr_agent", "mr_lead"],
-  patient_portal: ["admin", "manager", "mr_admin", "mr_agent", "mr_lead"],
-  rfc: ["admin", "manager", "mr_admin", "mr_agent", "mr_lead"],
-  reports: ["admin", "manager", "hearings_admin"],
-  representatives: ["admin", "manager", "hearings_admin"],
-  schedule: ["admin", "manager", "hearings_admin", "hearings_agent", "rep"],
-  admin: ["admin"],
-  api_keys: ["admin"],
-  settings: ["admin", "manager", "hearings_admin", "mr_admin", "mr_lead"],
+  rep_dashboard: ["system_admin", "admin", "manager", "hearings_admin", "rep"],
+  import: ["system_admin"],
+  medical_records: [
+    "system_admin",
+    "admin",
+    "manager",
+    "mr_admin",
+    "mr_agent",
+    "mr_lead",
+  ],
+  patient_portal: [
+    "system_admin",
+    "admin",
+    "manager",
+    "mr_admin",
+    "mr_agent",
+    "mr_lead",
+  ],
+  rfc: ["system_admin", "admin", "manager", "mr_admin", "mr_agent", "mr_lead"],
+  reports: ["system_admin", "admin", "manager", "hearings_admin"],
+  representatives: ["system_admin", "admin", "manager", "hearings_admin"],
+  schedule: [
+    "system_admin",
+    "admin",
+    "manager",
+    "hearings_admin",
+    "hearings_agent",
+    "rep",
+  ],
+  admin: ["system_admin", "admin"],
+  api_keys: ["system_admin", "admin"],
+  settings: [
+    "system_admin",
+    "admin",
+    "manager",
+    "hearings_admin",
+    "mr_admin",
+    "mr_lead",
+  ],
 };
 
 // Hearing fields each role can edit (inline editing)
 export const EDITABLE_FIELDS: Record<string, UserRole[]> = {
-  assigned_rep_id: ["admin", "manager", "hearings_admin", "hearings_agent"],
-  assignment_status: ["admin", "manager", "hearings_admin", "hearings_agent"],
+  assigned_rep_id: [
+    "system_admin",
+    "admin",
+    "manager",
+    "hearings_admin",
+    "hearings_agent",
+  ],
+  assignment_status: [
+    "system_admin",
+    "admin",
+    "manager",
+    "hearings_admin",
+    "hearings_agent",
+  ],
   task_assigned: [
+    "system_admin",
     "admin",
     "manager",
     "hearings_admin",
@@ -58,6 +101,7 @@ export const EDITABLE_FIELDS: Record<string, UserRole[]> = {
     "pre_hearing_staff",
   ],
   rep_docs_complete: [
+    "system_admin",
     "admin",
     "manager",
     "hearings_admin",
@@ -65,6 +109,7 @@ export const EDITABLE_FIELDS: Record<string, UserRole[]> = {
     "pre_hearing_staff",
   ],
   rep_docs_assigned_to: [
+    "system_admin",
     "admin",
     "manager",
     "hearings_admin",
@@ -72,6 +117,7 @@ export const EDITABLE_FIELDS: Record<string, UserRole[]> = {
     "pre_hearing_staff",
   ],
   fee_agreement_complete: [
+    "system_admin",
     "admin",
     "manager",
     "hearings_admin",
@@ -79,6 +125,7 @@ export const EDITABLE_FIELDS: Record<string, UserRole[]> = {
     "pre_hearing_staff",
   ],
   phi_sheet_complete: [
+    "system_admin",
     "admin",
     "manager",
     "hearings_admin",
@@ -86,56 +133,102 @@ export const EDITABLE_FIELDS: Record<string, UserRole[]> = {
     "pre_hearing_staff",
   ],
   five_day_notice: [
+    "system_admin",
     "admin",
     "manager",
     "hearings_admin",
     "hearings_agent",
     "pre_hearing_staff",
   ],
-  brief_assigned_to: ["admin", "manager", "hearings_admin", "brief_agent"],
-  manner_of_appearance: ["admin", "manager", "hearings_admin"],
+  brief_assigned_to: [
+    "system_admin",
+    "admin",
+    "manager",
+    "hearings_admin",
+    "brief_agent",
+  ],
+  manner_of_appearance: ["system_admin", "admin", "manager", "hearings_admin"],
   hearing_decision_status: [
+    "system_admin",
     "admin",
     "manager",
     "hearings_admin",
     "post_hearing_admin",
   ],
   medical_record_status: [
+    "system_admin",
     "admin",
     "manager",
     "mr_admin",
     "mr_agent",
     "mr_lead",
   ],
-  mr_hearing_status: ["admin", "manager", "mr_admin", "mr_agent", "mr_lead"],
-  mr_team_id: ["admin", "manager", "mr_admin", "mr_lead"],
-  medical_record_link: ["admin", "manager", "mr_admin", "mr_agent", "mr_lead"],
-  rfc_status: ["admin", "manager", "mr_admin", "mr_agent", "mr_lead"],
+  mr_hearing_status: [
+    "system_admin",
+    "admin",
+    "manager",
+    "mr_admin",
+    "mr_agent",
+    "mr_lead",
+  ],
+  mr_team_id: ["system_admin", "admin", "manager", "mr_admin", "mr_lead"],
+  medical_record_link: [
+    "system_admin",
+    "admin",
+    "manager",
+    "mr_admin",
+    "mr_agent",
+    "mr_lead",
+  ],
+  rfc_status: [
+    "system_admin",
+    "admin",
+    "manager",
+    "mr_admin",
+    "mr_agent",
+    "mr_lead",
+  ],
   post_hrg_deadline: [
+    "system_admin",
     "admin",
     "manager",
     "post_hearing_admin",
     "post_hearing_staff",
   ],
   post_hrg_notes: [
+    "system_admin",
     "admin",
     "manager",
     "post_hearing_admin",
     "post_hearing_staff",
   ],
   post_hrg_review: [
+    "system_admin",
     "admin",
     "manager",
     "post_hearing_admin",
     "post_hearing_staff",
   ],
-  moa: ["admin", "manager", "post_hearing_admin", "post_hearing_staff"],
-  five_day: ["admin", "manager", "post_hearing_admin", "post_hearing_staff"],
-  credited: ["admin", "manager", "post_hearing_admin"],
+  moa: [
+    "system_admin",
+    "admin",
+    "manager",
+    "post_hearing_admin",
+    "post_hearing_staff",
+  ],
+  five_day: [
+    "system_admin",
+    "admin",
+    "manager",
+    "post_hearing_admin",
+    "post_hearing_staff",
+  ],
+  credited: ["system_admin", "admin", "manager", "post_hearing_admin"],
 };
 
 // Columns visible per role on the main dashboard
 export const VISIBLE_COLUMNS: Record<UserRole, string[]> = {
+  system_admin: ["ALL"],
   admin: ["ALL"],
   manager: ["ALL"],
   hearings_admin: ["ALL"],
@@ -277,9 +370,9 @@ export function getVisibleColumns(role: UserRole): string[] {
 }
 
 export function isAdmin(role: UserRole): boolean {
-  return role === "admin";
+  return role === "system_admin" || role === "admin";
 }
 
 export function isAdminOrManager(role: UserRole): boolean {
-  return role === "admin" || role === "manager";
+  return role === "system_admin" || role === "admin" || role === "manager";
 }
