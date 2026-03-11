@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useEffect, useTransition, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { AppHeader } from "@/components/layout/app-header";
 import {
   RefreshCw, Download, ChevronDown, ChevronRight, Loader2,
-  Bell, BarChart3, FileText, ClipboardList, Users, AlertTriangle,
+  Bell, BarChart3, FileText, ClipboardList, Users, AlertTriangle, MonitorSmartphone,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -493,6 +494,7 @@ function HearingRow({
 // ─── Main Client Component ────────────────────────────────────────────────────
 
 export function MrPivotClient(data: MrPivotPageData) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
   // ── Hearings state ───────────────────────────────────────────────────────
@@ -763,6 +765,10 @@ export function MrPivotClient(data: MrPivotPageData) {
                   <FileText size={12} />Post HRG ({data.postHrgCount})
                 </button>
               )}
+              <button onClick={() => router.push("/patient-portal")}
+                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors">
+                <MonitorSmartphone size={12} />Patient Portal
+              </button>
               <button onClick={() => setShowActivityLog(true)}
                 className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground transition-colors">
                 <ClipboardList size={12} />Activity Log
