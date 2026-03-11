@@ -1,6 +1,6 @@
 import { requireAuth } from "@/lib/session";
 import { getMrPivotPageData } from "./action";
-import { MrPivotClient } from "./mr-pivot";
+import { MrPivotClient } from "./medical-records-client";
 
 export default async function MedicalRecordsPage() {
   await requireAuth();

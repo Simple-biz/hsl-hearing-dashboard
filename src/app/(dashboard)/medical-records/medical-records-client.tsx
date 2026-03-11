@@ -884,10 +884,9 @@ export function MrPivotClient(data: MrPivotPageData) {
         open={showTeamStats}
         onClose={() => setShowTeamStats(false)}
       />
-      <ActivityLogModal
-        open={showActivityLog}
-        onClose={() => setShowActivityLog(false)}
-      />
+    {showActivityLog && (
+        <ActivityLogModal onClose={() => setShowActivityLog(false)} />
+    )}
     </>
   );
 }
