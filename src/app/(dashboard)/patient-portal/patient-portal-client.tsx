@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  useState, useEffect, useTransition, useCallback, useRef,
+  useState, useEffect, useTransition, useCallback, useRef, type ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
 import { AppHeader } from "@/components/layout/app-header";
@@ -67,7 +67,7 @@ function StatCard({ label, value, bg }: { label: string; value: number; bg: stri
   return (
     <div className={cn("relative overflow-hidden rounded-xl px-4 py-3 text-white flex flex-col gap-1", bg)}>
       <div className="pointer-events-none absolute -right-4 -top-4 w-20 h-20 rounded-full bg-white/10" />
-      <div className="pointer-events-none absolute -right-2 bottom-[-12px] w-14 h-14 rounded-full bg-white/10" />
+      <div className="pointer-events-none absolute -right-2 bottom-3 w-14 h-14 rounded-full bg-white/10" />
       <p className="relative text-[10px] font-semibold uppercase tracking-widest opacity-80">{label}</p>
       <p className="relative text-2xl font-bold tabular-nums leading-none">{value}</p>
     </div>
@@ -88,19 +88,18 @@ function NotesModal({
   onClose: () => void;
   onNoteAdded?: () => void;
 }) {
-  const [notes, setNotes] = useState<PortalNote[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [newNote, setNewNote] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [notes, setNotes]       = useState<PortalNote[]>([]);
+  const [notesLoading, startNotesTransition] = useTransition();
+  const [newNote, setNewNote]   = useState("");
+  const [saving, setSaving]     = useState(false);
 
   const FIELD_LABELS = { username: "Username Notes", password: "Password Notes", approved: "Approval Notes" };
 
   useEffect(() => {
     if (!open) return;
-    setLoading(true);
-    getPortalNotes(entryId, field).then((r) => {
+    startNotesTransition(async () => {
+      const r = await getPortalNotes(entryId, field);
       setNotes(r.notes ?? []);
-      setLoading(false);
     });
   }, [open, entryId, field]);
 
@@ -109,11 +108,7 @@ function NotesModal({
     setSaving(true);
     const r = await addPortalNote(entryId, field, newNote.trim());
     if (r.success) {
-      setNotes([{
-        user: "You",
-        date: new Date().toISOString(),
-        note: newNote.trim() 
-      }, ...notes]);
+      setNotes([{ user: "You", date: new Date().toISOString(), note: newNote.trim() }, ...notes]);
       setNewNote("");
       onNoteAdded?.();
     }
@@ -123,7 +118,7 @@ function NotesModal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
       <div className="w-full max-w-md flex flex-col rounded-xl border bg-card shadow-2xl max-h-[80vh] overflow-hidden"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b bg-muted/50 px-4 py-3 shrink-0">
@@ -158,7 +153,7 @@ function NotesModal({
             <p className="text-[11px] font-semibold text-muted-foreground mb-2">
               Notes History <span className="font-normal">({notes.length})</span>
             </p>
-            {loading ? (
+            {notesLoading ? (
               <div className="flex items-center justify-center py-8"><Loader2 size={20} className="animate-spin text-muted-foreground" /></div>
             ) : notes.length === 0 ? (
               <p className="text-xs text-center text-muted-foreground py-6 italic">No notes yet.</p>
@@ -172,7 +167,7 @@ function NotesModal({
                         {new Date(n.date).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
                       </span>
                     </div>
-                    <p className="text-xs text-foreground whitespace-pre-wrap break-words">{n.note}</p>
+                    <p className="text-xs text-foreground whitespace-pre-wrap wrap-break-word">{n.note}</p>
                   </div>
                 ))}
               </div>
@@ -203,9 +198,10 @@ function LinkModal({
   const [url, setUrl] = useState(currentUrl);
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => { if (open) setUrl(currentUrl); }, [open, currentUrl]);
+  // Note: parent passes key={id+field} so this component remounts on each new link,
+  // resetting url from currentUrl automatically — no useEffect needed.
 
-  async function handleSave() {
+  const handleSave = async () => {
     setSaving(true);
     const r = await updatePortalField(id, field, url);
     setSaving(false);
@@ -215,7 +211,7 @@ function LinkModal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-70 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
       <div className="w-full max-w-sm rounded-xl border bg-card shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b bg-muted/50 px-4 py-3">
           <h3 className="text-sm font-semibold">🔗 {title}</h3>
@@ -260,16 +256,16 @@ function AddEditModal({
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState("");
   const [form, setForm]     = useState<EntryForm>({
-    entry_date: entry?.entry_date    ?? new Date().toISOString().slice(0, 10),
-    hearing_date: entry?.hearing_date  ?? "",
-    client_name: entry?.client_name   ?? "",
-    provider: entry?.provider      ?? "",
-    mycase_link: entry?.mycase_link   ?? "",
-    portal_link: entry?.portal_link   ?? "",
+    entry_date:      entry?.entry_date    ?? new Date().toISOString().slice(0, 10),
+    hearing_date:    entry?.hearing_date  ?? "",
+    client_name:     entry?.client_name   ?? "",
+    provider:        entry?.provider      ?? "",
+    mycase_link:     entry?.mycase_link   ?? "",
+    portal_link:     entry?.portal_link   ?? "",
     portal_username: entry?.portal_username ?? "",
     portal_password: entry?.portal_password ?? "",
-    got_mr: entry?.got_mr        ?? false,
-    approved_by_tl: entry?.approved_by_tl ?? false,
+    got_mr:          entry?.got_mr        ?? false,
+    approved_by_tl:  entry?.approved_by_tl ?? false,
   });
 
   const set = (k: keyof EntryForm, v: string | boolean) => setForm((p) => ({ ...p, [k]: v }));
@@ -366,29 +362,28 @@ function AddEditModal({
 // ─── Activity Log Modal ───────────────────────────────────────────────────────
 
 function ActivityLogModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [entries, setEntries] = useState<PortalActivityEntry[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(false);
+  const [entries, setEntries]     = useState<PortalActivityEntry[]>([]);
+  const [total, setTotal]         = useState(0);
+  const [page, setPage]           = useState(1);
+  const [actLoading, startActTransition] = useTransition();
   const [dateRange, setDateRange] = useState<"all" | "today" | "week" | "month">("all");
-  const [userId, setUserId] = useState("");
-  const [users, setUsers] = useState<Array<{ id: number; full_name: string }>>([]);
+  const [userId, setUserId]       = useState("");
+  const [users, setUsers]         = useState<Array<{ id: number; full_name: string }>>([]);
   const totalPages = Math.max(1, Math.ceil(total / 50));
+
+  const load = useCallback((p: number, dr: string, uid: string) => {
+    startActTransition(async () => {
+      const r = await getPortalActivityLog({ page: p, date_range: dr as "all", user_id: uid || undefined });
+      setEntries(r.entries);
+      setTotal(r.total);
+    });
+  }, []);
 
   useEffect(() => {
     if (!open) return;
     getPortalActivityUsers().then((u) => setUsers(u));
     load(1, dateRange, userId);
-  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  function load(p: number, dr: string, uid: string) {
-    setLoading(true);
-    getPortalActivityLog({ page: p, date_range: dr as "all", user_id: uid || undefined }).then((r) => {
-      setEntries(r.entries);
-      setTotal(r.total);
-      setLoading(false);
-    });
-  }
+  }, [open, load]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!open) return null;
 
@@ -416,7 +411,7 @@ function ActivityLogModal({ open, onClose }: { open: boolean; onClose: () => voi
           <span className="ml-auto text-xs text-muted-foreground">{total} entries</span>
         </div>
         <div className="flex-1 overflow-y-auto px-5 py-3">
-          {loading ? (
+          {actLoading ? (
             <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
           ) : entries.length === 0 ? (
             <p className="text-center text-sm text-muted-foreground py-12">No activity found.</p>
@@ -442,17 +437,31 @@ function ActivityLogModal({ open, onClose }: { open: boolean; onClose: () => voi
         <div className="flex items-center justify-between border-t px-5 py-2.5 shrink-0">
           <span className="text-xs text-muted-foreground">Page {page} of {totalPages}</span>
           <div className="flex gap-1">
-            <button disabled={page <= 1 || loading} onClick={() => { const p = page - 1; setPage(p); load(p, dateRange, userId); }}
+            <button disabled={page <= 1 || actLoading} onClick={() => { const p = page - 1; setPage(p); load(p, dateRange, userId); }}
               className="h-7 w-7 flex items-center justify-center rounded border disabled:opacity-40 hover:bg-muted">
               <ChevronLeft className="h-3.5 w-3.5" />
             </button>
-            <button disabled={page >= totalPages || loading} onClick={() => { const p = page + 1; setPage(p); load(p, dateRange, userId); }}
+            <button disabled={page >= totalPages || actLoading} onClick={() => { const p = page + 1; setPage(p); load(p, dateRange, userId); }}
               className="h-7 w-7 flex items-center justify-center rounded border disabled:opacity-40 hover:bg-muted">
               <ChevronRight className="h-3.5 w-3.5" />
             </button>
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Detail Row (module-level — must NOT be defined inside a component) ─────────
+
+const DETAIL_LABEL_CLS = "text-[10px] uppercase font-semibold text-muted-foreground tracking-wider";
+const DETAIL_VALUE_CLS = "text-xs font-medium text-foreground";
+
+function DetailRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex items-start gap-4 py-1.5 border-b border-border/40 last:border-0">
+      <span className={cn(DETAIL_LABEL_CLS, "w-32 shrink-0 pt-0.5")}>{label}</span>
+      <span className={DETAIL_VALUE_CLS}>{children}</span>
     </div>
   );
 }
@@ -468,30 +477,17 @@ function ViewDetailsModal({
 }) {
   const [tab, setTab] = useState<"info" | "activity">("info");
   const [activities, setActivities] = useState<PortalActivityEntry[]>([]);
-  const [loadingAct, setLoadingAct] = useState(false);
+  const [loadingAct, startActTab] = useTransition();
 
   useEffect(() => {
     if (!entry || tab !== "activity") return;
-    setLoadingAct(true);
-    getPortalActivityLog({ page: 1 }).then((r) => {
+    startActTab(async () => {
+      const r = await getPortalActivityLog({ page: 1 });
       setActivities(r.entries);
-      setLoadingAct(false);
     });
   }, [entry, tab]);
 
   if (!entry) return null;
-
-  const labelCls = "text-[10px] uppercase font-semibold text-muted-foreground tracking-wider";
-  const valueCls = "text-xs font-medium text-foreground";
-
-  function Row({ label, children }: { label: string; children: React.ReactNode }) {
-    return (
-      <div className="flex items-start gap-4 py-1.5 border-b border-border/40 last:border-0">
-        <span className={cn(labelCls, "w-32 shrink-0 pt-0.5")}>{label}</span>
-        <span className={valueCls}>{children}</span>
-      </div>
-    );
-  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
@@ -517,27 +513,27 @@ function ViewDetailsModal({
             <div className="grid grid-cols-2 gap-6">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">📅 Dates</p>
-                <Row label="Entry Date">{fmtDate(entry.entry_date)}</Row>
-                <Row label="Hearing Date">{fmtDate(entry.hearing_date)}</Row>
-                <Row label="Specialist">
+                <DetailRow label="Entry Date">{fmtDate(entry.entry_date)}</DetailRow>
+                <DetailRow label="Hearing Date">{fmtDate(entry.hearing_date)}</DetailRow>
+                <DetailRow label="Specialist">
                   {entry.specialist_name
                     ? <span className="px-2 py-0.5 rounded text-[10px] font-medium" style={specStyle(entry.specialist_color)}>{entry.specialist_name}</span>
                     : "—"}
-                </Row>
+                </DetailRow>
               </div>
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">🏥 Provider</p>
-                <Row label="Provider">{entry.provider ?? "—"}</Row>
-                <Row label="MyCase Link">
+                <DetailRow label="Provider">{entry.provider ?? "—"}</DetailRow>
+                <DetailRow label="MyCase Link">
                   {entry.mycase_link ? <a href={entry.mycase_link} target="_blank" rel="noreferrer" className="text-primary hover:underline flex items-center gap-1"><ExternalLink size={10} />Open Link</a> : "—"}
-                </Row>
-                <Row label="Portal Link">
+                </DetailRow>
+                <DetailRow label="Portal Link">
                   {entry.portal_link ? <a href={entry.portal_link} target="_blank" rel="noreferrer" className="text-primary hover:underline flex items-center gap-1"><ExternalLink size={10} />Open Link</a> : "—"}
-                </Row>
+                </DetailRow>
               </div>
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">🔐 Credentials</p>
-                <Row label="Username">
+                <DetailRow label="Username">
                   <span className="flex items-center gap-1.5">
                     {entry.portal_username ?? "—"}
                     {entry.portal_username && (
@@ -546,8 +542,8 @@ function ViewDetailsModal({
                       </button>
                     )}
                   </span>
-                </Row>
-                <Row label="Password">
+                </DetailRow>
+                <DetailRow label="Password">
                   <span className="flex items-center gap-1.5">
                     {entry.portal_password ?? "—"}
                     {entry.portal_password && (
@@ -556,18 +552,18 @@ function ViewDetailsModal({
                       </button>
                     )}
                   </span>
-                </Row>
+                </DetailRow>
               </div>
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">✅ Status</p>
-                <Row label="Got MR?">
+                <DetailRow label="Got MR?">
                   <span className={cn("px-2 py-0.5 rounded text-[10px] font-medium", entry.got_mr ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700")}>
                     {entry.got_mr ? "✅ Yes" : "⏳ No"}
                   </span>
-                </Row>
-                <Row label="Approved by TL">
+                </DetailRow>
+                <DetailRow label="Approved by TL">
                   {entry.approved_by_tl ? <span className="text-blue-500 font-bold">✓ Yes</span> : <span className="text-muted-foreground">No</span>}
-                </Row>
+                </DetailRow>
               </div>
             </div>
           )}
@@ -647,7 +643,7 @@ function PortalRow({
       <td className="px-2 py-1.5 whitespace-nowrap">
         {canAssignSpecialist
           ? <select value={entry.mr_specialist_id ?? ""}
-              className="text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer min-w-[120px]"
+              className="text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer min-w-30"
               style={specColor ? specStyle(specColor) : { backgroundColor: "#f3f4f6", color: "#374151" }}
               onChange={(e) => onUpdate(entry.id, "mr_specialist_id", e.target.value ? Number(e.target.value) : null)}>
               <option value="">— Select —</option>
@@ -755,7 +751,7 @@ function PortalRow({
       <td className="px-2 py-1.5 whitespace-nowrap">
         {canEdit
           ? <select value={entry.got_mr ? "1" : "0"}
-              className={cn("text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer font-medium min-w-[60px]",
+              className={cn("text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer font-medium min-w-15",
                 entry.got_mr ? "bg-emerald-100 text-emerald-700" : "bg-red-50 text-red-600")}
               onChange={(e) => onUpdate(entry.id, "got_mr", e.target.value === "1")}>
               <option value="0">No</option>
@@ -843,24 +839,24 @@ export function PatientPortalClient(data: PortalPageData) {
 
   useEffect(() => { load(filters); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function applyFilter(patch: Partial<PortalFilters>) {
+  const applyFilter = (patch: Partial<PortalFilters>) => {
     const next = { ...filters, ...patch, page: 1 };
     setFilters(next);
     load(next);
-  }
+  };
 
-  function goPage(p: number) {
+  const goPage = (p: number) => {
     const next = { ...filters, page: p };
     setFilters(next);
     load(next);
-  }
+  };
 
-  function handleUpdate(id: number, field: string, value: unknown) {
+  const handleUpdate = (id: number, field: string, value: unknown) => {
     updatePortalField(id, field, value as string | number | boolean | null);
     setEntries((prev) => prev.map((e) => e.id === id ? { ...e, [field]: value } : e));
-  }
+  };
 
-  async function handleDelete(id: number) {
+  const handleDelete = async (id: number) => {
     if (!confirm("Delete this portal entry?")) return;
     const r = await deletePortalEntry(id);
     if (r.success) {
@@ -868,11 +864,11 @@ export function PatientPortalClient(data: PortalPageData) {
       setTotal((t) => t - 1);
       setStats((s) => ({ ...s, total: s.total - 1 }));
     }
-  }
+  };
 
-  function handleLinkSaved(id: number, field: string, url: string) {
+  const handleLinkSaved = (id: number, field: string, url: string) => {
     setEntries((prev) => prev.map((e) => e.id === id ? { ...e, [field]: url || null } : e));
-  }
+  };
 
   const curPage = filters.page ?? 1;
   const perPage = filters.per_page as number;
@@ -882,7 +878,7 @@ export function PatientPortalClient(data: PortalPageData) {
     <>
       <AppHeader title="Patient Portal" subtitle="Medical Records Patient Portal Tracking" />
 
-      <div className="max-w-[1900px] mx-auto px-6 py-6 space-y-5">
+      <div className="max-w-475 mx-auto px-6 py-6 space-y-5">
 
         {/* ── Stat Cards ─────────────────────────────────────────────────── */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -898,7 +894,7 @@ export function PatientPortalClient(data: PortalPageData) {
           {/* Filter Bar */}
           <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2.5 shrink-0">
             <input type="text" placeholder="🔍 Search client or provider…" value={filters.search}
-              className="text-xs px-3 py-1.5 rounded-lg border border-border bg-muted text-foreground focus:outline-none focus:border-primary min-w-[200px]"
+              className="text-xs px-3 py-1.5 rounded-lg border border-border bg-muted text-foreground focus:outline-none focus:border-primary min-w-50"
               onChange={(e) => {
                 const v = e.target.value;
                 setFilters((p) => ({ ...p, search: v }));
@@ -957,18 +953,18 @@ export function PatientPortalClient(data: PortalPageData) {
               <div className="flex gap-0 px-2 py-2.5">
                 {COLS.map((c) => (
                   <div key={c} className={cn("shrink-0 px-1",
-                    c === "Date"             ? "w-[100px]" :
-                    c === "Hearing Date"     ? "w-[100px]" :
-                    c === "MR Specialist"    ? "w-[130px]" :
-                    c === "Client Name"      ? "w-[155px]" :
-                    c === "Provider"         ? "w-[120px]" :
-                    c === "MyCase"           ? "w-[75px]"  :
-                    c === "Portal Link"      ? "w-[75px]"  :
-                    c === "Username"         ? "w-[155px]" :
-                    c === "Password"         ? "w-[140px]" :
-                    c === "Got MR?"          ? "w-[70px]"  :
-                    c === "Approved TL"      ? "w-[90px]"  :
-                    "w-[70px]")}>{c}</div>
+                    c === "Date"             ? "w-25" :
+                    c === "Hearing Date"     ? "w-25" :
+                    c === "MR Specialist"    ? "w-32.5" :
+                    c === "Client Name"      ? "w-38.75" :
+                    c === "Provider"         ? "w-30" :
+                    c === "MyCase"           ? "w-18.75"  :
+                    c === "Portal Link"      ? "w-18.75"  :
+                    c === "Username"         ? "w-38.75" :
+                    c === "Password"         ? "w-35" :
+                    c === "Got MR?"          ? "w-17.5"  :
+                    c === "Approved TL"      ? "w-22.5"  :
+                    "w-17.5")}>{c}</div>
                 ))}
               </div>
             </div>
@@ -1032,6 +1028,7 @@ export function PatientPortalClient(data: PortalPageData) {
       )}
 
       <NotesModal
+        key={`notes-${notesState.id}-${notesState.field}`}
         open={notesState.open}
         entryId={notesState.id}
         field={notesState.field}
@@ -1042,6 +1039,7 @@ export function PatientPortalClient(data: PortalPageData) {
       />
 
       <LinkModal
+        key={`link-${linkState.id}-${linkState.field}`}
         open={linkState.open}
         id={linkState.id}
         field={linkState.field}
