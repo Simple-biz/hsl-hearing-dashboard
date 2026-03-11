@@ -1,5 +1,4 @@
-// import type { NextAuthOptions, User } from "next-auth";
-import type { NextAuthOptions } from "next-auth";
+import type { NextAuthOptions, User } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { compare } from "bcryptjs";
 import { db } from "@/lib/db";
@@ -85,15 +84,17 @@ export const authOptions: NextAuthOptions = {
         token.role = user.role;
         token.forcePasswordChange = user.forcePasswordChange;
       }
-      // Always refresh forcePasswordChange from DB (it can change mid-session)
+      // Always refresh role and forcePasswordChange from DB (can change mid-session)
       if (token.id) {
         try {
           const { rows } = await db.query(
-            "SELECT force_password_change FROM users WHERE id=$1",
+            "SELECT role, force_password_change FROM users WHERE id=$1",
             [token.id],
           );
-          if (rows[0])
+          if (rows[0]) {
+            token.role = rows[0].role;
             token.forcePasswordChange = rows[0].force_password_change;
+          }
         } catch {}
       }
       return token;
