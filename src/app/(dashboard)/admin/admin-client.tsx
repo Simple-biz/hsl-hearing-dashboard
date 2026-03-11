@@ -19,8 +19,8 @@ import {
   Eye,
   EyeOff,
   Dice5,
-  Shield,
-  KeyRound,
+  // Shield,
+  // KeyRound,
   Users,
   Activity,
 } from "lucide-react";
@@ -40,7 +40,6 @@ import type { AdminUser } from "./actions";
 import type { UserRole } from "@/lib/roles";
 
 const ALL_ROLES = [
-  { value: "system_admin", label: "System Admin", group: "Administration" },
   { value: "admin", label: "Administrator", group: "Administration" },
   { value: "manager", label: "Manager", group: "Administration" },
   { value: "hearings_admin", label: "Hearings Admin", group: "Hearings" },
@@ -172,8 +171,9 @@ function UsersTab({
   const [showResetModal, setShowResetModal] = useState<AdminUser | null>(null);
   const [editing, setEditing] = useState<AdminUser | null>(null);
 
-  const active = users.filter((u) => u.is_active);
-  const inactive = users.filter((u) => !u.is_active);
+  const visible = users.filter((u) => u.role !== "system_admin");
+  const active = visible.filter((u) => u.is_active);
+  const inactive = visible.filter((u) => !u.is_active);
   const filtered = [...active, ...inactive].filter(
     (u) =>
       !search ||
@@ -185,31 +185,19 @@ function UsersTab({
     <div className="space-y-4">
       <StatCardGrid className="grid-cols-3">
         <StatCard
-          variant="icon"
           label="Total Users"
-          value={users.length}
-          icon={Users}
-          iconColor="text-primary"
-          iconBg="bg-primary/10"
-          cardBg="bg-primary/5 dark:bg-primary/10"
+          value={visible.length}
+          gradient="from-indigo-500 to-purple-600"
         />
         <StatCard
-          variant="icon"
           label="Active"
           value={active.length}
-          icon={Shield}
-          iconColor="text-emerald-600"
-          iconBg="bg-emerald-500/10"
-          cardBg="bg-emerald-50 dark:bg-emerald-950/30"
+          gradient="from-emerald-500 to-green-400"
         />
         <StatCard
-          variant="icon"
           label="Inactive"
           value={inactive.length}
-          icon={KeyRound}
-          iconColor="text-zinc-500"
-          iconBg="bg-zinc-500/10"
-          cardBg="bg-zinc-50 dark:bg-zinc-900/50"
+          gradient="from-zinc-400 to-zinc-500"
         />
       </StatCardGrid>
 
