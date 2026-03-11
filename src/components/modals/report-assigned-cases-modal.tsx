@@ -51,8 +51,8 @@ function deriveRepMonthly(
       const [, abbr, yr] = match;
       const mm = MONTH_ABBR[abbr] ?? "01";
       return {
-        raw:   m.month,
-        code:  `${yr}-${mm}`,
+        raw: m.month,
+        code: `${yr}-${mm}`,
         label: `${MONTH_FULL[abbr] ?? abbr} 20${yr}`,
         total: m.count,
       };
@@ -153,12 +153,12 @@ export function ReportAssignedCasesModal({
     });
   }, []);
 
-  const expandAll   = () => setCollapsed(new Set());
+  const expandAll = () => setCollapsed(new Set());
   const collapseAll = () => setCollapsed(new Set(repData.map((r) => r.name)));
 
   if (!open) return null;
 
-  const sorted     = [...repData].sort((a, b) => a.name.localeCompare(b.name));
+  const sorted = [...repData].sort((a, b) => a.name.localeCompare(b.name));
   const grandTotal = sorted.reduce((s, r) => s + r.total, 0);
 
   return (

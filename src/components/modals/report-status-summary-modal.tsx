@@ -51,8 +51,8 @@ export function ReportStatusSummaryModal({
 
   if (!open) return null;
 
-  const total    = hearingStatus.reduce((s, h) => s + h.count, 0);
-  const sorted   = [...hearingStatus].sort((a, b) => b.count - a.count);
+  const total = hearingStatus.reduce((s, h) => s + h.count, 0);
+  const sorted = [...hearingStatus].sort((a, b) => b.count - a.count);
 
   return (
     <div

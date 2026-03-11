@@ -27,10 +27,10 @@ import type {
   ReportsData,
   ReportsFilters,
 } from "./action";
-import { ReportMonthlyDetailsModal  } from "@/components/modals/report-monthly-details-modal";
-import { ReportStatusSummaryModal   } from "@/components/modals/report-status-summary-modal";
-import { ReportAssignedCasesModal   } from "@/components/modals/report-assigned-cases-modal";
-import { ReportMatrixModal          } from "@/components/modals/report-matrix-modal";
+import { ReportMonthlyDetailsModal } from "@/components/modals/report-monthly-details-modal";
+import { ReportStatusSummaryModal } from "@/components/modals/report-status-summary-modal";
+import { ReportAssignedCasesModal } from "@/components/modals/report-assigned-cases-modal";
+import { ReportMatrixModal } from "@/components/modals/report-matrix-modal";
 
 Chart.register(...registerables, ChartDataLabels);
 
@@ -86,15 +86,15 @@ export interface MonthlyTrendChartHandle {
 const MonthlyTrendChart = forwardRef<MonthlyTrendChartHandle, { monthly: MonthlyTrend[] }>(
   function MonthlyTrendChart({ monthly }, ref) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const chartRef  = useRef<Chart | null>(null);
+  const chartRef = useRef<Chart | null>(null);
 
   useImperativeHandle(ref, () => ({
     exportChart() {
       const chart = chartRef.current;
       if (!chart) return;
-      const link     = document.createElement("a");
-      link.download  = `monthly-trend-${new Date().toISOString().slice(0, 10)}.png`;
-      link.href      = chart.toBase64Image();
+      const link = document.createElement("a");
+      link.download = `monthly-trend-${new Date().toISOString().slice(0, 10)}.png`;
+      link.href = chart.toBase64Image();
       link.click();
     },
   }));
@@ -353,9 +353,9 @@ function exportRepMatrixCsv(repStatusRows: RepStatusRow[]) {
   );
   const csv = [header, ...rows].join("\n");
   const blob = new Blob([csv], { type: "text/csv" });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement("a");
-  a.href     = url;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
   a.download = `rep-status-matrix-${new Date().toISOString().slice(0, 10)}.csv`;
   a.click();
   URL.revokeObjectURL(url);
@@ -368,7 +368,7 @@ function computeWinRate(statCards: StatCard[]): string {
     const card = statCards.find((c) => c.label === label);
     return parseInt((card?.value ?? "0").replace(/,/g, ""), 10);
   };
-  const fav   = parse("Favorable");
+  const fav = parse("Favorable");
   const unfav = parse("Unfavorable");
   const denom = fav + unfav;
   if (denom === 0) return "—";
@@ -382,21 +382,21 @@ type Props = Omit<ReportsData, never>; // all fields from ReportsData
 // ─── Client Component ─────────────────────────────────────────────────────────
 
 export function ReportsClient({
-  monthly:       initialMonthly,
+  monthly: initialMonthly,
   hearingStatus: initialHearingStatus,
-  assignedReps:  initialAssignedReps,
+  assignedReps: initialAssignedReps,
   repStatusRows: initialRepStatusRows,
-  statCards:     initialStatCards,
+  statCards: initialStatCards,
   allMonths,
   allReps,
 }: Props) {
   // ── Data state (updated on Apply / Reset) ──────────────────────────────────
   const [data, setData] = useState<ReportsData>({
-    monthly:       initialMonthly,
+    monthly: initialMonthly,
     hearingStatus: initialHearingStatus,
-    assignedReps:  initialAssignedReps,
+    assignedReps: initialAssignedReps,
     repStatusRows: initialRepStatusRows,
-    statCards:     initialStatCards,
+    statCards: initialStatCards,
     allMonths,
     allReps,
   });
@@ -410,10 +410,10 @@ export function ReportsClient({
   const [isPending, startTransition] = useTransition();
 
   // ── Modal open state ────────────────────────────────────────────────────────
-  const [monthlyModalOpen,  setMonthlyModalOpen]  = useState(false);
-  const [statusModalOpen,   setStatusModalOpen]   = useState(false);
+  const [monthlyModalOpen, setMonthlyModalOpen]  = useState(false);
+  const [statusModalOpen, setStatusModalOpen]   = useState(false);
   const [assignedModalOpen, setAssignedModalOpen] = useState(false);
-  const [matrixModalOpen,   setMatrixModalOpen]   = useState(false);
+  const [matrixModalOpen, setMatrixModalOpen] = useState(false);
 
   // ── Monthly chart ref  ──────────────────────────────────────────────────────
   const monthlyChartRef = useRef<MonthlyTrendChartHandle>(null);
@@ -425,7 +425,7 @@ export function ReportsClient({
 
   // ── Derived values ──────────────────────────────────────────────────────────
   const maxHearings = Math.max(1, ...data.assignedReps.map((r) => r.hearings));
-  const winRate     = computeWinRate(data.statCards);
+  const winRate = computeWinRate(data.statCards);
 
   // ── Handlers ────────────────────────────────────────────────────────────────
 
@@ -740,14 +740,14 @@ export function ReportsClient({
                       className="border-b border-border/50 hover:bg-muted/50 transition-colors"
                     >
                       {STATUS_COLS.map((col) => {
-                        const val     = row[col as keyof RepStatusRow];
-                        const isRep   = col === "rep";
+                        const val = row[col as keyof RepStatusRow];
+                        const isRep = col === "rep";
                         const isTotal = col === "Total";
-                        const numVal  = typeof val === "number" ? val : 0;
-                        const isFav   = col === "Favorable"   && numVal > 0;
+                        const numVal = typeof val === "number" ? val : 0;
+                        const isFav = col === "Favorable"   && numVal > 0;
                         const isUnfav = col === "Unfavorable" && numVal > 0;
-                        const isHigh  = !isRep && !isTotal && numVal >= 50;
-                        const isMed   = !isRep && !isTotal && numVal >= 15 && numVal < 50;
+                        const isHigh = !isRep && !isTotal && numVal >= 50;
+                        const isMed = !isRep && !isTotal && numVal >= 15 && numVal < 50;
 
                         return (
                           <td

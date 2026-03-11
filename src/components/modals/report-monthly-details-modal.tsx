@@ -54,9 +54,9 @@ export function ReportMonthlyDetailsModal({
 
   if (!open) return null;
 
-  const grandTotal   = monthly.reduce((s, m) => s + m.count, 0);
-  const grandFav     = monthly.reduce((s, m) => s + m.favorable, 0);
-  const grandUnfav   = monthly.reduce((s, m) => s + m.unfavorable, 0);
+  const grandTotal = monthly.reduce((s, m) => s + m.count, 0);
+  const grandFav = monthly.reduce((s, m) => s + m.favorable, 0);
+  const grandUnfav = monthly.reduce((s, m) => s + m.unfavorable, 0);
 
   return (
     <div
