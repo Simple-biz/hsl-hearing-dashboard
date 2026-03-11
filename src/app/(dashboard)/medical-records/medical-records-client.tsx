@@ -82,9 +82,12 @@ const HRG_STATUS_CLS: Record<string, string> = {
 
 function SummaryCard({ label, value, bg, onClick }: { label: string; value: number | string; bg: string; onClick?: () => void }) {
   return (
-    <div onClick={onClick} className={cn("rounded-xl px-4 py-3 text-white flex flex-col gap-1", bg, onClick && "cursor-pointer hover:opacity-90 transition-opacity")}>
-      <p className="text-[10px] font-semibold uppercase tracking-widest opacity-80">{label}</p>
-      <p className="text-2xl font-bold tabular-nums leading-none">{value}</p>
+    <div onClick={onClick} className={cn("relative overflow-hidden rounded-xl px-4 py-3 text-white flex flex-col gap-1", bg, onClick && "cursor-pointer hover:opacity-90 transition-opacity")}>
+      {/* Decorative circles — matches StatCard solid variant */}
+      <div className="pointer-events-none absolute -right-4 -top-4 w-20 h-20 rounded-full bg-white/10" />
+      <div className="pointer-events-none absolute -right-2 bottom-[-12px] w-14 h-14 rounded-full bg-white/10" />
+      <p className="relative text-[10px] font-semibold uppercase tracking-widest opacity-80">{label}</p>
+      <p className="relative text-2xl font-bold tabular-nums leading-none">{value}</p>
     </div>
   );
 }
@@ -92,31 +95,32 @@ function SummaryCard({ label, value, bg, onClick }: { label: string; value: numb
 // ─── Assignment Card (No Specialist / No Task) ────────────────────────────────
 
 function AssignmentCard({
-  title, count, nextHearing, color,
+  title, count, nextHearing, bg,
 }: {
   title: string;
   count: number;
   nextHearing: { claimant: string; hearing_date: string } | null;
-  color: string;
+  bg: string;
 }) {
   return (
-    <div className="bg-card border border-border rounded-xl p-3 flex-1 min-w-[180px]">
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-xs font-semibold text-muted-foreground">{title}</span>
-        <span className={cn("text-lg font-bold tabular-nums", color)}>{count}</span>
-      </div>
-      <div className="text-[10px] text-muted-foreground">
+    <div className={cn("relative overflow-hidden rounded-xl px-4 py-3 text-white flex flex-col gap-1", bg)}>
+      {/* Decorative circles */}
+      <div className="pointer-events-none absolute -right-4 -top-4 w-20 h-20 rounded-full bg-white/10" />
+      <div className="pointer-events-none absolute -right-2 bottom-[-12px] w-14 h-14 rounded-full bg-white/10" />
+      <p className="relative text-[10px] font-semibold uppercase tracking-widest opacity-80">{title}</p>
+      <p className="relative text-2xl font-bold tabular-nums leading-none">{count}</p>
+      <div className="relative text-[10px] opacity-75 mt-0.5">
         {nextHearing ? (
           <>
             <span className="mr-1">📅</span>
-            <span className="font-medium text-foreground">
+            <span className="font-medium">
               {new Date(nextHearing.hearing_date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}
             </span>
             {" — "}
             {nextHearing.claimant.slice(0, 15)}…
           </>
         ) : (
-          <span className="opacity-40">No upcoming</span>
+          <span className="opacity-60">No upcoming</span>
         )}
       </div>
     </div>
@@ -136,7 +140,7 @@ function RoundRobinBanner({ rr }: { rr: RoundRobinState }) {
       </span>
       <span className="text-muted-foreground">→ Next:</span>
       <span className="px-2 py-0.5 rounded font-semibold text-white text-[11px] ring-2 ring-offset-1"
-        style={{ backgroundColor: teamHex(rr.nextColor), ringColor: teamHex(rr.nextColor) }}>
+        style={{ backgroundColor: teamHex(rr.nextColor) }}>
         {rr.nextTeamName}
       </span>
       <div className="flex gap-1.5 items-center ml-1">
@@ -608,26 +612,56 @@ export function MrPivotClient(data: MrPivotPageData) {
           </div>
         </div>
 
-        {/* ── Summary Cards ────────────────────────────────────────────── */}
-        <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-8 gap-3">
-          <SummaryCard label="Total" value={totalHearings} bg="bg-violet-600" />
-          <SummaryCard label="Complete" value={data.statCards.complete} bg="bg-[#6A4C93]" />
-          <SummaryCard label="In Progress" value={data.statCards.inProgress} bg="bg-pink-500" />
-          <SummaryCard label="Ready" value={data.statCards.ready} bg="bg-emerald-500" />
-          <SummaryCard label="Not Started" value={data.statCards.notStarted} bg="bg-red-500" />
-          <SummaryCard label="Urgent" value={data.statCards.urgent} bg="bg-red-700" />
+        {/* ── Stats + Team Assignments ─────────────────────────────────── */}
+        <div className="grid grid-cols-[1fr_220px] gap-4 items-start">
 
-          <AssignmentCard title="No Specialist" count={data.statCards.noSpecialistCount}
-            nextHearing={data.statCards.nextUnassignedHearing} color="text-orange-500" />
-          <AssignmentCard title="No Task Assigned" count={data.statCards.noTaskCount}
-            nextHearing={data.statCards.nextUnassignedTask} color="text-purple-500" />
+          {/* Left: stat cards */}
+          <div className="space-y-3">
+            {/* 6 colored summary cards */}
+            <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
+              <SummaryCard label="Total"       value={totalHearings}              bg="bg-violet-600" />
+              <SummaryCard label="Complete"    value={data.statCards.complete}    bg="bg-[#6A4C93]" />
+              <SummaryCard label="In Progress" value={data.statCards.inProgress}  bg="bg-pink-500" />
+              <SummaryCard label="Ready"       value={data.statCards.ready}       bg="bg-emerald-500" />
+              <SummaryCard label="Not Started" value={data.statCards.notStarted}  bg="bg-red-500" />
+              <SummaryCard label="Urgent"      value={data.statCards.urgent}      bg="bg-red-700" />
+            </div>
+            {/* 2 assignment cards */}
+            <div className="grid grid-cols-2 gap-3">
+              <AssignmentCard title="No Specialist"    count={data.statCards.noSpecialistCount}
+                nextHearing={data.statCards.nextUnassignedHearing} bg="bg-orange-500" />
+              <AssignmentCard title="No Task Assigned" count={data.statCards.noTaskCount}
+                nextHearing={data.statCards.nextUnassignedTask}    bg="bg-[#0d9488]" />
+            </div>
+          </div>
+
+          {/* Right: Team Assignments (spans both stat rows) */}
+          <div className="bg-card border border-border rounded-xl overflow-hidden">
+            <div className="px-4 py-2.5 bg-muted/30 border-b border-border">
+              <span className="text-xs font-semibold text-foreground">👥 Team Assignments</span>
+            </div>
+            <div className="px-3 py-2 space-y-1.5 max-h-52 overflow-y-auto">
+              {data.teamGrandTotals.map((t) => (
+                <div key={t.team_name} className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: t.team_color ?? "#9ca3af" }} />
+                    <span className="text-[11px] text-foreground">{t.team_name}</span>
+                  </div>
+                  <span className="text-xs font-bold tabular-nums text-foreground">{t.total}</span>
+                </div>
+              ))}
+            </div>
+            <div className="px-3 py-2 border-t border-border bg-muted/20 flex items-center justify-between">
+              <span className="text-[11px] font-semibold text-muted-foreground">Grand Total</span>
+              <span className="text-xs font-bold tabular-nums text-foreground">
+                {data.teamGrandTotals.reduce((s, t) => s + t.total, 0)}
+              </span>
+            </div>
+          </div>
         </div>
 
-        {/* ── Team Assignments sidebar + filter bar row ─────────────── */}
-        <div className="grid grid-cols-[1fr_220px] gap-4">
-
-          {/* Filters */}
-          <div className="flex flex-wrap gap-2 items-center bg-card border border-border rounded-xl px-4 py-3">
+        {/* ── Filter Bar ───────────────────────────────────────────────── */}
+        <div className="flex flex-wrap gap-2 items-center bg-card border border-border rounded-xl px-4 py-3">
             <input type="text" placeholder="🔍 Search claimant…" value={filters.search}
               onChange={(e) => applyFilter({ search: e.target.value })}
               className="text-xs px-3 py-1.5 rounded-lg border border-border bg-muted text-foreground focus:outline-none focus:border-primary min-w-[160px]" />
@@ -664,31 +698,6 @@ export function MrPivotClient(data: MrPivotPageData) {
               className="text-xs px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-muted-foreground transition-colors">
               Clear
             </button>
-          </div>
-
-          {/* Team Totals */}
-          <div className="bg-card border border-border rounded-xl overflow-hidden">
-            <div className="px-4 py-2.5 bg-muted/30 border-b border-border">
-              <span className="text-xs font-semibold text-foreground">👥 Team Assignments</span>
-            </div>
-            <div className="px-3 py-2 space-y-1.5 max-h-48 overflow-y-auto">
-              {data.teamGrandTotals.map((t) => (
-                <div key={t.team_name} className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: t.team_color ?? "#9ca3af" }} />
-                    <span className="text-[11px] text-foreground">{t.team_name}</span>
-                  </div>
-                  <span className="text-xs font-bold tabular-nums text-foreground">{t.total}</span>
-                </div>
-              ))}
-            </div>
-            <div className="px-3 py-2 border-t border-border bg-muted/20 flex items-center justify-between">
-              <span className="text-[11px] font-semibold text-muted-foreground">Grand Total</span>
-              <span className="text-xs font-bold tabular-nums text-foreground">
-                {data.teamGrandTotals.reduce((s, t) => s + t.total, 0)}
-              </span>
-            </div>
-          </div>
         </div>
 
         {/* ── Main Hearings Card ───────────────────────────────────────── */}
