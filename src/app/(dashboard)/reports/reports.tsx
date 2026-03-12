@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition, useCallback, forwardRef, useImperativeHandle } from "react";
-import { Chart, registerables } from "chart.js";
-import ChartDataLabels from "chartjs-plugin-datalabels";
+import { useEffect, useRef, useState, useTransition, useCallback } from "react";
+import type { Chart as ChartType } from "chart.js";
 import { AppHeader } from "@/components/layout/app-header";
 import {
   TrendingUp,
@@ -23,7 +22,7 @@ import type {
   HearingStatus,
   AssignedRep,
   RepStatusRow,
-  StatCard,
+  StatCardData,
   ReportsData,
   ReportsFilters,
 } from "./action";
@@ -31,8 +30,6 @@ import { ReportMonthlyDetailsModal } from "@/components/modals/report-monthly-de
 import { ReportStatusSummaryModal } from "@/components/modals/report-status-summary-modal";
 import { ReportAssignedCasesModal } from "@/components/modals/report-assigned-cases-modal";
 import { ReportMatrixModal } from "@/components/modals/report-matrix-modal";
-
-Chart.register(...registerables, ChartDataLabels);
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -79,157 +76,138 @@ const tooltipBase = {
 
 // ─── Charts ───────────────────────────────────────────────────────────────────
 
-export interface MonthlyTrendChartHandle {
-  exportChart: () => void;
-}
+// ─── Charts ───────────────────────────────────────────────────────────────────
+// Chart.js and chartjs-plugin-datalabels are loaded lazily inside each
+// useEffect so they are excluded from the initial JS bundle (~200 KB saved).
 
-const MonthlyTrendChart = forwardRef<MonthlyTrendChartHandle, { monthly: MonthlyTrend[] }>(
-  function MonthlyTrendChart({ monthly }, ref) {
+function MonthlyTrendChart({ monthly }: { monthly: MonthlyTrend[] }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const chartRef = useRef<Chart | null>(null);
-
-  useImperativeHandle(ref, () => ({
-    exportChart() {
-      const chart = chartRef.current;
-      if (!chart) return;
-      const link = document.createElement("a");
-      link.download = `monthly-trend-${new Date().toISOString().slice(0, 10)}.png`;
-      link.href = chart.toBase64Image();
-      link.click();
-    },
-  }));
+  const chartRef  = useRef<ChartType | null>(null);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    chartRef.current?.destroy();
-
-    chartRef.current = new Chart(canvas, {
-      data: {
-        labels: monthly.map((d) => d.month),
-        datasets: [
-          {
-            type: "bar",
-            label: "Total Hearings",
-            data: monthly.map((d) => d.count),
-            backgroundColor: "rgba(99,102,241,0.75)",
-            borderWidth: 0,
-            borderRadius: 3,
-            order: 3,
-          },
-          {
-            type: "line",
-            label: "Favorable",
-            data: monthly.map((d) => d.favorable),
-            borderColor: "#22c55e",
-            backgroundColor: "transparent",
-            pointRadius: 3,
-            pointBackgroundColor: "#22c55e",
-            borderWidth: 2,
-            tension: 0.3,
-            order: 1,
-          },
-          {
-            type: "line",
-            label: "Unfavorable",
-            data: monthly.map((d) => d.unfavorable),
-            borderColor: "#f87171",
-            backgroundColor: "transparent",
-            pointRadius: 3,
-            pointBackgroundColor: "#f87171",
-            borderWidth: 2,
-            tension: 0.3,
-            order: 2,
-          },
-        ],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { mode: "index", intersect: false },
-        scales: {
-          x: {
-            ticks: { ...tickStyle, maxRotation: 45 },
-            grid: { color: "rgba(0,0,0,0.04)" },
-          },
-          y: {
-            beginAtZero: true,
-            ticks: tickStyle,
-            grid: { color: "rgba(0,0,0,0.04)" },
-          },
+    let cancelled = false;
+    (async () => {
+      const { Chart, registerables } = await import("chart.js");
+      const { default: ChartDataLabels } = await import("chartjs-plugin-datalabels");
+      Chart.register(...registerables, ChartDataLabels);
+      if (cancelled || !canvasRef.current) return;
+      chartRef.current?.destroy();
+      chartRef.current = new Chart(canvasRef.current, {
+        data: {
+          labels: monthly.map((d) => d.month),
+          datasets: [
+            {
+              type: "bar",
+              label: "Total Hearings",
+              data: monthly.map((d) => d.count),
+              backgroundColor: "rgba(99,102,241,0.75)",
+              borderWidth: 0,
+              borderRadius: 3,
+              order: 3,
+            },
+            {
+              type: "line",
+              label: "Favorable",
+              data: monthly.map((d) => d.favorable),
+              borderColor: "#22c55e",
+              backgroundColor: "transparent",
+              pointRadius: 3,
+              pointBackgroundColor: "#22c55e",
+              borderWidth: 2,
+              tension: 0.3,
+              order: 1,
+            },
+            {
+              type: "line",
+              label: "Unfavorable",
+              data: monthly.map((d) => d.unfavorable),
+              borderColor: "#f87171",
+              backgroundColor: "transparent",
+              pointRadius: 3,
+              pointBackgroundColor: "#f87171",
+              borderWidth: 2,
+              tension: 0.3,
+              order: 2,
+            },
+          ],
         },
-        plugins: {
-          legend: {
-            position: "top",
-            align: "start",
-            labels: {
-              color: "#6b7280",
-              font: { size: 11 },
-              boxWidth: 10,
-              boxHeight: 10,
-              padding: 12,
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: "index", intersect: false },
+          scales: {
+            x: { ticks: { ...tickStyle, maxRotation: 45 }, grid: { color: "rgba(0,0,0,0.04)" } },
+            y: { beginAtZero: true, ticks: tickStyle, grid: { color: "rgba(0,0,0,0.04)" } },
+          },
+          plugins: {
+            legend: {
+              position: "top",
+              align: "start",
+              labels: { color: "#6b7280", font: { size: 11 }, boxWidth: 10, boxHeight: 10, padding: 12 },
+            },
+            tooltip: tooltipBase,
+            datalabels: {
+              display: (ctx) => ctx.dataset.type === "bar",
+              anchor: "end",
+              align: "end",
+              color: "#94a3b8",
+              font: { size: 9 },
+              formatter: (v) => v,
             },
           },
-          tooltip: tooltipBase,
-          datalabels: {
-            display: (ctx) => ctx.dataset.type === "bar",
-            anchor: "end",
-            align: "end",
-            color: "#94a3b8",
-            font: { size: 9 },
-            formatter: (v) => v,
-          },
         },
-      },
-      plugins: [ChartDataLabels],
-    });
-
+        plugins: [ChartDataLabels],
+      });
+    })();
     return () => {
+      cancelled = true;
       chartRef.current?.destroy();
     };
   }, [monthly]);
 
   return <canvas ref={canvasRef} />;
-});
+}
 
 function StatusDonutChart({ hearingStatus }: { hearingStatus: HearingStatus[] }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const chartRef  = useRef<Chart | null>(null);
+  const chartRef  = useRef<ChartType | null>(null);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    chartRef.current?.destroy();
-
-    chartRef.current = new Chart(canvas, {
-      type: "doughnut",
-      data: {
-        labels: hearingStatus.map((d) => d.status),
-        datasets: [
-          {
-            data: hearingStatus.map((d) => d.count),
-            backgroundColor: hearingStatus.map((d) => d.color),
-            borderWidth: 2,
-            borderColor: "#fff",
-            hoverOffset: 6,
-          },
-        ],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        cutout: "60%",
-        plugins: {
-          legend: { display: false },
-          tooltip: tooltipBase,
-          datalabels: { display: false },
+    let cancelled = false;
+    (async () => {
+      const { Chart, registerables } = await import("chart.js");
+      const { default: ChartDataLabels } = await import("chartjs-plugin-datalabels");
+      Chart.register(...registerables, ChartDataLabels);
+      if (cancelled || !canvasRef.current) return;
+      chartRef.current?.destroy();
+      chartRef.current = new Chart(canvasRef.current, {
+        type: "doughnut",
+        data: {
+          labels: hearingStatus.map((d) => d.status),
+          datasets: [
+            {
+              data: hearingStatus.map((d) => d.count),
+              backgroundColor: hearingStatus.map((d) => d.color),
+              borderWidth: 2,
+              borderColor: "#fff",
+              hoverOffset: 6,
+            },
+          ],
         },
-      },
-    });
-
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          cutout: "60%",
+          plugins: {
+            legend: { display: false },
+            tooltip: tooltipBase,
+            datalabels: { display: false },
+          },
+        },
+      });
+    })();
     return () => {
+      cancelled = true;
       chartRef.current?.destroy();
     };
   }, [hearingStatus]);
@@ -338,7 +316,27 @@ function FilterSelect({
   );
 }
 
-// ─── CSV export helper ────────────────────────────────────────────────────────
+// ─── CSV export helpers ───────────────────────────────────────────────────────
+
+function exportMonthlyCsv(monthly: MonthlyTrend[]) {
+  const rows = [
+    ["Month", "Total Hearings", "Favorable", "Unfavorable"],
+    ...monthly.map((m) => [m.month, m.count, m.favorable, m.unfavorable]),
+    [
+      "Grand Total",
+      monthly.reduce((s, m) => s + m.count, 0),
+      monthly.reduce((s, m) => s + m.favorable, 0),
+      monthly.reduce((s, m) => s + m.unfavorable, 0),
+    ],
+  ];
+  const csv = rows
+    .map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))
+    .join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.download = `monthly-trend-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+}
 
 function exportRepMatrixCsv(repStatusRows: RepStatusRow[]) {
   const cols = STATUS_COLS.filter((c) => c !== "rep");
@@ -363,7 +361,7 @@ function exportRepMatrixCsv(repStatusRows: RepStatusRow[]) {
 
 // ─── Win rate helper ──────────────────────────────────────────────────────────
 
-function computeWinRate(statCards: StatCard[]): string {
+function computeWinRate(statCards: StatCardData[]): string {
   const parse = (label: string) => {
     const card = statCards.find((c) => c.label === label);
     return parseInt((card?.value ?? "0").replace(/,/g, ""), 10);
@@ -414,9 +412,6 @@ export function ReportsClient({
   const [statusModalOpen, setStatusModalOpen]   = useState(false);
   const [assignedModalOpen, setAssignedModalOpen] = useState(false);
   const [matrixModalOpen, setMatrixModalOpen] = useState(false);
-
-  // ── Monthly chart ref  ──────────────────────────────────────────────────────
-  const monthlyChartRef = useRef<MonthlyTrendChartHandle>(null);
 
   const isFiltered =
     !!activeFilters.quickSelect ||
@@ -581,10 +576,10 @@ export function ReportsClient({
               subtitle="Volume + outcomes by month"
             >
               <GhostBtn icon={Eye}      label="View Details" onClick={() => setMonthlyModalOpen(true)}  />
-              <GhostBtn icon={Download} label="Export"       onClick={() => monthlyChartRef.current?.exportChart()} />
+              <GhostBtn icon={Download} label="Export"       onClick={() => exportMonthlyCsv(data.monthly)} />
             </CardHeader>
             <div className="h-64">
-              <MonthlyTrendChart ref={monthlyChartRef} monthly={data.monthly} />
+              <MonthlyTrendChart monthly={data.monthly} />
             </div>
           </div>
 
@@ -643,11 +638,11 @@ export function ReportsClient({
             >
               <GhostBtn icon={Eye} label="View Details" onClick={() => setStatusModalOpen(true)} />
             </CardHeader>
-            <div className="flex gap-5 items-center">
-              <div className="w-56 h-56 flex-shrink-0">
+            <div className="flex gap-5 items-center h-64">
+              <div className="w-56 h-56 shrink-0">
                 <StatusDonutChart hearingStatus={data.hearingStatus} />
               </div>
-              <div className="flex-1 flex flex-col gap-1.5">
+              <div className="flex-1 flex flex-col gap-1.5 overflow-y-auto max-h-56 pr-3">
                 {data.hearingStatus.map((d) => (
                   <div
                     key={d.status}
@@ -655,14 +650,14 @@ export function ReportsClient({
                   >
                     <div className="flex items-center gap-2 min-w-0">
                       <span
-                        className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                        className="w-2.5 h-2.5 rounded-full shrink-0"
                         style={{ backgroundColor: d.color }}
                       />
-                      <span className="text-[11px] text-muted-foreground whitespace-nowrap">
+                      <span className="text-[11px] text-muted-foreground truncate max-w-32.5" title={d.status}>
                         {d.status}
                       </span>
                     </div>
-                    <span className="text-[11px] font-semibold text-foreground tabular-nums">
+                    <span className="text-[11px] font-semibold text-foreground tabular-nums shrink-0">
                       {d.count}
                     </span>
                   </div>
@@ -789,12 +784,14 @@ export function ReportsClient({
         hearingStatus={data.hearingStatus}
       />
       <ReportAssignedCasesModal
+        key={assignedModalOpen ? "assigned-open" : "assigned-closed"}
         open={assignedModalOpen}
         onClose={() => setAssignedModalOpen(false)}
         assignedReps={data.assignedReps}
         monthly={data.monthly}
       />
       <ReportMatrixModal
+        key={matrixModalOpen ? "matrix-open" : "matrix-closed"}
         open={matrixModalOpen}
         onClose={() => setMatrixModalOpen(false)}
         repStatusRows={data.repStatusRows}
