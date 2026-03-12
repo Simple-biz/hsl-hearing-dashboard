@@ -36,9 +36,9 @@ function deriveRepMonthly(
     Sep: "09", Oct: "10", Nov: "11", Dec: "12",
   };
   const MONTH_FULL: Record<string, string> = {
-    Jan: "January",   Feb: "February",  Mar: "March",    Apr: "April",
-    May: "May",       Jun: "June",      Jul: "July",     Aug: "August",
-    Sep: "September", Oct: "October",   Nov: "November", Dec: "December",
+    Jan: "January", Feb: "February",  Mar: "March",    Apr: "April",
+    May: "May", Jun: "June", Jul: "July", Aug: "August",
+    Sep: "September", Oct: "October", Nov: "November", Dec: "December",
   };
 
   const parsedMonths = monthly
@@ -147,15 +147,15 @@ export function ReportAssignedCasesModal({
     });
   }, []);
 
-  const expandAll   = () => setCollapsed(new Set());
+  const expandAll = () => setCollapsed(new Set());
   const collapseAll = () => setCollapsed(new Set(repData.map((r) => r.name)));
 
   if (!open) return null;
 
   // Named reps sorted A–Z, withdrawal always last
-  const namedReps  = [...repData.filter((r) => !r.isWithdrawal)].sort((a, b) => a.name.localeCompare(b.name));
+  const namedReps = [...repData.filter((r) => !r.isWithdrawal)].sort((a, b) => a.name.localeCompare(b.name));
   const withdrawal = repData.find((r) => r.isWithdrawal);
-  const sorted     = withdrawal ? [...namedReps, withdrawal] : namedReps;
+  const sorted = withdrawal ? [...namedReps, withdrawal] : namedReps;
   const grandTotal = sorted.reduce((s, r) => s + r.total, 0);
 
   return (
@@ -342,7 +342,6 @@ export function ReportAssignedCasesModal({
               </td>
             </tr>
           </tfoot>
-
         </table></div>
       )}
     </ModalShell>

@@ -70,17 +70,17 @@ export interface ReportsData {
 // ─── Color map for hearing decision statuses (UI-only, not stored in DB) ──────
 
 const STATUS_COLORS: Record<string, string> = {
-  "Continued":        "#3b82f6",
-  "Dismissal":        "#ec4899",
-  "Favorable":        "#22c55e",
-  "Good Cause Ltr":   "#14b8a6",
-  "OTR at Hrg":       "#a3e635",
+  "Continued": "#3b82f6",
+  "Dismissal": "#ec4899",
+  "Favorable": "#22c55e",
+  "Good Cause Ltr": "#14b8a6",
+  "OTR at Hrg": "#a3e635",
   "Pending Decision": "#facc15",
-  "Post HRG Review":  "#f97316",
-  "Scheduled":        "#7c3aed",
-  "Unfavorable":      "#ef4444",
+  "Post HRG Review": "#f97316",
+  "Scheduled": "#7c3aed",
+  "Unfavorable": "#ef4444",
   "WD Clmt Deceased": "#64748b",
-  "Withdrawal":       "#9ca3af",
+  "Withdrawal": "#9ca3af",
 };
 
 // ─── Filter helpers ───────────────────────────────────────────────────────────
@@ -136,7 +136,7 @@ function monthLabelToDateRange(
     Sep: "09", Oct: "10", Nov: "11", Dec: "12",
   };
   const [, abbr, yr] = match;
-  const mm  = MONTH_NUM[abbr] ?? "01";
+  const mm = MONTH_NUM[abbr] ?? "01";
   const fullYear = `20${yr}`;
   const firstDay = `${fullYear}-${mm}-01`;
   return {
@@ -172,10 +172,10 @@ async function fetchAllMonthly(
 
   const { rows } = await db.query(
     `SELECT
-       TO_CHAR(h.hearing_date, 'Mon ''YY')                                       AS month,
-       COUNT(*)::int                                                              AS count,
-       COUNT(*) FILTER (WHERE h.hearing_decision_status = 'Favorable')::int     AS favorable,
-       COUNT(*) FILTER (WHERE h.hearing_decision_status = 'Unfavorable')::int   AS unfavorable
+       TO_CHAR(h.hearing_date, 'Mon ''YY') AS month,
+       COUNT(*)::int AS count,
+       COUNT(*) FILTER (WHERE h.hearing_decision_status = 'Favorable')::int AS favorable,
+       COUNT(*) FILTER (WHERE h.hearing_decision_status = 'Unfavorable')::int AS unfavorable
      FROM hearings h
      ${where}
      GROUP BY TO_CHAR(h.hearing_date, 'Mon ''YY'), DATE_TRUNC('month', h.hearing_date)
@@ -211,7 +211,7 @@ async function fetchAllHearingStatuses(
   const { rows } = await db.query(
     `SELECT
        h.hearing_decision_status AS status,
-       COUNT(*)::int             AS count
+       COUNT(*)::int AS count
      FROM hearings h
      WHERE ${conditions.join(" AND ")}
      GROUP BY h.hearing_decision_status

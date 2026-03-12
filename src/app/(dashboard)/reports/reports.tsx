@@ -81,8 +81,6 @@ const tooltipBase = {
 } as const;
 
 // ─── Charts ───────────────────────────────────────────────────────────────────
-
-// ─── Charts ───────────────────────────────────────────────────────────────────
 // Chart.js and chartjs-plugin-datalabels are loaded lazily inside each
 // useEffect so they are excluded from the initial JS bundle (~200 KB saved).
 
@@ -266,11 +264,11 @@ interface GhostBtnProps {
 
 function GhostBtn({ icon: Icon, label, onClick, color = "default" }: GhostBtnProps & { color?: "default" | "blue" | "emerald" | "purple" | "amber" }) {
   const colorCls = {
-    default:  "bg-muted border border-border text-muted-foreground hover:bg-muted/80",
-    blue:     "bg-blue-600 text-white hover:bg-blue-700",
-    emerald:  "bg-emerald-600 text-white hover:bg-emerald-700",
-    purple:   "bg-purple-600 text-white hover:bg-purple-700",
-    amber:    "bg-amber-500 text-white hover:bg-amber-600",
+    default: "bg-muted border border-border text-muted-foreground hover:bg-muted/80",
+    blue: "bg-blue-600 text-white hover:bg-blue-700",
+    emerald: "bg-emerald-600 text-white hover:bg-emerald-700",
+    purple: "bg-purple-600 text-white hover:bg-purple-700",
+    amber: "bg-amber-500 text-white hover:bg-amber-600",
   }[color];
   return (
     <button
@@ -415,8 +413,8 @@ export function ReportsClient({
   const [isPending, startTransition] = useTransition();
 
   // ── Modal open state ────────────────────────────────────────────────────────
-  const [monthlyModalOpen, setMonthlyModalOpen]  = useState(false);
-  const [statusModalOpen, setStatusModalOpen]   = useState(false);
+  const [monthlyModalOpen, setMonthlyModalOpen] = useState(false);
+  const [statusModalOpen, setStatusModalOpen] = useState(false);
   const [assignedModalOpen, setAssignedModalOpen] = useState(false);
   const [matrixModalOpen, setMatrixModalOpen] = useState(false);
 
@@ -596,8 +594,8 @@ export function ReportsClient({
               title="Monthly Hearing Trend"
               subtitle="Volume + outcomes by month"
             >
-              <GhostBtn icon={Eye}      label="View Details" onClick={() => setMonthlyModalOpen(true)} color="blue" />
-              <GhostBtn icon={Download} label="Export"       onClick={() => exportMonthlyCsv(data.monthly)} color="emerald" />
+              <GhostBtn icon={Eye} label="View Details" onClick={() => setMonthlyModalOpen(true)} color="blue" />
+              <GhostBtn icon={Download} label="Export" onClick={() => exportMonthlyCsv(data.monthly)} color="emerald" />
             </CardHeader>
             <div className="h-64">
               <MonthlyTrendChart monthly={data.monthly} />
@@ -660,7 +658,7 @@ export function ReportsClient({
               <GhostBtn icon={Eye} label="View Details" onClick={() => setStatusModalOpen(true)} color="purple" />
             </CardHeader>
             <div className="flex gap-5 items-center h-64">
-              <div className="w-56 h-56 flex-shrink-0">
+              <div className="w-56 h-56 shrink-0">
                 <StatusDonutChart hearingStatus={data.hearingStatus} />
               </div>
               <div className="flex-1 flex flex-col gap-1.5 overflow-y-auto max-h-56 pr-3">
@@ -671,14 +669,14 @@ export function ReportsClient({
                   >
                     <div className="flex items-center gap-2 min-w-0">
                       <span
-                        className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                        className="w-2.5 h-2.5 rounded-full shrink-0"
                         style={{ backgroundColor: d.color }}
                       />
-                      <span className="text-[11px] text-muted-foreground truncate max-w-[130px]" title={d.status}>
+                      <span className="text-[11px] text-muted-foreground truncate max-w-32.5" title={d.status}>
                         {d.status}
                       </span>
                     </div>
-                    <span className="text-[11px] font-semibold text-foreground tabular-nums flex-shrink-0">
+                    <span className="text-[11px] font-semibold text-foreground tabular-nums shrink-0">
                       {d.count}
                     </span>
                   </div>
@@ -700,7 +698,7 @@ export function ReportsClient({
               </p>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
-              <GhostBtn icon={Eye}      label="View Details" onClick={() => setMatrixModalOpen(true)} color="blue" />
+              <GhostBtn icon={Eye} label="View Details" onClick={() => setMatrixModalOpen(true)} color="blue" />
               <GhostBtn
                 icon={Download}
                 label="Export CSV"
@@ -771,12 +769,12 @@ export function ReportsClient({
                             key={col}
                             className={cn(
                               "px-3 py-2.5 tabular-nums",
-                              isRep   && "font-medium text-foreground",
+                              isRep && "font-medium text-foreground",
                               isTotal && "font-bold text-amber-600 text-center bg-amber-50",
-                              isFav   && "text-emerald-600 font-semibold",
+                              isFav && "text-emerald-600 font-semibold",
                               isUnfav && "text-red-500 font-semibold",
-                              isHigh  && !isFav && !isUnfav && "text-blue-600 font-semibold",
-                              isMed   && !isFav && !isUnfav && "text-foreground/80",
+                              isHigh && !isFav && !isUnfav && "text-blue-600 font-semibold",
+                              isMed && !isFav && !isUnfav && "text-foreground/80",
                               !isRep && !isTotal && !isFav && !isUnfav && !isHigh && !isMed && "text-muted-foreground",
                               numVal === 0 && !isRep && "text-muted-foreground/40"
                             )}
