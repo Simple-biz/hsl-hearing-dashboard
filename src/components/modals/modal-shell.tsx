@@ -47,7 +47,7 @@ export function ModalShell({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4"
       onClick={onClose}
     >
       {/* Backdrop */}
@@ -58,20 +58,20 @@ export function ModalShell({
         className={cn(
           "relative w-full rounded-xl border bg-card shadow-2xl",
           "animate-in fade-in-0 zoom-in-95",
-          "max-h-[88vh] flex flex-col overflow-hidden",
+          "max-h-[92vh] sm:max-h-[88vh] flex flex-col overflow-hidden",
           maxWidth,
         )}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 shrink-0 gap-3">
+        <div className="flex items-center justify-between px-4 sm:px-5 py-3 sm:py-4 shrink-0 gap-3">
           <div className="flex items-center gap-2 min-w-0">
             {Icon && (
               <Icon size={17} className="text-muted-foreground shrink-0" />
             )}
             <h2 className="text-base font-semibold truncate">{title}</h2>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-wrap justify-end">
             {actions}
             {/* SVG close button — matches settings & admin pattern exactly */}
             <button

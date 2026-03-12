@@ -61,7 +61,7 @@ export function ReportMonthlyDetailsModal({
           No data available.
         </p>
       ) : (
-        <table className="w-full text-xs">
+        <div className="overflow-x-auto"><table className="w-full text-xs min-w-[320px]">
           <thead className="sticky top-0 z-10">
             <tr>
               <th className="px-4 py-3 text-left font-semibold text-muted-foreground bg-muted border-b border-border">
@@ -108,7 +108,7 @@ export function ReportMonthlyDetailsModal({
               </td>
             </tr>
           </tfoot>
-        </table>
+        </table></div>
       )}
     </ModalShell>
   );

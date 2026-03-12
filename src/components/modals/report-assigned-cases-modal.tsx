@@ -203,7 +203,7 @@ export function ReportAssignedCasesModal({
       {sorted.length === 0 ? (
         <p className="text-center text-sm text-muted-foreground py-12">No data available.</p>
       ) : (
-        <table className="w-full text-xs border-collapse">
+        <div className="overflow-x-auto"><table className="w-full text-xs border-collapse min-w-90">
 
           {/* ── Header ── */}
           <thead className="sticky top-0 z-10">
@@ -241,7 +241,7 @@ export function ReportAssignedCasesModal({
                     onClick={hasMultiple ? () => toggle(rep.name) : undefined}
                   >
                     <td className="px-4 py-2.5 border border-border">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
                         {hasMultiple ? (
                           <span className={cn(
                             "flex items-center justify-center w-5 h-5 rounded shrink-0 text-white",
@@ -267,7 +267,7 @@ export function ReportAssignedCasesModal({
                       {hasMultiple ? (
                         <span className="text-[11px]">{rep.months.length} months</span>
                       ) : (
-                        <span className="flex items-center gap-2">
+                        <span className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
                           <MonthCodeBadge code={rep.months[0]?.month_code ?? ""} withdrawal={isWithdrawal} />
                           <span className="whitespace-nowrap">{rep.months[0]?.month_name}</span>
                         </span>
@@ -294,7 +294,7 @@ export function ReportAssignedCasesModal({
                     >
                       <td className="py-2 border border-border" />
                       <td className="px-4 py-2 border border-border">
-                        <span className="flex items-center gap-2">
+                        <span className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
                           <MonthCodeBadge code={m.month_code} withdrawal={isWithdrawal} />
                           <span className="text-foreground/80 whitespace-nowrap">{m.month_name}</span>
                           <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold text-amber-600 uppercase tracking-wide shrink-0">
@@ -343,7 +343,7 @@ export function ReportAssignedCasesModal({
             </tr>
           </tfoot>
 
-        </table>
+        </table></div>
       )}
     </ModalShell>
   );

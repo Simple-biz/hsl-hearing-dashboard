@@ -248,7 +248,7 @@ function CardHeader({
           <p className="text-xs text-muted-foreground">{subtitle}</p>
         )}
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         {children}
         <div className={cn("p-2 rounded-lg", iconBg)}>
           <Icon size={16} className={iconColor} />
@@ -307,7 +307,7 @@ function FilterSelect({
         {label}
       </label>
       <Select value={value || "__all__"} onValueChange={(v) => onChange(v === "__all__" ? "" : v)} disabled={disabled}>
-        <SelectTrigger className="h-9 w-auto min-w-36 text-sm">
+        <SelectTrigger className="h-9 w-full sm:w-auto sm:min-w-36 text-sm">
           <SelectValue placeholder={placeholder} />
         </SelectTrigger>
         <SelectContent>
@@ -476,8 +476,8 @@ export function ReportsClient({
       />
 
       {/* ── Filter Bar ─────────────────────────────────────────────────────── */}
-      <div className="border-b border-border bg-card px-6 py-3">
-        <div className="flex items-end gap-4 flex-wrap">
+      <div className="border-b border-border bg-card px-4 sm:px-6 py-3">
+        <div className="flex flex-col sm:flex-row sm:items-end gap-3 flex-wrap">
 
           {/* Quick Select */}
           <FilterSelect
@@ -511,7 +511,7 @@ export function ReportsClient({
 
           {/* Active filter badge */}
           {isFiltered && (
-            <div className="flex items-end pb-0.5">
+            <div className="flex items-center sm:items-end pb-0 sm:pb-0.5">
               <span className="text-[10px] font-medium text-primary bg-primary/10 rounded-full px-2 py-0.5">
                 Filters active
               </span>
@@ -519,12 +519,12 @@ export function ReportsClient({
           )}
 
           {/* Action buttons */}
-          <div className="flex items-end gap-2 ml-auto">
+          <div className="flex items-center gap-2 sm:ml-auto w-full sm:w-auto">
             <button
               type="button"
               onClick={handleApply}
               disabled={isPending}
-              className="flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-700 text-white"
+              className="flex flex-1 sm:flex-none items-center justify-center gap-2 px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-700 text-white"
             >
               {isPending ? (
                 <Loader2 size={13} className="animate-spin" />
@@ -546,10 +546,10 @@ export function ReportsClient({
         </div>
       </div>
 
-      <div className={cn("p-6 space-y-4", isPending && "opacity-60 pointer-events-none")}>
+      <div className={cn("p-4 sm:p-6 space-y-4", isPending && "opacity-60 pointer-events-none")}>
 
         {/* ── Stat Cards ──────────────────────────────────────────────────── */}
-        <div className="grid grid-cols-8 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-3">
           {data.statCards.map((c) => (
             <div
               key={c.label}
@@ -563,7 +563,7 @@ export function ReportsClient({
                 <p className="text-[10px] font-semibold tracking-widest uppercase opacity-80 mb-1">
                   {c.label}
                 </p>
-                <p className="text-3xl font-bold tabular-nums leading-none">
+                <p className="text-2xl sm:text-3xl font-bold tabular-nums leading-none">
                   {c.value}
                 </p>
               </div>
@@ -575,7 +575,7 @@ export function ReportsClient({
             <p className="text-[10px] font-semibold tracking-widest uppercase text-muted-foreground mb-1">
               Win Rate
             </p>
-            <p className="text-3xl font-bold tabular-nums text-foreground leading-none">
+            <p className="text-2xl sm:text-3xl font-bold tabular-nums text-foreground leading-none">
               {winRate}
             </p>
             <p className="text-[10px] text-muted-foreground mt-1">
@@ -660,7 +660,7 @@ export function ReportsClient({
               <GhostBtn icon={Eye} label="View Details" onClick={() => setStatusModalOpen(true)} color="purple" />
             </CardHeader>
             <div className="flex gap-5 items-center h-64">
-              <div className="w-56 h-56 shrink-0">
+              <div className="w-56 h-56 flex-shrink-0">
                 <StatusDonutChart hearingStatus={data.hearingStatus} />
               </div>
               <div className="flex-1 flex flex-col gap-1.5 overflow-y-auto max-h-56 pr-3">
@@ -671,14 +671,14 @@ export function ReportsClient({
                   >
                     <div className="flex items-center gap-2 min-w-0">
                       <span
-                        className="w-2.5 h-2.5 rounded-full shrink-0"
+                        className="w-2.5 h-2.5 rounded-full flex-shrink-0"
                         style={{ backgroundColor: d.color }}
                       />
-                      <span className="text-[11px] text-muted-foreground truncate max-w-32.5" title={d.status}>
+                      <span className="text-[11px] text-muted-foreground truncate max-w-[130px]" title={d.status}>
                         {d.status}
                       </span>
                     </div>
-                    <span className="text-[11px] font-semibold text-foreground tabular-nums shrink-0">
+                    <span className="text-[11px] font-semibold text-foreground tabular-nums flex-shrink-0">
                       {d.count}
                     </span>
                   </div>
@@ -690,7 +690,7 @@ export function ReportsClient({
 
         {/* ── Rep × Status Matrix ─────────────────────────────────────────── */}
         <div className="bg-card border border-border rounded-xl p-5">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex flex-wrap items-start sm:items-center justify-between gap-2 mb-4">
             <div>
               <h3 className="text-sm font-semibold text-foreground">
                 Representative × Status Matrix
@@ -699,7 +699,7 @@ export function ReportsClient({
                 Full breakdown by outcome
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <GhostBtn icon={Eye}      label="View Details" onClick={() => setMatrixModalOpen(true)} color="blue" />
               <GhostBtn
                 icon={Download}

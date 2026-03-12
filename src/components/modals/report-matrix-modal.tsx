@@ -131,7 +131,7 @@ export function ReportMatrixModal({
             <thead className="sticky top-0 z-20">
               <tr>
                 <th
-                  className="sticky left-0 z-30 px-3 py-2.5 text-left font-semibold text-muted-foreground bg-muted border-b border-r border-border min-w-[180px]"
+                  className="sticky left-0 z-30 px-3 py-2.5 text-left font-semibold text-muted-foreground bg-muted border-b border-r border-border min-w-45"
                   rowSpan={2}
                 >
                   Representative
@@ -143,7 +143,7 @@ export function ReportMatrixModal({
                   Hearing Decision Status
                 </th>
                 <th
-                  className="px-3 py-2.5 text-center font-semibold text-amber-700 bg-amber-50 border-b border-l-2 border-amber-300 min-w-[60px] whitespace-nowrap"
+                  className="px-3 py-2.5 text-center font-semibold text-amber-700 bg-amber-50 border-b border-l-2 border-amber-300 min-w-15 whitespace-nowrap"
                   rowSpan={2}
                 >
                   Total
@@ -154,7 +154,7 @@ export function ReportMatrixModal({
                   <th
                     key={col}
                     title={col}
-                    className="px-2 py-2 text-center text-[10px] font-semibold uppercase tracking-wide text-muted-foreground bg-muted border-b border-border whitespace-nowrap min-w-[52px]"
+                    className="px-2 py-2 text-center text-[10px] font-semibold uppercase tracking-wide text-muted-foreground bg-muted border-b border-border whitespace-nowrap min-w-13"
                   >
                     {col.length > 9 ? col.slice(0, 9) + "…" : col}
                   </th>
