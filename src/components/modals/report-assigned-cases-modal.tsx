@@ -190,15 +190,6 @@ export function ReportAssignedCasesModal({
         </>
       }
     >
-      {/* Estimated data disclaimer */}
-      <div className="mx-4 mb-2 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-700">
-        <span className="mt-0.5 shrink-0">⚠</span>
-        <span>
-          Month-level breakdown is <strong>estimated</strong> based on overall monthly
-          totals. Per-rep per-month figures will be accurate once a dedicated DB query
-          is wired.
-        </span>
-      </div>
 
       {sorted.length === 0 ? (
         <p className="text-center text-sm text-muted-foreground py-12">No data available.</p>

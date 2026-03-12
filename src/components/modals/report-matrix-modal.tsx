@@ -11,8 +11,6 @@ const STATUS_COLS = [
   "OTR", "Pending", "Post HRG", "Scheduled", "Unfavorable", "Withdrawal",
 ] as const;
 
-type StatusCol = (typeof STATUS_COLS)[number];
-
 interface ReportMatrixModalProps {
   open: boolean;
   onClose: () => void;

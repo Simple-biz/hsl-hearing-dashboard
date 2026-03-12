@@ -104,7 +104,6 @@ async function resolveRepId(repName?: string): Promise<number | null> {
  */
 function quickSelectToDateRange(
   quickSelect: ReportsFilters["quickSelect"],
-  startIdx: number,
 ): { clause: string; params: unknown[] } {
   switch (quickSelect) {
     case "Last 30 Days":
@@ -161,7 +160,7 @@ async function fetchAllMonthly(
     idx++;
   }
 
-  const { clause: qsClause, params: qsParams } = quickSelectToDateRange(qs, idx);
+  const { clause: qsClause, params: qsParams } = quickSelectToDateRange(qs);
   if (qsClause) {
     conditions.push(qsClause.replace(/^AND /, ""));
     params.push(...qsParams);
@@ -202,7 +201,7 @@ async function fetchAllHearingStatuses(
     idx++;
   }
 
-  const { clause: qsClause, params: qsParams } = quickSelectToDateRange(qs, idx);
+  const { clause: qsClause, params: qsParams } = quickSelectToDateRange(qs);
   if (qsClause) {
     conditions.push(qsClause.replace(/^AND /, ""));
     params.push(...qsParams);
@@ -231,9 +230,8 @@ async function fetchAllAssignedReps(
 ): Promise<AssignedRep[]> {
   const conditions: string[] = ["r.is_active = true"];
   const params: unknown[] = [];
-  const idx = 1;
 
-  const { clause: qsClause, params: qsParams } = quickSelectToDateRange(qs, idx);
+  const { clause: qsClause, params: qsParams } = quickSelectToDateRange(qs);
   if (qsClause) {
     conditions.push(qsClause.replace(/^AND h\./, "h.").replace(/^AND /, ""));
     params.push(...qsParams);
@@ -266,7 +264,7 @@ async function fetchAllRepStatusRows(
     idx++;
   }
 
-  const { clause: qsClause, params: qsParams } = quickSelectToDateRange(qs, idx);
+  const { clause: qsClause, params: qsParams } = quickSelectToDateRange(qs);
   if (qsClause) {
     conditions.push(qsClause.replace(/^AND h\./, "h.").replace(/^AND /, ""));
     params.push(...qsParams);
@@ -312,7 +310,7 @@ async function fetchStatCards(
     idx++;
   }
 
-  const { clause: qsClause, params: qsParams } = quickSelectToDateRange(qs, idx);
+  const { clause: qsClause, params: qsParams } = quickSelectToDateRange(qs);
   if (qsClause) {
     conditions.push(qsClause.replace(/^AND h\./, "").replace(/^AND /, ""));
     params.push(...qsParams);
