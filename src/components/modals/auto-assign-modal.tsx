@@ -3,13 +3,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { X, Zap, Loader2 } from "lucide-react";
 import {
   autoAssignAll,
@@ -18,6 +11,9 @@ import {
   autoAssignChunk,
 } from "@/app/(dashboard)/actions";
 import type { RepRow } from "@/app/(dashboard)/actions";
+
+const SEL =
+  "h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring";
 
 function getMonthOptions() {
   const months: { value: string; label: string }[] = [
@@ -363,9 +359,6 @@ export function AutoAssignModal({
     const checkedHover = isInternal
       ? "hover:border-green-500 hover:bg-green-50 dark:hover:border-green-500 dark:hover:bg-green-950"
       : "hover:border-purple-500 hover:bg-purple-50 dark:hover:border-purple-500 dark:hover:bg-purple-950";
-    // const checkColor = isInternal
-    //   ? "data-[state=checked]:bg-green-600 data-[state=checked]:border-green-600"
-    //   : "data-[state=checked]:bg-purple-600 data-[state=checked]:border-purple-600";
 
     return (
       <div
@@ -432,18 +425,17 @@ export function AutoAssignModal({
                 <label className="mb-2 block text-sm font-semibold">
                   Filter by Month
                 </label>
-                <Select value={monthFilter} onValueChange={setMonthFilter}>
-                  <SelectTrigger className="h-10 text-sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {getMonthOptions().map((m) => (
-                      <SelectItem key={m.value} value={m.value}>
-                        {m.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <select
+                  className={SEL}
+                  value={monthFilter}
+                  onChange={(e) => setMonthFilter(e.target.value)}
+                >
+                  {getMonthOptions().map((m) => (
+                    <option key={m.value} value={m.value}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               {/* Rep Selection */}
@@ -519,29 +511,25 @@ export function AutoAssignModal({
                   <label className="mb-2 block text-sm font-semibold">
                     ⚖️ Distribution Mode
                   </label>
-                  <Select
+                  <select
+                    className={SEL}
                     value={distributionMode}
-                    onValueChange={(v) =>
+                    onChange={(e) =>
                       setDistributionMode(
-                        v as "priority" | "balanced" | "workload",
+                        e.target.value as "priority" | "balanced" | "workload",
                       )
                     }
                   >
-                    <SelectTrigger className="h-10 text-sm">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="priority">
-                        ⚡ Priority (Internal first, then external)
-                      </SelectItem>
-                      <SelectItem value="balanced">
-                        📊 Balanced (Even distribution)
-                      </SelectItem>
-                      <SelectItem value="workload">
-                        📈 Workload (Least busy first)
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
+                    <option value="priority">
+                      ⚡ Priority (Internal first, then external)
+                    </option>
+                    <option value="balanced">
+                      📊 Balanced (Even distribution)
+                    </option>
+                    <option value="workload">
+                      📈 Workload (Least busy first)
+                    </option>
+                  </select>
                   <p className="mt-1 text-[11px] text-muted-foreground">
                     How to distribute hearings among selected reps
                   </p>

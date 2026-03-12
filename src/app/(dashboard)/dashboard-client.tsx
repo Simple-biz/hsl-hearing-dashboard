@@ -2,7 +2,7 @@
 
 import {
   useState,
-  // useMemo,
+  memo,
   useCallback,
   useTransition,
   useRef,
@@ -123,6 +123,10 @@ const SEL =
   "h-8 rounded-md border border-input bg-card px-2 text-xs cursor-pointer focus:outline-none focus:ring-1 focus:ring-ring";
 const SEL_SM =
   "h-7 rounded-md border border-input bg-card px-2 text-xs cursor-pointer focus:outline-none focus:ring-1 focus:ring-ring";
+
+// Press-feel class for action buttons
+const BTN_PRESS =
+  "active:scale-[0.96] active:opacity-80 transition-all duration-75";
 
 // ── Safe date parsing (avoids UTC midnight → local timezone day shift) ──
 function parseDate(dateStr: string): Date {
@@ -958,19 +962,18 @@ function PostHrgCell({
   let text = "+ Add";
 
   if (deadline) {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const dd = new Date(deadline + "T00:00:00");
+    const dd = parseDate(deadline);
+    const today = parseDate(new Date().toISOString().split("T")[0]);
     if (dd < today) {
       badgeClass =
         "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 hover:bg-red-200";
       icon = <AlertTriangleIcon className="h-3 w-3" />;
-      text = dd.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      text = fmtDate(deadline, { month: "short", day: "numeric" });
     } else {
       badgeClass =
         "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 hover:bg-blue-200";
       icon = <CalendarClock className="h-3 w-3" />;
-      text = dd.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      text = fmtDate(deadline, { month: "short", day: "numeric" });
     }
   } else if (noteCount > 0) {
     badgeClass =
@@ -1005,7 +1008,7 @@ function PostHrgCell({
 // ══════════════════════════════════════════════════════════════
 // STAT CARDS — gradient, matching original
 // ══════════════════════════════════════════════════════════════
-function StatsRow({
+const StatsRow = memo(function StatsRow({
   stats,
   userRole,
 }: {
@@ -1081,10 +1084,10 @@ function StatsRow({
       ))}
     </StatCardGrid>
   );
-}
+});
 
 // ── Filter bar — matches old dashboard: search, sort, rep (with counts), year, month, date presets, next unassigned ──
-function FilterBar({
+const FilterBar = memo(function FilterBar({
   filters,
   onFilterChange,
   repCounts,
@@ -1177,9 +1180,9 @@ function FilterBar({
 
   return (
     <div className="space-y-2">
-      {/* Row 1: Search + main filters */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-0 flex-1 sm:max-w-55">
+      {/* Row 1: Search + Rep filter */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+        <div className="relative w-full sm:w-auto sm:min-w-0 sm:flex-1 sm:max-w-55">
           <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder="Search Claimant, ALJ, City..."
@@ -1191,7 +1194,7 @@ function FilterBar({
 
         {isAdmin && (
           <select
-            className={SEL + " min-w-40"}
+            className={SEL + " w-full sm:w-auto sm:min-w-40"}
             value={filters.repId || ""}
             onChange={(e) => update("repId", e.target.value)}
           >
@@ -1207,104 +1210,107 @@ function FilterBar({
           </select>
         )}
 
-        <select
-          className={SEL + " min-w-25"}
-          value={filters.year || ""}
-          onChange={(e) => update("year", e.target.value)}
-        >
-          <option value="">All Years</option>
-          {[2024, 2025, 2026, 2027].map((y) => (
-            <option key={y} value={String(y)}>
-              {y}
-            </option>
-          ))}
-        </select>
-
-        <select
-          className={SEL + " min-w-30"}
-          value={filters.month || ""}
-          onChange={(e) => update("month", e.target.value)}
-        >
-          <option value="">All Months</option>
-          {[
-            "Jan",
-            "Feb",
-            "Mar",
-            "Apr",
-            "May",
-            "Jun",
-            "Jul",
-            "Aug",
-            "Sep",
-            "Oct",
-            "Nov",
-            "Dec",
-          ].map((m, i) => (
-            <option key={i} value={String(i + 1)}>
-              {m}
-            </option>
-          ))}
-        </select>
-
-        <select
-          className={SEL + " min-w-32.5"}
-          value={filters.datePreset || ""}
-          onChange={(e) => update("datePreset", e.target.value)}
-        >
-          <option value="">All Dates</option>
-          <option value="today">Today</option>
-          <option value="tomorrow">Tomorrow</option>
-          <option value="this-week">This Week</option>
-          <option value="next-week">Next Week</option>
-          <option value="this-month">This Month</option>
-          <option value="next-30">Next 30 Days</option>
-          <option value="custom">Custom Range...</option>
-        </select>
-
-        {filters.datePreset === "custom" && (
-          <div className="flex items-center gap-1.5">
-            <Input
-              type="date"
-              value={filters.dateFrom}
-              onChange={(e) =>
-                onFilterChange({ ...filters, dateFrom: e.target.value })
-              }
-              className="h-8 w-31.25 text-xs"
-            />
-            <span className="text-xs text-muted-foreground">to</span>
-            <Input
-              type="date"
-              value={filters.dateTo}
-              onChange={(e) =>
-                onFilterChange({ ...filters, dateTo: e.target.value })
-              }
-              className="h-8 w-31.25 text-xs"
-            />
-          </div>
-        )}
-
-        {activeCount > 0 && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 gap-1 text-xs text-muted-foreground"
-            onClick={() => onFilterChange(EMPTY_FILTERS)}
+        {/* Row 2 on mobile, inline on desktop: Year, Month, Date preset */}
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            className={SEL + " min-w-25"}
+            value={filters.year || ""}
+            onChange={(e) => update("year", e.target.value)}
           >
-            <X className="h-3 w-3" /> Clear
-          </Button>
-        )}
+            <option value="">All Years</option>
+            {[2024, 2025, 2026, 2027].map((y) => (
+              <option key={y} value={String(y)}>
+                {y}
+              </option>
+            ))}
+          </select>
+
+          <select
+            className={SEL + " min-w-30"}
+            value={filters.month || ""}
+            onChange={(e) => update("month", e.target.value)}
+          >
+            <option value="">All Months</option>
+            {[
+              "Jan",
+              "Feb",
+              "Mar",
+              "Apr",
+              "May",
+              "Jun",
+              "Jul",
+              "Aug",
+              "Sep",
+              "Oct",
+              "Nov",
+              "Dec",
+            ].map((m, i) => (
+              <option key={i} value={String(i + 1)}>
+                {m}
+              </option>
+            ))}
+          </select>
+
+          <select
+            className={SEL + " min-w-32.5"}
+            value={filters.datePreset || ""}
+            onChange={(e) => update("datePreset", e.target.value)}
+          >
+            <option value="">All Dates</option>
+            <option value="today">Today</option>
+            <option value="tomorrow">Tomorrow</option>
+            <option value="this-week">This Week</option>
+            <option value="next-week">Next Week</option>
+            <option value="this-month">This Month</option>
+            <option value="next-30">Next 30 Days</option>
+            <option value="custom">Custom Range...</option>
+          </select>
+
+          {filters.datePreset === "custom" && (
+            <div className="flex items-center gap-1.5">
+              <Input
+                type="date"
+                value={filters.dateFrom}
+                onChange={(e) =>
+                  onFilterChange({ ...filters, dateFrom: e.target.value })
+                }
+                className="h-8 w-31.25 text-xs"
+              />
+              <span className="text-xs text-muted-foreground">to</span>
+              <Input
+                type="date"
+                value={filters.dateTo}
+                onChange={(e) =>
+                  onFilterChange({ ...filters, dateTo: e.target.value })
+                }
+                className="h-8 w-31.25 text-xs"
+              />
+            </div>
+          )}
+
+          {activeCount > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 gap-1 text-xs text-muted-foreground"
+              onClick={() => onFilterChange(EMPTY_FILTERS)}
+            >
+              <X className="h-3 w-3" /> Clear
+            </Button>
+          )}
+        </div>
 
         {/* Next Unassigned Indicator */}
         {nextUnassigned && isAdmin && (
-          <div className="ml-auto flex items-center gap-2 rounded-lg border border-amber-400 bg-amber-50 px-3 py-1.5 dark:border-amber-700 dark:bg-amber-950/50">
+          <div className="sm:ml-auto flex items-center gap-2 rounded-lg border border-amber-400 bg-amber-50 px-3 py-1.5 dark:border-amber-700 dark:bg-amber-950/50">
             <span className="text-[10px] font-bold uppercase text-amber-700 dark:text-amber-400">
               Next Unassigned:
             </span>
             <span className="text-xs font-semibold text-amber-900 dark:text-amber-200">
-              {new Date(nextUnassigned.hearing_date).toLocaleDateString(
-                "en-US",
-                { month: "short", day: "numeric" },
-              )}
+              {fmtDate(nextUnassigned.hearing_date, {
+                month: "short",
+                day: "numeric",
+              })}
               {nextUnassigned.converted_time_est &&
                 ` @ ${nextUnassigned.converted_time_est.slice(0, 5)}`}
               <span className="ml-1 font-normal text-amber-700 dark:text-amber-400">
@@ -1316,7 +1322,7 @@ function FilterBar({
       </div>
     </div>
   );
-}
+});
 
 // ── Frozen column config ──
 interface ColumnDef {
@@ -1509,7 +1515,82 @@ function HearingCard({
 }
 
 // ── Desktop table ──
-function HearingTable({
+// ── Memoized table row — only re-renders when its own data or selection changes ──
+interface MemoRowProps {
+  hearing: HearingRow;
+  ri: number;
+  isSelected: boolean;
+  isAdmin: boolean;
+  evenBg: string;
+  oddBg: string;
+  getLeftPos: (key: string) => number | undefined;
+  lastFrozenKey: string;
+  renderCell: (h: HearingRow, col: ColumnDef) => React.ReactNode;
+  onToggleSelect: (id: number) => void;
+}
+
+const MemoRow = memo(
+  function MemoRow({
+    hearing,
+    ri,
+    isSelected,
+    isAdmin,
+    evenBg,
+    oddBg,
+    getLeftPos,
+    lastFrozenKey,
+    renderCell,
+    onToggleSelect,
+  }: MemoRowProps) {
+    const rb = ri % 2 === 0 ? evenBg : oddBg;
+    return (
+      <tr className={cn("group border-b border-border/40 last:border-0", rb)}>
+        {ALL_COLUMNS.map((col) => {
+          const lp = getLeftPos(col.key);
+          const isLF = col.key === lastFrozenKey;
+          return (
+            <td
+              key={col.key}
+              className={cn(
+                "px-2 py-1.5",
+                col.frozen && cn("sticky z-10 overflow-hidden", rb),
+                isLF &&
+                  "border-r-2 border-r-blue-400/40 dark:border-r-blue-500/40",
+              )}
+              style={{
+                width: col.w,
+                minWidth: col.w,
+                maxWidth: col.frozen ? col.w : undefined,
+                ...(lp !== undefined ? { left: lp } : {}),
+              }}
+            >
+              {col.key === "checkbox" ? (
+                isAdmin ? (
+                  <input
+                    type="checkbox"
+                    data-row-checkbox
+                    defaultChecked={isSelected}
+                    onChange={() => {
+                      onToggleSelect(hearing.id);
+                      // Checkbox is uncontrolled — DOM handles visual state instantly
+                      // No React re-render needed
+                    }}
+                    className="h-4 w-4 accent-purple-600 cursor-pointer"
+                  />
+                ) : null
+              ) : (
+                renderCell(hearing, col)
+              )}
+            </td>
+          );
+        })}
+      </tr>
+    );
+  },
+  (prev, next) => prev.hearing === next.hearing && prev.ri === next.ri,
+);
+
+const HearingTable = memo(function HearingTable({
   hearings,
   userRole,
   onUpdate,
@@ -1524,7 +1605,6 @@ function HearingTable({
   representatives,
   mrTeams,
   repDocsAssignees,
-  selectedIds,
   onToggleSelect,
   onToggleAll,
   scrollRef,
@@ -1544,7 +1624,6 @@ function HearingTable({
   representatives: RepRow[];
   mrTeams: MrTeamRow[];
   repDocsAssignees: RepDocsAssigneeRow[];
-  selectedIds: Set<number>;
   onToggleSelect: (id: number) => void;
   onToggleAll: () => void;
   scrollRef: React.RefObject<HTMLDivElement | null>;
@@ -1593,8 +1672,8 @@ function HearingTable({
         ];
 
   const isAdmin = !["rep", "staff"].includes(userRole);
-  const allSelected =
-    hearings.length > 0 && hearings.every((h) => selectedIds.has(h.id));
+  // Checkboxes are uncontrolled — allSelected header defaults to unchecked
+  // toggleAll handles DOM sync directly
 
   const evenBg = "bg-white dark:bg-zinc-950";
   const oddBg = "bg-zinc-50 dark:bg-zinc-900";
@@ -1605,14 +1684,7 @@ function HearingTable({
     const editable = canEditField(userRole, col.key);
     switch (col.key) {
       case "checkbox":
-        return isAdmin ? (
-          <input
-            type="checkbox"
-            checked={selectedIds.has(hearing.id)}
-            onChange={() => onToggleSelect(hearing.id)}
-            className="h-4 w-4 accent-purple-600 cursor-pointer"
-          />
-        ) : null;
+        return null; // Handled directly in MemoRow
       case "assigned_rep_id":
         return <RepBadge hearing={hearing} />;
       case "hearing_date":
@@ -1776,7 +1848,8 @@ function HearingTable({
       <div className="w-full overflow-hidden rounded-lg border">
         <div
           ref={scrollRef}
-          className="hide-scrollbar overflow-x-auto"
+          className="hide-scrollbar overflow-x-auto overflow-y-auto"
+          style={{ maxHeight: "calc(100vh - 320px)" }}
           onScroll={onScrollSync}
           onWheel={(e) => {
             if (e.shiftKey) {
@@ -1785,8 +1858,11 @@ function HearingTable({
             }
           }}
         >
-          <table className="w-max min-w-full border-collapse text-sm">
-            <thead>
+          <table
+            data-hearing-table
+            className="w-max min-w-full border-collapse text-sm"
+          >
+            <thead className="sticky top-0 z-30">
               <tr>
                 {ALL_COLUMNS.map((col) => {
                   const leftPos = getLeftPos(col.key);
@@ -1799,13 +1875,14 @@ function HearingTable({
                         headerBg,
                         col.sortable &&
                           "cursor-pointer select-none hover:text-foreground",
-                        col.frozen && "sticky z-20",
+                        col.frozen && "sticky z-20 overflow-hidden",
                         isLF &&
-                          "shadow-[inset_-3px_0_0_0_rgba(59,130,246,0.35),4px_0_8px_-3px_rgba(0,0,0,0.12)] dark:shadow-[inset_-3px_0_0_0_rgba(96,165,250,0.4),4px_0_8px_-3px_rgba(0,0,0,0.5)]",
+                          "border-r-2 border-r-blue-400/40 dark:border-r-blue-500/40",
                       )}
                       style={{
                         width: col.w,
                         minWidth: col.w,
+                        maxWidth: col.frozen ? col.w : undefined,
                         ...(leftPos !== undefined ? { left: leftPos } : {}),
                       }}
                       onClick={() => col.sortable && onSort(col.key)}
@@ -1814,7 +1891,8 @@ function HearingTable({
                         {col.key === "checkbox" && isAdmin ? (
                           <input
                             type="checkbox"
-                            checked={allSelected}
+                            defaultChecked={false}
+                            data-select-all-checkbox
                             onChange={onToggleAll}
                             className="h-4 w-4 accent-purple-600 cursor-pointer"
                           />
@@ -1845,41 +1923,21 @@ function HearingTable({
                   </td>
                 </tr>
               ) : (
-                hearings.map((h, ri) => {
-                  const rb = ri % 2 === 0 ? evenBg : oddBg;
-                  return (
-                    <tr
-                      key={h.id}
-                      className={cn(
-                        "group border-b border-border/40 last:border-0",
-                        rb,
-                      )}
-                    >
-                      {ALL_COLUMNS.map((col) => {
-                        const lp = getLeftPos(col.key);
-                        const isLF = col.key === lastFrozenKey;
-                        return (
-                          <td
-                            key={col.key}
-                            className={cn(
-                              "px-2 py-1.5",
-                              col.frozen && cn("sticky z-10", rb),
-                              isLF &&
-                                "shadow-[inset_-3px_0_0_0_rgba(59,130,246,0.35),4px_0_8px_-3px_rgba(0,0,0,0.12)] dark:shadow-[inset_-3px_0_0_0_rgba(96,165,250,0.4),4px_0_8px_-3px_rgba(0,0,0,0.5)]",
-                            )}
-                            style={{
-                              width: col.w,
-                              minWidth: col.w,
-                              ...(lp !== undefined ? { left: lp } : {}),
-                            }}
-                          >
-                            {renderCell(h, col)}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  );
-                })
+                hearings.map((h, ri) => (
+                  <MemoRow
+                    key={h.id}
+                    hearing={h}
+                    ri={ri}
+                    isSelected={false}
+                    isAdmin={isAdmin}
+                    evenBg={evenBg}
+                    oddBg={oddBg}
+                    getLeftPos={getLeftPos}
+                    lastFrozenKey={lastFrozenKey}
+                    renderCell={renderCell}
+                    onToggleSelect={onToggleSelect}
+                  />
+                ))
               )}
             </tbody>
           </table>
@@ -1887,7 +1945,7 @@ function HearingTable({
       </div>
     </>
   );
-}
+});
 
 // ══════════════════════════════════════════════════════════════
 // MAIN — SERVER-SIDE PAGINATION
@@ -1938,6 +1996,18 @@ export function DashboardClient({
   const [sortKey, setSortKey] = useState("");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [loading, setLoading] = useState(false);
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== "undefined"
+      ? window.matchMedia("(max-width: 767px)").matches
+      : false,
+  );
+  const [mounted] = useState(() => typeof window !== "undefined");
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const handler = () => setIsMobile(mq.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
   const [, startTransition] = useTransition();
   const [postHrgHearing, setPostHrgHearing] = useState<HearingRow | null>(null);
   const [showAddHearing, setShowAddHearing] = useState(false);
@@ -1947,7 +2017,24 @@ export function DashboardClient({
   const [showActivityLog, setShowActivityLog] = useState(false);
   const [showRepStats, setShowRepStats] = useState(false);
   const [showCsvCompare, setShowCsvCompare] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  // Selection is 100% DOM-based — no React state at all for checkbox clicks
+  // The bulk action bar reads from the ref only when the user clicks an action
+  const selectedIdsRef = useRef<Set<number>>(new Set());
+  const bulkBarRef = useRef<HTMLDivElement>(null);
+  const bulkCountRef = useRef<HTMLSpanElement>(null);
+
+  const syncBulkBar = useCallback(() => {
+    const count = selectedIdsRef.current.size;
+    if (bulkBarRef.current)
+      bulkBarRef.current.style.display = count > 0 ? "flex" : "none";
+    if (bulkCountRef.current)
+      bulkCountRef.current.textContent = `${count} selected`;
+    // Adjust fake scroll spacer
+    const spacer = document.querySelector(
+      "[data-scroll-spacer]",
+    ) as HTMLElement | null;
+    if (spacer) spacer.style.bottom = count > 0 ? "48px" : "0px";
+  }, []);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Server-side fetch
@@ -2247,47 +2334,80 @@ export function DashboardClient({
     });
   }, []);
 
-  // Bulk selection
-  const toggleSelect = useCallback((id: number) => {
-    setSelectedIds((prev) => {
-      const n = new Set(prev);
-      if (n.has(id)) n.delete(id);
-      else n.add(id);
-      return n;
-    });
-  }, []);
+  // Bulk selection — pure DOM, zero React re-renders on checkbox click
+  const toggleSelect = useCallback(
+    (id: number) => {
+      const s = selectedIdsRef.current;
+      if (s.has(id)) s.delete(id);
+      else s.add(id);
+      syncBulkBar();
+    },
+    [syncBulkBar],
+  );
   const toggleAll = useCallback(() => {
-    setSelectedIds((prev) =>
-      prev.size === hearings.length
-        ? new Set()
-        : new Set(hearings.map((h) => h.id)),
-    );
-  }, [hearings]);
-  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+    const s = selectedIdsRef.current;
+    const wasAll = s.size === hearings.length;
+    if (wasAll) {
+      s.clear();
+    } else {
+      hearings.forEach((h) => s.add(h.id));
+    }
+    syncBulkBar();
+    const container = document.querySelector("[data-hearing-table]");
+    if (container) {
+      container
+        .querySelectorAll<HTMLInputElement>("input[data-row-checkbox]")
+        .forEach((cb) => {
+          cb.checked = !wasAll;
+        });
+      const selectAllCb = container.querySelector<HTMLInputElement>(
+        "input[data-select-all-checkbox]",
+      );
+      if (selectAllCb) selectAllCb.checked = !wasAll;
+    }
+  }, [hearings, syncBulkBar]);
+  const clearSelection = useCallback(() => {
+    selectedIdsRef.current.clear();
+    syncBulkBar();
+    const container = document.querySelector("[data-hearing-table]");
+    if (container) {
+      container
+        .querySelectorAll<HTMLInputElement>(
+          "input[data-row-checkbox], input[data-select-all-checkbox]",
+        )
+        .forEach((cb) => {
+          cb.checked = false;
+        });
+    }
+  }, [syncBulkBar]);
 
   const handleBulkUnassign = useCallback(async () => {
-    if (!confirm(`Unassign ${selectedIds.size} hearings?`)) return;
-    const ids = Array.from(selectedIds);
+    if (!confirm(`Unassign ${selectedIdsRef.current.size} hearings?`)) return;
+    const ids = Array.from(selectedIdsRef.current);
     for (const id of ids) {
       await updateHearing(id, "assigned_rep_id", null);
     }
-    setSelectedIds(new Set());
+    clearSelection();
     fetchPage(filters, page, pageSize, sortKey, sortDir);
-  }, [selectedIds, filters, page, pageSize, sortKey, sortDir, fetchPage]);
+  }, [filters, page, pageSize, sortKey, sortDir, fetchPage, clearSelection]);
 
   const handleBulkDelete = useCallback(async () => {
-    if (!confirm(`Delete ${selectedIds.size} hearings? This cannot be undone.`))
+    if (
+      !confirm(
+        `Delete ${selectedIdsRef.current.size} hearings? This cannot be undone.`,
+      )
+    )
       return;
-    const ids = Array.from(selectedIds);
+    const ids = Array.from(selectedIdsRef.current);
     for (const id of ids) {
       await deleteHearing(id);
     }
-    setSelectedIds(new Set());
+    clearSelection();
     fetchPage(filters, page, pageSize, sortKey, sortDir);
-  }, [selectedIds, filters, page, pageSize, sortKey, sortDir, fetchPage]);
+  }, [filters, page, pageSize, sortKey, sortDir, fetchPage, clearSelection]);
 
   return (
-    <>
+    <div suppressHydrationWarning>
       <AppHeader
         title="Hearing Dashboard"
         subtitle={`${totalCount} total hearings`}
@@ -2295,7 +2415,7 @@ export function DashboardClient({
           <Button
             variant="outline"
             size="sm"
-            className="h-8 gap-1.5 text-xs"
+            className={cn("h-8 gap-1.5 text-xs", BTN_PRESS)}
             onClick={async () => {
               try {
                 const csvRows = await exportHearingsCsv({
@@ -2345,14 +2465,17 @@ export function DashboardClient({
             <>
               <Button
                 size="sm"
-                className="h-7 gap-1.5 text-[11px]"
+                className={cn("h-7 gap-1.5 text-[11px]", BTN_PRESS)}
                 onClick={() => setShowEmailAll(true)}
               >
                 📧 Email All
               </Button>
               <Button
                 size="sm"
-                className="h-7 gap-1.5 text-[11px] bg-purple-600 hover:bg-purple-700"
+                className={cn(
+                  "h-7 gap-1.5 text-[11px] bg-purple-600 hover:bg-purple-700",
+                  BTN_PRESS,
+                )}
                 onClick={() => setShowAutoAssign(true)}
               >
                 ⚡ Auto-Assign All
@@ -2360,7 +2483,7 @@ export function DashboardClient({
               <Button
                 variant="destructive"
                 size="sm"
-                className="h-7 gap-1.5 text-[11px]"
+                className={cn("h-7 gap-1.5 text-[11px]", BTN_PRESS)}
                 onClick={() => setShowUnassignAll(true)}
               >
                 🗑️ Unassign All
@@ -2368,7 +2491,10 @@ export function DashboardClient({
               <Button
                 variant="outline"
                 size="sm"
-                className="h-7 gap-1.5 text-[11px] text-emerald-600 border-emerald-300 hover:bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:hover:bg-emerald-950"
+                className={cn(
+                  "h-7 gap-1.5 text-[11px] text-emerald-600 border-emerald-300 hover:bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:hover:bg-emerald-950",
+                  BTN_PRESS,
+                )}
                 onClick={() => setShowAddHearing(true)}
               >
                 + Add Hearing
@@ -2376,7 +2502,7 @@ export function DashboardClient({
               <Button
                 variant="outline"
                 size="sm"
-                className="h-7 gap-1.5 text-[11px]"
+                className={cn("h-7 gap-1.5 text-[11px]", BTN_PRESS)}
                 onClick={() => setShowCsvCompare(true)}
               >
                 📊 CSV Compare
@@ -2394,20 +2520,20 @@ export function DashboardClient({
           userRole={userRole}
         />
 
-        {/* Pagination bar — above table like old dashboard, with Activity Log + Rep Stats */}
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-card px-3 py-2">
+        {/* Pagination bar */}
+        <div className="flex flex-col gap-2 rounded-lg border bg-card px-3 py-2 sm:flex-row sm:flex-wrap sm:items-center">
           <span className="text-xs text-muted-foreground tabular-nums">
             Showing {totalFiltered === 0 ? 0 : (page - 1) * pageSize + 1}-
             {Math.min(page * pageSize, totalFiltered)} of {totalFiltered}
             {totalFiltered !== totalCount && ` (filtered from ${totalCount})`}
           </span>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
             {userRole !== "rep" && (
               <>
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-7 gap-1.5 text-xs"
+                  className={cn("h-7 gap-1.5 text-xs", BTN_PRESS)}
                   onClick={() => setShowActivityLog(true)}
                 >
                   <ClipboardList className="h-3.5 w-3.5" /> Activity Log
@@ -2415,7 +2541,7 @@ export function DashboardClient({
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-7 gap-1.5 text-xs"
+                  className={cn("h-7 gap-1.5 text-xs", BTN_PRESS)}
                   onClick={() => setShowRepStats(true)}
                 >
                   <BarChart3 className="h-3.5 w-3.5" /> Rep Stats
@@ -2479,27 +2605,32 @@ export function DashboardClient({
         </div>
 
         {/* Mobile: Cards */}
-        <div
-          className={cn(
-            "relative flex flex-col gap-2 md:hidden",
-            loading && "opacity-50 pointer-events-none",
-          )}
-        >
-          {hearings.map((h) => (
-            <HearingCard
-              key={h.id}
-              hearing={h}
-              userRole={userRole}
-              onUpdate={handleUpdate}
-              onOpenPostHrg={setPostHrgHearing}
-            />
-          ))}
-          {hearings.length === 0 && !loading && (
-            <div className="py-12 text-center text-sm text-muted-foreground">
-              No hearings found.
-            </div>
-          )}
-        </div>
+        {/* Mobile cards — only mount on small screens */}
+        {isMobile && (
+          <div
+            className={cn(
+              "relative flex flex-col gap-2",
+              loading && "opacity-50 pointer-events-none",
+            )}
+          >
+            {hearings.map((h) => (
+              <HearingCard
+                key={h.id}
+                hearing={h}
+                userRole={userRole}
+                onUpdate={handleUpdate}
+                onOpenPostHrg={setPostHrgHearing}
+              />
+            ))}
+            {hearings.length === 0 && !loading && (
+              <div className="py-12 text-center text-sm text-muted-foreground">
+                No hearings found.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Desktop table */}
         {/* Desktop: Table */}
         <div
           className={cn(
@@ -2527,7 +2658,6 @@ export function DashboardClient({
             representatives={representatives}
             mrTeams={mrTeams}
             repDocsAssignees={repDocsAssignees}
-            selectedIds={selectedIds}
             onToggleSelect={toggleSelect}
             onToggleAll={toggleAll}
             scrollRef={tableScrollRef}
@@ -3014,10 +3144,11 @@ export function DashboardClient({
         tableWidth > tableContainerWidth &&
         createPortal(
           <div
+            data-scroll-spacer
             ref={fakeScrollRef}
             onScroll={handleFakeScroll}
             style={{
-              bottom: selectedIds.size > 0 ? 48 : 0,
+              bottom: 0, // adjusted by syncBulkBar via data-scroll-spacer
               left: "var(--sidebar-width, 0px)",
               height: 28,
               scrollbarWidth: "auto",
@@ -3030,25 +3161,35 @@ export function DashboardClient({
           document.body,
         )}
 
-      {/* Bulk action bar — fixed at bottom when rows selected */}
-      {selectedIds.size > 0 &&
+      {/* Bulk action bar — only after hydration to avoid SSR mismatch */}
+      {mounted &&
         createPortal(
-          <div className="fixed bottom-0 left-0 right-0 z-90 flex items-center justify-between gap-3 border-t bg-card px-6 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.1)]">
+          <div
+            ref={bulkBarRef}
+            style={{ display: "none" }}
+            className="fixed bottom-0 left-0 right-0 z-90 flex items-center justify-between gap-3 border-t bg-card px-6 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.1)]"
+          >
             <div className="flex items-center gap-3">
-              <span className="flex h-7 items-center rounded-md bg-purple-100 px-3 text-xs font-bold text-purple-700 dark:bg-purple-900/40 dark:text-purple-300">
-                {selectedIds.size} selected
+              <span
+                ref={bulkCountRef}
+                className="flex h-7 items-center rounded-md bg-purple-100 px-3 text-xs font-bold text-purple-700 dark:bg-purple-900/40 dark:text-purple-300"
+              >
+                0 selected
               </span>
               <Button
                 size="sm"
-                className="h-7 gap-1.5 text-[11px] bg-purple-600 hover:bg-purple-700"
+                className={cn(
+                  "h-7 gap-1.5 text-[11px] bg-purple-600 hover:bg-purple-700",
+                  BTN_PRESS,
+                )}
                 onClick={async () => {
                   if (
                     !confirm(
-                      `Auto-assign ${selectedIds.size} selected hearings?`,
+                      `Auto-assign ${selectedIdsRef.current.size} selected hearings?`,
                     )
                   )
                     return;
-                  const ids = Array.from(selectedIds);
+                  const ids = Array.from(selectedIdsRef.current);
                   setAutoAssignStatus({
                     hearingId: 0,
                     state: "loading",
@@ -3061,7 +3202,7 @@ export function DashboardClient({
                       state: "success",
                       message: `${result.assigned} assigned, ${result.failed} failed`,
                     });
-                    setSelectedIds(new Set());
+                    clearSelection();
                     fetchPage(filters, page, pageSize, sortKey, sortDir);
                   } catch (e: unknown) {
                     setAutoAssignStatus({
@@ -3078,7 +3219,7 @@ export function DashboardClient({
               <Button
                 variant="outline"
                 size="sm"
-                className="h-7 gap-1.5 text-[11px]"
+                className={cn("h-7 gap-1.5 text-[11px]", BTN_PRESS)}
                 onClick={handleBulkUnassign}
               >
                 🔄 Unassign
@@ -3086,7 +3227,7 @@ export function DashboardClient({
               <Button
                 variant="destructive"
                 size="sm"
-                className="h-7 gap-1.5 text-[11px]"
+                className={cn("h-7 gap-1.5 text-[11px]", BTN_PRESS)}
                 onClick={handleBulkDelete}
               >
                 🗑️ Delete
@@ -3094,21 +3235,21 @@ export function DashboardClient({
               <Button
                 variant="outline"
                 size="sm"
-                className="h-7 gap-1.5 text-[11px]"
+                className={cn("h-7 gap-1.5 text-[11px]", BTN_PRESS)}
                 onClick={async () => {
                   if (
                     !confirm(
-                      `Email reps for ${selectedIds.size} selected hearings?`,
+                      `Email reps for ${selectedIdsRef.current.size} selected hearings?`,
                     )
                   )
                     return;
-                  const ids = Array.from(selectedIds);
+                  const ids = Array.from(selectedIdsRef.current);
                   try {
                     const result = await bulkEmailSelected(ids);
                     alert(
                       `Emailed ${result.emailsSent} reps (${result.emailsFailed} failed${result.skippedNoRep > 0 ? `, ${result.skippedNoRep} unassigned` : ""})`,
                     );
-                    setSelectedIds(new Set());
+                    clearSelection();
                   } catch (e: unknown) {
                     alert(e instanceof Error ? e.message : "Email failed");
                   }
@@ -3183,7 +3324,7 @@ export function DashboardClient({
           </div>,
           document.body,
         )}
-    </>
+    </div>
   );
 }
 
