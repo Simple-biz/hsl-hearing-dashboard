@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useTransition, useCallback } from "react";
 import type { Chart as ChartType } from "chart.js";
 import { AppHeader } from "@/components/layout/app-header";
+import { DashboardNav } from "@/components/layout/dashboard-nav";
 import {
   TrendingUp,
   PieChart as PieIcon,
@@ -14,6 +15,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { UserRole } from "@/lib/roles";
 import {
   Select,
   SelectContent,
@@ -376,7 +378,7 @@ function computeWinRate(statCards: StatCardData[]): string {
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
-type Props = Omit<ReportsData, never>; // all fields from ReportsData
+type Props = ReportsData & { userRole: UserRole };
 
 // ─── Client Component ─────────────────────────────────────────────────────────
 
@@ -389,6 +391,7 @@ export function ReportsClient({
   withdrawalTotal: initialWithdrawalTotal,
   allMonths,
   allReps,
+  userRole,
 }: Props) {
   // ── Data state (updated on Apply / Reset) ──────────────────────────────────
   const [data, setData] = useState<ReportsData>({
@@ -470,6 +473,7 @@ export function ReportsClient({
         title="Reports"
         subtitle="Hearing analytics and performance metrics"
       />
+      <DashboardNav userRole={userRole} />
 
       {/* ── Filter Bar ─────────────────────────────────────────────────────── */}
       <div className="border-b border-border bg-card px-4 sm:px-6 py-3">
