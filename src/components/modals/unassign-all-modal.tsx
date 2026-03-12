@@ -3,17 +3,12 @@
 import { useState, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { X, Trash2, Loader2, AlertTriangle } from "lucide-react";
 import { unassignAll, getUnassignPreview } from "@/app/(dashboard)/actions";
 import type { UnassignPreviewRow } from "@/app/(dashboard)/actions";
 
+const SEL =
+  "h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring";
 function getMonthOptions() {
   const months: { value: string; label: string }[] = [
     { value: "__select__", label: "Select a month..." },
@@ -172,45 +167,36 @@ export function UnassignAllModal({
                 <label className="mb-2 block text-sm font-semibold">
                   Filter by Hearing Month
                 </label>
-                <Select value={monthFilter} onValueChange={setMonthFilter}>
-                  <SelectTrigger className="h-10 text-sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {getMonthOptions().map((m) => (
-                      <SelectItem key={m.value} value={m.value}>
-                        {m.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <select
+                  className={SEL}
+                  value={monthFilter}
+                  onChange={(e) => setMonthFilter(e.target.value)}
+                >
+                  {getMonthOptions().map((m) => (
+                    <option key={m.value} value={m.value}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div>
                 <label className="mb-2 block text-sm font-semibold">
                   Filter by Assignment Date
                 </label>
-                <Select
+                <select
+                  className={SEL}
                   value={assignDateFilter}
-                  onValueChange={setAssignDateFilter}
+                  onChange={(e) => setAssignDateFilter(e.target.value)}
                 >
-                  <SelectTrigger className="h-10 text-sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__any__">
-                      🕐 Any assignment date
-                    </SelectItem>
-                    <SelectItem value="today">📅 Assigned Today</SelectItem>
-                    <SelectItem value="yesterday">
-                      📅 Assigned Yesterday
-                    </SelectItem>
-                    <SelectItem value="last_7_days">
-                      📅 Assigned in Last 7 Days
-                    </SelectItem>
-                    <SelectItem value="custom">📅 Custom Date...</SelectItem>
-                  </SelectContent>
-                </Select>
+                  <option value="__any__">🕐 Any assignment date</option>
+                  <option value="today">📅 Assigned Today</option>
+                  <option value="yesterday">📅 Assigned Yesterday</option>
+                  <option value="last_7_days">
+                    📅 Assigned in Last 7 Days
+                  </option>
+                  <option value="custom">📅 Custom Date...</option>
+                </select>
                 {assignDateFilter === "custom" && (
                   <div className="mt-2">
                     <label className="mb-1 block text-sm font-semibold">
@@ -230,22 +216,19 @@ export function UnassignAllModal({
                 <label className="mb-2 block text-sm font-semibold">
                   Filter by Rep Type
                 </label>
-                <Select value={repTypeFilter} onValueChange={setRepTypeFilter}>
-                  <SelectTrigger className="h-10 text-sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__all__">
-                      👥 All Representatives
-                    </SelectItem>
-                    <SelectItem value="internal_advocates">
-                      🏢 Internal Advocates Only
-                    </SelectItem>
-                    <SelectItem value="external_advocates">
-                      🌐 External Advocates Only
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
+                <select
+                  className={SEL}
+                  value={repTypeFilter}
+                  onChange={(e) => setRepTypeFilter(e.target.value)}
+                >
+                  <option value="__all__">👥 All Representatives</option>
+                  <option value="internal_advocates">
+                    🏢 Internal Advocates Only
+                  </option>
+                  <option value="external_advocates">
+                    🌐 External Advocates Only
+                  </option>
+                </select>
               </div>
 
               {/* Preview count */}
