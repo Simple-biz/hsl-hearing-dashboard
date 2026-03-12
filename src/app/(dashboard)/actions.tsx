@@ -1023,6 +1023,7 @@ export async function fetchActivityLog(params: {
   dateFrom?: string;
   dateTo?: string;
   userId?: string;
+  excludeSystemAdmin?: boolean;
 }): Promise<{
   entries: ActivityLogEntry[];
   total: number;
@@ -1080,6 +1081,11 @@ export async function fetchActivityLog(params: {
     idx++;
   }
 
+  // Optionally hide system_admin (user id=1) activities — matches PHP dashboard
+  if (params.excludeSystemAdmin) {
+    conditions.push(`a.user_id != 1`);
+  }
+
   const where =
     conditions.length > 0 ? "WHERE " + conditions.join(" AND ") : "";
 
@@ -1109,7 +1115,7 @@ export async function fetchActivityLog(params: {
       [...values, params.pageSize, (params.page - 1) * params.pageSize],
     ),
     db.query(
-      "SELECT id, full_name AS name FROM users WHERE is_active = true ORDER BY full_name",
+      "SELECT id, full_name AS name FROM users WHERE is_active = true AND id != 1 ORDER BY full_name",
     ),
   ]);
 
