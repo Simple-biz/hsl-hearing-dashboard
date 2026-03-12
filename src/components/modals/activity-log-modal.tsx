@@ -36,7 +36,13 @@ const ACTION_COLORS: Record<string, string> = {
   token_revoked: "bg-orange-100 text-orange-700 dark:bg-orange-900/30",
 };
 
-export function ActivityLogModal({ onClose }: { onClose: () => void }) {
+export function ActivityLogModal({
+  onClose,
+  excludeSystemAdmin = true,
+}: {
+  onClose: () => void;
+  excludeSystemAdmin?: boolean;
+}) {
   const [category, setCategory] = useState("all");
   const [dateRange, setDateRange] = useState("");
   const [dateFrom, setDateFrom] = useState("");
@@ -63,6 +69,7 @@ export function ActivityLogModal({ onClose }: { onClose: () => void }) {
       dateFrom: dateFrom || undefined,
       dateTo: dateTo || undefined,
       userId: userId || undefined,
+      excludeSystemAdmin,
     }).then((res) => {
       if (!cancelled) {
         setEntries(res.entries);
@@ -257,9 +264,20 @@ export function ActivityLogModal({ onClose }: { onClose: () => void }) {
           {/* Pagination */}
           <div className="flex items-center justify-between border-t px-5 py-2.5 shrink-0">
             <span className="text-xs text-muted-foreground">
-              Page {page} of {totalPages}
+              {total.toLocaleString()} entries
             </span>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1.5">
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-7 w-7"
+                disabled={page <= 1 || loading}
+                onClick={() => changePage(1)}
+                title="First page"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+                <ChevronLeft className="h-3.5 w-3.5 -ml-2" />
+              </Button>
               <Button
                 variant="outline"
                 size="icon"
@@ -269,6 +287,18 @@ export function ActivityLogModal({ onClose }: { onClose: () => void }) {
               >
                 <ChevronLeft className="h-3.5 w-3.5" />
               </Button>
+              <select
+                className="h-7 rounded-md border border-input bg-background px-2 text-xs tabular-nums focus:outline-none focus:ring-1 focus:ring-ring"
+                value={String(page)}
+                onChange={(e) => changePage(Number(e.target.value))}
+                disabled={loading}
+              >
+                {Array.from({ length: totalPages }, (_, i) => (
+                  <option key={i + 1} value={String(i + 1)}>
+                    Page {i + 1}
+                  </option>
+                ))}
+              </select>
               <Button
                 variant="outline"
                 size="icon"
@@ -277,6 +307,17 @@ export function ActivityLogModal({ onClose }: { onClose: () => void }) {
                 onClick={() => changePage(page + 1)}
               >
                 <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-7 w-7"
+                disabled={page >= totalPages || loading}
+                onClick={() => changePage(totalPages)}
+                title="Last page"
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+                <ChevronRight className="h-3.5 w-3.5 -ml-2" />
               </Button>
             </div>
           </div>
