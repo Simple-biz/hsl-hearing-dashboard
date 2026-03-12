@@ -50,7 +50,7 @@ export function ReportMonthlyDetailsModal({
         <button
           type="button"
           onClick={() => exportCsv(monthly)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition-colors"
         >
           <Download size={11} /> Export CSV
         </button>

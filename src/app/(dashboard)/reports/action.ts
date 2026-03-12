@@ -59,6 +59,8 @@ export interface ReportsData {
   assignedReps: AssignedRep[];
   repStatusRows: RepStatusRow[];
   statCards: StatCardData[];
+  /** Total withdrawal hearing count — used in the Assigned Cases modal withdrawal row */
+  withdrawalTotal: number;
   /** All unique month labels across the full dataset — used to populate the Month filter */
   allMonths: string[];
   /** All rep names across the full dataset — used to populate the Rep filter */
@@ -103,7 +105,7 @@ async function resolveRepId(repName?: string): Promise<number | null> {
 function quickSelectToDateRange(
   quickSelect: ReportsFilters["quickSelect"],
   startIdx: number,
-  ): { clause: string; params: unknown[] } {
+): { clause: string; params: unknown[] } {
   switch (quickSelect) {
     case "Last 30 Days":
       return { clause: `AND h.hearing_date >= CURRENT_DATE - INTERVAL '30 days'`, params: [] };
@@ -170,10 +172,10 @@ async function fetchAllMonthly(
 
   const { rows } = await db.query(
     `SELECT
-       TO_CHAR(h.hearing_date, 'Mon ''YY') AS month,
-       COUNT(*)::int AS count,
-       COUNT(*) FILTER (WHERE h.hearing_decision_status = 'Favorable')::int AS favorable,
-       COUNT(*) FILTER (WHERE h.hearing_decision_status = 'Unfavorable')::int AS unfavorable
+       TO_CHAR(h.hearing_date, 'Mon ''YY')                                       AS month,
+       COUNT(*)::int                                                              AS count,
+       COUNT(*) FILTER (WHERE h.hearing_decision_status = 'Favorable')::int     AS favorable,
+       COUNT(*) FILTER (WHERE h.hearing_decision_status = 'Unfavorable')::int   AS unfavorable
      FROM hearings h
      ${where}
      GROUP BY TO_CHAR(h.hearing_date, 'Mon ''YY'), DATE_TRUNC('month', h.hearing_date)
@@ -395,12 +397,25 @@ export async function getReportsData(
     ? monthly.filter((m) => m.month === filters.month)
     : monthly;
 
+  // Derive withdrawalTotal from hearingStatus — sum all withdrawal-type statuses
+  const WITHDRAWAL_STATUSES = [
+    "Withdrawal", "WD Clmt Deceased", "Withdrawal - No Contact",
+    "Withdrawal - UFD", "Withdrawal - Client Terminated Rep",
+    "Withdrawal - Client Working/ Doing Better/WD Hrg Req",
+    "Withdrawal - In-Person", "Withdrawal - Receiving Benefits",
+    "Withdrawal - SGA", "Withdrawal - Misc",
+  ];
+  const withdrawalTotal = hearingStatus
+    .filter((s) => WITHDRAWAL_STATUSES.includes(s.status) || s.status.startsWith("Withdrawal"))
+    .reduce((sum, s) => sum + s.count, 0);
+
   return {
     monthly:      filteredMonthly,
     hearingStatus,
     assignedReps,
     repStatusRows,
     statCards,
+    withdrawalTotal,
     allMonths: allMonthsRows.rows.map((r) => r.month as string),
     allReps:   allRepsRows.rows.map((r)   => r.name  as string),
   };

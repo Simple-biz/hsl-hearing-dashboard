@@ -11,11 +11,17 @@ import {
   Download,
   Eye,
   RefreshCw,
-  Filter,
-  ChevronDown,
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { getReportsData } from "./action";
 import type {
   MonthlyTrend,
@@ -258,12 +264,19 @@ interface GhostBtnProps {
   onClick?: () => void;
 }
 
-function GhostBtn({ icon: Icon, label, onClick }: GhostBtnProps) {
+function GhostBtn({ icon: Icon, label, onClick, color = "default" }: GhostBtnProps & { color?: "default" | "blue" | "emerald" | "purple" | "amber" }) {
+  const colorCls = {
+    default:  "bg-muted border border-border text-muted-foreground hover:bg-muted/80",
+    blue:     "bg-blue-600 text-white hover:bg-blue-700",
+    emerald:  "bg-emerald-600 text-white hover:bg-emerald-700",
+    purple:   "bg-purple-600 text-white hover:bg-purple-700",
+    amber:    "bg-amber-500 text-white hover:bg-amber-600",
+  }[color];
   return (
     <button
       type="button"
       onClick={onClick}
-      className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-border hover:bg-muted text-xs text-muted-foreground transition-colors"
+      className={cn("flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors", colorCls)}
     >
       <Icon size={12} />
       {label}
@@ -293,25 +306,17 @@ function FilterSelect({
       <label className="text-[10px] font-semibold tracking-widest text-muted-foreground uppercase">
         {label}
       </label>
-      <div className="relative">
-        <select
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          disabled={disabled}
-          className="appearance-none pl-3 pr-8 py-1.5 bg-muted border border-border rounded-lg text-sm text-foreground cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <option value="">{placeholder}</option>
+      <Select value={value || "__all__"} onValueChange={(v) => onChange(v === "__all__" ? "" : v)} disabled={disabled}>
+        <SelectTrigger className="h-9 w-auto min-w-36 text-sm">
+          <SelectValue placeholder={placeholder} />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__all__">{placeholder}</SelectItem>
           {options.map((o) => (
-            <option key={o} value={o}>
-              {o}
-            </option>
+            <SelectItem key={o} value={o}>{o}</SelectItem>
           ))}
-        </select>
-        <ChevronDown
-          size={12}
-          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none"
-        />
-      </div>
+        </SelectContent>
+      </Select>
     </div>
   );
 }
@@ -385,6 +390,7 @@ export function ReportsClient({
   assignedReps: initialAssignedReps,
   repStatusRows: initialRepStatusRows,
   statCards: initialStatCards,
+  withdrawalTotal: initialWithdrawalTotal,
   allMonths,
   allReps,
 }: Props) {
@@ -395,6 +401,7 @@ export function ReportsClient({
     assignedReps: initialAssignedReps,
     repStatusRows: initialRepStatusRows,
     statCards: initialStatCards,
+    withdrawalTotal: initialWithdrawalTotal,
     allMonths,
     allReps,
   });
@@ -441,9 +448,23 @@ export function ReportsClient({
     });
   }, []);
 
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const updatePending = useCallback(
-    (key: keyof ReportsFilters, value: string) =>
-      setPending((prev) => ({ ...prev, [key]: value })),
+    (key: keyof ReportsFilters, value: string) => {
+      setPending((prev) => {
+        const next = { ...prev, [key]: value };
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        debounceRef.current = setTimeout(() => {
+          startTransition(async () => {
+            const result = await getReportsData(next);
+            setData(result);
+            setActiveFilters(next);
+          });
+        }, 400);
+        return next;
+      });
+    },
     []
   );
 
@@ -503,12 +524,12 @@ export function ReportsClient({
               type="button"
               onClick={handleApply}
               disabled={isPending}
-              className="flex items-center gap-2 px-4 py-1.5 bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg text-sm font-medium transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              className="flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed bg-blue-600 hover:bg-blue-700 text-white"
             >
               {isPending ? (
                 <Loader2 size={13} className="animate-spin" />
               ) : (
-                <Filter size={13} />
+                <RefreshCw size={13} />
               )}
               Apply Filters
             </button>
@@ -516,7 +537,7 @@ export function ReportsClient({
               type="button"
               onClick={handleReset}
               disabled={isPending}
-              className="flex items-center gap-2 px-4 py-1.5 border border-border hover:bg-muted rounded-lg text-sm text-muted-foreground transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              className="flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed bg-zinc-200 hover:bg-zinc-300 text-zinc-700"
             >
               <RefreshCw size={13} className={isPending ? "animate-spin" : ""} />
               Reset
@@ -564,7 +585,7 @@ export function ReportsClient({
         </div>
 
         {/* ── Three-panel row ─────────────────────────────────────────────── */}
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
 
           {/* Monthly Trend */}
           <div className="bg-card border border-border rounded-xl p-5">
@@ -575,8 +596,8 @@ export function ReportsClient({
               title="Monthly Hearing Trend"
               subtitle="Volume + outcomes by month"
             >
-              <GhostBtn icon={Eye}      label="View Details" onClick={() => setMonthlyModalOpen(true)}  />
-              <GhostBtn icon={Download} label="Export"       onClick={() => exportMonthlyCsv(data.monthly)} />
+              <GhostBtn icon={Eye}      label="View Details" onClick={() => setMonthlyModalOpen(true)} color="blue" />
+              <GhostBtn icon={Download} label="Export"       onClick={() => exportMonthlyCsv(data.monthly)} color="emerald" />
             </CardHeader>
             <div className="h-64">
               <MonthlyTrendChart monthly={data.monthly} />
@@ -592,7 +613,7 @@ export function ReportsClient({
               title="Assigned Cases"
               subtitle="Cases per representative"
             >
-              <GhostBtn icon={Eye} label="View All" onClick={() => setAssignedModalOpen(true)} />
+              <GhostBtn icon={Eye} label="View All" onClick={() => setAssignedModalOpen(true)} color="blue" />
             </CardHeader>
             <div className="space-y-2 overflow-y-auto max-h-64">
               {data.assignedReps.length === 0 ? (
@@ -636,7 +657,7 @@ export function ReportsClient({
               title="Status Distribution"
               subtitle="Outcome breakdown"
             >
-              <GhostBtn icon={Eye} label="View Details" onClick={() => setStatusModalOpen(true)} />
+              <GhostBtn icon={Eye} label="View Details" onClick={() => setStatusModalOpen(true)} color="purple" />
             </CardHeader>
             <div className="flex gap-5 items-center h-64">
               <div className="w-56 h-56 shrink-0">
@@ -679,11 +700,12 @@ export function ReportsClient({
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <GhostBtn icon={Eye}      label="View Details" onClick={() => setMatrixModalOpen(true)} />
+              <GhostBtn icon={Eye}      label="View Details" onClick={() => setMatrixModalOpen(true)} color="blue" />
               <GhostBtn
                 icon={Download}
                 label="Export CSV"
                 onClick={() => exportRepMatrixCsv(data.repStatusRows)}
+                color="emerald"
               />
               <div className="p-2 rounded-lg bg-amber-50">
                 <Grid3x3 size={16} className="text-amber-600" />
@@ -789,6 +811,7 @@ export function ReportsClient({
         onClose={() => setAssignedModalOpen(false)}
         assignedReps={data.assignedReps}
         monthly={data.monthly}
+        withdrawalTotal={data.withdrawalTotal}
       />
       <ReportMatrixModal
         key={matrixModalOpen ? "matrix-open" : "matrix-closed"}
