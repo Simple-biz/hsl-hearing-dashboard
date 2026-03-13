@@ -19,17 +19,33 @@ const CATEGORIES = [
 ];
 
 const ACTION_COLORS: Record<string, string> = {
-  hearing_assigned: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30",
-  hearing_unassigned: "bg-amber-100 text-amber-700 dark:bg-amber-900/30",
-  hearing_auto_assigned: "bg-purple-100 text-purple-700 dark:bg-purple-900/30",
+  // Assignments
+  rep_assigned: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30",
+  rep_unassigned: "bg-amber-100 text-amber-700 dark:bg-amber-900/30",
+  rep_auto_assigned: "bg-purple-100 text-purple-700 dark:bg-purple-900/30",
+  batch_auto_assign: "bg-purple-100 text-purple-700 dark:bg-purple-900/30",
+  bulk_unassign: "bg-amber-100 text-amber-700 dark:bg-amber-900/30",
+  status_assigned: "bg-teal-100 text-teal-700 dark:bg-teal-900/30",
+  // Emails
+  email_sent: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30",
+  email_failed: "bg-red-100 text-red-700 dark:bg-red-900/30",
+  bulk_email: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30",
+  // Field updates
+  field_updated: "bg-blue-100 text-blue-700 dark:bg-blue-900/30",
+  post_hrg_note_added: "bg-sky-100 text-sky-700 dark:bg-sky-900/30",
+  post_hrg_deadline_updated: "bg-sky-100 text-sky-700 dark:bg-sky-900/30",
+  post_hrg_note_deleted: "bg-orange-100 text-orange-700 dark:bg-orange-900/30",
+  // Hearings
   hearing_updated: "bg-blue-100 text-blue-700 dark:bg-blue-900/30",
-  hearing_edited: "bg-blue-100 text-blue-700 dark:bg-blue-900/30",
   hearing_created: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30",
   hearing_deleted: "bg-red-100 text-red-700 dark:bg-red-900/30",
   hearing_imported: "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30",
-  email_sent: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30",
-  withdrawal: "bg-red-100 text-red-700 dark:bg-red-900/30",
+  bulk_delete: "bg-red-100 text-red-700 dark:bg-red-900/30",
+  bulk_migrate: "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30",
+  // Schedule
   schedule_updated: "bg-sky-100 text-sky-700 dark:bg-sky-900/30",
+  schedule_lock_override: "bg-amber-100 text-amber-700 dark:bg-amber-900/30",
+  // Reps
   rep_created: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30",
   rep_updated: "bg-blue-100 text-blue-700 dark:bg-blue-900/30",
   rep_deleted: "bg-red-100 text-red-700 dark:bg-red-900/30",

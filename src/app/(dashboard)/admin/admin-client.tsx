@@ -886,15 +886,36 @@ const LOG_CATEGORIES = [
 ];
 
 const ACTION_COLORS: Record<string, string> = {
-  hearing_assigned:
+  // Assignments
+  rep_assigned:
     "bg-emerald-100 text-emerald-800 dark:bg-emerald-800/40 dark:text-emerald-300",
-  hearing_unassigned:
+  rep_unassigned:
     "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
-  hearing_auto_assigned:
+  rep_auto_assigned:
     "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300",
-  hearing_updated:
+  batch_auto_assign:
+    "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300",
+  bulk_unassign:
+    "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+  status_assigned:
+    "bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300",
+  // Emails
+  email_sent:
+    "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-300",
+  email_failed: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
+  bulk_email:
+    "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-300",
+  // Field updates
+  field_updated:
     "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
-  hearing_edited:
+  post_hrg_note_added:
+    "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300",
+  post_hrg_deadline_updated:
+    "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300",
+  post_hrg_note_deleted:
+    "bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300",
+  // Hearings
+  hearing_updated:
     "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
   hearing_created:
     "bg-emerald-100 text-emerald-800 dark:bg-emerald-800/40 dark:text-emerald-300",
@@ -902,11 +923,15 @@ const ACTION_COLORS: Record<string, string> = {
     "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
   hearing_imported:
     "bg-cyan-100 text-cyan-800 dark:bg-cyan-900/40 dark:text-cyan-300",
-  email_sent:
-    "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-300",
-  withdrawal: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
+  bulk_delete: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
+  bulk_migrate:
+    "bg-cyan-100 text-cyan-800 dark:bg-cyan-900/40 dark:text-cyan-300",
+  // Schedule
   schedule_updated:
     "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300",
+  schedule_lock_override:
+    "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+  // Reps
   rep_created:
     "bg-emerald-100 text-emerald-800 dark:bg-emerald-800/40 dark:text-emerald-300",
   rep_updated:
@@ -914,6 +939,7 @@ const ACTION_COLORS: Record<string, string> = {
   rep_deleted: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
   token_revoked:
     "bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300",
+  // Admin
   user_created:
     "bg-emerald-100 text-emerald-800 dark:bg-emerald-800/40 dark:text-emerald-300",
   user_updated:
