@@ -124,9 +124,9 @@ const SEL =
 const SEL_SM =
   "h-7 rounded-md border border-input bg-card px-2 text-xs cursor-pointer focus:outline-none focus:ring-1 focus:ring-ring";
 
-// Press-feel class for action buttons
+// Press-feel class for action buttons — standard Tailwind values, targeted transition
 const BTN_PRESS =
-  "active:scale-[0.96] active:opacity-80 transition-all duration-75";
+  "active:scale-95 active:brightness-90 transition-transform duration-75";
 
 // ── Safe date parsing (avoids UTC midnight → local timezone day shift) ──
 function parseDate(dateStr: string): Date {
@@ -256,7 +256,7 @@ function InlineCheck({
     <div className="flex items-center justify-center">
       <input
         type="checkbox"
-        checked={checked}
+        defaultChecked={checked}
         onChange={(e) => editable && onToggle(e.target.checked)}
         disabled={!editable}
         className={cn(
@@ -1526,7 +1526,6 @@ interface MemoRowProps {
   getLeftPos: (key: string) => number | undefined;
   lastFrozenKey: string;
   renderCell: (h: HearingRow, col: ColumnDef) => React.ReactNode;
-  onToggleSelect: (id: number) => void;
 }
 
 const MemoRow = memo(
@@ -1540,7 +1539,6 @@ const MemoRow = memo(
     getLeftPos,
     lastFrozenKey,
     renderCell,
-    onToggleSelect,
   }: MemoRowProps) {
     const rb = ri % 2 === 0 ? evenBg : oddBg;
     return (
@@ -1569,12 +1567,8 @@ const MemoRow = memo(
                   <input
                     type="checkbox"
                     data-row-checkbox
+                    data-hearing-id={hearing.id}
                     defaultChecked={isSelected}
-                    onChange={() => {
-                      onToggleSelect(hearing.id);
-                      // Checkbox is uncontrolled — DOM handles visual state instantly
-                      // No React re-render needed
-                    }}
                     className="h-4 w-4 accent-purple-600 cursor-pointer"
                   />
                 ) : null
@@ -1605,7 +1599,6 @@ const HearingTable = memo(function HearingTable({
   representatives,
   mrTeams,
   repDocsAssignees,
-  onToggleSelect,
   onToggleAll,
   scrollRef,
   onScrollSync,
@@ -1624,7 +1617,6 @@ const HearingTable = memo(function HearingTable({
   representatives: RepRow[];
   mrTeams: MrTeamRow[];
   repDocsAssignees: RepDocsAssigneeRow[];
-  onToggleSelect: (id: number) => void;
   onToggleAll: () => void;
   scrollRef: React.RefObject<HTMLDivElement | null>;
   onScrollSync: () => void;
@@ -1935,7 +1927,6 @@ const HearingTable = memo(function HearingTable({
                     getLeftPos={getLeftPos}
                     lastFrozenKey={lastFrozenKey}
                     renderCell={renderCell}
-                    onToggleSelect={onToggleSelect}
                   />
                 ))
               )}
@@ -2001,7 +1992,10 @@ export function DashboardClient({
       ? window.matchMedia("(max-width: 767px)").matches
       : false,
   );
-  const [mounted] = useState(() => typeof window !== "undefined");
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    requestAnimationFrame(() => setMounted(true));
+  }, []);
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 767px)");
     const handler = () => setIsMobile(mq.matches);
@@ -2121,23 +2115,35 @@ export function DashboardClient({
 
   const handleUpdate = useCallback(
     async (hearingId: number, field: string, value: UpdateValue) => {
-      setHearings((prev) =>
-        prev.map((h) => {
-          if (h.id !== hearingId) return h;
-          const updated = { ...h, [field]: value };
-          if (field === "assigned_rep_id") {
-            const rep = representatives.find((r) => r.id === Number(value));
-            updated.rep_name = rep?.name ?? null;
-            updated.rep_type = rep?.rep_type ?? null;
-          }
-          if (field === "mr_team_id") {
-            const team = mrTeams.find((t) => t.id === Number(value));
-            updated.mr_team_name = team?.team_name ?? null;
-            updated.mr_team_color = team?.team_color ?? null;
-          }
-          return updated;
-        }),
-      );
+      // Optimistic: update local state only for fields that affect display of OTHER cells
+      // (e.g. rep assignment changes the rep badge which is read-only)
+      // For simple dropdown/checkbox fields, the <select>/<input> already shows the new value
+      const needsLocalUpdate =
+        field === "assigned_rep_id" ||
+        field === "mr_team_id" ||
+        field === "assignment_status" ||
+        field === "post_hrg_notes" ||
+        field === "post_hrg_deadline";
+
+      if (needsLocalUpdate) {
+        setHearings((prev) =>
+          prev.map((h) => {
+            if (h.id !== hearingId) return h;
+            const updated = { ...h, [field]: value };
+            if (field === "assigned_rep_id") {
+              const rep = representatives.find((r) => r.id === Number(value));
+              updated.rep_name = rep?.name ?? null;
+              updated.rep_type = rep?.rep_type ?? null;
+            }
+            if (field === "mr_team_id") {
+              const team = mrTeams.find((t) => t.id === Number(value));
+              updated.mr_team_name = team?.team_name ?? null;
+              updated.mr_team_color = team?.team_color ?? null;
+            }
+            return updated;
+          }),
+        );
+      }
       if (
         postHrgHearing?.id === hearingId &&
         (field === "post_hrg_notes" || field === "post_hrg_deadline")
@@ -2146,13 +2152,10 @@ export function DashboardClient({
           prev ? { ...prev, [field]: value } : null,
         );
       }
-      startTransition(async () => {
-        try {
-          await updateHearing(hearingId, field, value);
-        } catch (e) {
-          console.error("Update failed:", e);
-        }
-      });
+      // Server update in background — no await blocking UI
+      updateHearing(hearingId, field, value).catch((e) =>
+        console.error("Update failed:", e),
+      );
     },
     [representatives, mrTeams, postHrgHearing],
   );
@@ -2303,6 +2306,28 @@ export function DashboardClient({
   const tableWidth = ALL_COLUMNS.reduce((s, c) => s + c.w, 0);
   const [tableContainerWidth, setTableContainerWidth] = useState(0);
 
+  // Native event delegation for checkbox clicks — zero React overhead
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const target = e.target as HTMLInputElement;
+      if (
+        target.matches("input[data-row-checkbox]") &&
+        target.dataset.hearingId
+      ) {
+        const id = Number(target.dataset.hearingId);
+        const s = selectedIdsRef.current;
+        if (s.has(id)) s.delete(id);
+        else s.add(id);
+        syncBulkBar();
+      }
+    };
+    const table = document.querySelector("[data-hearing-table]");
+    if (table) table.addEventListener("change", handler);
+    return () => {
+      if (table) table.removeEventListener("change", handler);
+    };
+  }, [syncBulkBar]);
+
   useEffect(() => {
     const el = tableScrollRef.current;
     if (!el) return;
@@ -2335,15 +2360,6 @@ export function DashboardClient({
   }, []);
 
   // Bulk selection — pure DOM, zero React re-renders on checkbox click
-  const toggleSelect = useCallback(
-    (id: number) => {
-      const s = selectedIdsRef.current;
-      if (s.has(id)) s.delete(id);
-      else s.add(id);
-      syncBulkBar();
-    },
-    [syncBulkBar],
-  );
   const toggleAll = useCallback(() => {
     const s = selectedIdsRef.current;
     const wasAll = s.size === hearings.length;
@@ -2658,7 +2674,6 @@ export function DashboardClient({
             representatives={representatives}
             mrTeams={mrTeams}
             repDocsAssignees={repDocsAssignees}
-            onToggleSelect={toggleSelect}
             onToggleAll={toggleAll}
             scrollRef={tableScrollRef}
             onScrollSync={handleTableScroll}
