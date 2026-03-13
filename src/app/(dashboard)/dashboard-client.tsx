@@ -9,6 +9,7 @@ import {
   useEffect,
 } from "react";
 import { createPortal } from "react-dom";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Download,
   Search,
@@ -32,7 +33,20 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatCard, StatCardGrid } from "@/components/stat-card";
-import { canEditField, type UserRole } from "@/lib/roles";
+import {
+  canEditField,
+  canManage,
+  canSeeCheckbox,
+  canSeeAdminButtons,
+  canSeeActivityLog,
+  canSeeRepStats,
+  canSeeCsvCompare,
+  canSeeRepFilter,
+  canSeeNextUnassigned,
+  canExport,
+  getVisibleColumns,
+  type UserRole,
+} from "@/lib/roles";
 import { AppHeader } from "@/components/layout/app-header";
 import { DashboardNav } from "@/components/layout/dashboard-nav";
 import { Card, CardContent } from "@/components/ui/card";
@@ -415,7 +429,7 @@ function ActionMenu({
   onEdit: (h: HearingRow) => void;
   onAutoAssign: (id: number) => void;
 }) {
-  const isAdmin = !["rep", "staff"].includes(userRole);
+  const isActionAdmin = canManage(userRole);
   const isUnassigned = !hearing.assigned_rep_id && !hearing.assignment_status;
   const isAssigned = !!hearing.assigned_rep_id;
   const hasStatus = !!hearing.assignment_status;
@@ -487,7 +501,7 @@ function ActionMenu({
               className="fixed z-101 w-48 max-h-[calc(100vh-16px)] overflow-y-auto rounded-lg border bg-card py-1 shadow-xl"
               style={{ top: pos.top, left: pos.left - 192 }}
             >
-              {isAdmin && (
+              {isActionAdmin && (
                 <>
                   {isUnassigned && (
                     <>
@@ -555,7 +569,7 @@ function ActionMenu({
                 onClick={menuAction(() => onEdit(hearing))}
                 className="flex w-full items-center px-3 py-1.5 text-xs hover:bg-muted/50"
               >
-                {isAdmin ? (
+                {isActionAdmin ? (
                   <>
                     <Pencil className="mr-2 h-3.5 w-3.5" /> Edit
                   </>
@@ -571,7 +585,7 @@ function ActionMenu({
               >
                 📝 Activity Log
               </button>
-              {isAdmin && (
+              {isActionAdmin && (
                 <>
                   <div className="my-1 border-t" />
                   <button
@@ -1092,13 +1106,16 @@ const FilterBar = memo(function FilterBar({
   onFilterChange,
   repCounts,
   nextUnassigned,
-  userRole,
+  showRepFilter: showRepFilterProp,
+  showNextUnassigned: showNextUnassignedProp,
 }: {
   filters: HearingFilters;
   onFilterChange: (f: HearingFilters) => void;
   repCounts: RepWithCount[];
   nextUnassigned: NextUnassignedRow | null;
   userRole: UserRole;
+  showRepFilter: boolean;
+  showNextUnassigned: boolean;
 }) {
   const update = (key: keyof HearingFilters, value: string) => {
     const v = value;
@@ -1176,7 +1193,7 @@ const FilterBar = memo(function FilterBar({
     filters.assignmentStatus,
     filters.datePreset,
   ].filter(Boolean).length;
-  const isAdmin = !["rep", "staff"].includes(userRole);
+  // Using showRepFilterProp and showNextUnassignedProp from parent
 
   return (
     <div className="space-y-2">
@@ -1192,7 +1209,7 @@ const FilterBar = memo(function FilterBar({
           />
         </div>
 
-        {isAdmin && (
+        {showRepFilterProp && (
           <select
             className={SEL + " w-full sm:w-auto sm:min-w-40"}
             value={filters.repId || ""}
@@ -1301,7 +1318,7 @@ const FilterBar = memo(function FilterBar({
         </div>
 
         {/* Next Unassigned Indicator */}
-        {nextUnassigned && isAdmin && (
+        {nextUnassigned && showNextUnassignedProp && (
           <div className="sm:ml-auto flex items-center gap-2 rounded-lg border border-amber-400 bg-amber-50 px-3 py-1.5 dark:border-amber-700 dark:bg-amber-950/50">
             <span className="text-[10px] font-bold uppercase text-amber-700 dark:text-amber-400">
               Next Unassigned:
@@ -1341,30 +1358,7 @@ const COL_W = {
   ssn_last_4: 62,
   actions: 44,
 };
-const LEFT: Record<string, number> = {
-  checkbox: 0,
-  assigned_rep_id: COL_W.checkbox,
-  hearing_date: COL_W.checkbox + COL_W.assigned_rep_id,
-  hearing_time: COL_W.checkbox + COL_W.assigned_rep_id + COL_W.hearing_date,
-  claimant:
-    COL_W.checkbox +
-    COL_W.assigned_rep_id +
-    COL_W.hearing_date +
-    COL_W.hearing_time,
-  ssn_last_4:
-    COL_W.checkbox +
-    COL_W.assigned_rep_id +
-    COL_W.hearing_date +
-    COL_W.hearing_time +
-    COL_W.claimant,
-  actions:
-    COL_W.checkbox +
-    COL_W.assigned_rep_id +
-    COL_W.hearing_date +
-    COL_W.hearing_time +
-    COL_W.claimant +
-    COL_W.ssn_last_4,
-};
+
 const ALL_COLUMNS: ColumnDef[] = [
   { key: "checkbox", label: "", w: COL_W.checkbox, frozen: true },
   {
@@ -1526,6 +1520,7 @@ interface MemoRowProps {
   getLeftPos: (key: string) => number | undefined;
   lastFrozenKey: string;
   renderCell: (h: HearingRow, col: ColumnDef) => React.ReactNode;
+  columns: ColumnDef[];
 }
 
 const MemoRow = memo(
@@ -1539,11 +1534,12 @@ const MemoRow = memo(
     getLeftPos,
     lastFrozenKey,
     renderCell,
+    columns,
   }: MemoRowProps) {
     const rb = ri % 2 === 0 ? evenBg : oddBg;
     return (
       <tr className={cn("group border-b border-border/40 last:border-0", rb)}>
-        {ALL_COLUMNS.map((col) => {
+        {columns.map((col) => {
           const lp = getLeftPos(col.key);
           const isLF = col.key === lastFrozenKey;
           return (
@@ -1599,6 +1595,7 @@ const HearingTable = memo(function HearingTable({
   representatives,
   mrTeams,
   repDocsAssignees,
+  showCheckbox: showCheckboxProp,
   onToggleAll,
   scrollRef,
   onScrollSync,
@@ -1617,10 +1614,28 @@ const HearingTable = memo(function HearingTable({
   representatives: RepRow[];
   mrTeams: MrTeamRow[];
   repDocsAssignees: RepDocsAssigneeRow[];
+  showCheckbox: boolean;
   onToggleAll: () => void;
   scrollRef: React.RefObject<HTMLDivElement | null>;
   onScrollSync: () => void;
 }) {
+  "use no memo";
+
+  // Filter columns based on role visibility
+  const visibleKeys = getVisibleColumns(userRole) || ["ALL"];
+  const columns =
+    visibleKeys[0] === "ALL"
+      ? ALL_COLUMNS
+      : ALL_COLUMNS.filter((col) => {
+          if (col.key === "checkbox") return showCheckboxProp;
+          if (col.key === "actions") return true;
+          if (col.key === "location")
+            return (
+              visibleKeys.includes("city") || visibleKeys.includes("state")
+            );
+          return visibleKeys.includes(col.key);
+        });
+
   // Build option lists for dropdowns
   const moaOptions = configOptions
     .filter((o) => o.option_type === "manner_of_appearance")
@@ -1663,15 +1678,24 @@ const HearingTable = memo(function HearingTable({
           { value: "Received", label: "Received" },
         ];
 
-  const isAdmin = !["rep", "staff"].includes(userRole);
+  const isAdmin = showCheckboxProp;
   // Checkboxes are uncontrolled — allSelected header defaults to unchecked
   // toggleAll handles DOM sync directly
 
   const evenBg = "bg-white dark:bg-zinc-950";
   const oddBg = "bg-zinc-50 dark:bg-zinc-900";
   const headerBg = "bg-zinc-100 dark:bg-zinc-900";
-  const lastFrozenKey = "actions";
-  const getLeftPos = (key: string): number | undefined => LEFT[key];
+  // Compute frozen column left positions dynamically based on visible columns
+  const frozenCols = columns.filter((c) => c.frozen);
+  const dynamicLeft: Record<string, number> = {};
+  let leftAccum = 0;
+  for (const col of frozenCols) {
+    dynamicLeft[col.key] = leftAccum;
+    leftAccum += col.w;
+  }
+  const lastFrozenKey =
+    frozenCols.length > 0 ? frozenCols[frozenCols.length - 1].key : "";
+  const getLeftPos = (key: string): number | undefined => dynamicLeft[key];
   const renderCell = (hearing: HearingRow, col: ColumnDef) => {
     const editable = canEditField(userRole, col.key);
     switch (col.key) {
@@ -1833,13 +1857,32 @@ const HearingTable = memo(function HearingTable({
   };
 
   // Calculate total table width for the scrollbar
-  // const tableWidth = ALL_COLUMNS.reduce((s, c) => s + c.w, 0);
+  // const tableWidth = columns.reduce((s, c) => s + c.w, 0);
+
+  // ── Virtualization — only render visible rows ──
+  const ROW_H = 36;
+  const parentRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count: hearings.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => ROW_H,
+    overscan: 8,
+  });
 
   return (
     <>
       <div className="w-full overflow-hidden rounded-lg border">
         <div
-          ref={scrollRef}
+          ref={(node) => {
+            (
+              parentRef as React.MutableRefObject<HTMLDivElement | null>
+            ).current = node;
+            if (typeof scrollRef === "object" && scrollRef !== null) {
+              (
+                scrollRef as React.MutableRefObject<HTMLDivElement | null>
+              ).current = node;
+            }
+          }}
           className="hide-scrollbar overflow-x-auto overflow-y-auto"
           style={{ maxHeight: "calc(100vh - 320px)" }}
           onScroll={onScrollSync}
@@ -1856,7 +1899,7 @@ const HearingTable = memo(function HearingTable({
           >
             <thead className="sticky top-0 z-30">
               <tr>
-                {ALL_COLUMNS.map((col) => {
+                {columns.map((col) => {
                   const leftPos = getLeftPos(col.key);
                   const isLF = col.key === lastFrozenKey;
                   return (
@@ -1908,27 +1951,64 @@ const HearingTable = memo(function HearingTable({
               {hearings.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={ALL_COLUMNS.length}
+                    colSpan={columns.length}
                     className="h-32 text-center text-sm text-muted-foreground"
                   >
                     No hearings found.
                   </td>
                 </tr>
               ) : (
-                hearings.map((h, ri) => (
-                  <MemoRow
-                    key={h.id}
-                    hearing={h}
-                    ri={ri}
-                    isSelected={false}
-                    isAdmin={isAdmin}
-                    evenBg={evenBg}
-                    oddBg={oddBg}
-                    getLeftPos={getLeftPos}
-                    lastFrozenKey={lastFrozenKey}
-                    renderCell={renderCell}
-                  />
-                ))
+                <>
+                  {/* Top spacer — uses a single cell spanning all columns */}
+                  {(virtualizer.getVirtualItems()[0]?.start ?? 0) > 0 && (
+                    <tr>
+                      <td
+                        colSpan={columns.length}
+                        style={{
+                          height: virtualizer.getVirtualItems()[0]?.start ?? 0,
+                          padding: 0,
+                          border: "none",
+                        }}
+                      />
+                    </tr>
+                  )}
+                  {virtualizer.getVirtualItems().map((vRow) => {
+                    const h = hearings[vRow.index];
+                    return (
+                      <MemoRow
+                        key={h.id}
+                        hearing={h}
+                        ri={vRow.index}
+                        isSelected={false}
+                        isAdmin={isAdmin}
+                        evenBg={evenBg}
+                        oddBg={oddBg}
+                        getLeftPos={getLeftPos}
+                        lastFrozenKey={lastFrozenKey}
+                        renderCell={renderCell}
+                        columns={columns}
+                      />
+                    );
+                  })}
+                  {/* Bottom spacer */}
+                  {(() => {
+                    const items = virtualizer.getVirtualItems();
+                    const lastEnd = items[items.length - 1]?.end ?? 0;
+                    const remaining = virtualizer.getTotalSize() - lastEnd;
+                    return remaining > 0 ? (
+                      <tr>
+                        <td
+                          colSpan={columns.length}
+                          style={{
+                            height: remaining,
+                            padding: 0,
+                            border: "none",
+                          }}
+                        />
+                      </tr>
+                    ) : null;
+                  })()}
+                </>
               )}
             </tbody>
           </table>
@@ -1965,16 +2045,16 @@ interface DashboardClientProps {
 }
 
 export function DashboardClient({
-  initialHearings,
-  initialTotalFiltered,
-  totalCount,
+  initialHearings = [],
+  initialTotalFiltered = 0,
+  totalCount = 0,
   stats,
-  representatives,
-  mrTeams,
-  configOptions,
-  repDocsAssignees,
-  repCounts,
-  nextUnassigned,
+  representatives = [],
+  mrTeams = [],
+  configOptions = [],
+  repDocsAssignees = [],
+  repCounts = [],
+  nextUnassigned = null,
   userRole,
   userEmail,
   userName,
@@ -2293,7 +2373,16 @@ export function DashboardClient({
     [representatives, hearings],
   );
 
-  const isAdmin = !["rep", "staff"].includes(userRole);
+  // Granular permissions matching PHP dashboard
+  const showCheckbox = canSeeCheckbox(userRole);
+  const showAdminButtons = canSeeAdminButtons(userRole);
+  const showActivityLogBtn = canSeeActivityLog(userRole);
+  const showRepStatsBtn = canSeeRepStats(userRole);
+  const canCsvCompare = canSeeCsvCompare(userRole);
+  const showRepFilter = canSeeRepFilter(userRole);
+  const showNextUnassigned = canSeeNextUnassigned(userRole);
+  const showExport = canExport(userRole);
+  const hasManageAccess = canManage(userRole);
 
   // const handleRefresh = () => {
   //   fetchPage(filters, page, pageSize, sortKey, sortDir);
@@ -2303,7 +2392,21 @@ export function DashboardClient({
   const tableScrollRef = useRef<HTMLDivElement>(null);
   const fakeScrollRef = useRef<HTMLDivElement>(null);
   const scrollSyncing = useRef(false);
-  const tableWidth = ALL_COLUMNS.reduce((s, c) => s + c.w, 0);
+  // Compute visible columns for scrollbar width
+  const visibleKeys = getVisibleColumns(userRole) || ["ALL"];
+  const visibleColumns =
+    visibleKeys[0] === "ALL"
+      ? ALL_COLUMNS
+      : ALL_COLUMNS.filter((col) => {
+          if (col.key === "checkbox") return showCheckbox;
+          if (col.key === "actions") return true;
+          if (col.key === "location")
+            return (
+              visibleKeys.includes("city") || visibleKeys.includes("state")
+            );
+          return visibleKeys.includes(col.key);
+        });
+  const tableWidth = visibleColumns.reduce((s, c) => s + c.w, 0);
   const [tableContainerWidth, setTableContainerWidth] = useState(0);
 
   // Native event delegation for checkbox clicks — zero React overhead
@@ -2428,56 +2531,58 @@ export function DashboardClient({
         title="Hearing Dashboard"
         subtitle={`${totalCount} total hearings`}
         actions={
-          <Button
-            variant="outline"
-            size="sm"
-            className={cn("h-8 gap-1.5 text-xs", BTN_PRESS)}
-            onClick={async () => {
-              try {
-                const csvRows = await exportHearingsCsv({
-                  ...filters,
-                  page: 1,
-                  pageSize: 999999,
-                  sortKey,
-                  sortDir,
-                });
-                if (!csvRows.length) {
-                  alert("No data to export");
-                  return;
+          showExport ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn("h-8 gap-1.5 text-xs", BTN_PRESS)}
+              onClick={async () => {
+                try {
+                  const csvRows = await exportHearingsCsv({
+                    ...filters,
+                    page: 1,
+                    pageSize: 999999,
+                    sortKey,
+                    sortDir,
+                  });
+                  if (!csvRows.length) {
+                    alert("No data to export");
+                    return;
+                  }
+                  const headers = Object.keys(csvRows[0]);
+                  const csv = [
+                    headers.join(","),
+                    ...csvRows.map((r) =>
+                      headers
+                        .map(
+                          (h) =>
+                            `"${String((r as Record<string, string>)[h] || "").replace(/"/g, '""')}"`,
+                        )
+                        .join(","),
+                    ),
+                  ].join("\n");
+                  const blob = new Blob([csv], { type: "text/csv" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `hearings-export-${new Date().toISOString().split("T")[0]}.csv`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                } catch {
+                  alert("Export failed");
                 }
-                const headers = Object.keys(csvRows[0]);
-                const csv = [
-                  headers.join(","),
-                  ...csvRows.map((r) =>
-                    headers
-                      .map(
-                        (h) =>
-                          `"${String((r as Record<string, string>)[h] || "").replace(/"/g, '""')}"`,
-                      )
-                      .join(","),
-                  ),
-                ].join("\n");
-                const blob = new Blob([csv], { type: "text/csv" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = `hearings-export-${new Date().toISOString().split("T")[0]}.csv`;
-                a.click();
-                URL.revokeObjectURL(url);
-              } catch {
-                alert("Export failed");
-              }
-            }}
-          >
-            <Download className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Export</span>
-          </Button>
+              }}
+            >
+              <Download className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Export</span>
+            </Button>
+          ) : undefined
         }
       />
       <div className="flex min-w-0 flex-col gap-3 p-3 sm:gap-4 sm:p-4 lg:p-6">
         {/* Navbar with page links + action buttons (matches old dashboard) */}
         <DashboardNav userRole={userRole}>
-          {isAdmin && (
+          {showAdminButtons && (
             <>
               <Button
                 size="sm"
@@ -2515,15 +2620,17 @@ export function DashboardClient({
               >
                 + Add Hearing
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className={cn("h-7 gap-1.5 text-[11px]", BTN_PRESS)}
-                onClick={() => setShowCsvCompare(true)}
-              >
-                📊 CSV Compare
-              </Button>
             </>
+          )}
+          {canCsvCompare && (
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn("h-7 gap-1.5 text-[11px]", BTN_PRESS)}
+              onClick={() => setShowCsvCompare(true)}
+            >
+              📊 CSV Compare
+            </Button>
           )}
         </DashboardNav>
 
@@ -2534,6 +2641,8 @@ export function DashboardClient({
           repCounts={repCounts}
           nextUnassigned={nextUnassigned}
           userRole={userRole}
+          showRepFilter={showRepFilter}
+          showNextUnassigned={showNextUnassigned}
         />
 
         {/* Pagination bar */}
@@ -2544,25 +2653,25 @@ export function DashboardClient({
             {totalFiltered !== totalCount && ` (filtered from ${totalCount})`}
           </span>
           <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
-            {userRole !== "rep" && (
-              <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className={cn("h-7 gap-1.5 text-xs", BTN_PRESS)}
-                  onClick={() => setShowActivityLog(true)}
-                >
-                  <ClipboardList className="h-3.5 w-3.5" /> Activity Log
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className={cn("h-7 gap-1.5 text-xs", BTN_PRESS)}
-                  onClick={() => setShowRepStats(true)}
-                >
-                  <BarChart3 className="h-3.5 w-3.5" /> Rep Stats
-                </Button>
-              </>
+            {showActivityLogBtn && (
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn("h-7 gap-1.5 text-xs", BTN_PRESS)}
+                onClick={() => setShowActivityLog(true)}
+              >
+                <ClipboardList className="h-3.5 w-3.5" /> Activity Log
+              </Button>
+            )}
+            {showRepStatsBtn && (
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn("h-7 gap-1.5 text-xs", BTN_PRESS)}
+                onClick={() => setShowRepStats(true)}
+              >
+                <BarChart3 className="h-3.5 w-3.5" /> Rep Stats
+              </Button>
             )}
             <Button
               variant="outline"
@@ -2674,6 +2783,7 @@ export function DashboardClient({
             representatives={representatives}
             mrTeams={mrTeams}
             repDocsAssignees={repDocsAssignees}
+            showCheckbox={showCheckbox}
             onToggleAll={toggleAll}
             scrollRef={tableScrollRef}
             onScrollSync={handleTableScroll}
@@ -2738,7 +2848,7 @@ export function DashboardClient({
             >
               <div className="flex items-center justify-between border-b bg-muted/50 px-5 py-4 shrink-0">
                 <h2 className="text-sm font-semibold">
-                  {isAdmin ? "✏️ Edit Hearing" : "👁️ View Hearing"} #
+                  {hasManageAccess ? "✏️ Edit Hearing" : "👁️ View Hearing"} #
                   {editHearing.id}
                 </h2>
                 <button
@@ -2760,7 +2870,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       Claimant *
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <input
                         name="claimant"
                         className="h-9 w-full rounded border bg-card px-2 text-sm"
@@ -2776,7 +2886,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       SSN (Last 4)
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <input
                         name="ssn_last_4"
                         className="h-9 w-full rounded border bg-card px-2 text-sm"
@@ -2791,7 +2901,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       Claim Type
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <select
                         name="claim_type"
                         className="h-9 w-full rounded border bg-card px-2 text-sm"
@@ -2825,7 +2935,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       Date *
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <input
                         name="hearing_date"
                         type="date"
@@ -2842,7 +2952,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       Time *
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <input
                         name="hearing_time"
                         type="time"
@@ -2859,7 +2969,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       Timezone *
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <select
                         name="time_zone"
                         className="h-9 w-full rounded border bg-card px-2 text-sm"
@@ -2887,7 +2997,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       ALJ
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <input
                         name="alj"
                         className="h-9 w-full rounded border bg-card px-2 text-sm"
@@ -2906,7 +3016,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       City
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <input
                         name="city"
                         className="h-9 w-full rounded border bg-card px-2 text-sm"
@@ -2920,7 +3030,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       State
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <input
                         name="state"
                         className="h-9 w-full rounded border bg-card px-2 text-sm"
@@ -2935,7 +3045,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       Claimant Location
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <input
                         name="claimant_location"
                         className="h-9 w-full rounded border bg-card px-2 text-sm"
@@ -2951,7 +3061,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       Rep Location
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <input
                         name="representative_location"
                         className="h-9 w-full rounded border bg-card px-2 text-sm"
@@ -2972,7 +3082,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       Medical Expert
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <input
                         name="medical_expert"
                         className="h-9 w-full rounded border bg-card px-2 text-sm"
@@ -2988,7 +3098,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       Vocational Expert
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <input
                         name="vocational_expert"
                         className="h-9 w-full rounded border bg-card px-2 text-sm"
@@ -3004,7 +3114,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       Status Date
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <input
                         name="status_date"
                         type="date"
@@ -3021,7 +3131,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       Entered Hearing Level
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <input
                         name="entered_hearing_level_date"
                         type="date"
@@ -3040,7 +3150,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       Download Type
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <select
                         name="download_type"
                         className="h-9 w-full rounded border bg-card px-2 text-sm"
@@ -3101,7 +3211,7 @@ export function DashboardClient({
                           name={field}
                           defaultChecked={editHearing[field]}
                           className="h-4 w-4 accent-green-600"
-                          disabled={!isAdmin}
+                          disabled={!hasManageAccess}
                         />
                         {labels[field]}
                       </label>
@@ -3111,7 +3221,7 @@ export function DashboardClient({
               </form>
               <div className="flex items-center justify-between border-t bg-muted/50 px-5 py-3 shrink-0">
                 <div>
-                  {isAdmin && (
+                  {hasManageAccess && (
                     <Button
                       variant="destructive"
                       size="sm"
@@ -3136,7 +3246,7 @@ export function DashboardClient({
                   >
                     Cancel
                   </Button>
-                  {isAdmin && (
+                  {hasManageAccess && (
                     <Button
                       size="sm"
                       className="h-8 text-xs"
