@@ -5,16 +5,12 @@ import { AppHeader } from "@/components/layout/app-header";
 import { DashboardNav } from "@/components/layout/dashboard-nav";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-// import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
-
 import { Separator } from "@/components/ui/separator";
 import {
   Plus,
   Trash2,
-  // Pencil,
   ChevronDown,
-  // Users,
   Stethoscope,
   Settings,
   Calendar,
@@ -182,20 +178,53 @@ export function SettingsClient({
   specialists: initSpecialists,
   userRole,
 }: Props) {
-  const [tab, setTab] = useState("teams");
+  // Tab visibility matching PHP settings.php:
+  // MR Teams: admin, manager, mr_admin, mr_lead (NOT hearings_admin)
+  // Config Options, Federal Holidays, Rep Docs Assignees: admin, manager, hearings_admin (NOT mr_admin, mr_lead)
+  const canSeeMrTeams = [
+    "system_admin",
+    "admin",
+    "manager",
+    "mr_admin",
+    "mr_lead",
+  ].includes(userRole);
+  const canSeeConfigTabs = [
+    "system_admin",
+    "admin",
+    "manager",
+    "hearings_admin",
+  ].includes(userRole);
+
+  const allTabs = [
+    canSeeMrTeams && { key: "teams", label: "MR Teams", icon: Stethoscope },
+    canSeeConfigTabs && {
+      key: "config",
+      label: "Config Options",
+      icon: Settings,
+    },
+    canSeeConfigTabs && {
+      key: "holidays",
+      label: "Federal Holidays",
+      icon: Calendar,
+    },
+    canSeeConfigTabs && {
+      key: "assignees",
+      label: "Rep Docs Assignees",
+      icon: ClipboardList,
+    },
+  ].filter(Boolean) as {
+    key: string;
+    label: string;
+    icon: typeof Stethoscope;
+  }[];
+
+  const [tab, setTab] = useState(allTabs[0]?.key || "teams");
   const [configOptions, setConfigOptions] = useState(initConfig);
   const [mrTeams, setMrTeams] = useState(initTeams);
   const [holidays, setHolidays] = useState(initHolidays);
   const [assignees, setAssignees] = useState(initAssignees);
   const [specialists, setSpecialists] = useState(initSpecialists);
   const [, startTransition] = useTransition();
-
-  const tabs = [
-    { key: "teams", label: "MR Teams", icon: Stethoscope },
-    { key: "config", label: "Config Options", icon: Settings },
-    { key: "holidays", label: "Federal Holidays", icon: Calendar },
-    { key: "assignees", label: "Rep Docs Assignees", icon: ClipboardList },
-  ];
 
   return (
     <>
@@ -206,7 +235,7 @@ export function SettingsClient({
       <div className="flex flex-col gap-4 p-4 lg:p-6">
         <DashboardNav userRole={userRole as UserRole} />
         <div className="flex items-center gap-4 border-b">
-          {tabs.map((t) => (
+          {allTabs.map((t) => (
             <button
               key={t.key}
               onClick={() => setTab(t.key)}
@@ -221,7 +250,7 @@ export function SettingsClient({
             </button>
           ))}
         </div>
-        {tab === "teams" && (
+        {tab === "teams" && canSeeMrTeams && (
           <TeamsTab
             teams={mrTeams}
             setTeams={setMrTeams}
@@ -232,21 +261,21 @@ export function SettingsClient({
             startTransition={startTransition}
           />
         )}
-        {tab === "config" && (
+        {tab === "config" && canSeeConfigTabs && (
           <ConfigTab
             options={configOptions}
             setOptions={setConfigOptions}
             startTransition={startTransition}
           />
         )}
-        {tab === "holidays" && (
+        {tab === "holidays" && canSeeConfigTabs && (
           <HolidaysTab
             holidays={holidays}
             setHolidays={setHolidays}
             startTransition={startTransition}
           />
         )}
-        {tab === "assignees" && (
+        {tab === "assignees" && canSeeConfigTabs && (
           <AssigneesTab
             assignees={assignees}
             setAssignees={setAssignees}
