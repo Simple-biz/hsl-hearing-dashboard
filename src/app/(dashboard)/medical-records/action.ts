@@ -37,298 +37,881 @@ import type {
   PostHrgNote,
 } from "./types";
 
-// ─── Stub constants ───────────────────────────────────────────────────────────
+import { db } from "@/lib/db";
 
-const MR_STATUS_OPTIONS = [
-  "Complete",
-  "In Progress",
-  "Not Started",
-  "Ready",
-  "URGENT! NEEDS ATTENTION",
-  "Overpayment",
-  "c/o Franciso's Team",
-  "WITHDRAWAL",
-];
+// ─── Shared SQL fragment — excludes withdrawn/dismissed records ───────────────
+const WITHDRAWN_FILTER = `
+  (h.medical_record_status != 'WITHDRAWAL' OR h.medical_record_status IS NULL)
+  AND (
+    h.hearing_decision_status NOT LIKE 'Withdrawal%'
+    AND h.hearing_decision_status != 'WD CLMT DECEASED'
+    AND h.hearing_decision_status != 'Dismissal'
+    OR h.hearing_decision_status IS NULL
+  )
+`.trim();
 
-const HEARING_DECISION_OPTIONS = [
-  "Scheduled",
-  "Favorable",
-  "Unfavorable",
-  "Post HRG Review/ Dev",
-  "Continued",
-  "Pending Decision",
-  "OTR at Hrg",
-  "Good Cause Ltr",
-  "WD CLMT DECEASED",
-  "Dismissal",
-  "Withdrawal - No Contact",
-  "Withdrawal - SGA",
-  "Withdrawal - Terminated",
-  "Withdrawal - In Person",
-  "Withdrawal - Working",
-  "Withdrawal - UFD",
-  "Withdrawal - Benefits",
-  "Withdrawal - Misc",
-];
+// ─── Page data loader — all independent queries run in parallel ───────────────
 
-const MANNER_OPTIONS = ["Video", "Phone", "In-Person", "OVH"];
-
-const STUB_TEAMS: MrTeam[] = [
-  { id: 1, team_name: "Blue Team",     team_color: "blue",   team_type: "regular",         is_active: true, is_assignable: true,  display_order: 1 },
-  { id: 2, team_name: "Orange Team",   team_color: "orange", team_type: "regular",         is_active: true, is_assignable: true,  display_order: 2 },
-  { id: 3, team_name: "Green Team",    team_color: "green",  team_type: "regular",         is_active: true, is_assignable: true,  display_order: 3 },
-  { id: 4, team_name: "Yellow Team",   team_color: "yellow", team_type: "regular",         is_active: true, is_assignable: true,  display_order: 4 },
-  { id: 5, team_name: "Purple Team",   team_color: "purple", team_type: "regular",         is_active: true, is_assignable: true,  display_order: 5 },
-  { id: 6, team_name: "Jerome's Team", team_color: "red",    team_type: "leadership_lead", is_active: true, is_assignable: false, display_order: 6 },
-];
-
-// ─── Server Actions (all must be async) ──────────────────────────────────────
-
-export async function getMrPivotPageData(userRole: UserRole = "post_hearing_staff"): Promise<MrPivotPageData> {
-  // TODO: replace with real DB queries
+export async function getMrPivotPageData(
+  userRole: UserRole = "mr_agent",
+): Promise<MrPivotPageData> {
   const permissions = derivePermissions(userRole);
 
+  const [
+    statsRow,
+    withdrawnRow,
+    postHrgRow,
+    noSpecialistRow,
+    noTaskRow,
+    nextUnassignedHearingRow,
+    nextUnassignedTaskRow,
+    teamGrandTotalsRows,
+    mrStatusPivotRows,
+    groupedAssignedRows,
+    weeklyStatsRows,
+    monthlyStatsRows,
+    availableMonthsRows,
+    availableYearsRows,
+    medicalTeamsRows,
+    mrStatusOptions,
+    decisionStatusOptions,
+    mannerOptions,
+    jeromeTeamRow,
+    rotationTeamsRows,
+    lastAssignedRow,
+  ] = await Promise.all([
+    // ── Stat cards ────────────────────────────────────────────────────────────
+    db.query(`
+      SELECT
+        COUNT(*)                                                                         AS total,
+        SUM(CASE WHEN medical_record_status = 'Complete' THEN 1 ELSE 0 END) AS complete_count,
+        SUM(CASE WHEN medical_record_status = 'In Progress' THEN 1 ELSE 0 END) AS progress_count,
+        SUM(CASE WHEN medical_record_status = 'Ready' THEN 1 ELSE 0 END) AS ready_count,
+        SUM(CASE WHEN medical_record_status IS NULL
+                   OR medical_record_status = ''
+                   OR medical_record_status = 'Not Started' THEN 1 ELSE 0 END) AS not_started_count,
+        SUM(CASE WHEN medical_record_status = 'URGENT! NEEDS ATTENTION' THEN 1 ELSE 0 END) AS urgent_count
+      FROM hearings h
+      WHERE ${WITHDRAWN_FILTER}
+    `),
+
+    // ── Withdrawn / dismissed count ───────────────────────────────────────────
+    db.query(`
+      SELECT COUNT(*) AS cnt
+      FROM hearings
+      WHERE medical_record_status = 'WITHDRAWAL'
+        OR hearing_decision_status LIKE 'Withdrawal%'
+        OR hearing_decision_status = 'WD CLMT DECEASED'
+        OR hearing_decision_status = 'Dismissal'
+    `),
+
+    // ── Post HRG Review count ─────────────────────────────────────────────────
+    db.query(`
+      SELECT COUNT(*) AS cnt
+      FROM hearings
+      WHERE hearing_decision_status = 'Post HRG Review/ Dev'
+        AND (medical_record_status != 'WITHDRAWAL' OR medical_record_status IS NULL)
+        AND (hearing_decision_status NOT LIKE 'Withdrawal%' OR hearing_decision_status = 'Post HRG Review/ Dev')
+    `),
+
+    // ── No specialist count (upcoming, not withdrawn) ─────────────────────────
+    db.query(`
+      SELECT COUNT(*) AS cnt
+      FROM hearings
+      WHERE mr_team_id IS NULL
+        AND hearing_date >= CURRENT_DATE
+        AND (medical_record_status != 'WITHDRAWAL' OR medical_record_status IS NULL)
+    `),
+
+    // ── No task assigned count (upcoming, not withdrawn) ─────────────────────
+    db.query(`
+      SELECT COUNT(*) AS cnt
+      FROM hearings
+      WHERE (task_assigned IS NULL OR task_assigned = false)
+        AND hearing_date >= CURRENT_DATE
+        AND (medical_record_status != 'WITHDRAWAL' OR medical_record_status IS NULL)
+    `),
+
+    // ── Next upcoming unassigned hearing ─────────────────────────────────────
+    db.query(`
+      SELECT id, claimant, hearing_date::text
+      FROM hearings
+      WHERE mr_team_id IS NULL
+        AND hearing_date >= CURRENT_DATE
+        AND (medical_record_status != 'WITHDRAWAL' OR medical_record_status IS NULL)
+      ORDER BY hearing_date ASC
+      LIMIT 1
+    `),
+
+    // ── Next hearing without task assigned ────────────────────────────────────
+    db.query(`
+      SELECT id, claimant, hearing_date::text
+      FROM hearings
+      WHERE (task_assigned IS NULL OR task_assigned = false)
+        AND hearing_date >= CURRENT_DATE
+        AND (medical_record_status != 'WITHDRAWAL' OR medical_record_status IS NULL)
+      ORDER BY hearing_date ASC
+      LIMIT 1
+    `),
+
+    // ── Team grand totals (sidebar) ───────────────────────────────────────────
+    db.query(`
+      SELECT
+        COALESCE(t.team_name, 'Unassigned') AS team_name,
+        t.team_color,
+        COALESCE(t.display_order, 9999)      AS display_order,
+        COUNT(*)                             AS total
+      FROM hearings h
+      LEFT JOIN mr_teams t ON h.mr_team_id = t.id
+      WHERE ${WITHDRAWN_FILTER}
+      GROUP BY t.team_name, t.team_color, t.display_order
+      ORDER BY COALESCE(t.display_order, 9999) ASC
+    `),
+
+    // ── MR status pivot (status breakdown by team) ────────────────────────────
+    db.query(`
+      SELECT
+        COALESCE(t.team_name, 'Unassigned') AS team,
+        t.team_color,
+        COALESCE(t.display_order, 9999)      AS display_order,
+        h.medical_record_status,
+        COUNT(*)                             AS cnt
+      FROM hearings h
+      LEFT JOIN mr_teams t ON h.mr_team_id = t.id
+      WHERE ${WITHDRAWN_FILTER}
+      GROUP BY t.team_name, t.team_color, t.display_order, h.medical_record_status
+      ORDER BY COALESCE(t.display_order, 9999) ASC
+    `),
+
+    // ── Assigned cases by month / team ────────────────────────────────────────
+    db.query(`
+      SELECT
+        TO_CHAR(h.hearing_date, 'YYYY-MM') AS month_key,
+        TO_CHAR(h.hearing_date, 'Mon YYYY') AS month_label,
+        COALESCE(t.team_name, 'Unassigned') AS team_name,
+        t.team_color,
+        COALESCE(t.display_order, 9999) AS display_order,
+        COUNT(*) AS case_count
+      FROM hearings h
+      LEFT JOIN mr_teams t ON h.mr_team_id = t.id
+      WHERE ${WITHDRAWN_FILTER}
+      GROUP BY TO_CHAR(h.hearing_date, 'YYYY-MM'), TO_CHAR(h.hearing_date, 'Mon YYYY'),
+               t.team_name, t.team_color, t.display_order
+      ORDER BY month_key ASC, COALESCE(t.display_order, 9999) ASC
+    `),
+
+    // ── Weekly team stats ─────────────────────────────────────────────────────
+    db.query(`
+      SELECT
+        TO_CHAR(h.hearing_date, 'IYYY-IW') AS week_key,
+        TO_CHAR(date_trunc('week', h.hearing_date), 'Mon DD') AS week_start,
+        TO_CHAR(date_trunc('week', h.hearing_date) + INTERVAL '6 days', 'Mon DD, YYYY') AS week_end,
+        COALESCE(t.team_name, 'Unassigned') AS team_name,
+        t.team_color,
+        COALESCE(t.display_order, 9999) AS display_order,
+        COUNT(*) AS total_cases,
+        SUM(CASE WHEN h.medical_record_status = 'Complete' THEN 1 ELSE 0 END) AS complete,
+        SUM(CASE WHEN h.medical_record_status = 'In Progress' THEN 1 ELSE 0 END) AS in_progress,
+        SUM(CASE WHEN h.medical_record_status = 'Ready' THEN 1 ELSE 0 END) AS ready,
+        SUM(CASE WHEN h.medical_record_status IS NULL
+                   OR h.medical_record_status = 'Not Started' THEN 1 ELSE 0 END) AS not_started,
+        SUM(CASE WHEN h.medical_record_status = 'URGENT! NEEDS ATTENTION' THEN 1 ELSE 0 END) AS urgent
+      FROM hearings h
+      LEFT JOIN mr_teams t ON h.mr_team_id = t.id
+      WHERE ${WITHDRAWN_FILTER}
+      GROUP BY TO_CHAR(h.hearing_date, 'IYYY-IW'),
+               TO_CHAR(date_trunc('week', h.hearing_date), 'Mon DD'),
+               TO_CHAR(date_trunc('week', h.hearing_date) + INTERVAL '6 days', 'Mon DD, YYYY'),
+               t.team_name, t.team_color, t.display_order
+      ORDER BY week_key DESC, COALESCE(t.display_order, 9999) ASC
+    `),
+
+    // ── Monthly team stats ────────────────────────────────────────────────────
+    db.query(`
+      SELECT
+        TO_CHAR(h.hearing_date, 'YYYY-MM') AS month_key,
+        TO_CHAR(h.hearing_date, 'Mon YYYY') AS month_label,
+        COALESCE(t.team_name, 'Unassigned') AS team_name,
+        t.team_color,
+        COALESCE(t.display_order, 9999) AS display_order,
+        COUNT(*) AS total_cases,
+        SUM(CASE WHEN h.medical_record_status = 'Complete' THEN 1 ELSE 0 END) AS complete,
+        SUM(CASE WHEN h.medical_record_status = 'In Progress' THEN 1 ELSE 0 END) AS in_progress,
+        SUM(CASE WHEN h.medical_record_status = 'Ready' THEN 1 ELSE 0 END) AS ready,
+        SUM(CASE WHEN h.medical_record_status IS NULL
+                   OR h.medical_record_status = 'Not Started' THEN 1 ELSE 0 END) AS not_started,
+        SUM(CASE WHEN h.medical_record_status = 'URGENT! NEEDS ATTENTION' THEN 1 ELSE 0 END) AS urgent
+      FROM hearings h
+      LEFT JOIN mr_teams t ON h.mr_team_id = t.id
+      WHERE ${WITHDRAWN_FILTER}
+      GROUP BY TO_CHAR(h.hearing_date, 'YYYY-MM'), TO_CHAR(h.hearing_date, 'Mon YYYY'),
+               t.team_name, t.team_color, t.display_order
+      ORDER BY month_key DESC, COALESCE(t.display_order, 9999) ASC
+    `),
+
+    // ── Available months filter ───────────────────────────────────────────────
+    db.query(`
+      SELECT DISTINCT
+        TO_CHAR(hearing_date, 'YYYY-MM') AS month_value,
+        TO_CHAR(hearing_date, 'Month YYYY') AS month_label
+      FROM hearings
+      ORDER BY month_value DESC
+    `),
+
+    // ── Available years (for assignment card filters) ─────────────────────────
+    db.query(`
+      SELECT DISTINCT EXTRACT(YEAR FROM hearing_date)::int AS year
+      FROM hearings
+      WHERE hearing_date >= CURRENT_DATE
+      ORDER BY year ASC
+    `),
+
+    // ── Active, assignable MR teams ───────────────────────────────────────────
+    db.query(`
+      SELECT id, team_name, team_color, team_type, is_active, is_assignable, display_order
+      FROM mr_teams
+      WHERE is_active = true
+      ORDER BY display_order ASC
+    `),
+
+    // ── Medical record status options from config ─────────────────────────────
+    db.query(`
+      SELECT option_value
+      FROM config_options
+      WHERE option_type = 'medical_record_status' AND is_active = true
+      ORDER BY display_order ASC
+    `),
+
+    // ── Hearing decision status options from config ───────────────────────────
+    db.query(`
+      SELECT option_value
+      FROM config_options
+      WHERE option_type = 'hearing_decision_status' AND is_active = true
+      ORDER BY display_order ASC
+    `),
+
+    // ── Manner of appearance options from config ──────────────────────────────
+    db.query(`
+      SELECT option_value
+      FROM config_options
+      WHERE option_type = 'manner_of_appearance' AND is_active = true
+      ORDER BY display_order ASC
+    `),
+
+    // ── Jerome's team info ────────────────────────────────────────────────────
+    db.query(`
+      SELECT id, team_name, team_color
+      FROM mr_teams
+      WHERE team_name ILIKE '%jerome%' AND is_active = true
+      LIMIT 1
+    `),
+
+    // ── Round-robin: rotation teams ───────────────────────────────────────────
+    db.query(`
+      SELECT id, team_name, team_color
+      FROM mr_teams
+      WHERE team_color IN ('blue', 'orange', 'green', 'yellow', 'purple')
+        AND is_active = true
+        AND is_assignable = true
+      ORDER BY
+        CASE team_color
+          WHEN 'blue' THEN 1
+          WHEN 'orange' THEN 2
+          WHEN 'green' THEN 3
+          WHEN 'yellow' THEN 4
+          WHEN 'purple' THEN 5
+        END ASC
+    `),
+
+    // ── Round-robin: last assigned team ──────────────────────────────────────
+    db.query(`
+      SELECT t.id, t.team_name, t.team_color
+      FROM hearings h
+      JOIN mr_teams t ON h.mr_team_id = t.id
+      WHERE t.team_color IN ('blue', 'orange', 'green', 'yellow', 'purple')
+        AND h.mr_team_assigned_at IS NOT NULL
+        AND (h.medical_record_status != 'WITHDRAWAL' OR h.medical_record_status IS NULL)
+      ORDER BY h.mr_team_assigned_at DESC
+      LIMIT 1
+    `),
+  ]);
+
+  // ── Shape: stat cards ───────────────────────────────────────────────────────
+  const s = statsRow.rows[0] ?? {};
+  const statCards = {
+    totalHearings: Number(s.total           ?? 0),
+    complete: Number(s.complete_count   ?? 0),
+    inProgress: Number(s.progress_count   ?? 0),
+    ready: Number(s.ready_count      ?? 0),
+    notStarted: Number(s.not_started_count ?? 0),
+    urgent: Number(s.urgent_count      ?? 0),
+    noSpecialistCount: Number(noSpecialistRow.rows[0]?.cnt ?? 0),
+    noTaskCount: Number(noTaskRow.rows[0]?.cnt ?? 0),
+    nextUnassignedHearing: nextUnassignedHearingRow.rows[0] ?? null,
+    nextUnassignedTask: nextUnassignedTaskRow.rows[0] ?? null,
+  };
+
+  // ── Shape: team grand totals ────────────────────────────────────────────────
+  const teamGrandTotals = teamGrandTotalsRows.rows.map((r: Record<string, unknown>) => ({
+    team_name:  r.team_name as string,
+    team_color: r.team_color as string | null,
+    total:      Number(r.total),
+  }));
+
+  // ── Shape: MR status by team (pivot) ───────────────────────────────────────
+  const mrStatusMap: Record<string, { color: string | null; display_order: number; statuses: Record<string, number> }> = {};
+  for (const r of mrStatusPivotRows.rows as Record<string, unknown>[]) {
+    const team = r.team as string;
+    if (!mrStatusMap[team]) {
+      mrStatusMap[team] = { color: r.team_color as string | null, display_order: Number(r.display_order ?? 999), statuses: {} };
+    }
+    const statusKey = (r.medical_record_status as string | null) ?? "No Status";
+    mrStatusMap[team].statuses[statusKey] = Number(r.cnt);
+  }
+  const mrStatusByTeam = Object.entries(mrStatusMap)
+    .sort(([, a], [, b]) => a.display_order - b.display_order)
+    .map(([team, data]) => ({ team, ...data }));
+
+  // ── Shape: grouped assigned by month ───────────────────────────────────────
+  const assignedMap: Record<string, { month_label: string; teams: { team_name: string; team_color: string | null; case_count: number }[]; total: number }> = {};
+  for (const r of groupedAssignedRows.rows as Record<string, unknown>[]) {
+    const key = r.month_key as string;
+    if (!assignedMap[key]) {
+      assignedMap[key] = { month_label: r.month_label as string, teams: [], total: 0 };
+    }
+    assignedMap[key].teams.push({
+      team_name:  r.team_name as string,
+      team_color: r.team_color as string | null,
+      case_count: Number(r.case_count),
+    });
+    assignedMap[key].total += Number(r.case_count);
+  }
+  const groupedAssigned = Object.entries(assignedMap).map(([month_key, v]) => ({ month_key, month_label: v.month_label, teams: v.teams, total: v.total }));
+
+  // ── Shape: weekly stats ─────────────────────────────────────────────────────
+  const weeklyMap: Record<string, { label: string; teams: MonthlyTeamStat["teams"]; totals: MonthlyTeamStat["totals"] }> = {};
+  for (const r of weeklyStatsRows.rows as Record<string, unknown>[]) {
+    const key = r.week_key as string;
+    if (!weeklyMap[key]) {
+      weeklyMap[key] = { label: `${r.week_start} - ${r.week_end}`, teams: [], totals: { total: 0, complete: 0, in_progress: 0, ready: 0, not_started: 0, urgent: 0 } };
+    }
+    const tc = Number(r.total_cases);
+    const co = Number(r.complete);
+    const ip = Number(r.in_progress);
+    const re = Number(r.ready);
+    const ns = Number(r.not_started);
+    const ug = Number(r.urgent);
+    weeklyMap[key].teams.push({ team_name: r.team_name as string, team_color: r.team_color as string | null, total_cases: tc, complete: co, in_progress: ip, ready: re, not_started: ns, urgent: ug });
+    weeklyMap[key].totals.total      += tc;
+    weeklyMap[key].totals.complete   += co;
+    weeklyMap[key].totals.in_progress += ip;
+    weeklyMap[key].totals.ready      += re;
+    weeklyMap[key].totals.not_started += ns;
+    weeklyMap[key].totals.urgent     += ug;
+  }
+  // const weekly = Object.values(weeklyMap);
+
+  // ── Shape: monthly stats ────────────────────────────────────────────────────
+  const monthlyMap: Record<string, { label: string; teams: MonthlyTeamStat["teams"]; totals: MonthlyTeamStat["totals"] }> = {};
+  for (const r of monthlyStatsRows.rows as Record<string, unknown>[]) {
+    const key = r.month_key as string;
+    if (!monthlyMap[key]) {
+      monthlyMap[key] = { label: r.month_label as string, teams: [], totals: { total: 0, complete: 0, in_progress: 0, ready: 0, not_started: 0, urgent: 0 } };
+    }
+    const tc = Number(r.total_cases);
+    const co = Number(r.complete);
+    const ip = Number(r.in_progress);
+    const re = Number(r.ready);
+    const ns = Number(r.not_started);
+    const ug = Number(r.urgent);
+    monthlyMap[key].teams.push({ team_name: r.team_name as string, team_color: r.team_color as string | null, total_cases: tc, complete: co, in_progress: ip, ready: re, not_started: ns, urgent: ug });
+    monthlyMap[key].totals.total      += tc;
+    monthlyMap[key].totals.complete   += co;
+    monthlyMap[key].totals.in_progress += ip;
+    monthlyMap[key].totals.ready      += re;
+    monthlyMap[key].totals.not_started += ns;
+    monthlyMap[key].totals.urgent     += ug;
+  }
+  // const monthly = Object.values(monthlyMap);
+
+  // ── Shape: round-robin state ────────────────────────────────────────────────
+  const ROTATION_ORDER = ["blue", "orange", "green", "yellow", "purple"];
+  const colorToTeam: Record<string, { id: number; name: string; color: string }> = {};
+  for (const rt of rotationTeamsRows.rows as Record<string, unknown>[]) {
+    colorToTeam[rt.team_color as string] = { id: Number(rt.id), name: rt.team_name as string, color: rt.team_color as string };
+  }
+
+  // Fallback: if mr_team_assigned_at was null on all rows, try last assigned by id
+  let lastRow = lastAssignedRow.rows[0] as Record<string, unknown> | undefined;
+  if (!lastRow) {
+    const fallback = await db.query(`
+      SELECT t.id, t.team_name, t.team_color
+      FROM hearings h
+      JOIN mr_teams t ON h.mr_team_id = t.id
+      WHERE t.team_color IN ('blue', 'orange', 'green', 'yellow', 'purple')
+      ORDER BY h.id DESC
+      LIMIT 1
+    `);
+    lastRow = fallback.rows[0];
+  }
+
+  const lastColor = (lastRow?.team_color as string | undefined) ?? "purple";
+  const lastTeamName = (lastRow?.team_name  as string | undefined) ?? "None";
+  const lastIndex = ROTATION_ORDER.indexOf(lastColor);
+  const nextIndex = (lastIndex + 1) % ROTATION_ORDER.length;
+  const nextColor = ROTATION_ORDER[nextIndex];
+  const nextTeamObj = colorToTeam[nextColor];
+  const nextTeamName = nextTeamObj?.name ?? "Blue Team";
+
+  const [nextUnassignedRRRow, urgentUnassignedRow] = await Promise.all([
+    db.query(`
+      SELECT id, claimant, hearing_date::text
+      FROM hearings
+      WHERE mr_team_id IS NULL
+        AND hearing_date >= CURRENT_DATE
+        AND (medical_record_status != 'WITHDRAWAL' OR medical_record_status IS NULL)
+      ORDER BY hearing_date ASC
+      LIMIT 1
+    `),
+    db.query(`
+      SELECT COUNT(*) AS cnt
+      FROM hearings
+      WHERE mr_team_id IS NULL
+        AND hearing_date >= CURRENT_DATE
+        AND hearing_date <= CURRENT_DATE + INTERVAL '28 days'
+        AND (medical_record_status != 'WITHDRAWAL' OR medical_record_status IS NULL)
+    `),
+  ]);
+
+  const roundRobin: RoundRobinState = {
+    lastColor,
+    lastTeamName,
+    nextColor,
+    nextTeamName,
+    rotationOrder: ROTATION_ORDER,
+    nextUnassignedHearing: nextUnassignedRRRow.rows[0] ?? null,
+    urgentUnassignedCount: Number(urgentUnassignedRow.rows[0]?.cnt ?? 0),
+  };
+
+  // ── Shape: config options (with fallbacks matching PHP defaults) ────────────
+  const medicalTeams = medicalTeamsRows.rows as MrTeam[];
+
+  const mrStatusOptionsList: string[] = mrStatusOptions.rows.length
+    ? mrStatusOptions.rows.map((r: Record<string, unknown>) => r.option_value as string)
+    : ["Complete", "Incomplete", "In Progress", "Overpayment", "Not Started", "Ready", "URGENT! NEEDS ATTENTION", "c/o Franciso's Team", "WITHDRAWAL", "CLIENT UNREACHABLE"];
+
+  const decisionStatusList: string[] = decisionStatusOptions.rows.length
+    ? decisionStatusOptions.rows.map((r: Record<string, unknown>) => r.option_value as string)
+    : ["Scheduled", "Post HRG Review/ Dev", "Favorable", "Unfavorable", "Pending Decision", "Continued", "OTR AT HRG", "GOOD CAUSE LTR TO CLMT", "WD CLMT DECEASED", "Dismissal", "Withdrawal - No Contact", "Withdrawal - SGA", "Withdrawal - Client Terminated Rep", "Withdrawal - In-Person", "Withdrawal - Client Working/ Doing Better/WD Hrg Req", "Withdrawal - UFD", "Withdrawal - Receiving Benefits", "Withdrawal - Misc"];
+
+  const mannerOptionsList: string[] = mannerOptions.rows.length
+    ? mannerOptions.rows.map((r: Record<string, unknown>) => r.option_value as string)
+    : ["Get Phone Permission", "Case is Ready", "In Person Florida", "Phone", "OVH"];
+
+  const jerome = jeromeTeamRow.rows[0] as { id: number; team_name: string; team_color: string } | undefined;
+
   return {
-    statCards: {
-      totalHearings: 5484,
-      complete: 1240,
-      inProgress: 830,
-      ready: 670,
-      notStarted: 2500,
-      urgent: 244,
-      noSpecialistCount: 312,
-      noTaskCount: 189,
-      nextUnassignedHearing: { id: 101, claimant: "Smith, John",  hearing_date: "2026-03-15" },
-      nextUnassignedTask:    { id: 204, claimant: "Doe, Jane",    hearing_date: "2026-03-16" },
-    },
-    teamGrandTotals: [
-      { team_name: "Blue Team",     team_color: "#3b82f6", total: 980 },
-      { team_name: "Orange Team",   team_color: "#f97316", total: 870 },
-      { team_name: "Green Team",    team_color: "#22c55e", total: 760 },
-      { team_name: "Yellow Team",   team_color: "#eab308", total: 650 },
-      { team_name: "Purple Team",   team_color: "#a855f7", total: 540 },
-      { team_name: "Jerome's Team", team_color: "#ef4444", total: 220 },
-      { team_name: "Unassigned",    team_color: null,      total: 464 },
-    ],
-    mrStatusByTeam: [
-      { team: "Blue Team",   color: "#3b82f6", display_order: 1,  statuses: { "Complete": 240, "In Progress": 180, "Not Started": 310, "Ready": 170, "URGENT! NEEDS ATTENTION": 50, "Overpayment": 20, "c/o Franciso's Team": 10 } },
-      { team: "Orange Team", color: "#f97316", display_order: 2,  statuses: { "Complete": 210, "In Progress": 150, "Not Started": 280, "Ready": 160, "URGENT! NEEDS ATTENTION": 40, "Overpayment": 20, "c/o Franciso's Team": 10 } },
-      { team: "Green Team",  color: "#22c55e", display_order: 3,  statuses: { "Complete": 190, "In Progress": 130, "Not Started": 240, "Ready": 140, "URGENT! NEEDS ATTENTION": 35, "Overpayment": 15, "c/o Franciso's Team": 10 } },
-      { team: "Yellow Team", color: "#eab308", display_order: 4,  statuses: { "Complete": 160, "In Progress": 100, "Not Started": 230, "Ready": 110, "URGENT! NEEDS ATTENTION": 30, "Overpayment": 10, "c/o Franciso's Team": 10 } },
-      { team: "Purple Team", color: "#a855f7", display_order: 5,  statuses: { "Complete": 140, "In Progress":  90, "Not Started": 190, "Ready":  90, "URGENT! NEEDS ATTENTION": 20, "Overpayment":  8, "c/o Franciso's Team":  2 } },
-      { team: "Unassigned",  color: null,      display_order: 99, statuses: { "Complete":  20, "In Progress":  40, "Not Started": 290, "Ready":  80, "URGENT! NEEDS ATTENTION": 34, "Overpayment":  0, "c/o Franciso's Team":  0 } },
-    ],
-    groupedAssigned: [
-      { month_key: "2025-12", month_label: "Dec 2025", total: 362, teams: [{ team_name: "Blue Team", team_color: "#3b82f6", case_count: 80 }, { team_name: "Orange Team", team_color: "#f97316", case_count: 75 }] },
-      { month_key: "2026-01", month_label: "Jan 2026", total: 284, teams: [{ team_name: "Blue Team", team_color: "#3b82f6", case_count: 65 }, { team_name: "Orange Team", team_color: "#f97316", case_count: 60 }] },
-      { month_key: "2026-02", month_label: "Feb 2026", total: 132, teams: [{ team_name: "Blue Team", team_color: "#3b82f6", case_count: 30 }, { team_name: "Orange Team", team_color: "#f97316", case_count: 28 }] },
-    ],
-    roundRobin: {
-      lastColor: "purple",
-      lastTeamName: "Purple Team",
-      nextColor: "blue",
-      nextTeamName: "Blue Team",
-      rotationOrder: ["blue", "orange", "green", "yellow", "purple"],
-      nextUnassignedHearing: { id: 101, claimant: "Smith, John", hearing_date: "2026-03-15" },
-      urgentUnassignedCount: 22,
-    },
-    availableMonths: [
-      { month_value: "2026-02", month_label: "February 2026" },
-      { month_value: "2026-01", month_label: "January 2026" },
-      { month_value: "2025-12", month_label: "December 2025" },
-      { month_value: "2025-11", month_label: "November 2025" },
-    ],
-    availableYears: [2025, 2026],
-    medical_teams: STUB_TEAMS,
-    medical_record_status_options: MR_STATUS_OPTIONS,
-    hearing_decision_status_options: HEARING_DECISION_OPTIONS,
-    manner_options: MANNER_OPTIONS,
-    jeromeTeamInfo: { id: 6, team_name: "Jerome's Team", team_color: "red" },
+    statCards,
+    teamGrandTotals,
+    mrStatusByTeam,
+    groupedAssigned,
+    roundRobin,
+    availableMonths: availableMonthsRows.rows.map((r: Record<string, unknown>) => ({
+      month_value: r.month_value as string,
+      month_label: (r.month_label as string).trim(),
+    })),
+    availableYears: availableYearsRows.rows.map((r: Record<string, unknown>) => Number(r.year)),
+    medical_teams: medicalTeams,
+    medical_record_status_options: mrStatusOptionsList,
+    hearing_decision_status_options: decisionStatusList,
+    manner_options: mannerOptionsList,
+    jeromeTeamInfo: jerome ?? null,
     permissions,
-    withdrawnCount: 47,
-    postHrgCount: 31,
+    withdrawnCount: Number(withdrawnRow.rows[0]?.cnt ?? 0),
+    postHrgCount:   Number(postHrgRow.rows[0]?.cnt ?? 0),
   };
 }
+
+// ─── Paginated hearings query ─────────────────────────────────────────────────
 
 export async function getHearingsPaginated(
-  filters: HearingFilters
+  filters: HearingFilters,
 ): Promise<PaginatedHearingsResult> {
-  // TODO: replace with parameterised DB query — stub filters in-memory for now
+  const params: unknown[] = [];
+  const where: string[] = [WITHDRAWN_FILTER];
 
-  // Build the full stub dataset (144 rows across 3 months)
-  const MONTHS = ["2025-12", "2026-01", "2026-02", "2026-03"];
-  const REPS = ["Sarah Johnson", "Michael Chen", "Emily Rodriguez", "James Wilson", "Linda Park"];
-
-  const allHearings: Hearing[] = Array.from({ length: 144 }, (_, i) => {
-    const monthIdx = i % MONTHS.length;
-    const day = String((i % 28) + 1).padStart(2, "0");
-    const teamIdx = i % 6;
-    const team = STUB_TEAMS[teamIdx];
-    return {
-      id: i + 1,
-      claimant: `Claimant ${i + 1}`,
-      hearing_date: `${MONTHS[monthIdx]}-${day}`,
-      converted_time_est: i % 2 === 0 ? "10:00 AM" : "02:30 PM",
-      assigned_rep_id: (i % 5) + 1,
-      rep_name: REPS[i % 5],
-      mr_team_id: team?.id ?? null,
-      mr_team_name: team?.team_name ?? null,
-      mr_team_color: team?.team_color ?? null,
-      mr_team_type: team?.team_type ?? null,
-      medical_record_status: MR_STATUS_OPTIONS[i % MR_STATUS_OPTIONS.length],
-      hearing_decision_status: HEARING_DECISION_OPTIONS[i % 4],
-      manner_of_hearing: MANNER_OPTIONS[i % MANNER_OPTIONS.length],
-      task_assigned: i % 3 !== 0,
-      five_day_letter: i % 4 === 0,
-      credited: i % 7 === 0,
-      post_hrg_status: i % 4 === 2 ? "Post HRG Review/ Dev" : null,
-      post_hrg_deadline: i % 4 === 2 ? "2026-04-01" : null,
-      mr_worksheet_link: i % 2 === 0 ? "https://docs.google.com/spreadsheets/stub" : null,
-      mr_team_assigned_at: null,
-    };
-  });
-
-  // ── Apply filters ─────────────────────────────────────────────────────────
-  let filtered = allHearings;
-
+  // Search
   if (filters.search?.trim()) {
-    const q = filters.search.toLowerCase();
-    filtered = filtered.filter((h) => h.claimant.toLowerCase().includes(q) || h.rep_name?.toLowerCase().includes(q));
+    const idx = params.length + 1;
+    params.push(`%${filters.search.trim()}%`);
+    where.push(`(h.claimant ILIKE $${idx} OR r.name ILIKE $${idx})`);
   }
-  if (filters.month_filter) {
-    filtered = filtered.filter((h) => h.hearing_date.startsWith(filters.month_filter!));
+
+  // Date range (takes priority over month_filter)
+  if (filters.date_range && filters.date_range !== "custom") {
+    const ranges: Record<string, string> = {
+      today: `h.hearing_date = CURRENT_DATE`,
+      this_week: `h.hearing_date BETWEEN date_trunc('week', CURRENT_DATE) AND date_trunc('week', CURRENT_DATE) + INTERVAL '6 days'`,
+      this_month: `h.hearing_date BETWEEN date_trunc('month', CURRENT_DATE) AND (date_trunc('month', CURRENT_DATE) + INTERVAL '1 month' - INTERVAL '1 day')`,
+      next_week: `h.hearing_date BETWEEN date_trunc('week', CURRENT_DATE) + INTERVAL '7 days' AND date_trunc('week', CURRENT_DATE) + INTERVAL '13 days'`,
+      next_month: `h.hearing_date BETWEEN date_trunc('month', CURRENT_DATE) + INTERVAL '1 month' AND date_trunc('month', CURRENT_DATE) + INTERVAL '2 months' - INTERVAL '1 day'`,
+    };
+    if (ranges[filters.date_range]) where.push(ranges[filters.date_range]);
+  } else if (filters.date_range === "custom") {
+    if (filters.date_from && filters.date_to) {
+      params.push(filters.date_from); where.push(`h.hearing_date >= $${params.length}`);
+      params.push(filters.date_to);   where.push(`h.hearing_date <= $${params.length}`);
+    } else if (filters.date_from) {
+      params.push(filters.date_from); where.push(`h.hearing_date >= $${params.length}`);
+    } else if (filters.date_to) {
+      params.push(filters.date_to); where.push(`h.hearing_date <= $${params.length}`);
+    }
+  } else if (filters.month_filter) {
+    params.push(filters.month_filter);
+    where.push(`TO_CHAR(h.hearing_date, 'YYYY-MM') = $${params.length}`);
   }
+
+  // Team filter
   if (filters.team_filter) {
     if (filters.team_filter === "unassigned") {
-      filtered = filtered.filter((h) => !h.mr_team_id);
+      where.push("h.mr_team_id IS NULL");
     } else {
-      filtered = filtered.filter((h) => String(h.mr_team_id) === String(filters.team_filter));
+      params.push(filters.team_filter);
+      where.push(`h.mr_team_id = $${params.length}`);
     }
   }
+
+  // Status filter
   if (filters.status_filter) {
     if (filters.status_filter === "unassigned") {
-      filtered = filtered.filter((h) => !h.medical_record_status);
+      where.push("(h.medical_record_status IS NULL OR h.medical_record_status = '')");
     } else {
-      filtered = filtered.filter((h) => h.medical_record_status === filters.status_filter);
+      params.push(filters.status_filter);
+      where.push(`h.medical_record_status = $${params.length}`);
     }
   }
-  if (filters.assignment_filter) {
-    if (filters.assignment_filter === "no_specialist")  filtered = filtered.filter((h) => !h.mr_team_id);
-    if (filters.assignment_filter === "no_task")        filtered = filtered.filter((h) => !h.task_assigned);
-    if (filters.assignment_filter === "no_both")        filtered = filtered.filter((h) => !h.mr_team_id && !h.task_assigned);
+
+  // Assignment filter
+  if (filters.assignment_filter === "no_specialist") {
+    where.push("h.mr_team_id IS NULL");
+  } else if (filters.assignment_filter === "no_task") {
+    where.push("(h.task_assigned IS NULL OR h.task_assigned = false)");
+  } else if (filters.assignment_filter === "no_both") {
+    where.push("h.mr_team_id IS NULL");
+    where.push("(h.task_assigned IS NULL OR h.task_assigned = false)");
   }
-  if (filters.date_from) filtered = filtered.filter((h) => h.hearing_date >= filters.date_from!);
-  if (filters.date_to)   filtered = filtered.filter((h) => h.hearing_date <= filters.date_to!);
 
-  // Sort
-  filtered.sort((a, b) => filters.sort_order === "desc"
-    ? b.hearing_date.localeCompare(a.hearing_date)
-    : a.hearing_date.localeCompare(b.hearing_date));
+  const whereClause = `WHERE ${where.join(" AND ")}`;
+  const sortDir = filters.sort_order === "desc" ? "DESC" : "ASC";
 
-  // Stats on filtered set
-  const stats = {
-    total:       filtered.length,
-    complete:    filtered.filter((h) => h.medical_record_status === "Complete").length,
-    in_progress: filtered.filter((h) => h.medical_record_status === "In Progress").length,
-    ready:       filtered.filter((h) => h.medical_record_status === "Ready").length,
-    not_started: filtered.filter((h) => h.medical_record_status === "Not Started").length,
-    urgent:      filtered.filter((h) => h.medical_record_status === "URGENT! NEEDS ATTENTION").length,
-  };
+  // Count + stats in one pass
+  const statsResult = await db.query(
+    `SELECT
+       COUNT(*)                                                                         AS total,
+       SUM(CASE WHEN h.medical_record_status = 'Complete' THEN 1 ELSE 0 END) AS complete,
+       SUM(CASE WHEN h.medical_record_status = 'In Progress' THEN 1 ELSE 0 END) AS in_progress,
+       SUM(CASE WHEN h.medical_record_status = 'Ready' THEN 1 ELSE 0 END) AS ready,
+       SUM(CASE WHEN h.medical_record_status IS NULL
+                  OR h.medical_record_status = 'Not Started' THEN 1 ELSE 0 END) AS not_started,
+       SUM(CASE WHEN h.medical_record_status = 'URGENT! NEEDS ATTENTION' THEN 1 ELSE 0 END) AS urgent
+     FROM hearings h
+     LEFT JOIN representatives r ON h.assigned_rep_id = r.id
+     ${whereClause}`,
+    params,
+  );
 
-  // Paginate
-  const page = Math.max(1, filters.page ?? 1);
-  const perPage = filters.per_page === "all" ? filtered.length : Math.min(500, (filters.per_page as number) ?? 50);
-  const paginated = filtered.slice((page - 1) * perPage, page * perPage);
+  const totalCount = Number(statsResult.rows[0]?.total ?? 0);
+  const page    = Math.max(1, filters.page ?? 1);
+  const perPage = filters.per_page === "all" ? Math.min(totalCount, 500) : Math.min(500, Number(filters.per_page ?? 50));
+  const offset  = (page - 1) * perPage;
 
+  params.push(perPage); const limitIdx  = params.length;
+  params.push(offset);  const offsetIdx = params.length;
+
+  const hearingsResult = await db.query(
+    `SELECT
+       h.*,
+       r.name AS rep_name,
+       t.team_name AS mr_team_name,
+       t.team_color AS mr_team_color,
+       t.team_type AS mr_team_type,
+       t.id AS mr_team_id,
+       h.hearing_date::text AS hearing_date
+     FROM hearings h
+     LEFT JOIN representatives r ON h.assigned_rep_id = r.id
+     LEFT JOIN mr_teams t ON h.mr_team_id = t.id
+     ${whereClause}
+     ORDER BY h.hearing_date ${sortDir}, COALESCE(t.display_order, 9999) ASC, h.converted_time_est ${sortDir}
+     LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+    params,
+  );
+
+  const sr = statsResult.rows[0] ?? {};
   return {
-    hearings: paginated,
-    total: filtered.length,
+    hearings: hearingsResult.rows as Hearing[],
+    total: totalCount,
     page,
     per_page: perPage,
-    total_pages: Math.max(1, Math.ceil(filtered.length / perPage)),
-    stats,
+    total_pages: Math.max(1, Math.ceil(totalCount / perPage)),
+    stats: {
+      total: totalCount,
+      complete: Number(sr.complete    ?? 0),
+      in_progress: Number(sr.in_progress ?? 0),
+      ready: Number(sr.ready       ?? 0),
+      not_started: Number(sr.not_started ?? 0),
+      urgent: Number(sr.urgent      ?? 0),
+    },
   };
 }
 
-export async function updateMrStatus(hearingId: number, status: string): Promise<{ success: boolean }> {
-  void hearingId; void status;
+// ─── Mutation actions ─────────────────────────────────────────────────────────
+
+export async function updateMrStatus(
+  hearingId: number,
+  status: string,
+): Promise<{ success: boolean }> {
+  await db.query(
+    `UPDATE hearings SET medical_record_status = $1 WHERE id = $2`,
+    [status, hearingId],
+  );
   return { success: true };
 }
 
-export async function updateHearingDecisionStatus(hearingId: number, status: string): Promise<{ success: boolean }> {
-  void hearingId; void status;
+export async function updateHearingDecisionStatus(
+  hearingId: number,
+  status: string,
+): Promise<{ success: boolean }> {
+  await db.query(
+    `UPDATE hearings SET hearing_decision_status = $1 WHERE id = $2`,
+    [status, hearingId],
+  );
   return { success: true };
 }
 
-export async function updateMrTeam(hearingId: number, teamId: number | null): Promise<{ success: boolean }> {
-  void hearingId; void teamId;
+export async function updateMrTeam(
+  hearingId: number,
+  teamId: number | null,
+): Promise<{ success: boolean }> {
+  await db.query(
+    `UPDATE hearings SET mr_team_id = $1, mr_team_assigned_at = $2 WHERE id = $3`,
+    [teamId, teamId ? new Date().toISOString() : null, hearingId],
+  );
   return { success: true };
 }
 
-export async function toggleTaskAssigned(hearingId: number, value: boolean): Promise<{ success: boolean }> {
-  void hearingId; void value;
+export async function toggleTaskAssigned(
+  hearingId: number,
+  value: boolean,
+): Promise<{ success: boolean }> {
+  await db.query(
+    `UPDATE hearings SET task_assigned = $1 WHERE id = $2`,
+    [value, hearingId],
+  );
   return { success: true };
 }
 
-export async function toggleCredited(hearingId: number, value: boolean): Promise<{ success: boolean }> {
-  void hearingId; void value;
+export async function toggleCredited(
+  hearingId: number,
+  value: boolean,
+): Promise<{ success: boolean }> {
+  await db.query(
+    `UPDATE hearings SET credited = $1 WHERE id = $2`,
+    [value, hearingId],
+  );
   return { success: true };
 }
 
-export async function updateMoa(hearingId: number, manner: string): Promise<{ success: boolean }> {
-  void hearingId; void manner;
+export async function updateMoa(
+  hearingId: number,
+  manner: string,
+): Promise<{ success: boolean }> {
+  await db.query(
+    `UPDATE hearings SET manner_of_hearing = $1 WHERE id = $2`,
+    [manner, hearingId],
+  );
   return { success: true };
 }
 
-export async function updateWorksheetLink(hearingId: number, link: string): Promise<{ success: boolean }> {
-  void hearingId; void link;
+export async function updateWorksheetLink(
+  hearingId: number,
+  link: string,
+): Promise<{ success: boolean }> {
+  await db.query(
+    `UPDATE hearings SET mr_worksheet_link = $1 WHERE id = $2`,
+    [link, hearingId],
+  );
   return { success: true };
 }
 
 export async function bulkUpdateMrStatus(
   hearingIds: number[],
-  status: string
+  status: string,
 ): Promise<{ success: boolean; message: string }> {
-  void hearingIds; void status;
-  return { success: true, message: `${hearingIds.length} hearings updated` };
+  if (!hearingIds.length) return { success: false, message: "No hearings selected" };
+  const placeholders = hearingIds.map((_, i) => `$${i + 2}`).join(", ");
+  await db.query(
+    `UPDATE hearings SET medical_record_status = $1 WHERE id IN (${placeholders})`,
+    [status, ...hearingIds],
+  );
+  return { success: true, message: `${hearingIds.length} hearing(s) updated to "${status}"` };
 }
 
-export async function assignJeromeUrgent(): Promise<{ success: boolean; message: string; count: number }> {
-  return { success: true, message: "12 hearing(s) assigned to Jerome's Team", count: 12 };
+export async function assignJeromeUrgent(): Promise<{
+  success: boolean;
+  message: string;
+  count: number;
+}> {
+  const jerome = await db.query(`
+    SELECT id FROM mr_teams WHERE team_name ILIKE '%jerome%' AND is_active = true LIMIT 1
+  `);
+  const jeromeId = jerome.rows[0]?.id;
+  if (!jeromeId) return { success: false, message: "Jerome's Team not found", count: 0 };
+
+  const result = await db.query(`
+    UPDATE hearings
+    SET mr_team_id = $1, mr_team_assigned_at = NOW()
+    WHERE mr_team_id IS NULL
+      AND hearing_date >= CURRENT_DATE
+      AND hearing_date <= CURRENT_DATE + INTERVAL '28 days'
+      AND (medical_record_status != 'WITHDRAWAL' OR medical_record_status IS NULL)
+    RETURNING id
+  `, [jeromeId]);
+
+  const count = result.rows.length;
+  return { success: true, message: `${count} hearing(s) assigned to Jerome's Team`, count };
 }
 
 export async function getRoundRobinState(): Promise<RoundRobinState> {
+  const ROTATION_ORDER = ["blue", "orange", "green", "yellow", "purple"];
+
+  const [rotationRows, lastAssignedRows, nextHearingRows, urgentRows] = await Promise.all([
+    db.query(`
+      SELECT id, team_name, team_color FROM mr_teams
+      WHERE team_color IN ('blue','orange','green','yellow','purple')
+        AND is_active = true AND is_assignable = true
+      ORDER BY CASE team_color WHEN 'blue' THEN 1 WHEN 'orange' THEN 2 WHEN 'green' THEN 3 WHEN 'yellow' THEN 4 WHEN 'purple' THEN 5 END
+    `),
+    db.query(`
+      SELECT t.team_name, t.team_color FROM hearings h
+      JOIN mr_teams t ON h.mr_team_id = t.id
+      WHERE t.team_color IN ('blue','orange','green','yellow','purple')
+        AND h.mr_team_assigned_at IS NOT NULL
+        AND (h.medical_record_status != 'WITHDRAWAL' OR h.medical_record_status IS NULL)
+      ORDER BY h.mr_team_assigned_at DESC LIMIT 1
+    `),
+    db.query(`
+      SELECT id, claimant, hearing_date::text FROM hearings
+      WHERE mr_team_id IS NULL AND hearing_date >= CURRENT_DATE
+        AND (medical_record_status != 'WITHDRAWAL' OR medical_record_status IS NULL)
+      ORDER BY hearing_date ASC LIMIT 1
+    `),
+    db.query(`
+      SELECT COUNT(*) AS cnt FROM hearings
+      WHERE mr_team_id IS NULL
+        AND hearing_date >= CURRENT_DATE
+        AND hearing_date <= CURRENT_DATE + INTERVAL '28 days'
+        AND (medical_record_status != 'WITHDRAWAL' OR medical_record_status IS NULL)
+    `),
+  ]);
+
+  const colorToTeam: Record<string, string> = {};
+  for (const r of rotationRows.rows as Record<string, unknown>[]) {
+    colorToTeam[r.team_color as string] = r.team_name as string;
+  }
+
+  const lastRow = lastAssignedRows.rows[0] as Record<string, unknown> | undefined;
+  const lastColor = (lastRow?.team_color as string | undefined) ?? "purple";
+  const lastTeamName = (lastRow?.team_name  as string | undefined) ?? "None";
+  const lastIndex = ROTATION_ORDER.indexOf(lastColor);
+  const nextColor = ROTATION_ORDER[(lastIndex + 1) % ROTATION_ORDER.length];
+
   return {
-    lastColor: "purple",
-    lastTeamName: "Purple Team",
-    nextColor: "blue",
-    nextTeamName: "Blue Team",
-    rotationOrder: ["blue", "orange", "green", "yellow", "purple"],
-    nextUnassignedHearing: { id: 101, claimant: "Smith, John", hearing_date: "2026-03-15" },
-    urgentUnassignedCount: 22,
+    lastColor,
+    lastTeamName,
+    nextColor,
+    nextTeamName: colorToTeam[nextColor] ?? "Blue Team",
+    rotationOrder: ROTATION_ORDER,
+    nextUnassignedHearing: nextHearingRows.rows[0] ?? null,
+    urgentUnassignedCount: Number(urgentRows.rows[0]?.cnt ?? 0),
   };
 }
 
 export async function getTeamStats(): Promise<TeamStatsData> {
-  const makeWeek = (label: string, offset: number): MonthlyTeamStat => ({
-    label,
-    totals: { total: 80 + offset, complete: 20 + offset, in_progress: 15, ready: 12, not_started: 28, urgent: 5 },
-    teams: STUB_TEAMS.slice(0, 5).map((t) => ({
-      team_name: t.team_name,
-      team_color: t.team_color,
-      total_cases: 16 + offset,
-      complete: 4, in_progress: 3, ready: 2, not_started: 6, urgent: 1,
-    })),
-  });
+  const [weeklyRows, monthlyRows] = await Promise.all([
+    db.query(`
+      SELECT
+        TO_CHAR(h.hearing_date, 'IYYY-IW') AS week_key,
+        TO_CHAR(date_trunc('week', h.hearing_date), 'Mon DD') AS week_start,
+        TO_CHAR(date_trunc('week', h.hearing_date) + INTERVAL '6 days', 'Mon DD, YYYY') AS week_end,
+        COALESCE(t.team_name, 'Unassigned') AS team_name,
+        t.team_color,
+        COALESCE(t.display_order, 9999) AS display_order,
+        COUNT(*) AS total_cases,
+        SUM(CASE WHEN h.medical_record_status = 'Complete' THEN 1 ELSE 0 END) AS complete,
+        SUM(CASE WHEN h.medical_record_status = 'In Progress' THEN 1 ELSE 0 END) AS in_progress,
+        SUM(CASE WHEN h.medical_record_status = 'Ready' THEN 1 ELSE 0 END) AS ready,
+        SUM(CASE WHEN h.medical_record_status IS NULL OR h.medical_record_status = 'Not Started' THEN 1 ELSE 0 END) AS not_started,
+        SUM(CASE WHEN h.medical_record_status = 'URGENT! NEEDS ATTENTION' THEN 1 ELSE 0 END) AS urgent
+      FROM hearings h
+      LEFT JOIN mr_teams t ON h.mr_team_id = t.id
+      WHERE ${WITHDRAWN_FILTER}
+      GROUP BY TO_CHAR(h.hearing_date,'IYYY-IW'),
+               TO_CHAR(date_trunc('week',h.hearing_date),'Mon DD'),
+               TO_CHAR(date_trunc('week',h.hearing_date)+INTERVAL '6 days','Mon DD, YYYY'),
+               t.team_name, t.team_color, t.display_order
+      ORDER BY week_key DESC, COALESCE(t.display_order,9999) ASC
+    `),
+    db.query(`
+      SELECT
+        TO_CHAR(h.hearing_date, 'YYYY-MM') AS month_key,
+        TO_CHAR(h.hearing_date, 'Mon YYYY') AS month_label,
+        COALESCE(t.team_name, 'Unassigned') AS team_name,
+        t.team_color,
+        COALESCE(t.display_order, 9999) AS display_order,
+        COUNT(*) AS total_cases,
+        SUM(CASE WHEN h.medical_record_status = 'Complete' THEN 1 ELSE 0 END) AS complete,
+        SUM(CASE WHEN h.medical_record_status = 'In Progress' THEN 1 ELSE 0 END) AS in_progress,
+        SUM(CASE WHEN h.medical_record_status = 'Ready' THEN 1 ELSE 0 END) AS ready,
+        SUM(CASE WHEN h.medical_record_status IS NULL OR h.medical_record_status = 'Not Started' THEN 1 ELSE 0 END) AS not_started,
+        SUM(CASE WHEN h.medical_record_status = 'URGENT! NEEDS ATTENTION' THEN 1 ELSE 0 END) AS urgent
+      FROM hearings h
+      LEFT JOIN mr_teams t ON h.mr_team_id = t.id
+      WHERE ${WITHDRAWN_FILTER}
+      GROUP BY TO_CHAR(h.hearing_date,'YYYY-MM'), TO_CHAR(h.hearing_date,'Mon YYYY'),
+               t.team_name, t.team_color, t.display_order
+      ORDER BY month_key DESC, COALESCE(t.display_order,9999) ASC
+    `),
+  ]);
+
+  const buildMap = (rows: Record<string, unknown>[], getKey: (r: Record<string, unknown>) => string, getLabel: (r: Record<string, unknown>) => string) => {
+    const map: Record<string, { label: string; teams: MonthlyTeamStat["teams"]; totals: MonthlyTeamStat["totals"] }> = {};
+    for (const r of rows) {
+      const key = getKey(r);
+      if (!map[key]) map[key] = { label: getLabel(r), teams: [], totals: { total: 0, complete: 0, in_progress: 0, ready: 0, not_started: 0, urgent: 0 } };
+      const tc = Number(r.total_cases), co = Number(r.complete), ip = Number(r.in_progress), re = Number(r.ready), ns = Number(r.not_started), ug = Number(r.urgent);
+      map[key].teams.push({ team_name: r.team_name as string, team_color: r.team_color as string | null, total_cases: tc, complete: co, in_progress: ip, ready: re, not_started: ns, urgent: ug });
+      map[key].totals.total += tc; map[key].totals.complete += co; map[key].totals.in_progress += ip;
+      map[key].totals.ready += re; map[key].totals.not_started += ns; map[key].totals.urgent += ug;
+    }
+    return Object.values(map);
+  };
+
   return {
-    weekly:  [makeWeek("Mar 3 - Mar 9, 2026", 0), makeWeek("Feb 24 - Mar 2, 2026", 5),  makeWeek("Feb 17 - Feb 23, 2026", 10)],
-    monthly: [makeWeek("Feb 2026", 50),            makeWeek("Jan 2026", 80),             makeWeek("Dec 2025", 100)],
+    weekly: buildMap(weeklyRows.rows as Record<string, unknown>[], r => r.week_key  as string, r => `${r.week_start} - ${r.week_end}`),
+    monthly: buildMap(monthlyRows.rows as Record<string, unknown>[], r => r.month_key as string, r => r.month_label as string),
   };
 }
 
 export async function getNotifications(): Promise<NotificationItem[]> {
-  // TODO: SELECT * FROM sync_notifications WHERE expires_at > NOW() ORDER BY created_at DESC LIMIT 50
-  return [];
+  const result = await db.query(`
+    SELECT n.*, u.full_name AS created_by_name
+    FROM sync_notifications n
+    LEFT JOIN users u ON n.created_by = u.id
+    WHERE n.expires_at > NOW()
+    ORDER BY n.created_at DESC
+    LIMIT 50
+  `);
+  return result.rows as NotificationItem[];
 }
 
 export async function getActivityLog(params: {
@@ -337,25 +920,73 @@ export async function getActivityLog(params: {
   date_to?: string;
   page?: number;
 }): Promise<{ items: ActivityLogItem[]; total: number }> {
-  void params;
-  return { items: [], total: 0 };
+  const where: string[] = [
+    `a.action IN ('mr_status_updated','mr_team_assigned','mr_link_updated','decision_status_updated','moa_updated','five_day_notice_updated','credited_updated','bulk_mr_team_assigned','bulk_mr_status_updated','urgent_team_assigned')`,
+  ];
+  const qParams: unknown[] = [];
+
+  if (params.type) {
+    qParams.push(params.type);
+    where.push(`a.action = $${qParams.length}`);
+  }
+  if (params.date_from) {
+    qParams.push(params.date_from);
+    where.push(`a.created_at >= $${qParams.length}`);
+  }
+  if (params.date_to) {
+    qParams.push(params.date_to);
+    where.push(`a.created_at <= $${qParams.length}`);
+  }
+
+  const whereClause = `WHERE ${where.join(" AND ")}`;
+  const page = Math.max(1, params.page ?? 1);
+  const perPage = 50;
+  const offset = (page - 1) * perPage;
+
+  const [countResult, itemsResult] = await Promise.all([
+    db.query(`SELECT COUNT(*) AS cnt FROM activity_log a ${whereClause}`, qParams),
+    db.query(
+      `SELECT a.*, u.full_name AS user_name, u.role AS user_role
+       FROM activity_log a
+       JOIN users u ON a.user_id = u.id
+       ${whereClause}
+       ORDER BY a.created_at DESC
+       LIMIT ${perPage} OFFSET ${offset}`,
+      qParams,
+    ),
+  ]);
+
+  return {
+    items: itemsResult.rows as ActivityLogItem[],
+    total: Number(countResult.rows[0]?.cnt ?? 0),
+  };
 }
 
 export async function getPostHrgNotes(hearingId: number): Promise<PostHrgNote[]> {
-  void hearingId;
-  return [];
+  const result = await db.query(
+    `SELECT n.*, u.full_name AS author_name
+     FROM post_hrg_notes n
+     JOIN users u ON n.user_id = u.id
+     WHERE n.hearing_id = $1
+     ORDER BY n.created_at DESC`,
+    [hearingId],
+  );
+  return result.rows as PostHrgNote[];
 }
 
 export async function updatePostHrgDeadline(
   hearingId: number,
-  deadline: string
+  deadline: string,
 ): Promise<{ success: boolean }> {
-  void hearingId; void deadline;
+  await db.query(
+    `UPDATE hearings SET post_hrg_deadline = $1 WHERE id = $2`,
+    [deadline, hearingId],
+  );
   return { success: true };
 }
 
 export async function getPostHrgHearings(
-  filters: HearingFilters
+  filters: HearingFilters,
 ): Promise<PaginatedHearingsResult> {
   return getHearingsPaginated(filters);
 }
@@ -365,6 +996,34 @@ export async function getCardStats(
   year?: string,
   month?: string,
 ): Promise<{ count: number; nextHearing: { claimant: string; hearing_date: string } | null }> {
-  void type; void year; void month;
-  return { count: type === "no_specialist" ? 312 : 189, nextHearing: null };
+  const where: string[] = [
+    `(medical_record_status != 'WITHDRAWAL' OR medical_record_status IS NULL)`,
+    type === "no_specialist"
+      ? "mr_team_id IS NULL"
+      : "(task_assigned IS NULL OR task_assigned = false)",
+  ];
+  const params: unknown[] = [];
+
+  if (year && month) {
+    params.push(`${year}-${month.padStart(2, "0")}`);
+    where.push(`TO_CHAR(hearing_date, 'YYYY-MM') = $${params.length}`);
+  } else if (year) {
+    params.push(year);
+    where.push(`EXTRACT(YEAR FROM hearing_date)::text = $${params.length}`);
+  }
+
+  const whereClause = `WHERE ${where.join(" AND ")}`;
+
+  const [countResult, nextResult] = await Promise.all([
+    db.query(`SELECT COUNT(*) AS cnt FROM hearings ${whereClause}`, params),
+    db.query(
+      `SELECT claimant, hearing_date::text FROM hearings ${whereClause} ORDER BY hearing_date ASC LIMIT 1`,
+      params,
+    ),
+  ]);
+
+  return {
+    count: Number(countResult.rows[0]?.cnt ?? 0),
+    nextHearing: nextResult.rows[0] ?? null,
+  };
 }

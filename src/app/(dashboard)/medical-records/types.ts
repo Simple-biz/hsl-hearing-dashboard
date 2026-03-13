@@ -1,35 +1,42 @@
-// types.ts — interfaces and synchronous helpers for the Medical records6 page.
+// types.ts — interfaces and synchronous helpers for the Medical Records page.
 // Kept separate from action.ts because "use server" files may only export async functions.
 
 // ─── Roles & Permissions ──────────────────────────────────────────────────────
 
+// Matches the canonical UserRole union in @/lib/roles.ts
 export type UserRole =
+  | "system_admin"
   | "admin"
   | "manager"
+  | "staff"
+  | "rep"
+  | "pre_hearing_staff"
+  | "brief_agent"
   | "mr_admin"
-  | "mr_lead"
   | "mr_agent"
+  | "mr_lead"
   | "hearings_admin"
   | "hearings_agent"
   | "post_hearing_admin"
   | "post_hearing_staff";
 
+// MR Pivot field-level permissions (see PDF Part 2.2 — differ from dashboard)
 export interface Permissions {
-  canManage: boolean;       // admin | manager | mr_admin | mr_lead
-  canEditMrTeam: boolean;   // admin | manager | mr_admin
-  canEditMoa: boolean;      // admin | manager
-  canEditTask: boolean;     // admin | mr_admin
-  canEditCredited: boolean; // admin only
+  canManage: boolean;       // sys_admin | admin | manager | mr_admin | mr_lead
+  canEditMrTeam: boolean;   // sys_admin | admin | manager | mr_admin  (mr_lead = view only on pivot)
+  canEditMoa: boolean;      // sys_admin | admin | manager  (most restricted)
+  canEditTask: boolean;     // sys_admin | admin | mr_admin  (no manager on pivot)
+  canEditCredited: boolean; // sys_admin | admin only
 }
 
 /** Synchronous helper — lives here, NOT in action.ts */
 export function derivePermissions(role: UserRole): Permissions {
   return {
-    canManage: ["admin", "manager", "mr_admin", "mr_lead"].includes(role),
-    canEditMrTeam: ["admin", "manager", "mr_admin"].includes(role),
-    canEditMoa: ["admin", "manager"].includes(role),
-    canEditTask: ["admin", "mr_admin"].includes(role),
-    canEditCredited: role === "admin",
+    canManage: ["system_admin", "admin", "manager", "mr_admin", "mr_lead"].includes(role),
+    canEditMrTeam: ["system_admin", "admin", "manager", "mr_admin"].includes(role),
+    canEditMoa: ["system_admin", "admin", "manager"].includes(role),
+    canEditTask: ["system_admin", "admin", "mr_admin"].includes(role),
+    canEditCredited: ["system_admin", "admin"].includes(role),
   };
 }
 
