@@ -22,6 +22,7 @@ export type {
 } from "./types";
 
 import { derivePermissions } from "./types";
+import type { UserRole } from "./types";
 import type {
   MrTeam,
   Hearing,
@@ -83,9 +84,9 @@ const STUB_TEAMS: MrTeam[] = [
 
 // ─── Server Actions (all must be async) ──────────────────────────────────────
 
-export async function getMrPivotPageData(): Promise<MrPivotPageData> {
+export async function getMrPivotPageData(userRole: UserRole = "post_hearing_staff"): Promise<MrPivotPageData> {
   // TODO: replace with real DB queries
-  const permissions = derivePermissions("admin");
+  const permissions = derivePermissions(userRole);
 
   return {
     statCards: {

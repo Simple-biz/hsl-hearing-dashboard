@@ -1,4 +1,4 @@
-// types.ts — interfaces and synchronous helpers for the MR Pivot page.
+// types.ts — interfaces and synchronous helpers for the Medical records6 page.
 // Kept separate from action.ts because "use server" files may only export async functions.
 
 // ─── Roles & Permissions ──────────────────────────────────────────────────────
@@ -25,10 +25,10 @@ export interface Permissions {
 /** Synchronous helper — lives here, NOT in action.ts */
 export function derivePermissions(role: UserRole): Permissions {
   return {
-    canManage:       ["admin", "manager", "mr_admin", "mr_lead"].includes(role),
-    canEditMrTeam:   ["admin", "manager", "mr_admin"].includes(role),
-    canEditMoa:      ["admin", "manager"].includes(role),
-    canEditTask:     ["admin", "mr_admin"].includes(role),
+    canManage: ["admin", "manager", "mr_admin", "mr_lead"].includes(role),
+    canEditMrTeam: ["admin", "manager", "mr_admin"].includes(role),
+    canEditMoa: ["admin", "manager"].includes(role),
+    canEditTask: ["admin", "mr_admin"].includes(role),
     canEditCredited: role === "admin",
   };
 }

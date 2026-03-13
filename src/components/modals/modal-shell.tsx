@@ -17,15 +17,31 @@ interface ModalShellProps {
   /** Buttons / controls rendered to the left of the close button in the header */
   actions?: React.ReactNode;
   children: React.ReactNode;
+  /**
+   * "default" — wraps children in `overflow-y-auto flex-1` (simple single-scroll modals).
+   * "bare"    — renders children directly as flex children of the panel, giving
+   *             complex modals (multi-zone scroll, split-pane, sticky headers, footers)
+   *             full control over their internal layout.
+   */
+  layout?: "default" | "bare";
 }
 
 /**
- * Shared modal wrapper matching the project's established pattern from
- * settings-client.tsx and admin-client.tsx:
+ * Shared modal wrapper used across the dashboard.
+ *
+ * All layouts share:
  *   - bg-black/60 backdrop-blur-sm backdrop
  *   - animate-in fade-in-0 zoom-in-95 entry animation
- *   - Neutral card header + Separator
- *   - SVG close button (consistent with the rest of the codebase)
+ *   - Escape key dismiss + body scroll lock
+ *   - Consistent header (title + optional icon + optional actions + close button)
+ *   - Separator below header
+ *
+ * Use layout="bare" for modals with multiple internal scroll zones, sticky
+ * column headers, pagination footers, or split-pane layouts (e.g. HearingsModal,
+ * PostHrgModal, TeamStatsModal). Children become direct flex children of the panel.
+ *
+ * Use layout="default" (or omit) for simple single-scroll content
+ * (e.g. report detail modals).
  */
 export function ModalShell({
   title,
@@ -34,6 +50,7 @@ export function ModalShell({
   maxWidth = "max-w-md",
   actions,
   children,
+  layout = "default",
 }: ModalShellProps) {
   useBodyScrollLock(true);
 
@@ -64,16 +81,16 @@ export function ModalShell({
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-4 sm:px-5 py-3 sm:py-4 shrink-0 gap-3">
+        <div className="flex items-center justify-between px-4 sm:px-5 py-3 sm:py-4 flex-shrink-0 gap-3">
           <div className="flex items-center gap-2 min-w-0">
             {Icon && (
-              <Icon size={17} className="text-muted-foreground shrink-0" />
+              <Icon size={17} className="text-muted-foreground flex-shrink-0" />
             )}
             <h2 className="text-base font-semibold truncate">{title}</h2>
           </div>
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-wrap justify-end">
+          <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0 flex-wrap justify-end">
             {actions}
-            {/* SVG close button — matches settings & admin pattern exactly */}
+            {/* SVG close button — matches settings & admin pattern */}
             <button
               type="button"
               onClick={onClose}
@@ -93,10 +110,19 @@ export function ModalShell({
 
         <Separator />
 
-        {/* Scrollable body */}
-        <div className="overflow-y-auto flex-1">
-          {children}
-        </div>
+        {/*
+         * "default": single overflow-y-auto scroll container — for simple modals.
+         * "bare":    children are direct flex children of the panel so they can
+         *            define their own sections (filters, sticky headers, split panes,
+         *            paginated footers, etc.) without fighting a wrapper scroll context.
+         */}
+        {layout === "default" ? (
+          <div className="overflow-y-auto flex-1">
+            {children}
+          </div>
+        ) : (
+          children
+        )}
       </div>
     </div>
   );
