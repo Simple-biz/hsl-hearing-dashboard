@@ -118,8 +118,8 @@ function AddEntryModal({
   const labelCls = "text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-1 block";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-      <div className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-xl border bg-card shadow-2xl overflow-hidden"
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4" onClick={onClose}>
+      <div className="w-full sm:max-w-2xl max-h-[95vh] sm:max-h-[90vh] flex flex-col rounded-t-xl sm:rounded-xl border bg-card shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b bg-muted/50 px-5 py-4 shrink-0">
           <h2 className="text-sm font-semibold">➕ Add RFC Entry</h2>
@@ -128,7 +128,7 @@ function AddEntryModal({
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
           {error && <p className="text-xs text-red-500 bg-red-50 dark:bg-red-900/20 rounded px-3 py-2">{error}</p>}
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className={labelCls}>Date</label>
               <input type="date" className={inputCls} value={form.entry_date} onChange={(e) => set("entry_date", e.target.value)} />
@@ -144,7 +144,7 @@ function AddEntryModal({
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className={labelCls}>Hearing Date</label>
               <input type="date" className={inputCls} value={form.hearing_date} onChange={(e) => set("hearing_date", e.target.value)} />
@@ -155,7 +155,7 @@ function AddEntryModal({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className={labelCls}>Type of Document</label>
               <select className={inputCls} value={form.document_type} onChange={(e) => set("document_type", e.target.value)}>
@@ -169,7 +169,7 @@ function AddEntryModal({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className={labelCls}>Date Signed</label>
               <input type="date" className={inputCls} value={form.date_signed} onChange={(e) => set("date_signed", e.target.value)} />
@@ -180,7 +180,7 @@ function AddEntryModal({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className={labelCls}>Method Received</label>
               <select className={inputCls} value={form.method_received} onChange={(e) => set("method_received", e.target.value)}>
@@ -239,8 +239,8 @@ function RfcActivityLogModal({ open, onClose }: { open: boolean; onClose: () => 
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-      <div className="w-full max-w-2xl max-h-[80vh] flex flex-col rounded-xl border bg-card shadow-2xl"
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4" onClick={onClose}>
+      <div className="w-full sm:max-w-2xl max-h-[90vh] sm:max-h-[80vh] flex flex-col rounded-t-xl sm:rounded-xl border bg-card shadow-2xl"
         onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b bg-muted/50 px-5 py-4 shrink-0">
           <h2 className="text-sm font-semibold">📋 RFC Activity Log</h2>
@@ -453,6 +453,125 @@ function RfcRow({
         </td>
       )}
     </tr>
+  );
+}
+
+// ─── Mobile Card (replaces table rows on small screens) ──────────────────────
+
+function RfcMobileCard({
+  entry, data, onUpdate, onDelete,
+}: {
+  entry: RfcEntry;
+  data: RfcPageData;
+  onUpdate: (id: number, field: string, value: unknown) => void;
+  onDelete: (id: number) => void;
+}) {
+  const { permissions: p, documentTypes, methodOptions, mrTeams } = data;
+  const docType   = documentTypes.find((d) => d.value === entry.document_type);
+  const method    = methodOptions.find((m) => m.value === entry.method_received);
+  const team      = mrTeams.find((t) => t.id === entry.mr_team_id);
+  const teamColor = entry.team_color ? teamHex(entry.team_color) : (team?.team_color ? teamHex(team.team_color) : undefined);
+
+  function fmtDate(d: string | null) {
+    if (!d) return "—";
+    return new Date(d + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" });
+  }
+
+  return (
+    <div className="border-b border-border/40 px-4 py-3 space-y-2 hover:bg-muted/20 transition-colors">
+
+      {/* Row 1: Client name + doc type badge */}
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex-1 min-w-0">
+          {p.canEdit
+            ? <input type="text" value={entry.client_name}
+                className="text-xs font-semibold border border-border rounded px-2 py-1 bg-card text-foreground w-full"
+                onChange={(e) => onUpdate(entry.id, "client_name", e.target.value)} />
+            : <span className="text-xs font-semibold text-foreground">{entry.client_name}</span>}
+        </div>
+        {p.canEdit
+          ? <select value={entry.document_type ?? ""}
+              className="text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer shrink-0"
+              style={docType?.color ? colorStyle(docType.color) : { backgroundColor: "#f3f4f6", color: "#374151" }}
+              onChange={(e) => onUpdate(entry.id, "document_type", e.target.value)}>
+              <option value="">—</option>
+              {documentTypes.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
+            </select>
+          : entry.document_type
+            ? <span className="px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0" style={docType?.color ? colorStyle(docType.color) : {}}>{entry.document_type}</span>
+            : null}
+      </div>
+
+      {/* Row 2: Team + dates */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {p.canAssignTeam
+          ? <select value={entry.mr_team_id ?? ""}
+              className="text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer font-medium"
+              style={teamColor ? { backgroundColor: teamColor, color: isLight(teamColor) ? "#1f2937" : "#fff" } : { backgroundColor: "#e5e7eb", color: "#374151" }}
+              onChange={(e) => onUpdate(entry.id, "mr_team_id", e.target.value ? Number(e.target.value) : null)}>
+              <option value="">—</option>
+              {mrTeams.map((t) => <option key={t.id} value={t.id}>{t.team_name}</option>)}
+            </select>
+          : entry.team_name
+            ? <span className="px-1.5 py-0.5 rounded text-[10px] font-medium" style={teamColor ? { backgroundColor: teamColor, color: isLight(teamColor) ? "#1f2937" : "#fff" } : {}}>{entry.team_name}</span>
+            : <span className="text-[10px] text-muted-foreground/50">No Team</span>}
+        <span className="text-[10px] text-muted-foreground">Entry: <span className="text-foreground">{fmtDate(entry.entry_date)}</span></span>
+        <span className="text-[10px] text-muted-foreground">Hrg: <span className="text-foreground">{fmtDate(entry.hearing_date)}</span></span>
+      </div>
+
+      {/* Row 3: Provider + method */}
+      <div className="flex items-center gap-2 flex-wrap text-[10px] text-muted-foreground">
+        {entry.provider_name && <span className="text-foreground">{entry.provider_name}</span>}
+        {p.canEdit
+          ? <select value={entry.method_received ?? ""}
+              className="text-[10px] px-1.5 py-0.5 rounded border-0 cursor-pointer"
+              style={method?.color ? colorStyle(method.color) : { backgroundColor: "#f3f4f6", color: "#374151" }}
+              onChange={(e) => onUpdate(entry.id, "method_received", e.target.value)}>
+              <option value="">— Method —</option>
+              {methodOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </select>
+          : entry.method_received
+            ? <span className="px-1.5 py-0.5 rounded font-medium" style={method?.color ? colorStyle(method.color) : {}}>{entry.method_received}</span>
+            : null}
+      </div>
+
+      {/* Row 4: Checkboxes + MyCase + Delete */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <label className="flex items-center gap-1.5 text-[10px] text-foreground cursor-pointer">
+          {p.canEdit
+            ? <input type="checkbox" checked={entry.filed_to_oho} className="w-3.5 h-3.5 accent-emerald-500"
+                onChange={(e) => onUpdate(entry.id, "filed_to_oho", e.target.checked)} />
+            : <span className={entry.filed_to_oho ? "text-emerald-500 font-bold" : "text-muted-foreground/30"}>
+                {entry.filed_to_oho ? "✓" : "✗"}
+              </span>}
+          Filed OHO
+        </label>
+        <label className="flex items-center gap-1.5 text-[10px] text-foreground cursor-pointer">
+          {p.canEdit
+            ? <input type="checkbox" checked={entry.approved_by_tl} className="w-3.5 h-3.5 accent-blue-500"
+                onChange={(e) => onUpdate(entry.id, "approved_by_tl", e.target.checked)} />
+            : <span className={entry.approved_by_tl ? "text-blue-500 font-bold" : "text-muted-foreground/30"}>
+                {entry.approved_by_tl ? "✓" : "✗"}
+              </span>}
+          Appr. TL
+        </label>
+        {entry.mycase_link
+          ? <a href={entry.mycase_link} target="_blank" rel="noreferrer"
+              className="inline-flex items-center gap-1 text-[10px] bg-primary text-primary-foreground px-2 py-0.5 rounded hover:bg-primary/80">
+              <ExternalLink size={9} />MyCase
+            </a>
+          : p.canEdit
+            ? <button onClick={() => { const v = prompt("MyCase link:"); if (v) onUpdate(entry.id, "mycase_link", v); }}
+                className="text-[10px] text-muted-foreground border border-dashed border-border rounded px-1.5 py-0.5">+ Link</button>
+            : null}
+        {p.canDelete && (
+          <button onClick={() => { if (confirm(`Delete entry for "${entry.client_name}"?`)) onDelete(entry.id); }}
+            className="ml-auto text-red-500 hover:text-red-700 p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20">
+            <Trash2 size={13} />
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -689,125 +808,147 @@ export function RfcClient(data: RfcPageData) {
         </div>
 
         {/* ── Main Card ────────────────────────────────────────────────── */}
-        <div className="bg-card border border-border rounded-xl overflow-hidden flex flex-col" style={{ maxHeight: "calc(100vh - 220px)" }}>
+        <div className="bg-card border border-border rounded-xl overflow-hidden flex flex-col" style={{ maxHeight: "calc(100vh - 160px)" }}>
 
           {/* Card Header */}
-          <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-border bg-muted/30 flex-wrap shrink-0">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 px-4 py-3 border-b border-border bg-muted/30 shrink-0">
             <div className="flex items-center gap-2">
               <span className="text-sm font-bold text-foreground">📋 RFC Documents</span>
               <span className="text-xs text-muted-foreground tabular-nums">({total})</span>
             </div>
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap sm:ml-auto">
               <button onClick={() => setShowViewDetails(true)}
                 className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground transition-colors">
-                🔍 View Details
+                🔍 <span className="hidden sm:inline">View Details</span><span className="sm:hidden">Details</span>
               </button>
               {data.permissions.canEdit && (
                 <button onClick={() => setShowActivity(true)}
                   className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground transition-colors">
-                  <ClipboardList size={12} />Activity Log
+                  <ClipboardList size={12} /><span className="hidden sm:inline">Activity Log</span><span className="sm:hidden">Log</span>
                 </button>
               )}
               {data.permissions.canExport && (
                 <button onClick={() => exportRfcCsv(entries)}
                   className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition-colors">
-                  <Download size={12} />Export CSV
+                  <Download size={12} /><span className="hidden sm:inline">Export CSV</span><span className="sm:hidden">Export</span>
                 </button>
               )}
               {data.permissions.canCreate && (
                 <button onClick={() => setShowAdd(true)}
                   className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-[#6A4C93] hover:bg-[#5a3d80] text-white transition-colors">
-                  <Plus size={12} />Add Entry
+                  <Plus size={12} /><span className="hidden sm:inline">Add Entry</span><span className="sm:hidden">Add</span>
                 </button>
               )}
               <button onClick={() => router.push("/medical-records")}
                 className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-muted-foreground transition-colors">
-                ← MR Pivot
+                ← <span className="hidden sm:inline">MR Pivot</span><span className="sm:hidden">MR</span>
               </button>
             </div>
           </div>
 
           {/* Filter Bar */}
-          <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2.5 shrink-0">
+          <div className="border-b px-4 py-2.5 shrink-0 space-y-2">
+            {/* Search — full width */}
             <input type="text" placeholder="🔍 Search client or provider…" value={filters.search}
-              className="text-xs px-3 py-1.5 rounded-lg border border-border bg-muted text-foreground focus:outline-none focus:border-primary min-w-45"
+              className="text-xs px-3 py-1.5 rounded-lg border border-border bg-muted text-foreground focus:outline-none focus:border-primary w-full"
               onChange={(e) => {
                 const v = e.target.value;
                 setFilters((p) => ({ ...p, search: v }));
                 if (searchRef.current) clearTimeout(searchRef.current);
                 searchRef.current = setTimeout(() => applyFilter({ search: v }), 300);
               }} />
-            <select value={filters.sort_order} onChange={(e) => applyFilter({ sort_order: e.target.value as "asc" | "desc" })}
-              className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer">
-              <option value="desc">🆕 Newest First</option>
-              <option value="asc">📜 Oldest First</option>
-            </select>
-            <select value={filters.status} onChange={(e) => applyFilter({ status: e.target.value as RfcFilters["status"] })}
-              className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer">
-              <option value="">All Status</option>
-              <option value="filed">✅ Filed to OHO</option>
-              <option value="pending">⏳ Pending</option>
-              <option value="approved">✓ Approved by TL</option>
-            </select>
-            <select value={filters.month} onChange={(e) => applyFilter({ month: e.target.value })}
-              className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer">
-              <option value="">All Months</option>
-              {data.availableMonths.map((m) => <option key={m.val} value={m.val}>{m.label}</option>)}
-            </select>
-            <select value={filters.team} onChange={(e) => applyFilter({ team: e.target.value })}
-              className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer">
-              <option value="">All Teams</option>
-              <option value="unassigned">— Unassigned —</option>
-              {data.mrTeams.map((t) => <option key={t.id} value={t.id}>{t.team_name}</option>)}
-            </select>
-            <select value={filters.doc_type} onChange={(e) => applyFilter({ doc_type: e.target.value })}
-              className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer">
-              <option value="">All Doc Types</option>
-              {data.documentTypes.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
-            </select>
-            <button onClick={() => applyFilter({ search: "", sort_order: "desc", status: "", month: "", team: "", doc_type: "" })}
-              className="text-xs px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-muted-foreground transition-colors">Clear</button>
-          </div>
-
-          {/* Column headers */}
-          <div className="overflow-x-auto shrink-0">
-            <div className="bg-[#4a5568] text-white text-[9px] font-semibold uppercase tracking-wide" style={{ minWidth: "1300px" }}>
-              <div className="grid px-3 py-2.5"
-                style={{ gridTemplateColumns: data.permissions.canDelete
-                  ? "100px 110px 100px 160px 130px 130px 100px 70px 110px 100px 60px 60px 50px"
-                  : "100px 110px 100px 160px 130px 130px 100px 70px 110px 100px 60px 60px" }}>
-                {[...COLS, ...(data.permissions.canDelete ? ["Del"] : [])].map((c) => (
-                  <div key={c}>{c}</div>
-                ))}
-              </div>
+            {/* Selects — 2-col on mobile, flex-wrap on desktop */}
+            <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2">
+              <select value={filters.sort_order} onChange={(e) => applyFilter({ sort_order: e.target.value as "asc" | "desc" })}
+                className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer w-full sm:w-auto">
+                <option value="desc">🆕 Newest First</option>
+                <option value="asc">📜 Oldest First</option>
+              </select>
+              <select value={filters.status} onChange={(e) => applyFilter({ status: e.target.value as RfcFilters["status"] })}
+                className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer w-full sm:w-auto">
+                <option value="">All Status</option>
+                <option value="filed">✅ Filed to OHO</option>
+                <option value="pending">⏳ Pending</option>
+                <option value="approved">✓ Approved by TL</option>
+              </select>
+              <select value={filters.month} onChange={(e) => applyFilter({ month: e.target.value })}
+                className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer w-full sm:w-auto">
+                <option value="">All Months</option>
+                {data.availableMonths.map((m) => <option key={m.val} value={m.val}>{m.label}</option>)}
+              </select>
+              <select value={filters.team} onChange={(e) => applyFilter({ team: e.target.value })}
+                className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer w-full sm:w-auto">
+                <option value="">All Teams</option>
+                <option value="unassigned">— Unassigned —</option>
+                {data.mrTeams.map((t) => <option key={t.id} value={String(t.id)}>{t.team_name}</option>)}
+              </select>
+              <select value={filters.doc_type} onChange={(e) => applyFilter({ doc_type: e.target.value })}
+                className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer w-full sm:w-auto">
+                <option value="">All Doc Types</option>
+                {data.documentTypes.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
+              </select>
+              <button onClick={() => applyFilter({ search: "", sort_order: "desc", status: "", month: "", team: "", doc_type: "" })}
+                className="text-xs px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-muted-foreground transition-colors w-full sm:w-auto">
+                Clear
+              </button>
             </div>
           </div>
 
-          {/* Scrollable body */}
-          <div className="flex-1 overflow-y-auto overflow-x-auto min-h-0 relative">
+          {/* ── Mobile card list (< md) ─────────────────────────────── */}
+          <div className="md:hidden flex-1 overflow-y-auto min-h-0 relative">
             {isPending && (
               <div className="absolute inset-0 bg-background/70 flex items-center justify-center z-10">
                 <Loader2 size={28} className="animate-spin text-primary" />
               </div>
             )}
-            <table className="w-full" style={{ minWidth: "1300px" }}>
-              <tbody>
-                {!isPending && entries.length === 0
-                  ? <tr><td colSpan={14} className="text-center py-16 text-sm text-muted-foreground">No entries found.</td></tr>
-                  : entries.map((e) => (
-                      <RfcRow key={e.id} entry={e} data={data} onUpdate={handleUpdate} onDelete={handleDelete} />
-                    ))
-                }
-              </tbody>
-            </table>
+            {!isPending && entries.length === 0
+              ? <p className="text-center py-16 text-sm text-muted-foreground">No entries found.</p>
+              : entries.map((e) => (
+                  <RfcMobileCard key={e.id} entry={e} data={data} onUpdate={handleUpdate} onDelete={handleDelete} />
+                ))}
+          </div>
+
+          {/* ── Desktop table (≥ md) ─────────────────────────────────── */}
+          <div className="hidden md:flex md:flex-col md:flex-1 md:min-h-0">
+            {/* Column headers */}
+            <div className="overflow-x-auto shrink-0">
+              <div className="bg-[#4a5568] text-white text-[9px] font-semibold uppercase tracking-wide" style={{ minWidth: "1300px" }}>
+                <div className="grid px-3 py-2.5"
+                  style={{ gridTemplateColumns: data.permissions.canDelete
+                    ? "100px 110px 100px 160px 130px 130px 100px 70px 110px 100px 60px 60px 50px"
+                    : "100px 110px 100px 160px 130px 130px 100px 70px 110px 100px 60px 60px" }}>
+                  {[...COLS, ...(data.permissions.canDelete ? ["Del"] : [])].map((c) => (
+                    <div key={c}>{c}</div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Scrollable body */}
+            <div className="flex-1 overflow-y-auto overflow-x-auto min-h-0 relative">
+              {isPending && (
+                <div className="absolute inset-0 bg-background/70 flex items-center justify-center z-10">
+                  <Loader2 size={28} className="animate-spin text-primary" />
+                </div>
+              )}
+              <table className="w-full" style={{ minWidth: "1300px" }}>
+                <tbody>
+                  {!isPending && entries.length === 0
+                    ? <tr><td colSpan={14} className="text-center py-16 text-sm text-muted-foreground">No entries found.</td></tr>
+                    : entries.map((e) => (
+                        <RfcRow key={e.id} entry={e} data={data} onUpdate={handleUpdate} onDelete={handleDelete} />
+                      ))}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           {/* Pagination */}
-          <div className="flex items-center justify-between gap-3 px-5 py-2.5 border-t border-border bg-muted/20 shrink-0 flex-wrap">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 px-4 sm:px-5 py-2.5 border-t border-border bg-muted/20 shrink-0">
             <span className="text-[11px] text-muted-foreground">
               Showing {Math.min((curPage - 1) * perPage + 1, total)}–{Math.min(curPage * perPage, total)} of {total}
             </span>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <select value={filters.per_page} onChange={(e) => applyFilter({ per_page: Number(e.target.value), page: 1 })}
                 className="text-xs px-2 py-1 rounded-lg border border-border bg-card text-foreground cursor-pointer">
                 <option value={25}>25/page</option>
