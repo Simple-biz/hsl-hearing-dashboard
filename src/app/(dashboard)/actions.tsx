@@ -478,7 +478,7 @@ export async function updateHearing(
     hearingId,
   ]);
 
-  // Log the update
+  // Log the update — action names match PHP dashboard
   const claimant = await getClaimantName(hearingId);
   if (field === "assigned_rep_id" && value) {
     const { rows } = await db.query(
@@ -486,20 +486,23 @@ export async function updateHearing(
       [value],
     );
     await logAction(
-      "hearing_assigned",
-      `${claimant} assigned to ${rows[0]?.name || "unknown"}`,
+      "rep_assigned",
+      `Assigned ${rows[0]?.name || "unknown"} to: ${claimant}`,
     );
   } else if (field === "assigned_rep_id" && !value) {
-    await logAction("hearing_unassigned", `${claimant} unassigned`);
+    await logAction("rep_unassigned", `Unassigned from: ${claimant}`);
   } else if (field === "assignment_status") {
     await logAction(
-      "withdrawal",
-      `${claimant} status changed to ${value || "cleared"}`,
+      "status_assigned",
+      `Set ${value || "cleared"} for: ${claimant}`,
     );
   } else {
+    const fieldLabel = field
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, (l) => l.toUpperCase());
     await logAction(
-      "hearing_updated",
-      `${claimant}: ${field.replace(/_/g, " ")} updated`,
+      "field_updated",
+      `Set ${fieldLabel} to '${value ?? "cleared"}' for: ${claimant}`,
     );
   }
 }
@@ -508,7 +511,7 @@ export async function deleteHearing(hearingId: number) {
   const { logAction, getClaimantName } = await import("@/lib/activity-log");
   const claimant = await getClaimantName(hearingId);
   await db.query("DELETE FROM hearings WHERE id = $1", [hearingId]);
-  await logAction("hearing_deleted", `${claimant} deleted`);
+  await logAction("hearing_deleted", `Deleted hearing: ${claimant}`);
 }
 
 export async function autoAssignSingle(hearingId: number) {
@@ -522,8 +525,8 @@ export async function autoAssignSingle(hearingId: number) {
   const claimant = await getClaimantName(hearingId);
   if (result.success) {
     await logAction(
-      "hearing_auto_assigned",
-      `${claimant} auto-assigned to ${result.rep_name}`,
+      "rep_auto_assigned",
+      `Auto-assigned ${result.rep_name} to: ${claimant}`,
     );
   }
   return result;
@@ -680,7 +683,7 @@ export async function emailAllReps(monthFilter: string) {
 
   const { logAction } = await import("@/lib/activity-log");
   await logAction(
-    "email_sent",
+    "bulk_email",
     `Batch email sent to ${emailsSent} reps (${monthFilter})`,
   );
 
@@ -849,7 +852,7 @@ export async function unassignAll(options: {
 
   const { logAction } = await import("@/lib/activity-log");
   await logAction(
-    "hearing_unassigned",
+    "bulk_unassign",
     `Bulk unassign: ${rowCount ?? 0} hearings unassigned`,
   );
 
@@ -1033,19 +1036,31 @@ export async function fetchActivityLog(params: {
   const values: unknown[] = [];
   let idx = 1;
 
-  // Category filter
+  // Category filter — action names match PHP dashboard logActivity() calls
   if (params.category && params.category !== "all") {
     const catMap: Record<string, string[]> = {
       assignments: [
-        "hearing_assigned",
-        "hearing_unassigned",
-        "hearing_auto_assigned",
-        "withdrawal",
+        "rep_assigned",
+        "rep_unassigned",
+        "rep_auto_assigned",
+        "batch_auto_assign",
+        "bulk_unassign",
+        "status_assigned",
       ],
-      emails: ["email_sent", "hearing_alert_minimal"],
-      fields: ["hearing_updated", "hearing_edited"],
-      hearings: ["hearing_created", "hearing_deleted", "hearing_imported"],
-      schedule: ["schedule_updated"],
+      emails: ["email_sent", "email_failed", "bulk_email"],
+      fields: [
+        "field_updated",
+        "post_hrg_note_added",
+        "post_hrg_deadline_updated",
+        "post_hrg_note_deleted",
+      ],
+      hearings: [
+        "hearing_updated",
+        "hearing_created",
+        "hearing_deleted",
+        "bulk_delete",
+      ],
+      schedule: ["schedule_updated", "schedule_lock_override"],
       reps: ["rep_created", "rep_updated", "rep_deleted", "token_revoked"],
     };
     const actions = catMap[params.category];
@@ -1083,7 +1098,7 @@ export async function fetchActivityLog(params: {
 
   // Optionally hide system_admin (user id=1) activities — matches PHP dashboard
   if (params.excludeSystemAdmin) {
-    conditions.push(`a.user_id != 1`);
+    conditions.push(`(a.user_id IS NULL OR a.user_id != 1)`);
   }
 
   const where =
@@ -1225,7 +1240,7 @@ export async function bulkAutoAssignSelected(
   }
 
   await logAction(
-    "hearing_auto_assigned",
+    "batch_auto_assign",
     `Bulk auto-assigned ${assigned} of ${hearingIds.length} selected hearings`,
   );
   return { assigned, failed, total: hearingIds.length };
@@ -1286,7 +1301,7 @@ export async function bulkEmailSelected(hearingIds: number[]) {
   }
 
   await logAction(
-    "email_sent",
+    "bulk_email",
     `Bulk email sent to ${emailsSent} reps for ${hearingIds.length} selected hearings`,
   );
   return {
