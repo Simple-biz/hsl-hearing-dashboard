@@ -3,21 +3,43 @@
 
 // ─── Roles & Permissions ──────────────────────────────────────────────────────
 
+// Matches the canonical UserRole union in @/lib/roles.ts
 export type RfcUserRole =
-  | "admin" | "manager" | "mr_admin" | "mr_lead" | "mr_agent"
-  | "hearings_admin" | "hearings_agent" | "post_hearing_admin" | "post_hearing_staff";
+  | "system_admin"
+  | "admin"
+  | "manager"
+  | "staff"
+  | "rep"
+  | "pre_hearing_staff"
+  | "brief_agent"
+  | "mr_admin"
+  | "mr_agent"
+  | "mr_lead"
+  | "hearings_admin"
+  | "hearings_agent"
+  | "post_hearing_admin"
+  | "post_hearing_staff";
 
+// RFC page permissions (see PDF Part 3 / roles.ts RFC_PAGE_ACTIONS)
 export interface RfcPermissions {
-  canManage: boolean;     // admin | manager | mr_admin | mr_lead | hearings_admin
-  canEdit: boolean;       // admin | manager | mr_admin | mr_lead | mr_agent | hearings_admin
-  canAssignTeam: boolean; // admin | mr_admin only
+  canView: boolean;       // system_admin | admin | manager | mr_admin | mr_lead | mr_agent
+  canCreate: boolean;     // system_admin | admin | manager | mr_admin | mr_lead
+  canEdit: boolean;       // system_admin | admin | manager | mr_admin | mr_lead | mr_agent
+  canDelete: boolean;     // system_admin | admin | manager
+  canExport: boolean;     // system_admin | admin | manager | mr_admin | mr_lead
+  canManage: boolean;     // system_admin | admin | manager | mr_admin | mr_lead (bulk/assign)
+  canAssignTeam: boolean; // system_admin | admin | manager | mr_admin | mr_lead
 }
 
 export function deriveRfcPermissions(role: RfcUserRole): RfcPermissions {
   return {
-    canManage:     ["admin", "manager", "mr_admin", "mr_lead", "hearings_admin"].includes(role),
-    canEdit:       ["admin", "manager", "mr_admin", "mr_lead", "mr_agent", "hearings_admin"].includes(role),
-    canAssignTeam: ["admin", "mr_admin"].includes(role),
+    canView:       ["system_admin","admin","manager","mr_admin","mr_lead","mr_agent"].includes(role),
+    canCreate:     ["system_admin","admin","manager","mr_admin","mr_lead"].includes(role),
+    canEdit:       ["system_admin","admin","manager","mr_admin","mr_lead","mr_agent"].includes(role),
+    canDelete:     ["system_admin","admin","manager"].includes(role),
+    canExport:     ["system_admin","admin","manager","mr_admin","mr_lead"].includes(role),
+    canManage:     ["system_admin","admin","manager","mr_admin","mr_lead"].includes(role),
+    canAssignTeam: ["system_admin","admin","manager","mr_admin","mr_lead"].includes(role),
   };
 }
 

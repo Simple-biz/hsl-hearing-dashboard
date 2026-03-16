@@ -165,7 +165,7 @@ function AssignmentCard({ title, count, nextHearing, nextIcon, gradientFrom, gra
     : null;
 
   return (
-    <div className="rounded-xl border border-border overflow-hidden w-fit min-w-[180px]">
+    <div className="rounded-xl border border-border overflow-hidden w-fit min-w-45">
       {/* Colored header: title left, count right */}
       <div
         className="flex items-center justify-between px-3 py-2"
@@ -197,8 +197,8 @@ function AssignmentCard({ title, count, nextHearing, nextIcon, gradientFrom, gra
         <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground pt-1.5 border-t border-border min-w-0">
           {dateStr ? (
             <>
-              <span className="flex-shrink-0">{nextIcon ?? "📅"}</span>
-              <span className="font-semibold text-primary flex-shrink-0">{dateStr}</span>
+              <span className="shrink-0">{nextIcon ?? "📅"}</span>
+              <span className="font-semibold text-primary shrink-0">{dateStr}</span>
               <span className="text-[10px] truncate">— {nextHearing!.claimant.slice(0, 14)}…</span>
             </>
           ) : (
@@ -241,7 +241,7 @@ function RoundRobinBanner({ rr }: { rr: RoundRobinState }) {
             {new Date(rr.nextUnassignedHearing.hearing_date + "T00:00:00")
               .toLocaleDateString("en-US", { month: "short", day: "numeric" })}
           </span>
-          <span className="text-muted-foreground text-[10px] truncate max-w-[100px]">
+          <span className="text-muted-foreground text-[10px] truncate max-w-25">
             — {rr.nextUnassignedHearing.claimant.slice(0, 14)}…
           </span>
         </div>
@@ -275,7 +275,7 @@ function NotificationBell({ notifications, onRefresh }: {
       >
         <Bell size={16} className="text-muted-foreground" />
         {unseen.length > 0 && (
-          <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 bg-red-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+          <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 bg-red-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
             {unseen.length > 99 ? "99+" : unseen.length}
           </span>
         )}
@@ -366,7 +366,7 @@ function MrStatusPivot({ rows }: { rows: MrStatusByTeam[] }) {
               <tr key={row.team} className="border-b border-border hover:bg-muted/30 transition-colors">
                 <td className="px-3 py-2 font-semibold text-foreground">
                   {row.color && (
-                    <span className="inline-block w-2 h-2 rounded-full mr-2 flex-shrink-0"
+                    <span className="inline-block w-2 h-2 rounded-full mr-2 shrink-0"
                       style={{ backgroundColor: teamHex(row.color) }} />
                   )}
                   {row.team}
@@ -616,6 +616,7 @@ type Props = MrPivotPageData & { userRole: UserRole };
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function MrPivotClient({ userRole, ...data }: Props) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
   // ── Hearings ─────────────────────────────────────────────────────────────
@@ -731,7 +732,7 @@ export function MrPivotClient({ userRole, ...data }: Props) {
   // ── Column headers (shared between both views) ────────────────────────────
   const columnHeaders = (
     <div
-      className="grid gap-2 px-4 py-2 bg-muted text-foreground text-[9px] font-semibold uppercase tracking-wide flex-shrink-0 border-b border-border"
+      className="grid gap-2 px-4 py-2 bg-muted text-foreground text-[9px] font-semibold uppercase tracking-wide shrink-0 border-b border-border"
       style={{ gridTemplateColumns: "200px 120px 36px 90px 160px 36px 100px 70px 36px 70px 80px", minWidth: "1200px" }}
     >
       <div>Claimant</div><div>MR Specialist</div><div>Task</div><div>Date</div>
@@ -746,7 +747,7 @@ export function MrPivotClient({ userRole, ...data }: Props) {
       <AppHeader title="Medical Records" subtitle="MR Status Tracking &amp; Analytics" />
       <DashboardNav userRole={userRole} />
 
-      <div className="w-full max-w-[1800px] mx-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-5">
+      <div className="w-full max-w-450 mx-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-5">
 
         {/* ── Icon buttons (bell + refresh) ────────────────────────────── */}
         <div className="flex items-center justify-end gap-2">
@@ -803,14 +804,14 @@ export function MrPivotClient({ userRole, ...data }: Props) {
 
           {/* Right column: Team Assignments sidebar — spans full left height */}
           <div className="bg-card border border-border rounded-xl overflow-hidden flex flex-col">
-            <div className="px-3 py-2 bg-muted/30 border-b border-border flex-shrink-0 flex items-center justify-between">
+            <div className="px-3 py-2 bg-muted/30 border-b border-border shrink-0 flex items-center justify-between">
               <span className="text-[11px] font-semibold text-foreground">👥 Team Assignments</span>
             </div>
             <div className="px-2 py-1.5 space-y-0.5 overflow-y-auto flex-1" style={{ maxHeight: "200px" }}>
               {data.teamGrandTotals.map((t) => (
                 <div key={t.team_name} className="flex items-center justify-between px-1.5 py-1 rounded hover:bg-muted/40 transition-colors">
                   <div className="flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                    <span className="w-1.5 h-1.5 rounded-full shrink-0"
                       style={{ backgroundColor: t.team_color ?? "#9ca3af" }} />
                     <span className="text-[10px] font-medium text-foreground">{t.team_name}</span>
                   </div>
@@ -818,7 +819,7 @@ export function MrPivotClient({ userRole, ...data }: Props) {
                 </div>
               ))}
             </div>
-            <div className="px-2 py-1.5 border-t border-border bg-muted/20 flex-shrink-0">
+            <div className="px-2 py-1.5 border-t border-border bg-muted/20 shrink-0">
               <div className="flex items-center justify-between px-1.5">
                 <span className="text-[10px] font-bold text-foreground">Grand Total</span>
                 <span className="text-xs font-bold tabular-nums text-primary">
@@ -834,7 +835,7 @@ export function MrPivotClient({ userRole, ...data }: Props) {
           <div className="flex flex-wrap gap-2 items-center">
 
             {/* Search */}
-            <div className="relative min-w-[140px]">
+            <div className="relative min-w-35">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
               <Input
                 placeholder="Search claimant…"
@@ -948,7 +949,7 @@ export function MrPivotClient({ userRole, ...data }: Props) {
           style={{ maxHeight: "min(calc(100vh - 240px), 75vh)" }}
         >
           {/* Card header */}
-          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-border bg-muted/30 flex-shrink-0">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-border bg-muted/30 shrink-0">
             <div className="flex items-center gap-2">
               <span className="text-sm font-bold text-foreground">📁 Hearings</span>
               <span className="text-xs text-muted-foreground tabular-nums">({totalHearings})</span>
@@ -987,6 +988,14 @@ export function MrPivotClient({ userRole, ...data }: Props) {
                   <FileText size={12} /> Post HRG ({data.postHrgCount})
                 </button>
               )}
+
+              {/* RFC Documents */}
+              <button onClick={() => router.push("/rfc")}
+                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-[#6A4C93] hover:bg-[#5a3d80] text-white font-semibold transition-colors">
+                <ClipboardList size={12} />
+                <span className="hidden sm:inline">RFC Docs</span>
+                <span className="sm:hidden">RFC</span>
+              </button>
               <button onClick={() => setShowActivityLog(true)}
                 className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground font-semibold transition-colors">
                 <ClipboardList size={12} />
@@ -1021,7 +1030,7 @@ export function MrPivotClient({ userRole, ...data }: Props) {
           </div>
 
           {/* Column headers */}
-          <div className="overflow-x-auto flex-shrink-0">
+          <div className="overflow-x-auto shrink-0">
             {columnHeaders}
           </div>
 
@@ -1093,7 +1102,7 @@ export function MrPivotClient({ userRole, ...data }: Props) {
           </div>
 
           {/* Pagination */}
-          <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-2.5 border-t border-border bg-muted/20 flex-shrink-0">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-2.5 border-t border-border bg-muted/20 shrink-0">
             <span className="text-[11px] text-muted-foreground">
               Showing {((filters.page ?? 1) - 1) * (filters.per_page as number) + 1}–{Math.min(
                 (filters.page ?? 1) * (filters.per_page as number), totalHearings

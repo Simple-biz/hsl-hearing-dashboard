@@ -4,17 +4,19 @@ export type {
   RfcUserRole, RfcPermissions, RfcEntry, RfcStats, RfcDocumentType,
   RfcMethodOption, RfcMrTeam, RfcFilters, RfcPaginatedResult,
   RfcPageData, RfcAddEntryInput, RfcActivityLogEntry,
-} from "../rfc/types";
+} from "./types";
 
-import { deriveRfcPermissions } from "../rfc/types";
+import { deriveRfcPermissions } from "./types";
 import type {
-  RfcEntry, RfcStats, RfcDocumentType, RfcMethodOption, RfcMrTeam,
+  RfcUserRole, RfcEntry, RfcStats, RfcDocumentType, RfcMethodOption, RfcMrTeam,
   RfcFilters, RfcPaginatedResult, RfcPageData, RfcAddEntryInput, RfcActivityLogEntry,
-} from "../rfc/types";
+} from "./types";
 
-// ─── Stub constants ───────────────────────────────────────────────────────────
+import { db } from "@/lib/db";
 
-const STUB_DOC_TYPES: RfcDocumentType[] = [
+// ─── Fallback config values (match PHP defaults) ──────────────────────────────
+
+const FALLBACK_DOC_TYPES: RfcDocumentType[] = [
   { value: "RFC",                   label: "RFC",                   color: "#2E7D32" },
   { value: "Childhood Eval",        label: "Childhood Eval",        color: "#1976D2" },
   { value: "Teacher Questionnaire", label: "Teacher Questionnaire", color: "#7E57C2" },
@@ -24,7 +26,7 @@ const STUB_DOC_TYPES: RfcDocumentType[] = [
   { value: "Home Healthcare",       label: "Home Healthcare",       color: "#6FA8B6" },
 ];
 
-const STUB_METHODS: RfcMethodOption[] = [
+const FALLBACK_METHODS: RfcMethodOption[] = [
   { value: "Email",             label: "Email",             color: "#C8E6A0" },
   { value: "Fax",               label: "Fax",               color: "#9ED0F6" },
   { value: "Mail",              label: "Mail",              color: "#D6C2F0" },
@@ -33,152 +35,219 @@ const STUB_METHODS: RfcMethodOption[] = [
   { value: "Patient Portal",    label: "Patient Portal",    color: "#A7D6D1" },
 ];
 
-const STUB_TEAMS: RfcMrTeam[] = [
-  { id: 1, team_name: "Blue Team",   team_color: "#3b82f6" },
-  { id: 2, team_name: "Orange Team", team_color: "#f97316" },
-  { id: 3, team_name: "Green Team",  team_color: "#22c55e" },
-  { id: 4, team_name: "Yellow Team", team_color: "#eab308" },
-  { id: 5, team_name: "Purple Team", team_color: "#a855f7" },
-];
+// ─── Page data loader ─────────────────────────────────────────────────────────
 
-// Build a repeatable stub dataset
-function buildStubEntries(): RfcEntry[] {
-  const clients = [
-    "Smith, John", "Doe, Jane", "Johnson, Michael", "Williams, Sarah",
-    "Brown, David", "Jones, Emily", "Miller, Robert", "Davis, Linda",
-    "Wilson, James", "Taylor, Mary", "Anderson, Thomas", "Martinez, Patricia",
-    "Garcia, Charles", "Rodriguez, Barbara", "Lee, Christopher",
-  ];
-  const docTypes = STUB_DOC_TYPES.map((d) => d.value);
-  const methods  = STUB_METHODS.map((m) => m.value);
-  const months   = ["2025-11", "2025-12", "2026-01", "2026-02", "2026-03"];
+export async function getRfcPageData(
+  userRole: RfcUserRole = "mr_agent",
+): Promise<RfcPageData> {
+  const permissions = deriveRfcPermissions(userRole);
 
-  return Array.from({ length: 75 }, (_, i) => {
-    const team = i % 7 === 0 ? null : STUB_TEAMS[i % STUB_TEAMS.length];
-    const month = months[i % months.length];
-    const day   = String((i % 28) + 1).padStart(2, "0");
-    return {
-      id:              i + 1,
-      entry_date:      `${month}-${day}`,
-      mr_team_id:      team?.id ?? null,
-      hearing_date:    `${month}-${String(((i + 5) % 28) + 1).padStart(2, "0")}`,
-      client_name:     clients[i % clients.length],
-      document_type:   docTypes[i % docTypes.length],
-      provider_name:   i % 4 === 0 ? null : `Provider ${i + 1}`,
-      date_signed:     i % 3 === 0 ? `${month}-${day}` : null,
-      mycase_link:     i % 2 === 0 ? "https://app.mycase.com/stub" : null,
-      method_received: methods[i % methods.length],
-      date_received:   `${month}-${day}`,
-      filed_to_oho:    i % 3 === 0,
-      approved_by_tl:  i % 5 === 0,
-      created_at:      `${month}-${day}T10:00:00Z`,
-      updated_at:      `${month}-${day}T10:00:00Z`,
-      created_by:      1,
-      team_name:       team?.team_name ?? null,
-      team_color:      team?.team_color ?? null,
-    };
-  });
-}
+  const [statsRows, docTypeRows, methodRows, teamRows, monthRows] = await Promise.all([
+    // ── Stat cards ────────────────────────────────────────────────────────────
+    db.query(`
+      SELECT
+        COUNT(*)                                                                  AS total,
+        SUM(CASE WHEN filed_to_oho  = true  THEN 1 ELSE 0 END)                  AS filed,
+        SUM(CASE WHEN approved_by_tl = true THEN 1 ELSE 0 END)                  AS approved,
+        SUM(CASE WHEN filed_to_oho  = false OR filed_to_oho IS NULL THEN 1 ELSE 0 END) AS pending
+      FROM mr_rfc
+    `),
 
-function computeStats(entries: RfcEntry[]): RfcStats {
-  return {
-    total:    entries.length,
-    filed:    entries.filter((e) => e.filed_to_oho).length,
-    approved: entries.filter((e) => e.approved_by_tl).length,
-    pending:  entries.filter((e) => !e.filed_to_oho).length,
+    // ── Document types from config ────────────────────────────────────────────
+    db.query(`
+      SELECT option_value AS value, option_value AS label, option_color AS color
+      FROM config_options
+      WHERE option_type = 'rfc_document_type' AND is_active = true
+      ORDER BY display_order ASC
+    `),
+
+    // ── Method options from config ────────────────────────────────────────────
+    db.query(`
+      SELECT option_value AS value, option_value AS label, option_color AS color
+      FROM config_options
+      WHERE option_type = 'rfc_method_received' AND is_active = true
+      ORDER BY display_order ASC
+    `),
+
+    // ── Active assignable MR teams ────────────────────────────────────────────
+    db.query(`
+      SELECT id, team_name, team_color
+      FROM mr_teams
+      WHERE is_assignable = true AND is_active = true AND team_color IS NOT NULL
+      ORDER BY display_order ASC
+    `),
+
+    // ── Available months (from hearing_date, last 12) ─────────────────────────
+    db.query(`
+      SELECT DISTINCT
+        TO_CHAR(hearing_date, 'YYYY-MM')    AS val,
+        TO_CHAR(hearing_date, 'Month YYYY') AS label
+      FROM mr_rfc
+      WHERE hearing_date IS NOT NULL
+      ORDER BY val DESC
+      LIMIT 12
+    `),
+  ]);
+
+  const s = statsRows.rows[0] ?? {};
+  const stats: RfcStats = {
+    total:    Number(s.total    ?? 0),
+    filed:    Number(s.filed    ?? 0),
+    approved: Number(s.approved ?? 0),
+    pending:  Number(s.pending  ?? 0),
   };
-}
 
-// ─── Server Actions ───────────────────────────────────────────────────────────
+  const documentTypes: RfcDocumentType[] = docTypeRows.rows.length
+    ? docTypeRows.rows as RfcDocumentType[]
+    : FALLBACK_DOC_TYPES;
 
-export async function getRfcPageData(): Promise<RfcPageData> {
-  // TODO: replace with real DB queries
-  const all = buildStubEntries();
-  const stats = computeStats(all);
-
-  // Derive available months from hearing_dates
-  const monthSet = new Set<string>();
-  all.forEach((e) => { if (e.hearing_date) monthSet.add(e.hearing_date.slice(0, 7)); });
-  const availableMonths = Array.from(monthSet)
-    .sort((a, b) => b.localeCompare(a))
-    .map((val) => ({
-      val,
-      label: new Date(val + "-01").toLocaleDateString("en-US", { month: "long", year: "numeric" }),
-    }));
+  const methodOptions: RfcMethodOption[] = methodRows.rows.length
+    ? methodRows.rows as RfcMethodOption[]
+    : FALLBACK_METHODS;
 
   return {
     stats,
-    documentTypes:   STUB_DOC_TYPES,
-    methodOptions:   STUB_METHODS,
-    mrTeams:         STUB_TEAMS,
-    availableMonths,
-    permissions:     deriveRfcPermissions("admin"),
+    documentTypes,
+    methodOptions,
+    mrTeams: teamRows.rows as RfcMrTeam[],
+    availableMonths: monthRows.rows.map((r: Record<string, unknown>) => ({
+      val:   r.val as string,
+      label: (r.label as string).trim(),
+    })),
+    permissions,
   };
 }
 
-export async function getRfcEntries(filters: RfcFilters): Promise<RfcPaginatedResult> {
-  // TODO: replace with parameterised DB query — stub filters in-memory
-  let entries = buildStubEntries();
+// ─── Paginated entries ────────────────────────────────────────────────────────
+
+export async function getRfcEntries(
+  filters: RfcFilters,
+): Promise<RfcPaginatedResult> {
+  const params: unknown[] = [];
+  const where: string[] = [];
 
   // Search
   if (filters.search?.trim()) {
-    const q = filters.search.toLowerCase();
-    entries = entries.filter((e) =>
-      e.client_name.toLowerCase().includes(q) ||
-      e.provider_name?.toLowerCase().includes(q)
-    );
+    params.push(`%${filters.search.trim()}%`);
+    where.push(`(r.client_name ILIKE $${params.length} OR r.provider_name ILIKE $${params.length})`);
   }
 
   // Status
-  if (filters.status === "filed")    entries = entries.filter((e) => e.filed_to_oho);
-  if (filters.status === "pending")  entries = entries.filter((e) => !e.filed_to_oho);
-  if (filters.status === "approved") entries = entries.filter((e) => e.approved_by_tl);
+  if (filters.status === "filed")    where.push("r.filed_to_oho = true");
+  if (filters.status === "pending")  where.push("(r.filed_to_oho = false OR r.filed_to_oho IS NULL)");
+  if (filters.status === "approved") where.push("r.approved_by_tl = true");
 
   // Month (on hearing_date)
   if (filters.month) {
-    entries = entries.filter((e) => e.hearing_date?.startsWith(filters.month!));
+    params.push(filters.month);
+    where.push(`TO_CHAR(r.hearing_date, 'YYYY-MM') = $${params.length}`);
   }
 
   // Team
   if (filters.team) {
-    if (filters.team === "unassigned") entries = entries.filter((e) => !e.mr_team_id);
-    else entries = entries.filter((e) => String(e.mr_team_id) === String(filters.team));
+    if (filters.team === "unassigned") {
+      where.push("(r.mr_team_id IS NULL OR r.mr_team_id = 0)");
+    } else {
+      params.push(filters.team);
+      where.push(`r.mr_team_id = $${params.length}`);
+    }
   }
 
   // Doc type
   if (filters.doc_type) {
-    entries = entries.filter((e) => e.document_type === filters.doc_type);
+    params.push(filters.doc_type);
+    where.push(`r.document_type = $${params.length}`);
   }
 
-  // Sort by entry_date
-  entries.sort((a, b) => {
-    const da = a.entry_date ?? "";
-    const db = b.entry_date ?? "";
-    return filters.sort_order === "asc" ? da.localeCompare(db) : db.localeCompare(da);
-  });
+  const whereClause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const sortDir = filters.sort_order === "asc" ? "ASC" : "DESC";
 
-  const stats = computeStats(entries);
+  // Count + stats in one pass
+  const statsResult = await db.query(
+    `SELECT
+       COUNT(*)                                                              AS total,
+       SUM(CASE WHEN r.filed_to_oho  = true  THEN 1 ELSE 0 END)            AS filed,
+       SUM(CASE WHEN r.approved_by_tl = true THEN 1 ELSE 0 END)            AS approved,
+       SUM(CASE WHEN r.filed_to_oho  = false OR r.filed_to_oho IS NULL THEN 1 ELSE 0 END) AS pending
+     FROM mr_rfc r
+     ${whereClause}`,
+    params,
+  );
 
-  // Paginate
+  const totalCount = Number(statsResult.rows[0]?.total ?? 0);
   const page    = Math.max(1, filters.page ?? 1);
-  const perPage = filters.per_page === "all" ? entries.length : Math.min(500, (filters.per_page as number) ?? 50);
-  const paginated = entries.slice((page - 1) * perPage, page * perPage);
+  const perPage = filters.per_page === "all" ? Math.min(totalCount || 1, 500) : Math.min(500, Number(filters.per_page ?? 50));
+  const offset  = (page - 1) * perPage;
 
+  params.push(perPage); const limitIdx  = params.length;
+  params.push(offset);  const offsetIdx = params.length;
+
+  const entriesResult = await db.query(
+    `SELECT
+       r.*,
+       r.entry_date::text,
+       r.hearing_date::text,
+       r.date_signed::text,
+       r.date_received::text,
+       t.team_name,
+       t.team_color
+     FROM mr_rfc r
+     LEFT JOIN mr_teams t ON r.mr_team_id = t.id
+     ${whereClause}
+     ORDER BY r.entry_date ${sortDir} NULLS LAST, r.id ${sortDir}
+     LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+    params,
+  );
+
+  const sr = statsResult.rows[0] ?? {};
   return {
-    entries: paginated,
-    total:       entries.length,
+    entries:     entriesResult.rows as RfcEntry[],
+    total:       totalCount,
     page,
     per_page:    perPage,
-    total_pages: Math.max(1, Math.ceil(entries.length / (filters.per_page === "all" ? 1 : (filters.per_page as number) ?? 50))),
-    stats,
+    total_pages: Math.max(1, Math.ceil(totalCount / perPage)),
+    stats: {
+      total:    totalCount,
+      filed:    Number(sr.filed    ?? 0),
+      approved: Number(sr.approved ?? 0),
+      pending:  Number(sr.pending  ?? 0),
+    },
   };
 }
 
-export async function addRfcEntry(input: RfcAddEntryInput): Promise<{ success: boolean; id?: number; message?: string }> {
-  // TODO: INSERT INTO mr_rfc (...) VALUES (...)
-  if (!input.client_name?.trim()) return { success: false, message: "Client name is required" };
-  void input;
-  return { success: true, id: Math.floor(Math.random() * 10000) + 100 };
+// ─── Mutations ────────────────────────────────────────────────────────────────
+
+export async function addRfcEntry(
+  input: RfcAddEntryInput,
+): Promise<{ success: boolean; id?: number; message?: string }> {
+  if (!input.client_name?.trim()) {
+    return { success: false, message: "Client name is required" };
+  }
+
+  const result = await db.query(
+    `INSERT INTO mr_rfc
+       (entry_date, mr_team_id, hearing_date, client_name, document_type,
+        provider_name, date_signed, mycase_link, method_received, date_received,
+        filed_to_oho, approved_by_tl)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+     RETURNING id`,
+    [
+      input.entry_date    || null,
+      input.mr_team_id    || null,
+      input.hearing_date  || null,
+      input.client_name.trim(),
+      input.document_type  || null,
+      input.provider_name  || null,
+      input.date_signed    || null,
+      input.mycase_link    || null,
+      input.method_received || null,
+      input.date_received  || null,
+      input.filed_to_oho   ?? false,
+      input.approved_by_tl ?? false,
+    ],
+  );
+
+  return { success: true, id: result.rows[0]?.id };
 }
 
 export async function updateRfcField(
@@ -186,20 +255,31 @@ export async function updateRfcField(
   field: string,
   value: string | number | boolean | null,
 ): Promise<{ success: boolean; message?: string }> {
-  // TODO: UPDATE mr_rfc SET [field] = ? WHERE id = ?
   const allowed = [
     "entry_date", "mr_team_id", "hearing_date", "client_name", "document_type",
     "provider_name", "date_signed", "mycase_link", "method_received",
     "date_received", "filed_to_oho", "approved_by_tl",
   ];
-  if (!allowed.includes(field)) return { success: false, message: "Invalid field" };
-  void id; void value;
+  if (!allowed.includes(field)) {
+    return { success: false, message: "Invalid field" };
+  }
+
+  // Normalize empty string team to null
+  const safeValue = field === "mr_team_id" && (value === "" || value === 0)
+    ? null
+    : value;
+
+  await db.query(
+    `UPDATE mr_rfc SET ${field} = $1, updated_at = NOW() WHERE id = $2`,
+    [safeValue, id],
+  );
   return { success: true };
 }
 
-export async function deleteRfcEntry(id: number): Promise<{ success: boolean; message?: string }> {
-  // TODO: DELETE FROM mr_rfc WHERE id = ?
-  void id;
+export async function deleteRfcEntry(
+  id: number,
+): Promise<{ success: boolean; message?: string }> {
+  await db.query(`DELETE FROM mr_rfc WHERE id = $1`, [id]);
   return { success: true };
 }
 
@@ -208,7 +288,30 @@ export async function getRfcActivityLog(page = 1): Promise<{
   total: number;
   total_pages: number;
 }> {
-  // TODO: SELECT FROM activity_log WHERE action IN ('rfc_entry_created','rfc_field_updated','rfc_entry_deleted')
-  void page;
-  return { entries: [], total: 0, total_pages: 1 };
+  const perPage = 50;
+  const offset  = (page - 1) * perPage;
+
+  const [countResult, itemsResult] = await Promise.all([
+    db.query(`
+      SELECT COUNT(*) AS cnt
+      FROM activity_log
+      WHERE action IN ('rfc_entry_created', 'rfc_field_updated', 'rfc_entry_deleted')
+    `),
+    db.query(
+      `SELECT a.*, u.full_name AS user_name
+       FROM activity_log a
+       LEFT JOIN users u ON a.user_id = u.id
+       WHERE a.action IN ('rfc_entry_created', 'rfc_field_updated', 'rfc_entry_deleted')
+       ORDER BY a.created_at DESC
+       LIMIT $1 OFFSET $2`,
+      [perPage, offset],
+    ),
+  ]);
+
+  const total = Number(countResult.rows[0]?.cnt ?? 0);
+  return {
+    entries:     itemsResult.rows as RfcActivityLogEntry[],
+    total,
+    total_pages: Math.max(1, Math.ceil(total / perPage)),
+  };
 }

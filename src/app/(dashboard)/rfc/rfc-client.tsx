@@ -138,7 +138,7 @@ function AddEntryModal({
                 <label className={labelCls}>MR Team</label>
                 <select className={inputCls} value={form.mr_team_id} onChange={(e) => set("mr_team_id", e.target.value)}>
                   <option value="">— Select Team —</option>
-                  {data.mrTeams.map((t) => <option key={t.id} value={t.id}>{t.team_name}</option>)}
+                  {data.mrTeams.map((t) => <option key={t.id} value={String(t.id)}>{t.team_name}</option>)}
                 </select>
               </div>
             )}
@@ -444,7 +444,7 @@ function RfcRow({
       </td>
 
       {/* Actions */}
-      {p.canManage && (
+      {p.canDelete && (
         <td className="px-3 py-1.5 text-center">
           <button onClick={() => { if (confirm(`Delete entry for "${entry.client_name}"?`)) onDelete(entry.id); }}
             className="text-red-500 hover:text-red-700 transition-colors p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20">
@@ -571,7 +571,7 @@ function ViewDetailsModal({
             <thead>
               <tr className="bg-[#4a5568] text-white sticky top-0">
                 {COLS.map((c) => <th key={c} className="px-3 py-2.5 text-left text-[9px] font-semibold uppercase tracking-wide whitespace-nowrap">{c}</th>)}
-                {data.permissions.canManage && <th className="px-3 py-2.5 text-center text-[9px] font-semibold uppercase">Del</th>}
+                {data.permissions.canDelete && <th className="px-3 py-2.5 text-center text-[9px] font-semibold uppercase">Del</th>}
               </tr>
             </thead>
             <tbody>
@@ -706,11 +706,13 @@ export function RfcClient(data: RfcPageData) {
                 className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground transition-colors">
                 <ClipboardList size={12} />Activity Log
               </button>
-              <button onClick={() => exportRfcCsv(entries)}
-                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition-colors">
-                <Download size={12} />Export CSV
-              </button>
-              {data.permissions.canEdit && (
+              {data.permissions.canExport && (
+                <button onClick={() => exportRfcCsv(entries)}
+                  className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition-colors">
+                  <Download size={12} />Export CSV
+                </button>
+              )}
+              {data.permissions.canCreate && (
                 <button onClick={() => setShowAdd(true)}
                   className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-[#6A4C93] hover:bg-[#5a3d80] text-white transition-colors">
                   <Plus size={12} />Add Entry
@@ -769,10 +771,10 @@ export function RfcClient(data: RfcPageData) {
           <div className="overflow-x-auto shrink-0">
             <div className="bg-[#4a5568] text-white text-[9px] font-semibold uppercase tracking-wide" style={{ minWidth: "1300px" }}>
               <div className="grid px-3 py-2.5"
-                style={{ gridTemplateColumns: data.permissions.canManage
+                style={{ gridTemplateColumns: data.permissions.canDelete
                   ? "100px 110px 100px 160px 130px 130px 100px 70px 110px 100px 60px 60px 50px"
                   : "100px 110px 100px 160px 130px 130px 100px 70px 110px 100px 60px 60px" }}>
-                {[...COLS, ...(data.permissions.canManage ? ["Del"] : [])].map((c) => (
+                {[...COLS, ...(data.permissions.canDelete ? ["Del"] : [])].map((c) => (
                   <div key={c}>{c}</div>
                 ))}
               </div>
