@@ -63,7 +63,7 @@ function StatCard({ label, value, bg }: { label: string; value: number; bg: stri
   return (
     <div className={cn("relative overflow-hidden rounded-xl px-4 py-3 text-white flex flex-col gap-1", bg)}>
       <div className="pointer-events-none absolute -right-4 -top-4 w-20 h-20 rounded-full bg-white/10" />
-      <div className="pointer-events-none absolute -right-2 bottom-[-12px] w-14 h-14 rounded-full bg-white/10" />
+      <div className="pointer-events-none absolute -right-2 -bottom-3 w-14 h-14 rounded-full bg-white/10" />
       <p className="relative text-[10px] font-semibold uppercase tracking-widest opacity-80">{label}</p>
       <p className="relative text-2xl font-bold tabular-nums leading-none">{value}</p>
     </div>
@@ -323,7 +323,7 @@ function RfcRow({
       <td className="px-3 py-1.5 whitespace-nowrap">
         {p.canAssignTeam
           ? <select value={entry.mr_team_id ?? ""}
-              className="text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer font-medium min-w-[100px]"
+              className="text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer font-medium min-w-25"
               style={teamColor ? { backgroundColor: teamColor, color: isLight(teamColor) ? "#1f2937" : "#fff" } : { backgroundColor: "#e5e7eb", color: "#374151" }}
               onChange={(e) => onUpdate(entry.id, "mr_team_id", e.target.value ? Number(e.target.value) : null)}>
               <option value="">—</option>
@@ -355,7 +355,7 @@ function RfcRow({
       <td className="px-3 py-1.5 whitespace-nowrap">
         {p.canEdit
           ? <select value={entry.document_type ?? ""}
-              className="text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer min-w-[110px]"
+              className="text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer min-w-27.5"
               style={docType?.color ? colorStyle(docType.color) : { backgroundColor: "#f3f4f6", color: "#374151" }}
               onChange={(e) => onUpdate(entry.id, "document_type", e.target.value)}>
               <option value="">—</option>
@@ -401,7 +401,7 @@ function RfcRow({
       <td className="px-3 py-1.5 whitespace-nowrap">
         {p.canEdit
           ? <select value={entry.method_received ?? ""}
-              className="text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer min-w-[100px]"
+              className="text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer min-w-25"
               style={method?.color ? colorStyle(method.color) : { backgroundColor: "#f3f4f6", color: "#374151" }}
               onChange={(e) => onUpdate(entry.id, "method_received", e.target.value)}>
               <option value="">—</option>
@@ -509,7 +509,7 @@ function ViewDetailsModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-6 overflow-auto">
-      <div className="w-full max-w-[1700px] max-h-[95vh] flex flex-col rounded-xl border bg-card shadow-2xl">
+      <div className="w-full max-w-425 max-h-[95vh] flex flex-col rounded-xl border bg-card shadow-2xl">
 
         {/* Header */}
         <div className="flex items-center justify-between border-b bg-muted/50 px-5 py-4 shrink-0 rounded-t-xl">
@@ -520,7 +520,7 @@ function ViewDetailsModal({
         {/* Filters */}
         <div className="flex flex-wrap items-center gap-2 border-b px-5 py-2.5 shrink-0">
           <input type="text" placeholder="🔍 Search client or provider…" value={filters.search}
-            className="text-xs px-3 py-1.5 rounded-lg border border-border bg-muted text-foreground focus:outline-none min-w-[180px]"
+            className="text-xs px-3 py-1.5 rounded-lg border border-border bg-muted text-foreground focus:outline-none min-w-45"
             onChange={(e) => {
               const v = e.target.value;
               setFilters((p) => ({ ...p, search: v }));
@@ -678,7 +678,7 @@ export function RfcClient(data: RfcPageData) {
         subtitle="Medical Records RFC &amp; Document Tracking"
       />
 
-      <div className="max-w-[1800px] mx-auto px-6 py-6 space-y-5">
+      <div className="max-w-450 mx-auto px-6 py-6 space-y-5">
 
         {/* ── Stat Cards ──────────────────────────────────────────────── */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -702,10 +702,12 @@ export function RfcClient(data: RfcPageData) {
                 className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground transition-colors">
                 🔍 View Details
               </button>
-              <button onClick={() => setShowActivity(true)}
-                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground transition-colors">
-                <ClipboardList size={12} />Activity Log
-              </button>
+              {data.permissions.canEdit && (
+                <button onClick={() => setShowActivity(true)}
+                  className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground transition-colors">
+                  <ClipboardList size={12} />Activity Log
+                </button>
+              )}
               {data.permissions.canExport && (
                 <button onClick={() => exportRfcCsv(entries)}
                   className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition-colors">
@@ -728,7 +730,7 @@ export function RfcClient(data: RfcPageData) {
           {/* Filter Bar */}
           <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2.5 shrink-0">
             <input type="text" placeholder="🔍 Search client or provider…" value={filters.search}
-              className="text-xs px-3 py-1.5 rounded-lg border border-border bg-muted text-foreground focus:outline-none focus:border-primary min-w-[180px]"
+              className="text-xs px-3 py-1.5 rounded-lg border border-border bg-muted text-foreground focus:outline-none focus:border-primary min-w-45"
               onChange={(e) => {
                 const v = e.target.value;
                 setFilters((p) => ({ ...p, search: v }));

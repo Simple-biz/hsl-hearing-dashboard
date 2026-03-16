@@ -13,6 +13,7 @@ import type {
 } from "./types";
 
 import { db } from "@/lib/db";
+import { getSession } from "@/lib/session";
 
 // ─── Fallback config values (match PHP defaults) ──────────────────────────────
 
@@ -224,12 +225,15 @@ export async function addRfcEntry(
     return { success: false, message: "Client name is required" };
   }
 
+  const session = await getSession();
+  const createdBy = session?.user?.id ?? null;
+
   const result = await db.query(
     `INSERT INTO mr_rfc
        (entry_date, mr_team_id, hearing_date, client_name, document_type,
         provider_name, date_signed, mycase_link, method_received, date_received,
-        filed_to_oho, approved_by_tl)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+        filed_to_oho, approved_by_tl, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
      RETURNING id`,
     [
       input.entry_date    || null,
@@ -244,6 +248,7 @@ export async function addRfcEntry(
       input.date_received  || null,
       input.filed_to_oho   ?? false,
       input.approved_by_tl ?? false,
+      createdBy,
     ],
   );
 
