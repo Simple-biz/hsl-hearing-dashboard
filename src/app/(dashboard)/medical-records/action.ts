@@ -329,7 +329,7 @@ export async function getMrPivotPageData(
     db.query(`
       SELECT id, team_name, team_color
       FROM mr_teams
-      WHERE team_color IN ('blue', 'orange', 'green', 'yellow', 'purple')
+      WHERE team_color IN ('blue', 'orange', 'green', 'yellow', 'purple', 'pink')
         AND is_active = true
         AND is_assignable = true
       ORDER BY
@@ -347,7 +347,7 @@ export async function getMrPivotPageData(
       SELECT t.id, t.team_name, t.team_color
       FROM hearings h
       JOIN mr_teams t ON h.mr_team_id = t.id
-      WHERE t.team_color IN ('blue', 'orange', 'green', 'yellow', 'purple')
+      WHERE t.team_color IN ('blue', 'orange', 'green', 'yellow', 'purple', 'pink')
         AND h.mr_team_assigned_at IS NOT NULL
         AND (h.medical_record_status != 'WITHDRAWAL' OR h.medical_record_status IS NULL)
       ORDER BY h.mr_team_assigned_at DESC
@@ -454,7 +454,7 @@ export async function getMrPivotPageData(
   // const monthly = Object.values(monthlyMap);
 
   // ── Shape: round-robin state ────────────────────────────────────────────────
-  const ROTATION_ORDER = ["blue", "orange", "green", "yellow", "purple"];
+  const ROTATION_ORDER = ["blue", "orange", "green", "yellow", "purple", "pink"];
   const colorToTeam: Record<string, { id: number; name: string; color: string }> = {};
   for (const rt of rotationTeamsRows.rows as Record<string, unknown>[]) {
     colorToTeam[rt.team_color as string] = { id: Number(rt.id), name: rt.team_name as string, color: rt.team_color as string };
@@ -467,7 +467,7 @@ export async function getMrPivotPageData(
       SELECT t.id, t.team_name, t.team_color
       FROM hearings h
       JOIN mr_teams t ON h.mr_team_id = t.id
-      WHERE t.team_color IN ('blue', 'orange', 'green', 'yellow', 'purple')
+      WHERE t.team_color IN ('blue', 'orange', 'green', 'yellow', 'purple', 'pink')
       ORDER BY h.id DESC
       LIMIT 1
     `);
@@ -823,19 +823,19 @@ export async function assignJeromeUrgent(): Promise<{
 }
 
 export async function getRoundRobinState(): Promise<RoundRobinState> {
-  const ROTATION_ORDER = ["blue", "orange", "green", "yellow", "purple"];
+  const ROTATION_ORDER = ["blue", "orange", "green", "yellow", "purple", "pink"];
 
   const [rotationRows, lastAssignedRows, nextHearingRows, urgentRows] = await Promise.all([
     db.query(`
       SELECT id, team_name, team_color FROM mr_teams
-      WHERE team_color IN ('blue','orange','green','yellow','purple')
+      WHERE team_color IN ('blue','orange','green','yellow','purple','pink')
         AND is_active = true AND is_assignable = true
-      ORDER BY CASE team_color WHEN 'blue' THEN 1 WHEN 'orange' THEN 2 WHEN 'green' THEN 3 WHEN 'yellow' THEN 4 WHEN 'purple' THEN 5 END
+      ORDER BY CASE team_color WHEN 'blue' THEN 1 WHEN 'orange' THEN 2 WHEN 'green' THEN 3 WHEN 'yellow' THEN 4 WHEN 'purple' THEN 5 WHEN 'pink' THEN 6 END
     `),
     db.query(`
       SELECT t.team_name, t.team_color FROM hearings h
       JOIN mr_teams t ON h.mr_team_id = t.id
-      WHERE t.team_color IN ('blue','orange','green','yellow','purple')
+      WHERE t.team_color IN ('blue','orange','green','yellow','purple','pink')
         AND h.mr_team_assigned_at IS NOT NULL
         AND (h.medical_record_status != 'WITHDRAWAL' OR h.medical_record_status IS NULL)
       ORDER BY h.mr_team_assigned_at DESC LIMIT 1
@@ -877,7 +877,29 @@ export async function getRoundRobinState(): Promise<RoundRobinState> {
   };
 }
 
-export async function getTeamStats(): Promise<TeamStatsData> {
+export async function getTeamStats(params?: {
+  dateFrom?: string;
+  dateTo?: string;
+  teamId?: number | null;
+}): Promise<TeamStatsData> {
+  const extraWhere: string[] = [];
+  const extraParams: unknown[] = [];
+
+  if (params?.dateFrom) {
+    extraParams.push(params.dateFrom);
+    extraWhere.push(`h.hearing_date >= $${extraParams.length}`);
+  }
+  if (params?.dateTo) {
+    extraParams.push(params.dateTo);
+    extraWhere.push(`h.hearing_date <= $${extraParams.length}`);
+  }
+  if (params?.teamId) {
+    extraParams.push(params.teamId);
+    extraWhere.push(`h.mr_team_id = $${extraParams.length}`);
+  }
+
+  const extraClause = extraWhere.length ? `AND ${extraWhere.join(" AND ")}` : "";
+
   const [weeklyRows, monthlyRows] = await Promise.all([
     db.query(`
       SELECT
@@ -895,13 +917,13 @@ export async function getTeamStats(): Promise<TeamStatsData> {
         SUM(CASE WHEN h.medical_record_status = 'URGENT! NEEDS ATTENTION' THEN 1 ELSE 0 END) AS urgent
       FROM hearings h
       LEFT JOIN mr_teams t ON h.mr_team_id = t.id
-      WHERE ${WITHDRAWN_FILTER}
+      WHERE ${WITHDRAWN_FILTER} ${extraClause}
       GROUP BY TO_CHAR(h.hearing_date,'IYYY-IW'),
                TO_CHAR(date_trunc('week',h.hearing_date),'Mon DD'),
                TO_CHAR(date_trunc('week',h.hearing_date)+INTERVAL '6 days','Mon DD, YYYY'),
                t.team_name, t.team_color, t.display_order
       ORDER BY week_key DESC, COALESCE(t.display_order,9999) ASC
-    `),
+    `, extraParams),
     db.query(`
       SELECT
         TO_CHAR(h.hearing_date, 'YYYY-MM') AS month_key,
@@ -917,11 +939,11 @@ export async function getTeamStats(): Promise<TeamStatsData> {
         SUM(CASE WHEN h.medical_record_status = 'URGENT! NEEDS ATTENTION' THEN 1 ELSE 0 END) AS urgent
       FROM hearings h
       LEFT JOIN mr_teams t ON h.mr_team_id = t.id
-      WHERE ${WITHDRAWN_FILTER}
+      WHERE ${WITHDRAWN_FILTER} ${extraClause}
       GROUP BY TO_CHAR(h.hearing_date,'YYYY-MM'), TO_CHAR(h.hearing_date,'Mon YYYY'),
                t.team_name, t.team_color, t.display_order
       ORDER BY month_key DESC, COALESCE(t.display_order,9999) ASC
-    `),
+    `, extraParams),
   ]);
 
   const buildMap = (rows: Record<string, unknown>[], getKey: (r: Record<string, unknown>) => string, getLabel: (r: Record<string, unknown>) => string) => {

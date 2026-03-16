@@ -70,6 +70,29 @@ function teamHex(color: string | null | undefined): string {
 }
 
 // Theme-safe status badge classes (no hardcoded light-only colours)
+// Text-only color maps — bg is always bg-card; only text + border-current changes
+const MR_STATUS_TEXT: Record<string, string> = {
+  "Complete":                "text-purple-700 dark:text-purple-300",
+  "In Progress":             "text-pink-700 dark:text-pink-300",
+  "Ready":                   "text-green-700 dark:text-green-300",
+  "Not Started":             "text-red-700 dark:text-red-300",
+  "URGENT! NEEDS ATTENTION": "text-red-700 dark:text-red-400 font-semibold",
+  "WITHDRAWAL":              "text-zinc-400 line-through",
+  "Overpayment":             "text-amber-700 dark:text-amber-300",
+};
+
+const HRG_STATUS_TEXT: Record<string, string> = {
+  "Scheduled":            "text-violet-700 dark:text-violet-300",
+  "Favorable":            "text-emerald-700 dark:text-emerald-300",
+  "Unfavorable":          "text-orange-700 dark:text-orange-300",
+  "Post HRG Review/ Dev": "text-yellow-700 dark:text-yellow-300",
+  "Continued":            "text-zinc-600 dark:text-zinc-400",
+  "Pending Decision":     "text-yellow-700 dark:text-yellow-300",
+  "OTR at Hrg":           "text-green-700 dark:text-green-400",
+  "Dismissal":            "text-red-700 dark:text-red-300",
+};
+
+// Badge maps (read-only display — keeps bg+text for spans)
 const MR_STATUS_CLS: Record<string, string> = {
   "Complete":                "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300",
   "In Progress":             "bg-pink-100 text-pink-800 dark:bg-pink-900/40 dark:text-pink-300",
@@ -250,7 +273,19 @@ function RoundRobinBanner({ rr }: { rr: RoundRobinState }) {
   );
 }
 
-// ─── NotificationBell ─────────────────────────────────────────────────────────
+// ─── Shared set-toggle utility ────────────────────────────────────────────────
+// Used by AssignedByMonth row toggle, toggleMonth, and toggleTeam —
+// all share the identical "flip key membership in a Set" pattern.
+function toggleSetKey(
+  setter: React.Dispatch<React.SetStateAction<Set<string>>>,
+  key: string,
+) {
+  setter((prev) => {
+    const next = new Set(prev);
+    if (next.has(key)) { next.delete(key); } else { next.add(key); }
+    return next;
+  });
+}
 
 function NotificationBell({ notifications, onRefresh }: {
   notifications: NotificationItem[];
@@ -421,9 +456,7 @@ function AssignedByMonth({ rows }: { rows: AssignedByMonthRow[] }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const grandTotal = rows.reduce((s, r) => s + r.total, 0);
 
-  function toggle(key: string) {
-    setExpanded((p) => { const n = new Set(p); n.has(key) ? n.delete(key) : n.add(key); return n; });
-  }
+  function toggle(key: string) { toggleSetKey(setExpanded, key); }
 
   return (
     <div className="space-y-1">
@@ -478,8 +511,13 @@ function HearingRow({
   onUpdate: (id: number, field: string, value: unknown) => void;
 }) {
   const dateStr = new Date(h.hearing_date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  const mrCls   = MR_STATUS_CLS[h.medical_record_status ?? ""]   ?? "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300";
-  const hrgCls  = HRG_STATUS_CLS[h.hearing_decision_status ?? ""] ?? "bg-red-500 text-white";
+  // Badge classes for read-only spans
+  // Text-only classes for selects (bg-card, text + border-current only)
+  const mrTextCls  = MR_STATUS_TEXT[h.medical_record_status ?? ""]    ?? "text-muted-foreground";
+  const hrgTextCls = HRG_STATUS_TEXT[h.hearing_decision_status ?? ""] ?? "text-muted-foreground";
+  // Badge classes for read-only spans
+  const mrCls  = MR_STATUS_CLS[h.medical_record_status ?? ""]    ?? "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300";
+  const hrgCls = HRG_STATUS_CLS[h.hearing_decision_status ?? ""] ?? "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300";
 
   return (
     <div
@@ -500,8 +538,8 @@ function HearingRow({
           value={h.mr_team_id ?? ""}
           onChange={(e) => onUpdate(h.id, "mr_team", e.target.value ? Number(e.target.value) : null)}
         >
-          <option value="">Unassigned</option>
-          {teams.map((t) => <option key={t.id} value={t.id}>{t.team_name}</option>)}
+          <option value="" className="text-muted-foreground bg-card">Unassigned</option>
+          {teams.map((t) => <option key={t.id} value={t.id} className="text-foreground bg-card">{t.team_name}</option>)}
         </select>
       ) : (
         <span className="text-[9px] px-1.5 py-0.5 rounded font-medium"
@@ -532,10 +570,13 @@ function HearingRow({
       {/* MR Status — canManage gate */}
       {permissions.canManage ? (
         <select value={h.medical_record_status ?? ""}
-          className={cn("w-full text-[9px] px-1.5 py-1 rounded border-0 cursor-pointer", mrCls)}
+          className={cn(
+            "w-full text-[9px] px-1.5 py-1 rounded border cursor-pointer bg-card",
+            h.medical_record_status ? cn("border-current", mrTextCls) : "text-muted-foreground border-transparent hover:border-border",
+          )}
           onChange={(e) => onUpdate(h.id, "medical_record_status", e.target.value)}>
-          <option value="">No Status</option>
-          {mrStatusOptions.map((s) => <option key={s} value={s}>{s}</option>)}
+          <option value="" className="text-muted-foreground bg-card">No Status</option>
+          {mrStatusOptions.map((s) => <option key={s} value={s} className="text-foreground bg-card">{s}</option>)}
         </select>
       ) : (
         <span className={cn("inline-block text-[9px] px-1.5 py-0.5 rounded", mrCls)}>
@@ -559,10 +600,13 @@ function HearingRow({
       {/* HRG Decision — canManage gate */}
       {permissions.canManage ? (
         <select value={h.hearing_decision_status ?? ""}
-          className={cn("w-full text-[9px] px-1.5 py-1 rounded border-0 cursor-pointer", hrgCls)}
+          className={cn(
+            "w-full text-[9px] px-1.5 py-1 rounded border cursor-pointer bg-card",
+            h.hearing_decision_status ? cn("border-current", hrgTextCls) : "text-muted-foreground border-transparent hover:border-border",
+          )}
           onChange={(e) => onUpdate(h.id, "hearing_decision_status", e.target.value)}>
-          <option value="">— Status —</option>
-          {hearingDecisionOptions.map((s) => <option key={s} value={s}>{s}</option>)}
+          <option value="" className="text-muted-foreground bg-card">— Status —</option>
+          {hearingDecisionOptions.map((s) => <option key={s} value={s} className="text-foreground bg-card">{s}</option>)}
         </select>
       ) : (
         <span className={cn("inline-block text-[9px] px-1.5 py-0.5 rounded", hrgCls)}>
@@ -575,8 +619,8 @@ function HearingRow({
         <select value={h.manner_of_hearing ?? ""}
           className="w-full text-[9px] px-1.5 py-1 rounded border border-border bg-card text-foreground cursor-pointer"
           onChange={(e) => onUpdate(h.id, "manner_of_hearing", e.target.value)}>
-          <option value="">—</option>
-          {mannerOptions.map((m) => <option key={m} value={m}>{m}</option>)}
+          <option value="" className="text-muted-foreground bg-card">—</option>
+          {mannerOptions.map((m) => <option key={m} value={m} className="text-foreground bg-card">{m}</option>)}
         </select>
       ) : (
         <span className="text-muted-foreground">{h.manner_of_hearing ?? "—"}</span>
@@ -657,6 +701,13 @@ export function MrPivotClient({ userRole, ...data }: Props) {
 
   useEffect(() => { loadHearings(filters); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Auto-expand months that contain search results
+  useEffect(() => {
+    if (!filters.search?.trim()) return;
+    const matchedMonths = new Set(hearings.map((h) => h.hearing_date.slice(0, 7)));
+    if (matchedMonths.size > 0) setExpandedMonths(matchedMonths);
+  }, [hearings, filters.search]);
+
   // ── Refresh round robin + notifications every 30s ─────────────────────────
   useEffect(() => {
     const id = setInterval(async () => {
@@ -690,7 +741,20 @@ export function MrPivotClient({ userRole, ...data }: Props) {
       manner_of_hearing:       (v) => updateMoa(id, v as string),
     };
     await actions[field]?.(value);
-    setHearings((prev) => prev.map((h) => h.id === id ? { ...h, [field]: value } : h));
+
+    // mr_team needs to update mr_team_id + derive mr_team_name/color from teams list
+    if (field === "mr_team") {
+      const teamId = value as number | null;
+      const team = teamId ? data.medical_teams.find((t) => t.id === teamId) : null;
+      setHearings((prev) => prev.map((h) => h.id === id
+        ? { ...h, mr_team_id: teamId, mr_team_name: team?.team_name ?? null, mr_team_color: team?.team_color ?? null }
+        : h
+      ));
+      // Refresh round robin immediately so the indicator reflects the new assignment
+      getRoundRobinState().then(setRoundRobin);
+    } else {
+      setHearings((prev) => prev.map((h) => h.id === id ? { ...h, [field]: value } : h));
+    }
   }
 
   async function handleAssignJerome() {
@@ -747,12 +811,8 @@ export function MrPivotClient({ userRole, ...data }: Props) {
     overscan:         15,
   });
 
-  function toggleMonth(key: string) {
-    setExpandedMonths((p) => { const n = new Set(p); n.has(key) ? n.delete(key) : n.add(key); return n; });
-  }
-  function toggleTeam(key: string) {
-    setExpandedTeams((p) => { const n = new Set(p); n.has(key) ? n.delete(key) : n.add(key); return n; });
-  }
+  function toggleMonth(key: string) { toggleSetKey(setExpandedMonths, key); }
+  function toggleTeam(key: string)  { toggleSetKey(setExpandedTeams,  key); }
   function expandAll() {
     if (viewMode === "date") setExpandedMonths(new Set(Object.keys(groupedByMonth)));
     else setExpandedTeams(new Set(Object.keys(groupedByTeam)));
@@ -1174,7 +1234,17 @@ export function MrPivotClient({ userRole, ...data }: Props) {
                 className="text-[11px] px-3 py-1.5 rounded-lg bg-zinc-200 hover:bg-zinc-300 text-zinc-700 dark:bg-zinc-700 dark:hover:bg-zinc-600 dark:text-zinc-200 font-semibold disabled:opacity-40 transition-colors">
                 ← Prev
               </button>
-              <span className="text-[11px] text-muted-foreground">Page {filters.page} of {totalPages}</span>
+              {/* Page jump select */}
+              <select
+                value={String(filters.page ?? 1)}
+                onChange={(e) => goPage(Number(e.target.value))}
+                className="text-[11px] px-2 py-1 rounded-lg border border-border bg-card text-foreground cursor-pointer tabular-nums"
+              >
+                {Array.from({ length: totalPages }, (_, i) => (
+                  <option key={i + 1} value={String(i + 1)}>Page {i + 1}</option>
+                ))}
+              </select>
+              <span className="text-[11px] text-muted-foreground">of {totalPages}</span>
               <button onClick={() => goPage((filters.page ?? 1) + 1)} disabled={(filters.page ?? 1) >= totalPages}
                 className="text-[11px] px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold disabled:opacity-40 transition-colors">
                 Next →
@@ -1233,6 +1303,7 @@ export function MrPivotClient({ userRole, ...data }: Props) {
       <TeamStatsModal
         open={showTeamStats}
         onClose={() => setShowTeamStats(false)}
+        teams={data.medical_teams}
       />
       {showActivityLog && (
         <ActivityLogModal onClose={() => setShowActivityLog(false)} />
