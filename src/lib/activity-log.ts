@@ -19,10 +19,10 @@ export async function logActivity(
 
 /**
  * Log activity with auto-resolved session user.
- * Falls back to System Administrator (id=1) if no session.
+ * Falls back to NULL (system event) if no session — NOT to user_id=1.
  */
 export async function logAction(action: string, description: string) {
-  let userId: number | null = 1; // Default: System Administrator
+  let userId: number | null = null;
   try {
     const session = await getSession();
     if (session?.user?.id) userId = Number(session.user.id);
