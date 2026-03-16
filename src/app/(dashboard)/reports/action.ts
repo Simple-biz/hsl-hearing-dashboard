@@ -1,5 +1,7 @@
 "use server";
 
+import { db } from "@/lib/db";
+
 // ─── Interfaces ───────────────────────────────────────────────────────────────
 
 export interface MonthlyTrend {
@@ -35,7 +37,8 @@ export interface RepStatusRow {
   Total: number;
 }
 
-export interface StatCard {
+/** Renamed from StatCard to avoid collision with the StatCard UI component. */
+export interface StatCardData {
   label: string;
   value: string;
   bg: string;
@@ -55,140 +58,363 @@ export interface ReportsData {
   hearingStatus: HearingStatus[];
   assignedReps: AssignedRep[];
   repStatusRows: RepStatusRow[];
-  statCards: StatCard[];
+  statCards: StatCardData[];
+  /** Total withdrawal hearing count — used in the Assigned Cases modal withdrawal row */
+  withdrawalTotal: number;
   /** All unique month labels across the full dataset — used to populate the Month filter */
   allMonths: string[];
   /** All rep names across the full dataset — used to populate the Rep filter */
   allReps: string[];
 }
 
-// ─── Raw data helpers (replace bodies with db.query() when live) ──────────────
+// ─── Color map for hearing decision statuses (UI-only, not stored in DB) ──────
 
-async function fetchAllMonthly(): Promise<MonthlyTrend[]> {
-  return [
-    { month: "Oct '24",  count: 3,   favorable: 0,   unfavorable: 0  },
-    { month: "Nov '24",  count: 14,  favorable: 2,   unfavorable: 1  },
-    { month: "Dec '24",  count: 18,  favorable: 4,   unfavorable: 2  },
-    { month: "Jan '25",  count: 29,  favorable: 8,   unfavorable: 3  },
-    { month: "Feb '25",  count: 44,  favorable: 12,  unfavorable: 6  },
-    { month: "Mar '25",  count: 63,  favorable: 18,  unfavorable: 8  },
-    { month: "Apr '25",  count: 116, favorable: 40,  unfavorable: 20 },
-    { month: "May '25",  count: 109, favorable: 38,  unfavorable: 18 },
-    { month: "Jun '25",  count: 155, favorable: 55,  unfavorable: 30 },
-    { month: "Jul '25",  count: 192, favorable: 70,  unfavorable: 40 },
-    { month: "Aug '25",  count: 194, favorable: 72,  unfavorable: 42 },
-    { month: "Sep '25",  count: 241, favorable: 90,  unfavorable: 55 },
-    { month: "Oct '25",  count: 310, favorable: 116, unfavorable: 70 },
-    { month: "Nov '25",  count: 264, favorable: 98,  unfavorable: 60 },
-    { month: "Dec '25",  count: 362, favorable: 135, unfavorable: 80 },
-    { month: "Jan '26",  count: 284, favorable: 105, unfavorable: 65 },
-    { month: "Feb '26",  count: 132, favorable: 48,  unfavorable: 28 },
-    { month: "Feb '26+", count: 420, favorable: 160, unfavorable: 95 },
-  ];
+const STATUS_COLORS: Record<string, string> = {
+  "Continued": "#3b82f6",
+  "Dismissal": "#ec4899",
+  "Favorable": "#22c55e",
+  "Good Cause Ltr": "#14b8a6",
+  "OTR at Hrg": "#a3e635",
+  "Pending Decision": "#facc15",
+  "Post HRG Review": "#f97316",
+  "Scheduled": "#7c3aed",
+  "Unfavorable": "#ef4444",
+  "WD Clmt Deceased": "#64748b",
+  "Withdrawal": "#9ca3af",
+};
+
+// ─── Filter helpers ───────────────────────────────────────────────────────────
+
+/**
+ * Resolves the rep name filter to a rep ID.
+ * Returns null if no rep filter is active or the name isn't found.
+ */
+async function resolveRepId(repName?: string): Promise<number | null> {
+  if (!repName) return null;
+  const { rows } = await db.query(
+    "SELECT id FROM representatives WHERE name = $1 AND is_active = true LIMIT 1",
+    [repName],
+  );
+  return rows.length > 0 ? (rows[0].id as number) : null;
 }
 
-async function fetchAllHearingStatuses(): Promise<HearingStatus[]> {
-  return [
-    { status: "Continued",        count: 20, color: "#3b82f6" },
-    { status: "Dismissal",        count: 10, color: "#ec4899" },
-    { status: "Favorable",        count: 50, color: "#22c55e" },
-    { status: "Good Cause Ltr",   count: 5,  color: "#14b8a6" },
-    { status: "OTR at Hrg",       count: 2,  color: "#a3e635" },
-    { status: "Pending Decision",  count: 8,  color: "#facc15" },
-    { status: "Post HRG Review",  count: 3,  color: "#f97316" },
-    { status: "Scheduled",        count: 15, color: "#7c3aed" },
-    { status: "Unfavorable",      count: 12, color: "#ef4444" },
-    { status: "WD Clmt Deceased", count: 1,  color: "#64748b" },
-    { status: "Withdrawal",       count: 0,  color: "#9ca3af" },
-  ];
+/**
+ * Converts a quickSelect preset to a SQL date condition fragment + params.
+ * Returns an object with the WHERE clause snippet and any bound values.
+ */
+function quickSelectToDateRange(
+  quickSelect: ReportsFilters["quickSelect"],
+): { clause: string; params: unknown[] } {
+  switch (quickSelect) {
+    case "Last 30 Days":
+      return { clause: `AND h.hearing_date >= CURRENT_DATE - INTERVAL '30 days'`, params: [] };
+    case "Last 90 Days":
+      return { clause: `AND h.hearing_date >= CURRENT_DATE - INTERVAL '90 days'`, params: [] };
+    case "This Year":
+      return { clause: `AND EXTRACT(YEAR FROM h.hearing_date) = EXTRACT(YEAR FROM CURRENT_DATE)`, params: [] };
+    default:
+      return { clause: "", params: [] };
+  }
 }
 
-async function fetchAllAssignedReps(): Promise<AssignedRep[]> {
-  return [
-    { name: "Sarah Johnson",   hearings: 238 },
-    { name: "Michael Chen",    hearings: 196 },
-    { name: "Emily Rodriguez", hearings: 25  },
-    { name: "James Wilson",    hearings: 276 },
-    { name: "Linda Park",      hearings: 142 },
-    { name: "David Torres",    hearings: 89  },
-  ];
+/**
+ * Converts a month label like "Jan '25" to a SQL date range condition.
+ * Returns an object with the WHERE clause snippet and bound values.
+ */
+function monthLabelToDateRange(
+  month: string | undefined,
+  startIdx: number,
+): { clause: string; params: unknown[] } {
+  if (!month) return { clause: "", params: [] };
+  // Parse "Jan '25" → first/last day of that calendar month
+  const match = month.match(/^(\w{3})\s+'(\d{2})$/);
+  if (!match) return { clause: "", params: [] };
+  const MONTH_NUM: Record<string, string> = {
+    Jan: "01", Feb: "02", Mar: "03", Apr: "04",
+    May: "05", Jun: "06", Jul: "07", Aug: "08",
+    Sep: "09", Oct: "10", Nov: "11", Dec: "12",
+  };
+  const [, abbr, yr] = match;
+  const mm = MONTH_NUM[abbr] ?? "01";
+  const fullYear = `20${yr}`;
+  const firstDay = `${fullYear}-${mm}-01`;
+  return {
+    clause: `AND h.hearing_date >= $${startIdx}::date AND h.hearing_date < ($${startIdx}::date + INTERVAL '1 month')`,
+    params: [firstDay],
+  };
 }
 
-async function fetchAllRepStatusRows(): Promise<RepStatusRow[]> {
-  return [
-    { rep: "Sarah Johnson",   Continued: 2,  Dismissal: 3, Favorable: 33, "Good Cause": 2, OTR: 0, Pending: 22, "Post HRG": 15, Scheduled: 90, Unfavorable: 44, Withdrawal: 27, Total: 238 },
-    { rep: "Michael Chen",    Continued: 0,  Dismissal: 4, Favorable: 62, "Good Cause": 0, OTR: 0, Pending: 4,  "Post HRG": 3,  Scheduled: 27, Unfavorable: 77, Withdrawal: 19, Total: 196 },
-    { rep: "Emily Rodriguez", Continued: 0,  Dismissal: 0, Favorable: 0,  "Good Cause": 0, OTR: 1, Pending: 1,  "Post HRG": 0,  Scheduled: 18, Unfavorable: 3,  Withdrawal: 2,  Total: 23  },
-    { rep: "James Wilson",    Continued: 5,  Dismissal: 2, Favorable: 80, "Good Cause": 1, OTR: 0, Pending: 30, "Post HRG": 12, Scheduled: 95, Unfavorable: 40, Withdrawal: 11, Total: 276 },
-    { rep: "Linda Park",      Continued: 1,  Dismissal: 1, Favorable: 45, "Good Cause": 0, OTR: 0, Pending: 15, "Post HRG": 8,  Scheduled: 48, Unfavorable: 18, Withdrawal: 6,  Total: 142 },
-    { rep: "David Torres",    Continued: 0,  Dismissal: 0, Favorable: 22, "Good Cause": 0, OTR: 0, Pending: 10, "Post HRG": 5,  Scheduled: 30, Unfavorable: 15, Withdrawal: 7,  Total: 89  },
-  ];
+// ─── DB fetch helpers ─────────────────────────────────────────────────────────
+
+async function fetchAllMonthly(
+  repId: number | null,
+  qs: ReportsFilters["quickSelect"],
+): Promise<MonthlyTrend[]> {
+  const conditions: string[] = ["h.hearing_date IS NOT NULL"];
+  const params: unknown[] = [];
+  let idx = 1;
+
+  if (repId !== null) {
+    conditions.push(`h.assigned_rep_id = $${idx}`);
+    params.push(repId);
+    idx++;
+  }
+
+  const { clause: qsClause, params: qsParams } = quickSelectToDateRange(qs);
+  if (qsClause) {
+    conditions.push(qsClause.replace(/^AND /, ""));
+    params.push(...qsParams);
+    idx += qsParams.length;
+  }
+
+  const where = `WHERE ${conditions.join(" AND ")}`;
+
+  const { rows } = await db.query(
+    `SELECT
+       TO_CHAR(h.hearing_date, 'Mon ''YY') AS month,
+       COUNT(*)::int AS count,
+       COUNT(*) FILTER (WHERE h.hearing_decision_status = 'Favorable')::int AS favorable,
+       COUNT(*) FILTER (WHERE h.hearing_decision_status = 'Unfavorable')::int AS unfavorable
+     FROM hearings h
+     ${where}
+     GROUP BY TO_CHAR(h.hearing_date, 'Mon ''YY'), DATE_TRUNC('month', h.hearing_date)
+     ORDER BY DATE_TRUNC('month', h.hearing_date)`,
+    params,
+  );
+  return rows as MonthlyTrend[];
 }
 
-async function fetchAllStatCards(): Promise<StatCard[]> {
+async function fetchAllHearingStatuses(
+  repId: number | null,
+  qs: ReportsFilters["quickSelect"],
+): Promise<HearingStatus[]> {
+  const conditions: string[] = [
+    "h.hearing_decision_status IS NOT NULL",
+    "h.hearing_decision_status != ''",
+  ];
+  const params: unknown[] = [];
+  let idx = 1;
+
+  if (repId !== null) {
+    conditions.push(`h.assigned_rep_id = $${idx}`);
+    params.push(repId);
+    idx++;
+  }
+
+  const { clause: qsClause, params: qsParams } = quickSelectToDateRange(qs);
+  if (qsClause) {
+    conditions.push(qsClause.replace(/^AND /, ""));
+    params.push(...qsParams);
+  }
+
+  const { rows } = await db.query(
+    `SELECT
+       h.hearing_decision_status AS status,
+       COUNT(*)::int AS count
+     FROM hearings h
+     WHERE ${conditions.join(" AND ")}
+     GROUP BY h.hearing_decision_status
+     ORDER BY count DESC`,
+    params,
+  );
+
+  return (rows as { status: string; count: number }[]).map((r) => ({
+    status: r.status,
+    count:  r.count,
+    color:  STATUS_COLORS[r.status] ?? "#94a3b8",
+  }));
+}
+
+async function fetchAllAssignedReps(
+  qs: ReportsFilters["quickSelect"],
+): Promise<AssignedRep[]> {
+  const conditions: string[] = ["r.is_active = true"];
+  const params: unknown[] = [];
+
+  const { clause: qsClause, params: qsParams } = quickSelectToDateRange(qs);
+  if (qsClause) {
+    conditions.push(qsClause.replace(/^AND h\./, "h.").replace(/^AND /, ""));
+    params.push(...qsParams);
+  }
+
+  const { rows } = await db.query(
+    `SELECT r.name, COUNT(h.id)::int AS hearings
+     FROM representatives r
+     JOIN hearings h ON h.assigned_rep_id = r.id
+     WHERE ${conditions.join(" AND ")}
+     GROUP BY r.id, r.name
+     HAVING COUNT(h.id) > 0
+     ORDER BY r.name`,
+    params,
+  );
+  return rows as AssignedRep[];
+}
+
+async function fetchAllRepStatusRows(
+  repId: number | null,
+  qs: ReportsFilters["quickSelect"],
+): Promise<RepStatusRow[]> {
+  const conditions: string[] = ["r.is_active = true"];
+  const params: unknown[] = [];
+  let idx = 1;
+
+  if (repId !== null) {
+    conditions.push(`r.id = $${idx}`);
+    params.push(repId);
+    idx++;
+  }
+
+  const { clause: qsClause, params: qsParams } = quickSelectToDateRange(qs);
+  if (qsClause) {
+    conditions.push(qsClause.replace(/^AND h\./, "h.").replace(/^AND /, ""));
+    params.push(...qsParams);
+  }
+
+  const { rows } = await db.query(
+    `SELECT
+       r.name AS rep,
+       COUNT(*) FILTER (WHERE h.hearing_decision_status = 'Continued')::int AS "Continued",
+       COUNT(*) FILTER (WHERE h.hearing_decision_status = 'Dismissal')::int AS "Dismissal",
+       COUNT(*) FILTER (WHERE h.hearing_decision_status = 'Favorable')::int AS "Favorable",
+       COUNT(*) FILTER (WHERE h.hearing_decision_status = 'Good Cause Ltr')::int AS "Good Cause",
+       COUNT(*) FILTER (WHERE h.hearing_decision_status = 'OTR at Hrg')::int AS "OTR",
+       COUNT(*) FILTER (WHERE h.hearing_decision_status = 'Pending Decision')::int AS "Pending",
+       COUNT(*) FILTER (WHERE h.hearing_decision_status = 'Post HRG Review')::int AS "Post HRG",
+       COUNT(*) FILTER (WHERE h.hearing_decision_status = 'Scheduled')::int AS "Scheduled",
+       COUNT(*) FILTER (WHERE h.hearing_decision_status = 'Unfavorable')::int AS "Unfavorable",
+       COUNT(*) FILTER (WHERE h.hearing_decision_status = 'Withdrawal'
+                           OR h.hearing_decision_status = 'WD Clmt Deceased')::int AS "Withdrawal",
+       COUNT(*)::int AS "Total"
+     FROM representatives r
+     JOIN hearings h ON h.assigned_rep_id = r.id
+     WHERE ${conditions.join(" AND ")}
+     GROUP BY r.id, r.name
+     HAVING COUNT(h.id) > 0
+     ORDER BY r.name`,
+    params,
+  );
+  return rows as RepStatusRow[];
+}
+
+async function fetchStatCards(
+  repId: number | null,
+  qs: ReportsFilters["quickSelect"],
+): Promise<StatCardData[]> {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  let idx = 1;
+
+  if (repId !== null) {
+    conditions.push(`assigned_rep_id = $${idx}`);
+    params.push(repId);
+    idx++;
+  }
+
+  const { clause: qsClause, params: qsParams } = quickSelectToDateRange(qs);
+  if (qsClause) {
+    conditions.push(qsClause.replace(/^AND h\./, "").replace(/^AND /, ""));
+    params.push(...qsParams);
+  }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  const { rows } = await db.query(
+    `SELECT
+       COUNT(*)::int AS total,
+       COUNT(*) FILTER (WHERE assigned_rep_id IS NOT NULL)::int AS assigned,
+       COUNT(*) FILTER (WHERE assigned_rep_id IS NULL
+                          AND (assignment_status IS NULL OR assignment_status = ''))::int AS unassigned,
+       COUNT(*) FILTER (WHERE hearing_decision_status = 'Favorable')::int AS favorable,
+       COUNT(*) FILTER (WHERE hearing_decision_status = 'Unfavorable')::int AS unfavorable,
+       COUNT(*) FILTER (WHERE hearing_decision_status = 'Scheduled')::int AS scheduled,
+       COUNT(*) FILTER (WHERE hearing_decision_status = 'Pending Decision')::int AS pending
+     FROM hearings ${where}`,
+    params,
+  );
+
+  const s = rows[0] as {
+    total: number; assigned: number; unassigned: number;
+    favorable: number; unfavorable: number; scheduled: number; pending: number;
+  };
+
   return [
-    { label: "Total Hearings", value: "5,484", bg: "bg-violet-600"  },
-    { label: "Assigned",       value: "4,117", bg: "bg-emerald-500" },
-    { label: "Unassigned",     value: "1,367", bg: "bg-pink-500"    },
-    { label: "Favorable",      value: "817",   bg: "bg-lime-500"    },
-    { label: "Unfavorable",    value: "964",   bg: "bg-red-500"     },
-    { label: "Scheduled",      value: "2,553", bg: "bg-cyan-500"    },
-    { label: "Pending",        value: "181",   bg: "bg-amber-400"   },
+    { label: "Total Hearings", value: s.total.toLocaleString(), bg: "bg-violet-600"  },
+    { label: "Assigned", value: s.assigned.toLocaleString(), bg: "bg-emerald-500" },
+    { label: "Unassigned", value: s.unassigned.toLocaleString(), bg: "bg-pink-500" },
+    { label: "Favorable", value: s.favorable.toLocaleString(), bg: "bg-lime-500"},
+    { label: "Unfavorable", value: s.unfavorable.toLocaleString(), bg: "bg-red-500" },
+    { label: "Scheduled", value: s.scheduled.toLocaleString(), bg: "bg-cyan-500" },
+    { label: "Pending", value: s.pending.toLocaleString(), bg: "bg-amber-400" },
   ];
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
-/**
- * Fetches all reports data, optionally filtered.
- *
- * When the backing data source is a real DB, replace the fetch* helpers above
- * with parameterised db.query() calls and push filtering to SQL WHERE clauses.
- * The filter interface and call-sites in the client component stay identical.
- */
 export async function getReportsData(
   filters: ReportsFilters = {}
 ): Promise<ReportsData> {
-  const [monthly, hearingStatus, assignedReps, repStatusRows, statCards] =
-    await Promise.all([
-      fetchAllMonthly(),
-      fetchAllHearingStatuses(),
-      fetchAllAssignedReps(),
-      fetchAllRepStatusRows(),
-      fetchAllStatCards(),
-    ]);
+  // Resolve rep name → ID once; all queries reuse the same ID.
+  const repId = await resolveRepId(filters.rep);
+  const qs    = filters.quickSelect;
 
-  // Derive option lists from the *full* unfiltered sets so the dropdowns
-  // always show every choice regardless of active filters.
-  const allMonths = monthly.map((m) => m.month);
-  const allReps   = assignedReps.map((r) => r.name);
+  // Fetch unfiltered option lists in parallel with filtered data.
+  // allMonths and allReps are always the full set so dropdowns don't shrink.
+  const [
+    monthly,
+    hearingStatus,
+    assignedReps,
+    repStatusRows,
+    statCards,
+    allRepsRows,
+    allMonthsRows,
+  ] = await Promise.all([
+    fetchAllMonthly(repId, qs),
+    fetchAllHearingStatuses(repId, qs),
+    fetchAllAssignedReps(qs),
+    fetchAllRepStatusRows(repId, qs),
+    fetchStatCards(repId, qs),
+    // Full unfiltered rep list for the dropdown
+    db.query(
+      "SELECT name FROM representatives WHERE is_active = true ORDER BY name",
+    ),
+    // Full unfiltered month list for the dropdown
+    db.query(
+      `SELECT DISTINCT TO_CHAR(hearing_date, 'Mon ''YY') AS month,
+              DATE_TRUNC('month', hearing_date) AS sort_key
+       FROM hearings
+       WHERE hearing_date IS NOT NULL
+       ORDER BY sort_key`,
+    ),
+  ]);
 
-  // ── Apply filters ──────────────────────────────────────────────────────────
-  // TODO: when live, replace these in-memory filters with DB WHERE clauses.
-
-  const filteredMonthly = filters.month
+  // Apply month filter in-memory after fetching (month is already pushed to SQL
+  // for the trend chart query; the other queries use repId/qs only).
+  // When all filters are pushed to SQL, remove this block.
+  const { clause: mClause } = monthLabelToDateRange(filters.month, 1);
+  const filteredMonthly = filters.month && !mClause
     ? monthly.filter((m) => m.month === filters.month)
     : monthly;
 
-  const filteredReps = filters.rep
-    ? assignedReps.filter((r) => r.name === filters.rep)
-    : assignedReps;
-
-  const filteredRepRows = filters.rep
-    ? repStatusRows.filter((r) => r.rep === filters.rep)
-    : repStatusRows;
-
-  // quickSelect is a date-range preset; with live data this maps to a
-  // WHERE hearing_date BETWEEN x AND y. Stub: treated same as "All Time".
-  // TODO: implement date-range slicing once DB query is wired.
+  // Derive withdrawalTotal from hearingStatus — sum all withdrawal-type statuses
+  const WITHDRAWAL_STATUSES = [
+    "Withdrawal", "WD Clmt Deceased", "Withdrawal - No Contact",
+    "Withdrawal - UFD", "Withdrawal - Client Terminated Rep",
+    "Withdrawal - Client Working/ Doing Better/WD Hrg Req",
+    "Withdrawal - In-Person", "Withdrawal - Receiving Benefits",
+    "Withdrawal - SGA", "Withdrawal - Misc",
+  ];
+  const withdrawalTotal = hearingStatus
+    .filter((s) => WITHDRAWAL_STATUSES.includes(s.status) || s.status.startsWith("Withdrawal"))
+    .reduce((sum, s) => sum + s.count, 0);
 
   return {
-    monthly: filteredMonthly,
-    hearingStatus,   // status distribution is always the full cross-section
-    assignedReps: filteredReps,
-    repStatusRows: filteredRepRows,
-    statCards,       // aggregate cards reflect the full dataset for now
-    allMonths,
-    allReps,
+    monthly:      filteredMonthly,
+    hearingStatus,
+    assignedReps,
+    repStatusRows,
+    statCards,
+    withdrawalTotal,
+    allMonths: allMonthsRows.rows.map((r) => r.month as string),
+    allReps:   allRepsRows.rows.map((r)   => r.name  as string),
   };
 }

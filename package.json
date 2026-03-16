@@ -12,6 +12,7 @@
     "@base-ui/react": "^1.2.0",
     "@hookform/resolvers": "^5.2.2",
     "@neondatabase/serverless": "^1.0.2",
+    "@tanstack/react-virtual": "^3.13.22",
     "bcryptjs": "^3.0.3",
     "chart.js": "^4.5.1",
     "chartjs-plugin-datalabels": "^2.2.0",

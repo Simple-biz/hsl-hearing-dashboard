@@ -19,8 +19,6 @@ import {
   Eye,
   EyeOff,
   Dice5,
-  // Shield,
-  // KeyRound,
   Users,
   Activity,
 } from "lucide-react";
@@ -953,6 +951,7 @@ function ActivityTab() {
       dateFrom: dateFrom || undefined,
       dateTo: dateTo || undefined,
       userId: userId || undefined,
+      excludeSystemAdmin: true,
     }).then((res) => {
       if (!cancelled) {
         setEntries(res.entries);
@@ -1108,9 +1107,20 @@ function ActivityTab() {
       </Card>
       <div className="flex items-center justify-between">
         <p className="text-xs text-muted-foreground">
-          Page {page} of {totalPages}
+          {total.toLocaleString()} entries
         </p>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5">
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-8 w-8"
+            disabled={page <= 1 || loading}
+            onClick={() => changePage(1)}
+            title="First page"
+          >
+            <ChevronLeft className="h-4 w-4" />
+            <ChevronLeft className="h-4 w-4 -ml-2.5" />
+          </Button>
           <Button
             variant="outline"
             size="icon"
@@ -1120,6 +1130,18 @@ function ActivityTab() {
           >
             <ChevronLeft className="h-4 w-4" />
           </Button>
+          <select
+            className="h-8 rounded-md border border-input bg-background px-2 text-xs tabular-nums focus:outline-none focus:ring-1 focus:ring-ring"
+            value={String(page)}
+            onChange={(e) => changePage(Number(e.target.value))}
+            disabled={loading}
+          >
+            {Array.from({ length: totalPages }, (_, i) => (
+              <option key={i + 1} value={String(i + 1)}>
+                Page {i + 1}
+              </option>
+            ))}
+          </select>
           <Button
             variant="outline"
             size="icon"
@@ -1128,6 +1150,17 @@ function ActivityTab() {
             onClick={() => changePage(page + 1)}
           >
             <ChevronRight className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-8 w-8"
+            disabled={page >= totalPages || loading}
+            onClick={() => changePage(totalPages)}
+            title="Last page"
+          >
+            <ChevronRight className="h-4 w-4" />
+            <ChevronRight className="h-4 w-4 -ml-2.5" />
           </Button>
         </div>
       </div>
