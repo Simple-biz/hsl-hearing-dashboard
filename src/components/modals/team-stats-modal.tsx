@@ -122,7 +122,7 @@ export function TeamStatsModal({ open, onClose }: Props) {
       layout="bare"
     >
       {/* Period toggle bar — flex-shrink-0 so it never scrolls away */}
-      <div className="flex items-center gap-1 px-5 py-3 border-b border-border bg-muted/10 flex-shrink-0">
+      <div className="flex items-center gap-1 px-5 py-3 border-b border-border bg-muted/10 shrink-0">
         <div className="flex bg-muted rounded-lg p-0.5 gap-0.5">
           {(["weekly", "monthly"] as const).map((v) => (
             <button

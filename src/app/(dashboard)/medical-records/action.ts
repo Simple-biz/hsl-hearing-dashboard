@@ -38,6 +38,25 @@ import type {
 } from "./types";
 
 import { db } from "@/lib/db";
+import { getSession } from "@/lib/session";
+
+// ─── Internal helper — writes to activity_log, matching PHP's logActivity() ──
+async function logActivity(
+  action: string,
+  details: string,
+): Promise<void> {
+  try {
+    const session = await getSession();
+    const userId = session?.user?.id;
+    if (!userId) return;
+    await db.query(
+      `INSERT INTO activity_log (user_id, action, details) VALUES ($1, $2, $3)`,
+      [userId, action, details],
+    );
+  } catch {
+    // Never let logging failures break the mutation
+  }
+}
 
 // ─── Shared SQL fragment — excludes withdrawn/dismissed records ───────────────
 const WITHDRAWN_FILTER = `
@@ -622,7 +641,9 @@ export async function getHearingsPaginated(
 
   const totalCount = Number(statsResult.rows[0]?.total ?? 0);
   const page    = Math.max(1, filters.page ?? 1);
-  const perPage = filters.per_page === "all" ? Math.min(totalCount, 500) : Math.min(500, Number(filters.per_page ?? 50));
+  const perPage = filters.per_page === "all"
+    ? Math.max(1, Math.min(totalCount, 500))
+    : Math.max(1, Math.min(500, Number(filters.per_page ?? 50)));
   const offset  = (page - 1) * perPage;
 
   params.push(perPage); const limitIdx  = params.length;
@@ -674,6 +695,7 @@ export async function updateMrStatus(
     `UPDATE hearings SET medical_record_status = $1 WHERE id = $2`,
     [status, hearingId],
   );
+  await logActivity("mr_status_updated", `MR status updated to "${status}" for hearing #${hearingId}`);
   return { success: true };
 }
 
@@ -685,6 +707,16 @@ export async function updateHearingDecisionStatus(
     `UPDATE hearings SET hearing_decision_status = $1 WHERE id = $2`,
     [status, hearingId],
   );
+  await logActivity("decision_status_updated", `Decision status updated to "${status}" for hearing #${hearingId}`);
+
+  // If this is a withdrawal-type decision, push a notification for the MR bell
+  const isWithdrawal = status.startsWith("Withdrawal") || status === "WD CLMT DECEASED" || status === "Dismissal";
+  if (isWithdrawal) {
+    const row = await db.query(`SELECT claimant FROM hearings WHERE id = $1`, [hearingId]);
+    const claimant = (row.rows[0]?.claimant as string | undefined) ?? `Hearing #${hearingId}`;
+    await createWithdrawalNotification(hearingId, claimant);
+  }
+
   return { success: true };
 }
 
@@ -696,6 +728,9 @@ export async function updateMrTeam(
     `UPDATE hearings SET mr_team_id = $1, mr_team_assigned_at = $2 WHERE id = $3`,
     [teamId, teamId ? new Date().toISOString() : null, hearingId],
   );
+  await logActivity("mr_team_assigned", teamId
+    ? `MR team #${teamId} assigned to hearing #${hearingId}`
+    : `MR team unassigned from hearing #${hearingId}`);
   return { success: true };
 }
 
@@ -707,6 +742,7 @@ export async function toggleTaskAssigned(
     `UPDATE hearings SET task_assigned = $1 WHERE id = $2`,
     [value, hearingId],
   );
+  await logActivity("five_day_notice_updated", `Task assigned set to ${value} for hearing #${hearingId}`);
   return { success: true };
 }
 
@@ -718,6 +754,7 @@ export async function toggleCredited(
     `UPDATE hearings SET credited = $1 WHERE id = $2`,
     [value, hearingId],
   );
+  await logActivity("credited_updated", `Credited set to ${value} for hearing #${hearingId}`);
   return { success: true };
 }
 
@@ -729,6 +766,7 @@ export async function updateMoa(
     `UPDATE hearings SET manner_of_hearing = $1 WHERE id = $2`,
     [manner, hearingId],
   );
+  await logActivity("moa_updated", `MOA updated to "${manner}" for hearing #${hearingId}`);
   return { success: true };
 }
 
@@ -740,6 +778,7 @@ export async function updateWorksheetLink(
     `UPDATE hearings SET mr_worksheet_link = $1 WHERE id = $2`,
     [link, hearingId],
   );
+  await logActivity("mr_link_updated", `Worksheet link updated for hearing #${hearingId}`);
   return { success: true };
 }
 
@@ -753,6 +792,7 @@ export async function bulkUpdateMrStatus(
     `UPDATE hearings SET medical_record_status = $1 WHERE id IN (${placeholders})`,
     [status, ...hearingIds],
   );
+  await logActivity("bulk_mr_status_updated", `Bulk updated ${hearingIds.length} hearing(s) to "${status}"`);
   return { success: true, message: `${hearingIds.length} hearing(s) updated to "${status}"` };
 }
 
@@ -778,6 +818,7 @@ export async function assignJeromeUrgent(): Promise<{
   `, [jeromeId]);
 
   const count = result.rows.length;
+  await logActivity("urgent_team_assigned", `${count} urgent hearing(s) assigned to Jerome's Team`);
   return { success: true, message: `${count} hearing(s) assigned to Jerome's Team`, count };
 }
 
@@ -903,15 +944,46 @@ export async function getTeamStats(): Promise<TeamStatsData> {
 }
 
 export async function getNotifications(): Promise<NotificationItem[]> {
-  const result = await db.query(`
-    SELECT n.*, u.full_name AS created_by_name
-    FROM sync_notifications n
-    LEFT JOIN users u ON n.created_by = u.id
-    WHERE n.expires_at > NOW()
-    ORDER BY n.created_at DESC
-    LIMIT 50
-  `);
-  return result.rows as NotificationItem[];
+  try {
+    const result = await db.query(`
+      SELECT n.*, u.full_name AS created_by_name
+      FROM sync_notifications n
+      LEFT JOIN users u ON n.created_by = u.id
+      WHERE n.expires_at > NOW()
+      ORDER BY n.created_at DESC
+      LIMIT 50
+    `);
+    return result.rows as NotificationItem[];
+  } catch {
+    // sync_notifications table not yet migrated — return empty
+    return [];
+  }
+}
+
+// Called by Hearings Dashboard when a withdrawal decision is saved.
+// Writes a notification that the MR page bell polls every 30s.
+export async function createWithdrawalNotification(
+  hearingId: number,
+  claimantName: string,
+): Promise<void> {
+  try {
+    const session = await getSession();
+    const createdBy = session?.user?.id ?? null;
+    await db.query(
+      `INSERT INTO sync_notifications
+         (notification_type, hearing_id, claimant_name, message, created_by, expires_at)
+       VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '24 hours')`,
+      [
+        "withdrawal",
+        hearingId,
+        claimantName,
+        `Withdrawal decision recorded for ${claimantName}`,
+        createdBy,
+      ],
+    );
+  } catch {
+    // Never let notification creation break the mutation that called it
+  }
 }
 
 export async function getActivityLog(params: {
@@ -919,11 +991,17 @@ export async function getActivityLog(params: {
   date_from?: string;
   date_to?: string;
   page?: number;
+  excludeSystemAdmin?: boolean;
 }): Promise<{ items: ActivityLogItem[]; total: number }> {
   const where: string[] = [
     `a.action IN ('mr_status_updated','mr_team_assigned','mr_link_updated','decision_status_updated','moa_updated','five_day_notice_updated','credited_updated','bulk_mr_team_assigned','bulk_mr_status_updated','urgent_team_assigned')`,
   ];
   const qParams: unknown[] = [];
+
+  // Exempt system_admin (user id=1) by default — matches dashboard activity log behaviour
+  if (params.excludeSystemAdmin !== false) {
+    where.push(`u.role != 'system_admin'`);
+  }
 
   if (params.type) {
     qParams.push(params.type);
@@ -963,15 +1041,20 @@ export async function getActivityLog(params: {
 }
 
 export async function getPostHrgNotes(hearingId: number): Promise<PostHrgNote[]> {
-  const result = await db.query(
-    `SELECT n.*, u.full_name AS author_name
-     FROM post_hrg_notes n
-     JOIN users u ON n.user_id = u.id
-     WHERE n.hearing_id = $1
-     ORDER BY n.created_at DESC`,
-    [hearingId],
-  );
-  return result.rows as PostHrgNote[];
+  // post_hrg_notes is a Phase 4 table — return empty until migrated
+  try {
+    const result = await db.query(
+      `SELECT n.*, u.full_name AS author_name
+       FROM post_hrg_notes n
+       JOIN users u ON n.user_id = u.id
+       WHERE n.hearing_id = $1
+       ORDER BY n.created_at DESC`,
+      [hearingId],
+    );
+    return result.rows as PostHrgNote[];
+  } catch {
+    return [];
+  }
 }
 
 export async function updatePostHrgDeadline(

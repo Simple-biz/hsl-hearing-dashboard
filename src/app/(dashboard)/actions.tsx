@@ -478,6 +478,42 @@ export async function updateHearing(
     hearingId,
   ]);
 
+  // If a withdrawal-type decision was just set, push a sync_notification
+  // so the Medical Records page bell picks it up within 30 seconds
+  if (field === "hearing_decision_status") {
+    const isWithdrawal =
+      typeof value === "string" &&
+      (value.startsWith("Withdrawal") ||
+        value === "WD CLMT DECEASED" ||
+        value === "Dismissal");
+    if (isWithdrawal) {
+      try {
+        const { rows: hRows } = await db.query(
+          "SELECT claimant FROM hearings WHERE id = $1",
+          [hearingId],
+        );
+        const claimantName = (hRows[0]?.claimant as string | undefined) ?? `Hearing #${hearingId}`;
+        const { getSession } = await import("@/lib/session");
+        const session = await getSession();
+        const createdBy = session?.user?.id ?? null;
+        await db.query(
+          `INSERT INTO sync_notifications
+             (notification_type, hearing_id, claimant_name, message, created_by, expires_at)
+           VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '24 hours')`,
+          [
+            "withdrawal",
+            hearingId,
+            claimantName,
+            `Withdrawal decision recorded for ${claimantName}`,
+            createdBy,
+          ],
+        );
+      } catch {
+        // Never let notification creation break the field update
+      }
+    }
+  }
+
   // Log the update — action names match PHP dashboard
   const claimant = await getClaimantName(hearingId);
   if (field === "assigned_rep_id" && value) {

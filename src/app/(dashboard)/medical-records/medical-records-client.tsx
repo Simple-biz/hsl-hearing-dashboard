@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useTransition, useCallback } from "react";
+import { useState, useEffect, useTransition, useCallback, useRef, useMemo } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { AppHeader } from "@/components/layout/app-header";
 import { DashboardNav } from "@/components/layout/dashboard-nav";
 import { Input } from "@/components/ui/input";
@@ -164,7 +165,7 @@ function AssignmentCard({ title, count, nextHearing, nextIcon, gradientFrom, gra
     : null;
 
   return (
-    <div className="rounded-xl border border-border overflow-hidden w-fit min-w-[180px]">
+    <div className="rounded-xl border border-border overflow-hidden w-fit min-w-45">
       {/* Colored header: title left, count right */}
       <div
         className="flex items-center justify-between px-3 py-2"
@@ -196,8 +197,8 @@ function AssignmentCard({ title, count, nextHearing, nextIcon, gradientFrom, gra
         <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground pt-1.5 border-t border-border min-w-0">
           {dateStr ? (
             <>
-              <span className="flex-shrink-0">{nextIcon ?? "📅"}</span>
-              <span className="font-semibold text-primary flex-shrink-0">{dateStr}</span>
+              <span className="shrink-0">{nextIcon ?? "📅"}</span>
+              <span className="font-semibold text-primary shrink-0">{dateStr}</span>
               <span className="text-[10px] truncate">— {nextHearing!.claimant.slice(0, 14)}…</span>
             </>
           ) : (
@@ -240,7 +241,7 @@ function RoundRobinBanner({ rr }: { rr: RoundRobinState }) {
             {new Date(rr.nextUnassignedHearing.hearing_date + "T00:00:00")
               .toLocaleDateString("en-US", { month: "short", day: "numeric" })}
           </span>
-          <span className="text-muted-foreground text-[10px] truncate max-w-[100px]">
+          <span className="text-muted-foreground text-[10px] truncate max-w-25">
             — {rr.nextUnassignedHearing.claimant.slice(0, 14)}…
           </span>
         </div>
@@ -274,7 +275,7 @@ function NotificationBell({ notifications, onRefresh }: {
       >
         <Bell size={16} className="text-muted-foreground" />
         {unseen.length > 0 && (
-          <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 bg-red-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+          <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 bg-red-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
             {unseen.length > 99 ? "99+" : unseen.length}
           </span>
         )}
@@ -365,7 +366,7 @@ function MrStatusPivot({ rows }: { rows: MrStatusByTeam[] }) {
               <tr key={row.team} className="border-b border-border hover:bg-muted/30 transition-colors">
                 <td className="px-3 py-2 font-semibold text-foreground">
                   {row.color && (
-                    <span className="inline-block w-2 h-2 rounded-full mr-2 flex-shrink-0"
+                    <span className="inline-block w-2 h-2 rounded-full mr-2 shrink-0"
                       style={{ backgroundColor: teamHex(row.color) }} />
                   )}
                   {row.team}
@@ -483,7 +484,7 @@ function HearingRow({
   return (
     <div
       className="grid gap-2 px-4 py-2 border-b border-border/40 hover:bg-muted/30 transition-colors text-[11px] items-center"
-      style={{ gridTemplateColumns: "200px 120px 36px 90px 160px 36px 100px 70px 36px 70px 80px", minWidth: "1200px" }}
+      style={{ gridTemplateColumns: "200px 120px 36px 90px 160px 56px 100px 70px 36px 70px 80px", minWidth: "1200px" }}
     >
       {/* Claimant */}
       <div>
@@ -666,7 +667,6 @@ export function MrPivotClient({ userRole, ...data }: Props) {
     return () => clearInterval(id);
   }, []);
 
-  // ── Filter helpers ────────────────────────────────────────────────────────
   function applyFilter(patch: Partial<HearingFilters>) {
     const next = { ...filters, ...patch, page: 1 };
     setFilters(next);
@@ -712,6 +712,41 @@ export function MrPivotClient({ userRole, ...data }: Props) {
     return acc;
   }, {});
 
+  // ── Virtualizer — flatten visible items into a single array ───────────────
+  const scrollRef    = useRef<HTMLDivElement>(null);
+  const scrollTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isScrolling, setIsScrolling] = useState(false);
+  const ROW_H  = 36;
+  const GROUP_H = 33;
+
+  type FlatItem =
+    | { kind: "group-date"; key: string; count: number }
+    | { kind: "group-team"; key: string; color: string | null; count: number }
+    | { kind: "row"; hearing: Hearing };
+
+  const flatItems = useMemo<FlatItem[]>(() => {
+    if (viewMode === "date") {
+      return Object.entries(groupedByMonth).flatMap(([key, rows]) => {
+        const header: FlatItem = { kind: "group-date", key, count: rows.length };
+        if (!expandedMonths.has(key)) return [header];
+        return [header, ...rows.map((h): FlatItem => ({ kind: "row", hearing: h }))];
+      });
+    }
+    return Object.entries(groupedByTeam).flatMap(([key, rows]) => {
+      const color = rows[0]?.mr_team_color ?? null;
+      const header: FlatItem = { kind: "group-team", key, color, count: rows.length };
+      if (!expandedTeams.has(key)) return [header];
+      return [header, ...rows.map((h): FlatItem => ({ kind: "row", hearing: h }))];
+    });
+  }, [viewMode, groupedByMonth, groupedByTeam, expandedMonths, expandedTeams]);
+
+  const virtualizer = useVirtualizer({
+    count:            flatItems.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize:     (i) => flatItems[i]?.kind === "row" ? ROW_H : GROUP_H,
+    overscan:         15,
+  });
+
   function toggleMonth(key: string) {
     setExpandedMonths((p) => { const n = new Set(p); n.has(key) ? n.delete(key) : n.add(key); return n; });
   }
@@ -730,12 +765,12 @@ export function MrPivotClient({ userRole, ...data }: Props) {
   // ── Column headers (shared between both views) ────────────────────────────
   const columnHeaders = (
     <div
-      className="grid gap-2 px-4 py-2 bg-muted text-foreground text-[9px] font-semibold uppercase tracking-wide flex-shrink-0 border-b border-border"
-      style={{ gridTemplateColumns: "200px 120px 36px 90px 160px 36px 100px 70px 36px 70px 80px", minWidth: "1200px" }}
+      className="grid gap-2 px-4 py-2 bg-muted text-foreground text-[9px] font-semibold uppercase tracking-wide shrink-0 border-b border-border text-center"
+      style={{ gridTemplateColumns: "200px 120px 36px 90px 160px 56px 100px 70px 36px 70px 80px", minWidth: "1200px" }}
     >
-      <div>Claimant</div><div>MR Specialist</div><div>Task</div><div>Date</div>
+      <div className="text-left">Claimant</div><div>MR Specialist</div><div>Task</div><div className="text-left">Date</div>
       <div>MR Status</div><div>Credited</div><div>Status</div><div>MOA</div>
-      <div>5Day</div><div>Post HRG</div><div>Worksheet</div>
+      <div>5Day</div><div className="text-center">Post HRG</div><div className="text-center">Worksheet</div>
     </div>
   );
 
@@ -745,7 +780,7 @@ export function MrPivotClient({ userRole, ...data }: Props) {
       <AppHeader title="Medical Records" subtitle="MR Status Tracking &amp; Analytics" />
       <DashboardNav userRole={userRole} />
 
-      <div className="w-full max-w-[1800px] mx-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-5">
+      <div className="w-full max-w-450 mx-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-5">
 
         {/* ── Icon buttons (bell + refresh) ────────────────────────────── */}
         <div className="flex items-center justify-end gap-2">
@@ -802,14 +837,14 @@ export function MrPivotClient({ userRole, ...data }: Props) {
 
           {/* Right column: Team Assignments sidebar — spans full left height */}
           <div className="bg-card border border-border rounded-xl overflow-hidden flex flex-col">
-            <div className="px-3 py-2 bg-muted/30 border-b border-border flex-shrink-0 flex items-center justify-between">
+            <div className="px-3 py-2 bg-muted/30 border-b border-border shrink-0 flex items-center justify-between">
               <span className="text-[11px] font-semibold text-foreground">👥 Team Assignments</span>
             </div>
             <div className="px-2 py-1.5 space-y-0.5 overflow-y-auto flex-1" style={{ maxHeight: "200px" }}>
               {data.teamGrandTotals.map((t) => (
                 <div key={t.team_name} className="flex items-center justify-between px-1.5 py-1 rounded hover:bg-muted/40 transition-colors">
                   <div className="flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                    <span className="w-1.5 h-1.5 rounded-full shrink-0"
                       style={{ backgroundColor: t.team_color ?? "#9ca3af" }} />
                     <span className="text-[10px] font-medium text-foreground">{t.team_name}</span>
                   </div>
@@ -817,7 +852,7 @@ export function MrPivotClient({ userRole, ...data }: Props) {
                 </div>
               ))}
             </div>
-            <div className="px-2 py-1.5 border-t border-border bg-muted/20 flex-shrink-0">
+            <div className="px-2 py-1.5 border-t border-border bg-muted/20 shrink-0">
               <div className="flex items-center justify-between px-1.5">
                 <span className="text-[10px] font-bold text-foreground">Grand Total</span>
                 <span className="text-xs font-bold tabular-nums text-primary">
@@ -833,7 +868,7 @@ export function MrPivotClient({ userRole, ...data }: Props) {
           <div className="flex flex-wrap gap-2 items-center">
 
             {/* Search */}
-            <div className="relative min-w-[140px]">
+            <div className="relative min-w-35">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
               <Input
                 placeholder="Search claimant…"
@@ -947,7 +982,7 @@ export function MrPivotClient({ userRole, ...data }: Props) {
           style={{ maxHeight: "min(calc(100vh - 240px), 75vh)" }}
         >
           {/* Card header */}
-          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-border bg-muted/30 flex-shrink-0">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-border bg-muted/30 shrink-0">
             <div className="flex items-center gap-2">
               <span className="text-sm font-bold text-foreground">📁 Hearings</span>
               <span className="text-xs text-muted-foreground tabular-nums">({totalHearings})</span>
@@ -1021,79 +1056,106 @@ export function MrPivotClient({ userRole, ...data }: Props) {
           </div>
 
           {/* Column headers */}
-          <div className="overflow-x-auto flex-shrink-0">
+          <div className="overflow-x-auto shrink-0">
             {columnHeaders}
           </div>
 
-          {/* Scrollable body */}
-          <div className="flex-1 overflow-y-auto overflow-x-auto relative min-h-0">
+          {/* Scrollable body — TanStack virtualised */}
+          <div
+            ref={scrollRef}
+            className="flex-1 overflow-y-auto overflow-x-auto relative min-h-0"
+            onScroll={() => {
+              if (!isScrolling) setIsScrolling(true);
+              if (scrollTimer.current) clearTimeout(scrollTimer.current);
+              scrollTimer.current = setTimeout(() => setIsScrolling(false), 150);
+            }}
+          >
+            {/* Full-page loader during server action transitions */}
             {isPending && (
               <div className="absolute inset-0 bg-background/70 flex items-center justify-center z-10">
                 <Loader2 size={32} className="animate-spin text-primary" />
               </div>
             )}
 
-            {viewMode === "date" && Object.entries(groupedByMonth).map(([key, rows]) => (
-              <div key={`month-${key}`}>
-                <div
-                  className="flex items-center gap-3 px-4 py-2 bg-muted/30 border-b border-border cursor-pointer hover:bg-muted/50 select-none"
-                  style={{ minWidth: "1200px" }}
-                  onClick={() => toggleMonth(key)}
-                >
-                  <span className="w-4 h-4 flex items-center justify-center bg-primary text-white rounded text-[9px] font-bold">
-                    {expandedMonths.has(key) ? "−" : "+"}
-                  </span>
-                  <span className="text-xs font-semibold text-foreground">
-                    {new Date(key + "-01").toLocaleDateString("en-US", { month: "long", year: "numeric" })}
-                  </span>
-                  <span className="text-[10px] text-muted-foreground">({rows.length})</span>
-                </div>
-                {expandedMonths.has(key) && rows.map((h) => (
-                  <HearingRow key={`mh-${h.id}`} h={h} teams={data.medical_teams}
-                    mrStatusOptions={data.medical_record_status_options}
-                    hearingDecisionOptions={data.hearing_decision_status_options}
-                    mannerOptions={data.manner_options}
-                    permissions={data.permissions}
-                    onUpdate={handleUpdate} />
-                ))}
+            {/* Fast-scroll skeleton overlay — subtle, doesn't block interaction */}
+            {isScrolling && !isPending && (
+              <div className="absolute top-2 right-3 z-10 flex items-center gap-1.5 bg-card/80 border border-border rounded-full px-2.5 py-1 shadow-sm pointer-events-none">
+                <Loader2 size={11} className="animate-spin text-muted-foreground" />
+                <span className="text-[10px] text-muted-foreground">Loading...</span>
               </div>
-            ))}
+            )}
 
-            {viewMode === "team" && Object.entries(groupedByTeam).map(([key, rows]) => (
-              <div key={`team-${key}`}>
-                <div
-                  className="flex items-center gap-3 px-4 py-2 border-b border-border cursor-pointer hover:bg-muted/50 select-none bg-card"
-                  style={{ minWidth: "1200px" }}
-                  onClick={() => toggleTeam(key)}
-                >
-                  <span className="w-4 h-4 flex items-center justify-center text-[9px] text-muted-foreground">
-                    {expandedTeams.has(key) ? "▼" : "▶"}
-                  </span>
-                  <span className="w-2 h-2 rounded-full"
-                    style={{ backgroundColor: teamHex(rows[0]?.mr_team_color) }} />
-                  <span className="text-xs font-semibold text-foreground">{key}</span>
-                  <span className="text-[10px] text-muted-foreground">({rows.length})</span>
-                </div>
-                {expandedTeams.has(key) && rows.map((h) => (
-                  <HearingRow key={`th-${h.id}`} h={h} teams={data.medical_teams}
-                    mrStatusOptions={data.medical_record_status_options}
-                    hearingDecisionOptions={data.hearing_decision_status_options}
-                    mannerOptions={data.manner_options}
-                    permissions={data.permissions}
-                    onUpdate={handleUpdate} />
-                ))}
-              </div>
-            ))}
-
-            {!isPending && hearings.length === 0 && (
+            {!isPending && hearings.length === 0 ? (
               <div className="flex items-center justify-center py-16 text-sm text-muted-foreground">
                 No hearings match the current filters.
+              </div>
+            ) : (
+              <div style={{ height: virtualizer.getTotalSize(), position: "relative", minWidth: "1200px" }}>
+                {virtualizer.getVirtualItems().map((vRow) => {
+                  const item = flatItems[vRow.index];
+                  if (!item) return null;
+
+                  if (item.kind === "group-date") {
+                    return (
+                      <div
+                        key={`gd-${item.key}`}
+                        style={{ position: "absolute", top: vRow.start, left: 0, right: 0, height: GROUP_H }}
+                        className="flex items-center gap-3 px-4 bg-muted/30 border-b border-border cursor-pointer hover:bg-muted/50 select-none"
+                        onClick={() => toggleMonth(item.key)}
+                      >
+                        <span className="w-4 h-4 flex items-center justify-center bg-primary text-primary-foreground rounded text-[9px] font-bold">
+                          {expandedMonths.has(item.key) ? "−" : "+"}
+                        </span>
+                        <span className="text-xs font-semibold text-foreground">
+                          {new Date(item.key + "-01").toLocaleDateString("en-US", { month: "long", year: "numeric" })}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">({item.count})</span>
+                      </div>
+                    );
+                  }
+
+                  if (item.kind === "group-team") {
+                    return (
+                      <div
+                        key={`gt-${item.key}`}
+                        style={{ position: "absolute", top: vRow.start, left: 0, right: 0, height: GROUP_H }}
+                        className="flex items-center gap-3 px-4 border-b border-border cursor-pointer hover:bg-muted/50 select-none bg-card"
+                        onClick={() => toggleTeam(item.key)}
+                      >
+                        <span className="w-4 h-4 flex items-center justify-center text-[9px] text-muted-foreground">
+                          {expandedTeams.has(item.key) ? "▼" : "▶"}
+                        </span>
+                        <span className="w-2 h-2 rounded-full shrink-0"
+                          style={{ backgroundColor: teamHex(item.color) }} />
+                        <span className="text-xs font-semibold text-foreground">{item.key}</span>
+                        <span className="text-[10px] text-muted-foreground">({item.count})</span>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div
+                      key={`r-${item.hearing.id}`}
+                      style={{ position: "absolute", top: vRow.start, left: 0, right: 0, height: ROW_H }}
+                    >
+                      <HearingRow
+                        h={item.hearing}
+                        teams={data.medical_teams}
+                        mrStatusOptions={data.medical_record_status_options}
+                        hearingDecisionOptions={data.hearing_decision_status_options}
+                        mannerOptions={data.manner_options}
+                        permissions={data.permissions}
+                        onUpdate={handleUpdate}
+                      />
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
 
           {/* Pagination */}
-          <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-2.5 border-t border-border bg-muted/20 flex-shrink-0">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-2.5 border-t border-border bg-muted/20 shrink-0">
             <span className="text-[11px] text-muted-foreground">
               Showing {((filters.page ?? 1) - 1) * (filters.per_page as number) + 1}–{Math.min(
                 (filters.page ?? 1) * (filters.per_page as number), totalHearings
