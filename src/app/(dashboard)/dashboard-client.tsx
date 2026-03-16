@@ -270,13 +270,15 @@ function InlineCheck({
     <div className="flex items-center justify-center">
       <input
         type="checkbox"
-        defaultChecked={checked}
-        onChange={(e) => editable && onToggle(e.target.checked)}
-        disabled={!editable}
+        checked={checked}
+        onChange={(e) => {
+          if (editable) onToggle(e.target.checked);
+        }}
+        readOnly={!editable}
         className={cn(
-          "h-4 w-4 rounded cursor-pointer",
+          "h-4 w-4 rounded",
           accent,
-          !editable && "opacity-50 cursor-not-allowed",
+          editable ? "cursor-pointer" : "cursor-default pointer-events-none",
         )}
       />
     </div>
@@ -2195,35 +2197,24 @@ export function DashboardClient({
 
   const handleUpdate = useCallback(
     async (hearingId: number, field: string, value: UpdateValue) => {
-      // Optimistic: update local state only for fields that affect display of OTHER cells
-      // (e.g. rep assignment changes the rep badge which is read-only)
-      // For simple dropdown/checkbox fields, the <select>/<input> already shows the new value
-      const needsLocalUpdate =
-        field === "assigned_rep_id" ||
-        field === "mr_team_id" ||
-        field === "assignment_status" ||
-        field === "post_hrg_notes" ||
-        field === "post_hrg_deadline";
-
-      if (needsLocalUpdate) {
-        setHearings((prev) =>
-          prev.map((h) => {
-            if (h.id !== hearingId) return h;
-            const updated = { ...h, [field]: value };
-            if (field === "assigned_rep_id") {
-              const rep = representatives.find((r) => r.id === Number(value));
-              updated.rep_name = rep?.name ?? null;
-              updated.rep_type = rep?.rep_type ?? null;
-            }
-            if (field === "mr_team_id") {
-              const team = mrTeams.find((t) => t.id === Number(value));
-              updated.mr_team_name = team?.team_name ?? null;
-              updated.mr_team_color = team?.team_color ?? null;
-            }
-            return updated;
-          }),
-        );
-      }
+      // Optimistic update — immediately reflect in UI
+      setHearings((prev) =>
+        prev.map((h) => {
+          if (h.id !== hearingId) return h;
+          const updated = { ...h, [field]: value };
+          if (field === "assigned_rep_id") {
+            const rep = representatives.find((r) => r.id === Number(value));
+            updated.rep_name = rep?.name ?? null;
+            updated.rep_type = rep?.rep_type ?? null;
+          }
+          if (field === "mr_team_id") {
+            const team = mrTeams.find((t) => t.id === Number(value));
+            updated.mr_team_name = team?.team_name ?? null;
+            updated.mr_team_color = team?.team_color ?? null;
+          }
+          return updated;
+        }),
+      );
       if (
         postHrgHearing?.id === hearingId &&
         (field === "post_hrg_notes" || field === "post_hrg_deadline")
@@ -2232,7 +2223,7 @@ export function DashboardClient({
           prev ? { ...prev, [field]: value } : null,
         );
       }
-      // Server update in background — no await blocking UI
+      // Server update in background
       updateHearing(hearingId, field, value).catch((e) =>
         console.error("Update failed:", e),
       );
