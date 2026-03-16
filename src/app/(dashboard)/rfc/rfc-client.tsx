@@ -228,12 +228,17 @@ function RfcActivityLogModal({ open, onClose }: { open: boolean; onClose: () => 
 
   useEffect(() => {
     if (!open) return;
-    setLoading(true);
-    getRfcActivityLog(page).then((r) => {
+    let cancelled = false;
+    async function fetchLog() {
+      setLoading(true);
+      const r = await getRfcActivityLog(page);
+      if (cancelled) return;
       setEntries(r.entries);
       setTotal(r.total);
       setLoading(false);
-    });
+    }
+    fetchLog();
+    return () => { cancelled = true; };
   }, [open, page]);
 
   if (!open) return null;
