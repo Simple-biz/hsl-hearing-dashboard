@@ -17,6 +17,7 @@ interface Props {
   onClose: () => void;
   teams: MrTeam[];
   mrStatusOptions: string[];
+  hearingId?: number; // When provided, opens directly to that hearing's detail panel
 }
 
 // ─── DeadlineStatus ───────────────────────────────────────────────────────────
@@ -161,7 +162,7 @@ function HearingDetailPanel({
 
 // ─── Main Modal ───────────────────────────────────────────────────────────────
 
-export function PostHrgModal({ open, onClose, teams, mrStatusOptions }: Props) {
+export function PostHrgModal({ open, onClose, teams, mrStatusOptions, hearingId }: Props) {
   const [isPending, startTransition] = useTransition();
   const [hearings,    setHearings]    = useState<Hearing[]>([]);
   const [total,       setTotal]       = useState(0);
@@ -179,6 +180,11 @@ export function PostHrgModal({ open, onClose, teams, mrStatusOptions }: Props) {
       setHearings(res.hearings);
       setTotal(res.total);
       setTotalPages(res.total_pages);
+      // When opened from a specific row, auto-select that hearing
+      if (hearingId) {
+        const match = res.hearings.find((h) => h.id === hearingId) ?? null;
+        setSelectedHearing(match);
+      }
     });
   }
 

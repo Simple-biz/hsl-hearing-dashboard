@@ -65,13 +65,13 @@ export interface Hearing {
   mr_team_type: string | null;
   medical_record_status: string | null;
   hearing_decision_status: string | null;
-  manner_of_hearing: string | null;
+  manner_of_appearance: string | null;
   task_assigned: boolean;
-  five_day_letter: boolean;
+  five_day_notice: boolean;
   credited: boolean;
-  post_hrg_status: string | null;
+  post_hrg_review: string | null;
   post_hrg_deadline: string | null;
-  mr_worksheet_link: string | null;
+  medical_record_link: string | null;
   mr_team_assigned_at: string | null;
 }
 
