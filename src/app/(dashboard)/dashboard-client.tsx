@@ -2,13 +2,14 @@
 
 import {
   useState,
-  // useMemo,
+  memo,
   useCallback,
   useTransition,
   useRef,
   useEffect,
 } from "react";
 import { createPortal } from "react-dom";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Download,
   Search,
@@ -32,7 +33,20 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatCard, StatCardGrid } from "@/components/stat-card";
-import { canEditField, type UserRole } from "@/lib/roles";
+import {
+  canEditField,
+  canManage,
+  canSeeCheckbox,
+  canSeeAdminButtons,
+  canSeeActivityLog,
+  canSeeRepStats,
+  canSeeCsvCompare,
+  canSeeRepFilter,
+  canSeeNextUnassigned,
+  canExport,
+  getVisibleColumns,
+  type UserRole,
+} from "@/lib/roles";
 import { AppHeader } from "@/components/layout/app-header";
 import { DashboardNav } from "@/components/layout/dashboard-nav";
 import { Card, CardContent } from "@/components/ui/card";
@@ -52,6 +66,11 @@ import {
   deleteHearing,
   autoAssignSingle,
   fetchHearingsPage,
+  bulkAutoAssignSelected,
+  bulkEmailSelected,
+  fetchAllHearingsForCompare,
+  importChronicleEntries,
+  exportHearingsCsv,
 } from "./actions";
 import type {
   HearingRow,
@@ -118,6 +137,10 @@ const SEL =
   "h-8 rounded-md border border-input bg-card px-2 text-xs cursor-pointer focus:outline-none focus:ring-1 focus:ring-ring";
 const SEL_SM =
   "h-7 rounded-md border border-input bg-card px-2 text-xs cursor-pointer focus:outline-none focus:ring-1 focus:ring-ring";
+
+// Press-feel class for action buttons — standard Tailwind values, targeted transition
+const BTN_PRESS =
+  "active:scale-95 active:brightness-90 transition-transform duration-75";
 
 // ── Safe date parsing (avoids UTC midnight → local timezone day shift) ──
 function parseDate(dateStr: string): Date {
@@ -248,12 +271,14 @@ function InlineCheck({
       <input
         type="checkbox"
         checked={checked}
-        onChange={(e) => editable && onToggle(e.target.checked)}
-        disabled={!editable}
+        onChange={(e) => {
+          if (editable) onToggle(e.target.checked);
+        }}
+        readOnly={!editable}
         className={cn(
-          "h-4 w-4 rounded cursor-pointer",
+          "h-4 w-4 rounded",
           accent,
-          !editable && "opacity-50 cursor-not-allowed",
+          editable ? "cursor-pointer" : "cursor-default pointer-events-none",
         )}
       />
     </div>
@@ -406,7 +431,7 @@ function ActionMenu({
   onEdit: (h: HearingRow) => void;
   onAutoAssign: (id: number) => void;
 }) {
-  const isAdmin = !["rep", "staff"].includes(userRole);
+  const isActionAdmin = canManage(userRole);
   const isUnassigned = !hearing.assigned_rep_id && !hearing.assignment_status;
   const isAssigned = !!hearing.assigned_rep_id;
   const hasStatus = !!hearing.assignment_status;
@@ -478,7 +503,7 @@ function ActionMenu({
               className="fixed z-101 w-48 max-h-[calc(100vh-16px)] overflow-y-auto rounded-lg border bg-card py-1 shadow-xl"
               style={{ top: pos.top, left: pos.left - 192 }}
             >
-              {isAdmin && (
+              {isActionAdmin && (
                 <>
                   {isUnassigned && (
                     <>
@@ -546,7 +571,7 @@ function ActionMenu({
                 onClick={menuAction(() => onEdit(hearing))}
                 className="flex w-full items-center px-3 py-1.5 text-xs hover:bg-muted/50"
               >
-                {isAdmin ? (
+                {isActionAdmin ? (
                   <>
                     <Pencil className="mr-2 h-3.5 w-3.5" /> Edit
                   </>
@@ -562,7 +587,7 @@ function ActionMenu({
               >
                 📝 Activity Log
               </button>
-              {isAdmin && (
+              {isActionAdmin && (
                 <>
                   <div className="my-1 border-t" />
                   <button
@@ -953,19 +978,18 @@ function PostHrgCell({
   let text = "+ Add";
 
   if (deadline) {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const dd = new Date(deadline + "T00:00:00");
+    const dd = parseDate(deadline);
+    const today = parseDate(new Date().toISOString().split("T")[0]);
     if (dd < today) {
       badgeClass =
         "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 hover:bg-red-200";
       icon = <AlertTriangleIcon className="h-3 w-3" />;
-      text = dd.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      text = fmtDate(deadline, { month: "short", day: "numeric" });
     } else {
       badgeClass =
         "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 hover:bg-blue-200";
       icon = <CalendarClock className="h-3 w-3" />;
-      text = dd.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      text = fmtDate(deadline, { month: "short", day: "numeric" });
     }
   } else if (noteCount > 0) {
     badgeClass =
@@ -1000,7 +1024,7 @@ function PostHrgCell({
 // ══════════════════════════════════════════════════════════════
 // STAT CARDS — gradient, matching original
 // ══════════════════════════════════════════════════════════════
-function StatsRow({
+const StatsRow = memo(function StatsRow({
   stats,
   userRole,
 }: {
@@ -1076,21 +1100,24 @@ function StatsRow({
       ))}
     </StatCardGrid>
   );
-}
+});
 
 // ── Filter bar — matches old dashboard: search, sort, rep (with counts), year, month, date presets, next unassigned ──
-function FilterBar({
+const FilterBar = memo(function FilterBar({
   filters,
   onFilterChange,
   repCounts,
   nextUnassigned,
-  userRole,
+  showRepFilter: showRepFilterProp,
+  showNextUnassigned: showNextUnassignedProp,
 }: {
   filters: HearingFilters;
   onFilterChange: (f: HearingFilters) => void;
   repCounts: RepWithCount[];
   nextUnassigned: NextUnassignedRow | null;
   userRole: UserRole;
+  showRepFilter: boolean;
+  showNextUnassigned: boolean;
 }) {
   const update = (key: keyof HearingFilters, value: string) => {
     const v = value;
@@ -1168,13 +1195,13 @@ function FilterBar({
     filters.assignmentStatus,
     filters.datePreset,
   ].filter(Boolean).length;
-  const isAdmin = !["rep", "staff"].includes(userRole);
+  // Using showRepFilterProp and showNextUnassignedProp from parent
 
   return (
     <div className="space-y-2">
-      {/* Row 1: Search + main filters */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-0 flex-1 sm:max-w-55">
+      {/* Row 1: Search + Rep filter */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+        <div className="relative w-full sm:w-auto sm:min-w-0 sm:flex-1 sm:max-w-55">
           <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder="Search Claimant, ALJ, City..."
@@ -1184,9 +1211,9 @@ function FilterBar({
           />
         </div>
 
-        {isAdmin && (
+        {showRepFilterProp && (
           <select
-            className={SEL + " min-w-40"}
+            className={SEL + " w-full sm:w-auto sm:min-w-40"}
             value={filters.repId || ""}
             onChange={(e) => update("repId", e.target.value)}
           >
@@ -1202,104 +1229,107 @@ function FilterBar({
           </select>
         )}
 
-        <select
-          className={SEL + " min-w-25"}
-          value={filters.year || ""}
-          onChange={(e) => update("year", e.target.value)}
-        >
-          <option value="">All Years</option>
-          {[2024, 2025, 2026, 2027].map((y) => (
-            <option key={y} value={String(y)}>
-              {y}
-            </option>
-          ))}
-        </select>
-
-        <select
-          className={SEL + " min-w-30"}
-          value={filters.month || ""}
-          onChange={(e) => update("month", e.target.value)}
-        >
-          <option value="">All Months</option>
-          {[
-            "Jan",
-            "Feb",
-            "Mar",
-            "Apr",
-            "May",
-            "Jun",
-            "Jul",
-            "Aug",
-            "Sep",
-            "Oct",
-            "Nov",
-            "Dec",
-          ].map((m, i) => (
-            <option key={i} value={String(i + 1)}>
-              {m}
-            </option>
-          ))}
-        </select>
-
-        <select
-          className={SEL + " min-w-32.5"}
-          value={filters.datePreset || ""}
-          onChange={(e) => update("datePreset", e.target.value)}
-        >
-          <option value="">All Dates</option>
-          <option value="today">Today</option>
-          <option value="tomorrow">Tomorrow</option>
-          <option value="this-week">This Week</option>
-          <option value="next-week">Next Week</option>
-          <option value="this-month">This Month</option>
-          <option value="next-30">Next 30 Days</option>
-          <option value="custom">Custom Range...</option>
-        </select>
-
-        {filters.datePreset === "custom" && (
-          <div className="flex items-center gap-1.5">
-            <Input
-              type="date"
-              value={filters.dateFrom}
-              onChange={(e) =>
-                onFilterChange({ ...filters, dateFrom: e.target.value })
-              }
-              className="h-8 w-31.25 text-xs"
-            />
-            <span className="text-xs text-muted-foreground">to</span>
-            <Input
-              type="date"
-              value={filters.dateTo}
-              onChange={(e) =>
-                onFilterChange({ ...filters, dateTo: e.target.value })
-              }
-              className="h-8 w-31.25 text-xs"
-            />
-          </div>
-        )}
-
-        {activeCount > 0 && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 gap-1 text-xs text-muted-foreground"
-            onClick={() => onFilterChange(EMPTY_FILTERS)}
+        {/* Row 2 on mobile, inline on desktop: Year, Month, Date preset */}
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            className={SEL + " min-w-25"}
+            value={filters.year || ""}
+            onChange={(e) => update("year", e.target.value)}
           >
-            <X className="h-3 w-3" /> Clear
-          </Button>
-        )}
+            <option value="">All Years</option>
+            {[2024, 2025, 2026, 2027].map((y) => (
+              <option key={y} value={String(y)}>
+                {y}
+              </option>
+            ))}
+          </select>
+
+          <select
+            className={SEL + " min-w-30"}
+            value={filters.month || ""}
+            onChange={(e) => update("month", e.target.value)}
+          >
+            <option value="">All Months</option>
+            {[
+              "Jan",
+              "Feb",
+              "Mar",
+              "Apr",
+              "May",
+              "Jun",
+              "Jul",
+              "Aug",
+              "Sep",
+              "Oct",
+              "Nov",
+              "Dec",
+            ].map((m, i) => (
+              <option key={i} value={String(i + 1)}>
+                {m}
+              </option>
+            ))}
+          </select>
+
+          <select
+            className={SEL + " min-w-32.5"}
+            value={filters.datePreset || ""}
+            onChange={(e) => update("datePreset", e.target.value)}
+          >
+            <option value="">All Dates</option>
+            <option value="today">Today</option>
+            <option value="tomorrow">Tomorrow</option>
+            <option value="this-week">This Week</option>
+            <option value="next-week">Next Week</option>
+            <option value="this-month">This Month</option>
+            <option value="next-30">Next 30 Days</option>
+            <option value="custom">Custom Range...</option>
+          </select>
+
+          {filters.datePreset === "custom" && (
+            <div className="flex items-center gap-1.5">
+              <Input
+                type="date"
+                value={filters.dateFrom}
+                onChange={(e) =>
+                  onFilterChange({ ...filters, dateFrom: e.target.value })
+                }
+                className="h-8 w-31.25 text-xs"
+              />
+              <span className="text-xs text-muted-foreground">to</span>
+              <Input
+                type="date"
+                value={filters.dateTo}
+                onChange={(e) =>
+                  onFilterChange({ ...filters, dateTo: e.target.value })
+                }
+                className="h-8 w-31.25 text-xs"
+              />
+            </div>
+          )}
+
+          {activeCount > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 gap-1 text-xs text-muted-foreground"
+              onClick={() => onFilterChange(EMPTY_FILTERS)}
+            >
+              <X className="h-3 w-3" /> Clear
+            </Button>
+          )}
+        </div>
 
         {/* Next Unassigned Indicator */}
-        {nextUnassigned && isAdmin && (
-          <div className="ml-auto flex items-center gap-2 rounded-lg border border-amber-400 bg-amber-50 px-3 py-1.5 dark:border-amber-700 dark:bg-amber-950/50">
+        {nextUnassigned && showNextUnassignedProp && (
+          <div className="sm:ml-auto flex items-center gap-2 rounded-lg border border-amber-400 bg-amber-50 px-3 py-1.5 dark:border-amber-700 dark:bg-amber-950/50">
             <span className="text-[10px] font-bold uppercase text-amber-700 dark:text-amber-400">
               Next Unassigned:
             </span>
             <span className="text-xs font-semibold text-amber-900 dark:text-amber-200">
-              {new Date(nextUnassigned.hearing_date).toLocaleDateString(
-                "en-US",
-                { month: "short", day: "numeric" },
-              )}
+              {fmtDate(nextUnassigned.hearing_date, {
+                month: "short",
+                day: "numeric",
+              })}
               {nextUnassigned.converted_time_est &&
                 ` @ ${nextUnassigned.converted_time_est.slice(0, 5)}`}
               <span className="ml-1 font-normal text-amber-700 dark:text-amber-400">
@@ -1311,7 +1341,7 @@ function FilterBar({
       </div>
     </div>
   );
-}
+});
 
 // ── Frozen column config ──
 interface ColumnDef {
@@ -1330,30 +1360,7 @@ const COL_W = {
   ssn_last_4: 62,
   actions: 44,
 };
-const LEFT: Record<string, number> = {
-  checkbox: 0,
-  assigned_rep_id: COL_W.checkbox,
-  hearing_date: COL_W.checkbox + COL_W.assigned_rep_id,
-  hearing_time: COL_W.checkbox + COL_W.assigned_rep_id + COL_W.hearing_date,
-  claimant:
-    COL_W.checkbox +
-    COL_W.assigned_rep_id +
-    COL_W.hearing_date +
-    COL_W.hearing_time,
-  ssn_last_4:
-    COL_W.checkbox +
-    COL_W.assigned_rep_id +
-    COL_W.hearing_date +
-    COL_W.hearing_time +
-    COL_W.claimant,
-  actions:
-    COL_W.checkbox +
-    COL_W.assigned_rep_id +
-    COL_W.hearing_date +
-    COL_W.hearing_time +
-    COL_W.claimant +
-    COL_W.ssn_last_4,
-};
+
 const ALL_COLUMNS: ColumnDef[] = [
   { key: "checkbox", label: "", w: COL_W.checkbox, frozen: true },
   {
@@ -1504,7 +1511,78 @@ function HearingCard({
 }
 
 // ── Desktop table ──
-function HearingTable({
+// ── Memoized table row — only re-renders when its own data or selection changes ──
+interface MemoRowProps {
+  hearing: HearingRow;
+  ri: number;
+  isSelected: boolean;
+  isAdmin: boolean;
+  evenBg: string;
+  oddBg: string;
+  getLeftPos: (key: string) => number | undefined;
+  lastFrozenKey: string;
+  renderCell: (h: HearingRow, col: ColumnDef) => React.ReactNode;
+  columns: ColumnDef[];
+}
+
+const MemoRow = memo(
+  function MemoRow({
+    hearing,
+    ri,
+    isSelected,
+    isAdmin,
+    evenBg,
+    oddBg,
+    getLeftPos,
+    lastFrozenKey,
+    renderCell,
+    columns,
+  }: MemoRowProps) {
+    const rb = ri % 2 === 0 ? evenBg : oddBg;
+    return (
+      <tr className={cn("group border-b border-border/40 last:border-0", rb)}>
+        {columns.map((col) => {
+          const lp = getLeftPos(col.key);
+          const isLF = col.key === lastFrozenKey;
+          return (
+            <td
+              key={col.key}
+              className={cn(
+                "px-2 py-1.5",
+                col.frozen && cn("sticky z-10 overflow-hidden", rb),
+                isLF &&
+                  "border-r-2 border-r-blue-400/40 dark:border-r-blue-500/40",
+              )}
+              style={{
+                width: col.w,
+                minWidth: col.w,
+                maxWidth: col.frozen ? col.w : undefined,
+                ...(lp !== undefined ? { left: lp } : {}),
+              }}
+            >
+              {col.key === "checkbox" ? (
+                isAdmin ? (
+                  <input
+                    type="checkbox"
+                    data-row-checkbox
+                    data-hearing-id={hearing.id}
+                    defaultChecked={isSelected}
+                    className="h-4 w-4 accent-purple-600 cursor-pointer"
+                  />
+                ) : null
+              ) : (
+                renderCell(hearing, col)
+              )}
+            </td>
+          );
+        })}
+      </tr>
+    );
+  },
+  (prev, next) => prev.hearing === next.hearing && prev.ri === next.ri,
+);
+
+const HearingTable = memo(function HearingTable({
   hearings,
   userRole,
   onUpdate,
@@ -1519,8 +1597,7 @@ function HearingTable({
   representatives,
   mrTeams,
   repDocsAssignees,
-  selectedIds,
-  onToggleSelect,
+  showCheckbox: showCheckboxProp,
   onToggleAll,
   scrollRef,
   onScrollSync,
@@ -1539,12 +1616,28 @@ function HearingTable({
   representatives: RepRow[];
   mrTeams: MrTeamRow[];
   repDocsAssignees: RepDocsAssigneeRow[];
-  selectedIds: Set<number>;
-  onToggleSelect: (id: number) => void;
+  showCheckbox: boolean;
   onToggleAll: () => void;
   scrollRef: React.RefObject<HTMLDivElement | null>;
   onScrollSync: () => void;
 }) {
+  "use no memo";
+
+  // Filter columns based on role visibility
+  const visibleKeys = getVisibleColumns(userRole) || ["ALL"];
+  const columns =
+    visibleKeys[0] === "ALL"
+      ? ALL_COLUMNS
+      : ALL_COLUMNS.filter((col) => {
+          if (col.key === "checkbox") return showCheckboxProp;
+          if (col.key === "actions") return true;
+          if (col.key === "location")
+            return (
+              visibleKeys.includes("city") || visibleKeys.includes("state")
+            );
+          return visibleKeys.includes(col.key);
+        });
+
   // Build option lists for dropdowns
   const moaOptions = configOptions
     .filter((o) => o.option_type === "manner_of_appearance")
@@ -1587,27 +1680,29 @@ function HearingTable({
           { value: "Received", label: "Received" },
         ];
 
-  const isAdmin = !["rep", "staff"].includes(userRole);
-  const allSelected =
-    hearings.length > 0 && hearings.every((h) => selectedIds.has(h.id));
+  const isAdmin = showCheckboxProp;
+  // Checkboxes are uncontrolled — allSelected header defaults to unchecked
+  // toggleAll handles DOM sync directly
 
   const evenBg = "bg-white dark:bg-zinc-950";
   const oddBg = "bg-zinc-50 dark:bg-zinc-900";
   const headerBg = "bg-zinc-100 dark:bg-zinc-900";
-  const lastFrozenKey = "actions";
-  const getLeftPos = (key: string): number | undefined => LEFT[key];
+  // Compute frozen column left positions dynamically based on visible columns
+  const frozenCols = columns.filter((c) => c.frozen);
+  const dynamicLeft: Record<string, number> = {};
+  let leftAccum = 0;
+  for (const col of frozenCols) {
+    dynamicLeft[col.key] = leftAccum;
+    leftAccum += col.w;
+  }
+  const lastFrozenKey =
+    frozenCols.length > 0 ? frozenCols[frozenCols.length - 1].key : "";
+  const getLeftPos = (key: string): number | undefined => dynamicLeft[key];
   const renderCell = (hearing: HearingRow, col: ColumnDef) => {
     const editable = canEditField(userRole, col.key);
     switch (col.key) {
       case "checkbox":
-        return isAdmin ? (
-          <input
-            type="checkbox"
-            checked={selectedIds.has(hearing.id)}
-            onChange={() => onToggleSelect(hearing.id)}
-            className="h-4 w-4 accent-purple-600 cursor-pointer"
-          />
-        ) : null;
+        return null; // Handled directly in MemoRow
       case "assigned_rep_id":
         return <RepBadge hearing={hearing} />;
       case "hearing_date":
@@ -1764,14 +1859,34 @@ function HearingTable({
   };
 
   // Calculate total table width for the scrollbar
-  // const tableWidth = ALL_COLUMNS.reduce((s, c) => s + c.w, 0);
+  // const tableWidth = columns.reduce((s, c) => s + c.w, 0);
+
+  // ── Virtualization — only render visible rows ──
+  const ROW_H = 36;
+  const parentRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count: hearings.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => ROW_H,
+    overscan: 8,
+  });
 
   return (
     <>
       <div className="w-full overflow-hidden rounded-lg border">
         <div
-          ref={scrollRef}
-          className="hide-scrollbar overflow-x-auto"
+          ref={(node) => {
+            (
+              parentRef as React.MutableRefObject<HTMLDivElement | null>
+            ).current = node;
+            if (typeof scrollRef === "object" && scrollRef !== null) {
+              (
+                scrollRef as React.MutableRefObject<HTMLDivElement | null>
+              ).current = node;
+            }
+          }}
+          className="hide-scrollbar overflow-x-auto overflow-y-auto"
+          style={{ maxHeight: "calc(100vh - 320px)" }}
           onScroll={onScrollSync}
           onWheel={(e) => {
             if (e.shiftKey) {
@@ -1780,10 +1895,13 @@ function HearingTable({
             }
           }}
         >
-          <table className="w-max min-w-full border-collapse text-sm">
-            <thead>
+          <table
+            data-hearing-table
+            className="w-max min-w-full border-collapse text-sm"
+          >
+            <thead className="sticky top-0 z-30">
               <tr>
-                {ALL_COLUMNS.map((col) => {
+                {columns.map((col) => {
                   const leftPos = getLeftPos(col.key);
                   const isLF = col.key === lastFrozenKey;
                   return (
@@ -1794,13 +1912,14 @@ function HearingTable({
                         headerBg,
                         col.sortable &&
                           "cursor-pointer select-none hover:text-foreground",
-                        col.frozen && "sticky z-20",
+                        col.frozen && "sticky z-20 overflow-hidden",
                         isLF &&
-                          "shadow-[inset_-3px_0_0_0_rgba(59,130,246,0.35),4px_0_8px_-3px_rgba(0,0,0,0.12)] dark:shadow-[inset_-3px_0_0_0_rgba(96,165,250,0.4),4px_0_8px_-3px_rgba(0,0,0,0.5)]",
+                          "border-r-2 border-r-blue-400/40 dark:border-r-blue-500/40",
                       )}
                       style={{
                         width: col.w,
                         minWidth: col.w,
+                        maxWidth: col.frozen ? col.w : undefined,
                         ...(leftPos !== undefined ? { left: leftPos } : {}),
                       }}
                       onClick={() => col.sortable && onSort(col.key)}
@@ -1809,7 +1928,8 @@ function HearingTable({
                         {col.key === "checkbox" && isAdmin ? (
                           <input
                             type="checkbox"
-                            checked={allSelected}
+                            defaultChecked={false}
+                            data-select-all-checkbox
                             onChange={onToggleAll}
                             className="h-4 w-4 accent-purple-600 cursor-pointer"
                           />
@@ -1833,48 +1953,64 @@ function HearingTable({
               {hearings.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={ALL_COLUMNS.length}
+                    colSpan={columns.length}
                     className="h-32 text-center text-sm text-muted-foreground"
                   >
                     No hearings found.
                   </td>
                 </tr>
               ) : (
-                hearings.map((h, ri) => {
-                  const rb = ri % 2 === 0 ? evenBg : oddBg;
-                  return (
-                    <tr
-                      key={h.id}
-                      className={cn(
-                        "group border-b border-border/40 last:border-0",
-                        rb,
-                      )}
-                    >
-                      {ALL_COLUMNS.map((col) => {
-                        const lp = getLeftPos(col.key);
-                        const isLF = col.key === lastFrozenKey;
-                        return (
-                          <td
-                            key={col.key}
-                            className={cn(
-                              "px-2 py-1.5",
-                              col.frozen && cn("sticky z-10", rb),
-                              isLF &&
-                                "shadow-[inset_-3px_0_0_0_rgba(59,130,246,0.35),4px_0_8px_-3px_rgba(0,0,0,0.12)] dark:shadow-[inset_-3px_0_0_0_rgba(96,165,250,0.4),4px_0_8px_-3px_rgba(0,0,0,0.5)]",
-                            )}
-                            style={{
-                              width: col.w,
-                              minWidth: col.w,
-                              ...(lp !== undefined ? { left: lp } : {}),
-                            }}
-                          >
-                            {renderCell(h, col)}
-                          </td>
-                        );
-                      })}
+                <>
+                  {/* Top spacer — uses a single cell spanning all columns */}
+                  {(virtualizer.getVirtualItems()[0]?.start ?? 0) > 0 && (
+                    <tr>
+                      <td
+                        colSpan={columns.length}
+                        style={{
+                          height: virtualizer.getVirtualItems()[0]?.start ?? 0,
+                          padding: 0,
+                          border: "none",
+                        }}
+                      />
                     </tr>
-                  );
-                })
+                  )}
+                  {virtualizer.getVirtualItems().map((vRow) => {
+                    const h = hearings[vRow.index];
+                    return (
+                      <MemoRow
+                        key={h.id}
+                        hearing={h}
+                        ri={vRow.index}
+                        isSelected={false}
+                        isAdmin={isAdmin}
+                        evenBg={evenBg}
+                        oddBg={oddBg}
+                        getLeftPos={getLeftPos}
+                        lastFrozenKey={lastFrozenKey}
+                        renderCell={renderCell}
+                        columns={columns}
+                      />
+                    );
+                  })}
+                  {/* Bottom spacer */}
+                  {(() => {
+                    const items = virtualizer.getVirtualItems();
+                    const lastEnd = items[items.length - 1]?.end ?? 0;
+                    const remaining = virtualizer.getTotalSize() - lastEnd;
+                    return remaining > 0 ? (
+                      <tr>
+                        <td
+                          colSpan={columns.length}
+                          style={{
+                            height: remaining,
+                            padding: 0,
+                            border: "none",
+                          }}
+                        />
+                      </tr>
+                    ) : null;
+                  })()}
+                </>
               )}
             </tbody>
           </table>
@@ -1882,7 +2018,7 @@ function HearingTable({
       </div>
     </>
   );
-}
+});
 
 // ══════════════════════════════════════════════════════════════
 // MAIN — SERVER-SIDE PAGINATION
@@ -1911,16 +2047,16 @@ interface DashboardClientProps {
 }
 
 export function DashboardClient({
-  initialHearings,
-  initialTotalFiltered,
-  totalCount,
+  initialHearings = [],
+  initialTotalFiltered = 0,
+  totalCount = 0,
   stats,
-  representatives,
-  mrTeams,
-  configOptions,
-  repDocsAssignees,
-  repCounts,
-  nextUnassigned,
+  representatives = [],
+  mrTeams = [],
+  configOptions = [],
+  repDocsAssignees = [],
+  repCounts = [],
+  nextUnassigned = null,
   userRole,
   userEmail,
   userName,
@@ -1933,6 +2069,21 @@ export function DashboardClient({
   const [sortKey, setSortKey] = useState("");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [loading, setLoading] = useState(false);
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== "undefined"
+      ? window.matchMedia("(max-width: 767px)").matches
+      : false,
+  );
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    requestAnimationFrame(() => setMounted(true));
+  }, []);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const handler = () => setIsMobile(mq.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
   const [, startTransition] = useTransition();
   const [postHrgHearing, setPostHrgHearing] = useState<HearingRow | null>(null);
   const [showAddHearing, setShowAddHearing] = useState(false);
@@ -1941,7 +2092,25 @@ export function DashboardClient({
   const [showUnassignAll, setShowUnassignAll] = useState(false);
   const [showActivityLog, setShowActivityLog] = useState(false);
   const [showRepStats, setShowRepStats] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [showCsvCompare, setShowCsvCompare] = useState(false);
+  // Selection is 100% DOM-based — no React state at all for checkbox clicks
+  // The bulk action bar reads from the ref only when the user clicks an action
+  const selectedIdsRef = useRef<Set<number>>(new Set());
+  const bulkBarRef = useRef<HTMLDivElement>(null);
+  const bulkCountRef = useRef<HTMLSpanElement>(null);
+
+  const syncBulkBar = useCallback(() => {
+    const count = selectedIdsRef.current.size;
+    if (bulkBarRef.current)
+      bulkBarRef.current.style.display = count > 0 ? "flex" : "none";
+    if (bulkCountRef.current)
+      bulkCountRef.current.textContent = `${count} selected`;
+    // Adjust fake scroll spacer
+    const spacer = document.querySelector(
+      "[data-scroll-spacer]",
+    ) as HTMLElement | null;
+    if (spacer) spacer.style.bottom = count > 0 ? "48px" : "0px";
+  }, []);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Server-side fetch
@@ -2028,6 +2197,7 @@ export function DashboardClient({
 
   const handleUpdate = useCallback(
     async (hearingId: number, field: string, value: UpdateValue) => {
+      // Optimistic update — immediately reflect in UI
       setHearings((prev) =>
         prev.map((h) => {
           if (h.id !== hearingId) return h;
@@ -2053,13 +2223,10 @@ export function DashboardClient({
           prev ? { ...prev, [field]: value } : null,
         );
       }
-      startTransition(async () => {
-        try {
-          await updateHearing(hearingId, field, value);
-        } catch (e) {
-          console.error("Update failed:", e);
-        }
-      });
+      // Server update in background
+      updateHearing(hearingId, field, value).catch((e) =>
+        console.error("Update failed:", e),
+      );
     },
     [representatives, mrTeams, postHrgHearing],
   );
@@ -2197,7 +2364,16 @@ export function DashboardClient({
     [representatives, hearings],
   );
 
-  const isAdmin = !["rep", "staff"].includes(userRole);
+  // Granular permissions matching PHP dashboard
+  const showCheckbox = canSeeCheckbox(userRole);
+  const showAdminButtons = canSeeAdminButtons(userRole);
+  const showActivityLogBtn = canSeeActivityLog(userRole);
+  const showRepStatsBtn = canSeeRepStats(userRole);
+  const canCsvCompare = canSeeCsvCompare(userRole);
+  const showRepFilter = canSeeRepFilter(userRole);
+  const showNextUnassigned = canSeeNextUnassigned(userRole);
+  const showExport = canExport(userRole);
+  const hasManageAccess = canManage(userRole);
 
   // const handleRefresh = () => {
   //   fetchPage(filters, page, pageSize, sortKey, sortDir);
@@ -2207,8 +2383,44 @@ export function DashboardClient({
   const tableScrollRef = useRef<HTMLDivElement>(null);
   const fakeScrollRef = useRef<HTMLDivElement>(null);
   const scrollSyncing = useRef(false);
-  const tableWidth = ALL_COLUMNS.reduce((s, c) => s + c.w, 0);
+  // Compute visible columns for scrollbar width
+  const visibleKeys = getVisibleColumns(userRole) || ["ALL"];
+  const visibleColumns =
+    visibleKeys[0] === "ALL"
+      ? ALL_COLUMNS
+      : ALL_COLUMNS.filter((col) => {
+          if (col.key === "checkbox") return showCheckbox;
+          if (col.key === "actions") return true;
+          if (col.key === "location")
+            return (
+              visibleKeys.includes("city") || visibleKeys.includes("state")
+            );
+          return visibleKeys.includes(col.key);
+        });
+  const tableWidth = visibleColumns.reduce((s, c) => s + c.w, 0);
   const [tableContainerWidth, setTableContainerWidth] = useState(0);
+
+  // Native event delegation for checkbox clicks — zero React overhead
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const target = e.target as HTMLInputElement;
+      if (
+        target.matches("input[data-row-checkbox]") &&
+        target.dataset.hearingId
+      ) {
+        const id = Number(target.dataset.hearingId);
+        const s = selectedIdsRef.current;
+        if (s.has(id)) s.delete(id);
+        else s.add(id);
+        syncBulkBar();
+      }
+    };
+    const table = document.querySelector("[data-hearing-table]");
+    if (table) table.addEventListener("change", handler);
+    return () => {
+      if (table) table.removeEventListener("change", handler);
+    };
+  }, [syncBulkBar]);
 
   useEffect(() => {
     const el = tableScrollRef.current;
@@ -2241,72 +2453,141 @@ export function DashboardClient({
     });
   }, []);
 
-  // Bulk selection
-  const toggleSelect = useCallback((id: number) => {
-    setSelectedIds((prev) => {
-      const n = new Set(prev);
-      if (n.has(id)) n.delete(id);
-      else n.add(id);
-      return n;
-    });
-  }, []);
+  // Bulk selection — pure DOM, zero React re-renders on checkbox click
   const toggleAll = useCallback(() => {
-    setSelectedIds((prev) =>
-      prev.size === hearings.length
-        ? new Set()
-        : new Set(hearings.map((h) => h.id)),
-    );
-  }, [hearings]);
-  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+    const s = selectedIdsRef.current;
+    const wasAll = s.size === hearings.length;
+    if (wasAll) {
+      s.clear();
+    } else {
+      hearings.forEach((h) => s.add(h.id));
+    }
+    syncBulkBar();
+    const container = document.querySelector("[data-hearing-table]");
+    if (container) {
+      container
+        .querySelectorAll<HTMLInputElement>("input[data-row-checkbox]")
+        .forEach((cb) => {
+          cb.checked = !wasAll;
+        });
+      const selectAllCb = container.querySelector<HTMLInputElement>(
+        "input[data-select-all-checkbox]",
+      );
+      if (selectAllCb) selectAllCb.checked = !wasAll;
+    }
+  }, [hearings, syncBulkBar]);
+  const clearSelection = useCallback(() => {
+    selectedIdsRef.current.clear();
+    syncBulkBar();
+    const container = document.querySelector("[data-hearing-table]");
+    if (container) {
+      container
+        .querySelectorAll<HTMLInputElement>(
+          "input[data-row-checkbox], input[data-select-all-checkbox]",
+        )
+        .forEach((cb) => {
+          cb.checked = false;
+        });
+    }
+  }, [syncBulkBar]);
 
   const handleBulkUnassign = useCallback(async () => {
-    if (!confirm(`Unassign ${selectedIds.size} hearings?`)) return;
-    const ids = Array.from(selectedIds);
+    if (!confirm(`Unassign ${selectedIdsRef.current.size} hearings?`)) return;
+    const ids = Array.from(selectedIdsRef.current);
     for (const id of ids) {
       await updateHearing(id, "assigned_rep_id", null);
     }
-    setSelectedIds(new Set());
+    clearSelection();
     fetchPage(filters, page, pageSize, sortKey, sortDir);
-  }, [selectedIds, filters, page, pageSize, sortKey, sortDir, fetchPage]);
+  }, [filters, page, pageSize, sortKey, sortDir, fetchPage, clearSelection]);
 
   const handleBulkDelete = useCallback(async () => {
-    if (!confirm(`Delete ${selectedIds.size} hearings? This cannot be undone.`))
+    if (
+      !confirm(
+        `Delete ${selectedIdsRef.current.size} hearings? This cannot be undone.`,
+      )
+    )
       return;
-    const ids = Array.from(selectedIds);
+    const ids = Array.from(selectedIdsRef.current);
     for (const id of ids) {
       await deleteHearing(id);
     }
-    setSelectedIds(new Set());
+    clearSelection();
     fetchPage(filters, page, pageSize, sortKey, sortDir);
-  }, [selectedIds, filters, page, pageSize, sortKey, sortDir, fetchPage]);
+  }, [filters, page, pageSize, sortKey, sortDir, fetchPage, clearSelection]);
 
   return (
-    <>
+    <div suppressHydrationWarning>
       <AppHeader
         title="Hearing Dashboard"
         subtitle={`${totalCount} total hearings`}
         actions={
-          <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs">
-            <Download className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Export</span>
-          </Button>
+          showExport ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn("h-8 gap-1.5 text-xs", BTN_PRESS)}
+              onClick={async () => {
+                try {
+                  const csvRows = await exportHearingsCsv({
+                    ...filters,
+                    page: 1,
+                    pageSize: 999999,
+                    sortKey,
+                    sortDir,
+                  });
+                  if (!csvRows.length) {
+                    alert("No data to export");
+                    return;
+                  }
+                  const headers = Object.keys(csvRows[0]);
+                  const csv = [
+                    headers.join(","),
+                    ...csvRows.map((r) =>
+                      headers
+                        .map(
+                          (h) =>
+                            `"${String((r as Record<string, string>)[h] || "").replace(/"/g, '""')}"`,
+                        )
+                        .join(","),
+                    ),
+                  ].join("\n");
+                  const blob = new Blob([csv], { type: "text/csv" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `hearings-export-${new Date().toISOString().split("T")[0]}.csv`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                } catch {
+                  alert("Export failed");
+                }
+              }}
+            >
+              <Download className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Export</span>
+            </Button>
+          ) : undefined
         }
       />
       <div className="flex min-w-0 flex-col gap-3 p-3 sm:gap-4 sm:p-4 lg:p-6">
         {/* Navbar with page links + action buttons (matches old dashboard) */}
         <DashboardNav userRole={userRole}>
-          {isAdmin && (
+          {showAdminButtons && (
             <>
               <Button
                 size="sm"
-                className="h-7 gap-1.5 text-[11px]"
+                className={cn("h-7 gap-1.5 text-[11px]", BTN_PRESS)}
                 onClick={() => setShowEmailAll(true)}
               >
                 📧 Email All
               </Button>
               <Button
                 size="sm"
-                className="h-7 gap-1.5 text-[11px] bg-purple-600 hover:bg-purple-700"
+                className={cn(
+                  "h-7 gap-1.5 text-[11px] bg-purple-600 hover:bg-purple-700",
+                  BTN_PRESS,
+                )}
                 onClick={() => setShowAutoAssign(true)}
               >
                 ⚡ Auto-Assign All
@@ -2314,7 +2595,7 @@ export function DashboardClient({
               <Button
                 variant="destructive"
                 size="sm"
-                className="h-7 gap-1.5 text-[11px]"
+                className={cn("h-7 gap-1.5 text-[11px]", BTN_PRESS)}
                 onClick={() => setShowUnassignAll(true)}
               >
                 🗑️ Unassign All
@@ -2322,19 +2603,25 @@ export function DashboardClient({
               <Button
                 variant="outline"
                 size="sm"
-                className="h-7 gap-1.5 text-[11px] text-emerald-600 border-emerald-300 hover:bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:hover:bg-emerald-950"
+                className={cn(
+                  "h-7 gap-1.5 text-[11px] text-emerald-600 border-emerald-300 hover:bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:hover:bg-emerald-950",
+                  BTN_PRESS,
+                )}
                 onClick={() => setShowAddHearing(true)}
               >
                 + Add Hearing
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 gap-1.5 text-[11px]"
-              >
-                📊 CSV Compare
-              </Button>
             </>
+          )}
+          {canCsvCompare && (
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn("h-7 gap-1.5 text-[11px]", BTN_PRESS)}
+              onClick={() => setShowCsvCompare(true)}
+            >
+              📊 CSV Compare
+            </Button>
           )}
         </DashboardNav>
 
@@ -2345,35 +2632,37 @@ export function DashboardClient({
           repCounts={repCounts}
           nextUnassigned={nextUnassigned}
           userRole={userRole}
+          showRepFilter={showRepFilter}
+          showNextUnassigned={showNextUnassigned}
         />
 
-        {/* Pagination bar — above table like old dashboard, with Activity Log + Rep Stats */}
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-card px-3 py-2">
+        {/* Pagination bar */}
+        <div className="flex flex-col gap-2 rounded-lg border bg-card px-3 py-2 sm:flex-row sm:flex-wrap sm:items-center">
           <span className="text-xs text-muted-foreground tabular-nums">
             Showing {totalFiltered === 0 ? 0 : (page - 1) * pageSize + 1}-
             {Math.min(page * pageSize, totalFiltered)} of {totalFiltered}
             {totalFiltered !== totalCount && ` (filtered from ${totalCount})`}
           </span>
-          <div className="ml-auto flex items-center gap-2">
-            {userRole !== "rep" && (
-              <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 gap-1.5 text-xs"
-                  onClick={() => setShowActivityLog(true)}
-                >
-                  <ClipboardList className="h-3.5 w-3.5" /> Activity Log
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 gap-1.5 text-xs"
-                  onClick={() => setShowRepStats(true)}
-                >
-                  <BarChart3 className="h-3.5 w-3.5" /> Rep Stats
-                </Button>
-              </>
+          <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+            {showActivityLogBtn && (
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn("h-7 gap-1.5 text-xs", BTN_PRESS)}
+                onClick={() => setShowActivityLog(true)}
+              >
+                <ClipboardList className="h-3.5 w-3.5" /> Activity Log
+              </Button>
+            )}
+            {showRepStatsBtn && (
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn("h-7 gap-1.5 text-xs", BTN_PRESS)}
+                onClick={() => setShowRepStats(true)}
+              >
+                <BarChart3 className="h-3.5 w-3.5" /> Rep Stats
+              </Button>
             )}
             <Button
               variant="outline"
@@ -2432,27 +2721,32 @@ export function DashboardClient({
         </div>
 
         {/* Mobile: Cards */}
-        <div
-          className={cn(
-            "relative flex flex-col gap-2 md:hidden",
-            loading && "opacity-50 pointer-events-none",
-          )}
-        >
-          {hearings.map((h) => (
-            <HearingCard
-              key={h.id}
-              hearing={h}
-              userRole={userRole}
-              onUpdate={handleUpdate}
-              onOpenPostHrg={setPostHrgHearing}
-            />
-          ))}
-          {hearings.length === 0 && !loading && (
-            <div className="py-12 text-center text-sm text-muted-foreground">
-              No hearings found.
-            </div>
-          )}
-        </div>
+        {/* Mobile cards — only mount on small screens */}
+        {isMobile && (
+          <div
+            className={cn(
+              "relative flex flex-col gap-2",
+              loading && "opacity-50 pointer-events-none",
+            )}
+          >
+            {hearings.map((h) => (
+              <HearingCard
+                key={h.id}
+                hearing={h}
+                userRole={userRole}
+                onUpdate={handleUpdate}
+                onOpenPostHrg={setPostHrgHearing}
+              />
+            ))}
+            {hearings.length === 0 && !loading && (
+              <div className="py-12 text-center text-sm text-muted-foreground">
+                No hearings found.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Desktop table */}
         {/* Desktop: Table */}
         <div
           className={cn(
@@ -2480,8 +2774,7 @@ export function DashboardClient({
             representatives={representatives}
             mrTeams={mrTeams}
             repDocsAssignees={repDocsAssignees}
-            selectedIds={selectedIds}
-            onToggleSelect={toggleSelect}
+            showCheckbox={showCheckbox}
             onToggleAll={toggleAll}
             scrollRef={tableScrollRef}
             onScrollSync={handleTableScroll}
@@ -2524,6 +2817,14 @@ export function DashboardClient({
         <ActivityLogModal onClose={() => setShowActivityLog(false)} />
       )}
       {showRepStats && <RepStatsModal onClose={() => setShowRepStats(false)} />}
+      {showCsvCompare && (
+        <CsvCompareModal
+          onClose={() => {
+            setShowCsvCompare(false);
+            fetchPage(filters, page, pageSize, sortKey, sortDir);
+          }}
+        />
+      )}
 
       {/* Edit hearing modal */}
       {editHearing &&
@@ -2538,7 +2839,7 @@ export function DashboardClient({
             >
               <div className="flex items-center justify-between border-b bg-muted/50 px-5 py-4 shrink-0">
                 <h2 className="text-sm font-semibold">
-                  {isAdmin ? "✏️ Edit Hearing" : "👁️ View Hearing"} #
+                  {hasManageAccess ? "✏️ Edit Hearing" : "👁️ View Hearing"} #
                   {editHearing.id}
                 </h2>
                 <button
@@ -2560,7 +2861,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       Claimant *
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <input
                         name="claimant"
                         className="h-9 w-full rounded border bg-card px-2 text-sm"
@@ -2576,7 +2877,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       SSN (Last 4)
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <input
                         name="ssn_last_4"
                         className="h-9 w-full rounded border bg-card px-2 text-sm"
@@ -2591,7 +2892,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       Claim Type
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <select
                         name="claim_type"
                         className="h-9 w-full rounded border bg-card px-2 text-sm"
@@ -2625,7 +2926,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       Date *
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <input
                         name="hearing_date"
                         type="date"
@@ -2642,7 +2943,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       Time *
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <input
                         name="hearing_time"
                         type="time"
@@ -2659,7 +2960,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       Timezone *
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <select
                         name="time_zone"
                         className="h-9 w-full rounded border bg-card px-2 text-sm"
@@ -2687,7 +2988,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       ALJ
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <input
                         name="alj"
                         className="h-9 w-full rounded border bg-card px-2 text-sm"
@@ -2706,7 +3007,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       City
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <input
                         name="city"
                         className="h-9 w-full rounded border bg-card px-2 text-sm"
@@ -2720,7 +3021,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       State
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <input
                         name="state"
                         className="h-9 w-full rounded border bg-card px-2 text-sm"
@@ -2735,7 +3036,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       Claimant Location
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <input
                         name="claimant_location"
                         className="h-9 w-full rounded border bg-card px-2 text-sm"
@@ -2751,7 +3052,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       Rep Location
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <input
                         name="representative_location"
                         className="h-9 w-full rounded border bg-card px-2 text-sm"
@@ -2772,7 +3073,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       Medical Expert
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <input
                         name="medical_expert"
                         className="h-9 w-full rounded border bg-card px-2 text-sm"
@@ -2788,7 +3089,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       Vocational Expert
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <input
                         name="vocational_expert"
                         className="h-9 w-full rounded border bg-card px-2 text-sm"
@@ -2804,7 +3105,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       Status Date
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <input
                         name="status_date"
                         type="date"
@@ -2821,7 +3122,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       Entered Hearing Level
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <input
                         name="entered_hearing_level_date"
                         type="date"
@@ -2840,7 +3141,7 @@ export function DashboardClient({
                     <label className="mb-1 block text-[11px] font-medium text-muted-foreground">
                       Download Type
                     </label>
-                    {isAdmin ? (
+                    {hasManageAccess ? (
                       <select
                         name="download_type"
                         className="h-9 w-full rounded border bg-card px-2 text-sm"
@@ -2901,7 +3202,7 @@ export function DashboardClient({
                           name={field}
                           defaultChecked={editHearing[field]}
                           className="h-4 w-4 accent-green-600"
-                          disabled={!isAdmin}
+                          disabled={!hasManageAccess}
                         />
                         {labels[field]}
                       </label>
@@ -2911,7 +3212,7 @@ export function DashboardClient({
               </form>
               <div className="flex items-center justify-between border-t bg-muted/50 px-5 py-3 shrink-0">
                 <div>
-                  {isAdmin && (
+                  {hasManageAccess && (
                     <Button
                       variant="destructive"
                       size="sm"
@@ -2936,7 +3237,7 @@ export function DashboardClient({
                   >
                     Cancel
                   </Button>
-                  {isAdmin && (
+                  {hasManageAccess && (
                     <Button
                       size="sm"
                       className="h-8 text-xs"
@@ -2959,10 +3260,11 @@ export function DashboardClient({
         tableWidth > tableContainerWidth &&
         createPortal(
           <div
+            data-scroll-spacer
             ref={fakeScrollRef}
             onScroll={handleFakeScroll}
             style={{
-              bottom: selectedIds.size > 0 ? 48 : 0,
+              bottom: 0, // adjusted by syncBulkBar via data-scroll-spacer
               left: "var(--sidebar-width, 0px)",
               height: 28,
               scrollbarWidth: "auto",
@@ -2975,19 +3277,57 @@ export function DashboardClient({
           document.body,
         )}
 
-      {/* Bulk action bar — fixed at bottom when rows selected */}
-      {selectedIds.size > 0 &&
+      {/* Bulk action bar — only after hydration to avoid SSR mismatch */}
+      {mounted &&
         createPortal(
-          <div className="fixed bottom-0 left-0 right-0 z-90 flex items-center justify-between gap-3 border-t bg-card px-6 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.1)]">
+          <div
+            ref={bulkBarRef}
+            style={{ display: "none" }}
+            className="fixed bottom-0 left-0 right-0 z-90 flex items-center justify-between gap-3 border-t bg-card px-6 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.1)]"
+          >
             <div className="flex items-center gap-3">
-              <span className="flex h-7 items-center rounded-md bg-purple-100 px-3 text-xs font-bold text-purple-700 dark:bg-purple-900/40 dark:text-purple-300">
-                {selectedIds.size} selected
+              <span
+                ref={bulkCountRef}
+                className="flex h-7 items-center rounded-md bg-purple-100 px-3 text-xs font-bold text-purple-700 dark:bg-purple-900/40 dark:text-purple-300"
+              >
+                0 selected
               </span>
               <Button
                 size="sm"
-                className="h-7 gap-1.5 text-[11px] bg-purple-600 hover:bg-purple-700"
-                onClick={() => {
-                  /* TODO: bulk auto-assign via chunks */
+                className={cn(
+                  "h-7 gap-1.5 text-[11px] bg-purple-600 hover:bg-purple-700",
+                  BTN_PRESS,
+                )}
+                onClick={async () => {
+                  if (
+                    !confirm(
+                      `Auto-assign ${selectedIdsRef.current.size} selected hearings?`,
+                    )
+                  )
+                    return;
+                  const ids = Array.from(selectedIdsRef.current);
+                  setAutoAssignStatus({
+                    hearingId: 0,
+                    state: "loading",
+                    message: `Assigning ${ids.length} hearings...`,
+                  });
+                  try {
+                    const result = await bulkAutoAssignSelected(ids);
+                    setAutoAssignStatus({
+                      hearingId: 0,
+                      state: "success",
+                      message: `${result.assigned} assigned, ${result.failed} failed`,
+                    });
+                    clearSelection();
+                    fetchPage(filters, page, pageSize, sortKey, sortDir);
+                  } catch (e: unknown) {
+                    setAutoAssignStatus({
+                      hearingId: 0,
+                      state: "error",
+                      message: e instanceof Error ? e.message : "Failed",
+                    });
+                  }
+                  setTimeout(() => setAutoAssignStatus(null), 4000);
                 }}
               >
                 ⚡ Auto-Assign
@@ -2995,7 +3335,7 @@ export function DashboardClient({
               <Button
                 variant="outline"
                 size="sm"
-                className="h-7 gap-1.5 text-[11px]"
+                className={cn("h-7 gap-1.5 text-[11px]", BTN_PRESS)}
                 onClick={handleBulkUnassign}
               >
                 🔄 Unassign
@@ -3003,7 +3343,7 @@ export function DashboardClient({
               <Button
                 variant="destructive"
                 size="sm"
-                className="h-7 gap-1.5 text-[11px]"
+                className={cn("h-7 gap-1.5 text-[11px]", BTN_PRESS)}
                 onClick={handleBulkDelete}
               >
                 🗑️ Delete
@@ -3011,9 +3351,24 @@ export function DashboardClient({
               <Button
                 variant="outline"
                 size="sm"
-                className="h-7 gap-1.5 text-[11px]"
-                onClick={() => {
-                  /* TODO: bulk email */
+                className={cn("h-7 gap-1.5 text-[11px]", BTN_PRESS)}
+                onClick={async () => {
+                  if (
+                    !confirm(
+                      `Email reps for ${selectedIdsRef.current.size} selected hearings?`,
+                    )
+                  )
+                    return;
+                  const ids = Array.from(selectedIdsRef.current);
+                  try {
+                    const result = await bulkEmailSelected(ids);
+                    alert(
+                      `Emailed ${result.emailsSent} reps (${result.emailsFailed} failed${result.skippedNoRep > 0 ? `, ${result.skippedNoRep} unassigned` : ""})`,
+                    );
+                    clearSelection();
+                  } catch (e: unknown) {
+                    alert(e instanceof Error ? e.message : "Email failed");
+                  }
                 }}
               >
                 📧 Email Selected
@@ -3085,6 +3440,541 @@ export function DashboardClient({
           </div>,
           document.body,
         )}
-    </>
+    </div>
+  );
+}
+
+// ── CSV Compare Modal ──────────────────────────────────────────────────────
+
+interface ChronicleEntry {
+  claimant: string;
+  ssn: string;
+  claimType: string;
+  hearingDate: string;
+  time: string;
+  timeZone: string;
+  claimantLocation: string;
+  repLocation: string;
+  alj: string;
+  medExpert: string;
+  vocExpert: string;
+  statusDate: string;
+  enteredDate: string;
+}
+
+type CompareCategory = "new" | "rescheduled" | "duplicate";
+
+function CsvCompareModal({ onClose }: { onClose: () => void }) {
+  const [file, setFile] = useState<File | null>(null);
+  const [status, setStatus] = useState<{
+    msg: string;
+    type: "loading" | "success" | "error";
+  } | null>(null);
+  const [dbCount, setDbCount] = useState<number | null>(null);
+  const [results, setResults] = useState<{
+    newEntries: (ChronicleEntry & { _cat: "new" })[];
+    rescheduled: (ChronicleEntry & {
+      _cat: "rescheduled";
+      prevDate: string;
+      prevClaimant: string;
+    })[];
+    duplicates: (ChronicleEntry & { _cat: "duplicate" })[];
+  } | null>(null);
+  const [activeTab, setActiveTab] = useState<CompareCategory>("new");
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<{
+    imported: number;
+    skipped: number;
+  } | null>(null);
+
+  // Load DB count on mount
+  useEffect(() => {
+    fetchAllHearingsForCompare().then((d) => setDbCount(d.totalCount));
+  }, []);
+
+  const stripSuffix = (name: string) =>
+    name.replace(/\s*\([^)]+\)\s*$/g, "").trim();
+
+  const normalizeTime = (t: string) => {
+    if (!t) return "";
+    const m = t.match(/(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)?/i);
+    if (!m) return t.toLowerCase().replace(/\s+/g, "");
+    let h = parseInt(m[1], 10);
+    const ampm = (m[3] || "").toUpperCase();
+    if (ampm === "PM" && h < 12) h += 12;
+    if (ampm === "AM" && h === 12) h = 0;
+    return `${String(h).padStart(2, "0")}:${m[2]}`;
+  };
+
+  const normalizeDate = (d: string) => {
+    if (!d) return "";
+    // YYYY-MM-DD
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+    // MM/DD/YYYY
+    const m = d.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+    if (m) {
+      const y = m[3].length === 2 ? `20${m[3]}` : m[3];
+      return `${y}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`;
+    }
+    return d;
+  };
+
+  const parseChronicleDateTime = (dt: string) => {
+    if (!dt) return { date: "", time: "" };
+    const parts = dt.trim().split(/\s+/);
+    const datePart = normalizeDate(parts[0] || "");
+    const timePart = parts.slice(1).join(" ");
+    return { date: datePart, time: timePart };
+  };
+
+  const handleCompare = async () => {
+    if (!file) return;
+    setStatus({ msg: "Loading hearings from database...", type: "loading" });
+    setResults(null);
+    setImportResult(null);
+
+    try {
+      const { hearings: dbHearings } = await fetchAllHearingsForCompare();
+      setDbCount(dbHearings.length);
+
+      // Build lookup maps from DB
+      const exactMap = new Map<string, boolean>();
+      const personMap = new Map<string, { date: string; claimant: string }[]>();
+
+      for (const h of dbHearings) {
+        const base = stripSuffix(h.claimant || "").toLowerCase();
+        const ssn = (h.ssn_last_4 || "").trim();
+        const date = h.hearing_date || "";
+        const time = normalizeTime(
+          h.hearing_time || h.converted_time_est || "",
+        );
+
+        if (base && ssn) {
+          exactMap.set(`${base}|${ssn}|${date}|${time}`, true);
+          const pk = `${base}|${ssn}`;
+          if (!personMap.has(pk)) personMap.set(pk, []);
+          personMap.get(pk)!.push({ date, claimant: h.claimant });
+        }
+      }
+
+      setStatus({ msg: "Parsing Chronicle CSV...", type: "loading" });
+
+      // Parse CSV
+      const text = await file.text();
+      const lines = text.split(/\r?\n/);
+      const headers = lines[0]
+        .split(",")
+        .map((h) => h.trim().replace(/^"|"$/g, ""));
+
+      const col = (row: string[], name: string) => {
+        const idx = headers.findIndex((h) =>
+          h.toLowerCase().includes(name.toLowerCase()),
+        );
+        return idx >= 0 ? (row[idx] || "").trim().replace(/^"|"$/g, "") : "";
+      };
+
+      const newEntries: (ChronicleEntry & { _cat: "new" })[] = [];
+      const rescheduled: (ChronicleEntry & {
+        _cat: "rescheduled";
+        prevDate: string;
+        prevClaimant: string;
+      })[] = [];
+      const duplicates: (ChronicleEntry & { _cat: "duplicate" })[] = [];
+
+      for (let i = 1; i < lines.length; i++) {
+        if (!lines[i].trim()) continue;
+        // Simple CSV parse (handles basic quoting)
+        const row =
+          lines[i]
+            .match(/(".*?"|[^,]*)/g)
+            ?.map((c) => c.trim().replace(/^"|"$/g, "")) || [];
+
+        const firstName = col(row, "client_firstName");
+        const lastName = col(row, "client_lastName");
+        const fullName = `${firstName} ${lastName}`.trim();
+        if (!fullName || fullName === " ") continue;
+        const ssn = col(row, "client_last4Ssn");
+        const { date: hDate, time: hTime } = parseChronicleDateTime(
+          col(row, "hearingScheduledDatetime"),
+        );
+
+        let claimType = col(row, "claimType");
+        if (claimType.includes("TITLE 2") && claimType.includes("TITLE 16"))
+          claimType = "Concurrent";
+        else if (claimType.includes("TITLE 2")) claimType = "Title II";
+        else if (claimType.includes("TITLE 16")) claimType = "Title XVI";
+
+        const entry: ChronicleEntry = {
+          claimant: fullName,
+          ssn,
+          claimType,
+          hearingDate: hDate,
+          time: hTime,
+          timeZone: "ET",
+          claimantLocation: col(row, "aljLocation") || "By Phone",
+          repLocation: col(row, "aljLocation") || "By Phone",
+          alj: col(row, "aljFullName"),
+          medExpert: col(row, "medicalExpert"),
+          vocExpert: col(row, "vocationalExpert"),
+          statusDate: col(row, "statusDate"),
+          enteredDate: col(row, "hearingRequestDate"),
+        };
+
+        const nameLower = fullName.toLowerCase();
+        const normTime = normalizeTime(hTime);
+        const normDate = normalizeDate(hDate);
+
+        // Exact duplicate?
+        if (exactMap.has(`${nameLower}|${ssn}|${normDate}|${normTime}`)) {
+          duplicates.push({ ...entry, _cat: "duplicate" });
+          continue;
+        }
+
+        // Rescheduled? (same person, different date)
+        const pk = `${nameLower}|${ssn}`;
+        if (personMap.has(pk)) {
+          const prev = personMap
+            .get(pk)!
+            .sort((a, b) => b.date.localeCompare(a.date))[0];
+          rescheduled.push({
+            ...entry,
+            _cat: "rescheduled",
+            prevDate: prev.date,
+            prevClaimant: prev.claimant,
+          });
+          continue;
+        }
+
+        newEntries.push({ ...entry, _cat: "new" });
+      }
+
+      setResults({ newEntries, rescheduled, duplicates });
+      const total = newEntries.length + rescheduled.length + duplicates.length;
+      setStatus({
+        msg: `Compared ${total} entries: ${newEntries.length} new, ${rescheduled.length} rescheduled, ${duplicates.length} duplicates`,
+        type: "success",
+      });
+      setActiveTab(
+        newEntries.length > 0
+          ? "new"
+          : rescheduled.length > 0
+            ? "rescheduled"
+            : "duplicate",
+      );
+    } catch (e: unknown) {
+      setStatus({
+        msg: e instanceof Error ? e.message : "Compare failed",
+        type: "error",
+      });
+    }
+  };
+
+  const handleImport = async () => {
+    if (!results) return;
+    const toImport = [...results.newEntries, ...results.rescheduled].map(
+      (e) => ({
+        claimant:
+          e._cat === "rescheduled" ? `${e.claimant} (Rescheduled)` : e.claimant,
+        ssn_last_4: e.ssn,
+        claim_type: e.claimType,
+        hearing_date: e.hearingDate,
+        hearing_time: e.time,
+        time_zone: e.timeZone,
+        claimant_location: e.claimantLocation,
+        representative_location: e.repLocation,
+        alj: e.alj,
+        medical_expert: e.medExpert,
+        vocational_expert: e.vocExpert,
+        status_date: e.statusDate,
+        entered_hearing_level_date: e.enteredDate,
+      }),
+    );
+    if (!toImport.length) return;
+    setImporting(true);
+    try {
+      const result = await importChronicleEntries(toImport);
+      setImportResult(result);
+    } catch {
+      setImportResult({ imported: 0, skipped: toImport.length });
+    }
+    setImporting(false);
+  };
+
+  const migrateCount = results
+    ? results.newEntries.length + results.rescheduled.length
+    : 0;
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-4xl max-h-[90vh] flex flex-col rounded-xl border bg-card shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between border-b bg-muted/50 px-5 py-4 shrink-0">
+          <div>
+            <h2 className="text-sm font-semibold">
+              📊 CSV Compare — Chronicle Legal
+            </h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Upload a Chronicle CSV export to compare against{" "}
+              {dbCount?.toLocaleString() ?? "..."} hearings in DB
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <XIcon className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {/* Upload */}
+          <div className="flex items-center gap-3">
+            <label className="flex-1 flex items-center gap-3 rounded-lg border-2 border-dashed px-4 py-3 cursor-pointer hover:bg-muted/30 transition-colors">
+              <span className="text-lg">📁</span>
+              <div className="flex-1">
+                <p className="text-sm font-medium">
+                  {file ? file.name : "Choose Chronicle CSV file"}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {file
+                    ? `${(file.size / 1024).toFixed(1)} KB`
+                    : "Export from Chronicle Legal → Upload here"}
+                </p>
+              </div>
+              <input
+                type="file"
+                accept=".csv"
+                className="hidden"
+                onChange={(e) => {
+                  setFile(e.target.files?.[0] || null);
+                  setResults(null);
+                  setImportResult(null);
+                }}
+              />
+            </label>
+            <Button
+              size="sm"
+              disabled={!file || status?.type === "loading"}
+              onClick={handleCompare}
+              className="h-10 gap-1.5"
+            >
+              {status?.type === "loading" ? (
+                <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+              ) : (
+                <Search className="h-3.5 w-3.5" />
+              )}
+              Compare
+            </Button>
+          </div>
+
+          {/* Status */}
+          {status && (
+            <div
+              className={cn(
+                "rounded-lg px-4 py-2.5 text-sm",
+                status.type === "loading" &&
+                  "bg-blue-50 text-blue-800 border border-blue-200 dark:bg-blue-950/30 dark:text-blue-300 dark:border-blue-800",
+                status.type === "success" &&
+                  "bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800",
+                status.type === "error" &&
+                  "bg-red-50 text-red-800 border border-red-200 dark:bg-red-950/30 dark:text-red-300 dark:border-red-800",
+              )}
+            >
+              {status.msg}
+            </div>
+          )}
+
+          {/* Results */}
+          {results && (
+            <>
+              {/* Summary stats */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="rounded-lg border bg-emerald-50/50 p-3 text-center dark:bg-emerald-950/20">
+                  <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-400 tabular-nums">
+                    {results.newEntries.length}
+                  </p>
+                  <p className="text-xs text-muted-foreground">New</p>
+                </div>
+                <div className="rounded-lg border bg-blue-50/50 p-3 text-center dark:bg-blue-950/20">
+                  <p className="text-2xl font-bold text-blue-700 dark:text-blue-400 tabular-nums">
+                    {results.rescheduled.length}
+                  </p>
+                  <p className="text-xs text-muted-foreground">Rescheduled</p>
+                </div>
+                <div className="rounded-lg border bg-amber-50/50 p-3 text-center dark:bg-amber-950/20">
+                  <p className="text-2xl font-bold text-amber-700 dark:text-amber-400 tabular-nums">
+                    {results.duplicates.length}
+                  </p>
+                  <p className="text-xs text-muted-foreground">Duplicates</p>
+                </div>
+              </div>
+
+              {/* Tabs */}
+              <div className="flex items-center gap-1.5 border-b">
+                {[
+                  {
+                    key: "new" as const,
+                    label: "New",
+                    count: results.newEntries.length,
+                    color: "text-emerald-600",
+                  },
+                  {
+                    key: "rescheduled" as const,
+                    label: "Rescheduled",
+                    count: results.rescheduled.length,
+                    color: "text-blue-600",
+                  },
+                  {
+                    key: "duplicate" as const,
+                    label: "Duplicates",
+                    count: results.duplicates.length,
+                    color: "text-amber-600",
+                  },
+                ].map((t) => (
+                  <button
+                    key={t.key}
+                    onClick={() => setActiveTab(t.key)}
+                    className={cn(
+                      "flex items-center gap-1.5 pb-2 px-3 text-xs font-medium border-b-2 transition-colors",
+                      activeTab === t.key
+                        ? "border-primary text-primary"
+                        : "border-transparent text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {t.label}{" "}
+                    <span
+                      className={cn(
+                        "tabular-nums",
+                        activeTab !== t.key && t.color,
+                      )}
+                    >
+                      ({t.count})
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              {/* Table */}
+              <div className="overflow-auto max-h-75 rounded-lg border">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10">
+                    <tr>
+                      <th className="px-2 py-1.5 text-left font-semibold">
+                        Claimant
+                      </th>
+                      <th className="px-2 py-1.5 text-left font-semibold">
+                        SSN
+                      </th>
+                      <th className="px-2 py-1.5 text-left font-semibold">
+                        Type
+                      </th>
+                      <th className="px-2 py-1.5 text-left font-semibold">
+                        Date
+                      </th>
+                      <th className="px-2 py-1.5 text-left font-semibold">
+                        Time
+                      </th>
+                      <th className="px-2 py-1.5 text-left font-semibold">
+                        ALJ
+                      </th>
+                      {activeTab === "rescheduled" && (
+                        <th className="px-2 py-1.5 text-left font-semibold">
+                          Previous Date
+                        </th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {(activeTab === "new"
+                      ? results.newEntries
+                      : activeTab === "rescheduled"
+                        ? results.rescheduled
+                        : results.duplicates
+                    ).map((entry, i) => (
+                      <tr key={i} className="hover:bg-muted/30">
+                        <td className="px-2 py-1.5 font-medium">
+                          {entry.claimant}
+                        </td>
+                        <td className="px-2 py-1.5 text-muted-foreground tabular-nums">
+                          {entry.ssn || "—"}
+                        </td>
+                        <td className="px-2 py-1.5">
+                          {entry.claimType || "—"}
+                        </td>
+                        <td className="px-2 py-1.5 tabular-nums">
+                          {entry.hearingDate}
+                        </td>
+                        <td className="px-2 py-1.5 tabular-nums">
+                          {entry.time || "—"}
+                        </td>
+                        <td className="px-2 py-1.5">{entry.alj || "—"}</td>
+                        {activeTab === "rescheduled" && "prevDate" in entry && (
+                          <td className="px-2 py-1.5 text-muted-foreground tabular-nums">
+                            {entry.prevDate}
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                    {(activeTab === "new"
+                      ? results.newEntries
+                      : activeTab === "rescheduled"
+                        ? results.rescheduled
+                        : results.duplicates
+                    ).length === 0 && (
+                      <tr>
+                        <td
+                          colSpan={7}
+                          className="py-6 text-center text-muted-foreground"
+                        >
+                          No entries in this category
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Import result */}
+              {importResult && (
+                <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800">
+                  ✅ Imported {importResult.imported} hearings
+                  {importResult.skipped > 0 &&
+                    ` (${importResult.skipped} skipped)`}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between border-t px-5 py-3 shrink-0">
+          <Button variant="outline" size="sm" onClick={onClose}>
+            Close
+          </Button>
+          {results && migrateCount > 0 && !importResult && (
+            <Button
+              size="sm"
+              className="gap-1.5"
+              disabled={importing}
+              onClick={handleImport}
+            >
+              {importing ? (
+                <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+              ) : (
+                "🚀"
+              )}
+              Migrate {migrateCount} to Hearings
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }

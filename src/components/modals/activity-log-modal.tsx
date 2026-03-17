@@ -19,24 +19,46 @@ const CATEGORIES = [
 ];
 
 const ACTION_COLORS: Record<string, string> = {
-  hearing_assigned: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30",
-  hearing_unassigned: "bg-amber-100 text-amber-700 dark:bg-amber-900/30",
-  hearing_auto_assigned: "bg-purple-100 text-purple-700 dark:bg-purple-900/30",
+  // Assignments
+  rep_assigned: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30",
+  rep_unassigned: "bg-amber-100 text-amber-700 dark:bg-amber-900/30",
+  rep_auto_assigned: "bg-purple-100 text-purple-700 dark:bg-purple-900/30",
+  batch_auto_assign: "bg-purple-100 text-purple-700 dark:bg-purple-900/30",
+  bulk_unassign: "bg-amber-100 text-amber-700 dark:bg-amber-900/30",
+  status_assigned: "bg-teal-100 text-teal-700 dark:bg-teal-900/30",
+  // Emails
+  email_sent: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30",
+  email_failed: "bg-red-100 text-red-700 dark:bg-red-900/30",
+  bulk_email: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30",
+  // Field updates
+  field_updated: "bg-blue-100 text-blue-700 dark:bg-blue-900/30",
+  post_hrg_note_added: "bg-sky-100 text-sky-700 dark:bg-sky-900/30",
+  post_hrg_deadline_updated: "bg-sky-100 text-sky-700 dark:bg-sky-900/30",
+  post_hrg_note_deleted: "bg-orange-100 text-orange-700 dark:bg-orange-900/30",
+  // Hearings
   hearing_updated: "bg-blue-100 text-blue-700 dark:bg-blue-900/30",
-  hearing_edited: "bg-blue-100 text-blue-700 dark:bg-blue-900/30",
   hearing_created: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30",
   hearing_deleted: "bg-red-100 text-red-700 dark:bg-red-900/30",
   hearing_imported: "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30",
-  email_sent: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30",
-  withdrawal: "bg-red-100 text-red-700 dark:bg-red-900/30",
+  bulk_delete: "bg-red-100 text-red-700 dark:bg-red-900/30",
+  bulk_migrate: "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30",
+  // Schedule
   schedule_updated: "bg-sky-100 text-sky-700 dark:bg-sky-900/30",
+  schedule_lock_override: "bg-amber-100 text-amber-700 dark:bg-amber-900/30",
+  // Reps
   rep_created: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30",
   rep_updated: "bg-blue-100 text-blue-700 dark:bg-blue-900/30",
   rep_deleted: "bg-red-100 text-red-700 dark:bg-red-900/30",
   token_revoked: "bg-orange-100 text-orange-700 dark:bg-orange-900/30",
 };
 
-export function ActivityLogModal({ onClose }: { onClose: () => void }) {
+export function ActivityLogModal({
+  onClose,
+  excludeSystemAdmin = true,
+}: {
+  onClose: () => void;
+  excludeSystemAdmin?: boolean;
+}) {
   const [category, setCategory] = useState("all");
   const [dateRange, setDateRange] = useState("");
   const [dateFrom, setDateFrom] = useState("");
@@ -63,6 +85,7 @@ export function ActivityLogModal({ onClose }: { onClose: () => void }) {
       dateFrom: dateFrom || undefined,
       dateTo: dateTo || undefined,
       userId: userId || undefined,
+      excludeSystemAdmin,
     }).then((res) => {
       if (!cancelled) {
         setEntries(res.entries);
@@ -257,9 +280,20 @@ export function ActivityLogModal({ onClose }: { onClose: () => void }) {
           {/* Pagination */}
           <div className="flex items-center justify-between border-t px-5 py-2.5 shrink-0">
             <span className="text-xs text-muted-foreground">
-              Page {page} of {totalPages}
+              {total.toLocaleString()} entries
             </span>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1.5">
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-7 w-7"
+                disabled={page <= 1 || loading}
+                onClick={() => changePage(1)}
+                title="First page"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+                <ChevronLeft className="h-3.5 w-3.5 -ml-2" />
+              </Button>
               <Button
                 variant="outline"
                 size="icon"
@@ -269,6 +303,18 @@ export function ActivityLogModal({ onClose }: { onClose: () => void }) {
               >
                 <ChevronLeft className="h-3.5 w-3.5" />
               </Button>
+              <select
+                className="h-7 rounded-md border border-input bg-background px-2 text-xs tabular-nums focus:outline-none focus:ring-1 focus:ring-ring"
+                value={String(page)}
+                onChange={(e) => changePage(Number(e.target.value))}
+                disabled={loading}
+              >
+                {Array.from({ length: totalPages }, (_, i) => (
+                  <option key={i + 1} value={String(i + 1)}>
+                    Page {i + 1}
+                  </option>
+                ))}
+              </select>
               <Button
                 variant="outline"
                 size="icon"
@@ -277,6 +323,17 @@ export function ActivityLogModal({ onClose }: { onClose: () => void }) {
                 onClick={() => changePage(page + 1)}
               >
                 <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-7 w-7"
+                disabled={page >= totalPages || loading}
+                onClick={() => changePage(totalPages)}
+                title="Last page"
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+                <ChevronRight className="h-3.5 w-3.5 -ml-2" />
               </Button>
             </div>
           </div>

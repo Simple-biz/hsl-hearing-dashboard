@@ -1,13 +1,23 @@
 "use client";
 
-import { useState, useEffect, useTransition, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, useTransition, useCallback, useRef, useMemo } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { AppHeader } from "@/components/layout/app-header";
+import { DashboardNav } from "@/components/layout/dashboard-nav";
+import { Input } from "@/components/ui/input";
 import {
-  RefreshCw, Download, ChevronDown, ChevronRight, Loader2,
-  Bell, BarChart3, FileText, ClipboardList, Users, AlertTriangle, MonitorSmartphone,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  RefreshCw, Download, Loader2,
+  Bell, BarChart3, FileText, ClipboardList, AlertTriangle, Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { UserRole } from "./types";
 
 import {
   getHearingsPaginated,
@@ -31,9 +41,9 @@ import type {
   AssignedByMonthRow,
 } from "./action";
 
-import { HearingsModal } from "@/components/modals/hearings-modal";
-import { PostHrgModal } from "@/components/modals/post-hrg-modal";
-import { TeamStatsModal } from "@/components/modals/team-stats-modal";
+import { HearingsModal }    from "@/components/modals/hearings-modal";
+import { PostHrgModal }     from "@/components/modals/post-hrg-modal";
+import { TeamStatsModal }   from "@/components/modals/team-stats-modal";
 import { ActivityLogModal } from "@/components/modals/activity-log-modal";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -49,9 +59,9 @@ const STATUS_COLUMNS = [
 ] as const;
 
 const TEAM_HEX: Record<string, string> = {
-  blue: "#3b82f6", orange: "#f97316", green: "#22c55e",
-  yellow: "#eab308", purple: "#a855f7", red: "#ef4444",
-  pink: "#ec4899", teal: "#14b8a6", indigo: "#6366f1", cyan: "#06b6d4",
+  blue:   "#3b82f6", orange: "#f97316", green:  "#22c55e",
+  yellow: "#eab308", purple: "#a855f7", red:    "#ef4444",
+  pink:   "#ec4899", teal:   "#14b8a6", indigo: "#6366f1", cyan: "#06b6d4",
 };
 
 function teamHex(color: string | null | undefined): string {
@@ -59,46 +69,73 @@ function teamHex(color: string | null | undefined): string {
   return TEAM_HEX[color] ?? color;
 }
 
+// Theme-safe status badge classes (no hardcoded light-only colours)
+// Text-only color maps — bg is always bg-card; only text + border-current changes
+const MR_STATUS_TEXT: Record<string, string> = {
+  "Complete":                "text-purple-700 dark:text-purple-300",
+  "In Progress":             "text-pink-700 dark:text-pink-300",
+  "Ready":                   "text-green-700 dark:text-green-300",
+  "Not Started":             "text-red-700 dark:text-red-300",
+  "URGENT! NEEDS ATTENTION": "text-red-700 dark:text-red-400 font-semibold",
+  "WITHDRAWAL":              "text-zinc-400 line-through",
+  "Overpayment":             "text-amber-700 dark:text-amber-300",
+};
+
+const HRG_STATUS_TEXT: Record<string, string> = {
+  "Scheduled":            "text-violet-700 dark:text-violet-300",
+  "Favorable":            "text-emerald-700 dark:text-emerald-300",
+  "Unfavorable":          "text-orange-700 dark:text-orange-300",
+  "Post HRG Review/ Dev": "text-yellow-700 dark:text-yellow-300",
+  "Continued":            "text-zinc-600 dark:text-zinc-400",
+  "Pending Decision":     "text-yellow-700 dark:text-yellow-300",
+  "OTR at Hrg":           "text-green-700 dark:text-green-400",
+  "Dismissal":            "text-red-700 dark:text-red-300",
+};
+
+// Badge maps (read-only display — keeps bg+text for spans)
 const MR_STATUS_CLS: Record<string, string> = {
-  "Complete":                "bg-purple-100 text-purple-800",
-  "In Progress":             "bg-pink-100 text-pink-800",
-  "Ready":                   "bg-green-100 text-green-800",
-  "Not Started":             "bg-red-100 text-red-800",
+  "Complete":                "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300",
+  "In Progress":             "bg-pink-100 text-pink-800 dark:bg-pink-900/40 dark:text-pink-300",
+  "Ready":                   "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300",
+  "Not Started":             "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
   "URGENT! NEEDS ATTENTION": "bg-red-700 text-white font-semibold",
-  "WITHDRAWAL":              "bg-gray-200 text-gray-500 line-through",
+  "WITHDRAWAL":              "bg-zinc-200 text-zinc-500 line-through dark:bg-zinc-700 dark:text-zinc-400",
 };
 
 const HRG_STATUS_CLS: Record<string, string> = {
-  "Scheduled":            "bg-violet-100 text-violet-800",
-  "Favorable":            "bg-emerald-100 text-emerald-800",
-  "Unfavorable":          "bg-orange-100 text-orange-800",
-  "Post HRG Review/ Dev": "bg-yellow-100 text-yellow-800",
-  "Continued":            "bg-gray-200 text-gray-700",
-  "Pending Decision":     "bg-yellow-50 text-yellow-700",
+  "Scheduled":            "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300",
+  "Favorable":            "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
+  "Unfavorable":          "bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300",
+  "Post HRG Review/ Dev": "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300",
+  "Continued":            "bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-300",
+  "Pending Decision":     "bg-yellow-50 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300",
   "OTR at Hrg":           "bg-green-700 text-white",
-  "Dismissal":            "bg-red-100 text-red-700",
+  "Dismissal":            "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
 };
 
-// ─── CSV Export ───────────────────────────────────────────────────────────────
+// ─── CSV helpers ──────────────────────────────────────────────────────────────
 
 function exportToCsv(filename: string, rows: string[][]) {
-  const csv = rows.map((r) => r.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+  const csv = rows
+    .map((r) => r.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(","))
+    .join("\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
   a.href = url; a.download = filename; a.click();
   URL.revokeObjectURL(url);
 }
 
 function exportHearingsToCsv(hearings: Hearing[]) {
-  const headers = ["ID", "Claimant", "Rep", "Hearing Date", "Time", "MR Team", "MR Status", "HRG Decision", "MOA", "Task", "Credited", "5-Day", "Post HRG", "Worksheet"];
+  const headers = ["ID","Claimant","Rep","Hearing Date","Time","MR Team","MR Status",
+    "HRG Decision","MOA","Task","Credited","5-Day","Post HRG","Worksheet"];
   const rows = hearings.map((h) => [
     h.id, h.claimant, h.rep_name ?? "", h.hearing_date, h.converted_time_est ?? "",
     h.mr_team_name ?? "", h.medical_record_status ?? "", h.hearing_decision_status ?? "",
     h.manner_of_hearing ?? "", h.task_assigned ? "Yes" : "No", h.credited ? "Yes" : "No",
     h.five_day_letter ? "Yes" : "No", h.post_hrg_status ?? "", h.mr_worksheet_link ?? "",
   ]);
-  exportToCsv(`hearings-export-${new Date().toISOString().slice(0, 10)}.csv`, [headers, ...rows] as string[][]);
+  exportToCsv(`hearings-export-${new Date().toISOString().slice(0,10)}.csv`, [headers, ...rows] as string[][]);
 }
 
 function exportPivotToCsv(rows: MrStatusByTeam[]) {
@@ -107,97 +144,155 @@ function exportPivotToCsv(rows: MrStatusByTeam[]) {
     const rowTotal = STATUS_COLUMNS.reduce((s, col) => s + (r.statuses[col] ?? 0), 0);
     return [r.team, ...STATUS_COLUMNS.map((col) => r.statuses[col] ?? 0), rowTotal];
   });
-  exportToCsv(`mr-status-pivot-${new Date().toISOString().slice(0, 10)}.csv`, [headers, ...dataRows] as string[][]);
+  exportToCsv(`mr-status-pivot-${new Date().toISOString().slice(0,10)}.csv`, [headers, ...dataRows] as string[][]);
 }
 
-function SummaryCard({ label, value, bg, onClick }: { label: string; value: number | string; bg: string; onClick?: () => void }) {
-  return (
-    <div onClick={onClick} className={cn("relative overflow-hidden rounded-xl px-4 py-3 text-white flex flex-col gap-1", bg, onClick && "cursor-pointer hover:opacity-90 transition-opacity")}>
-      {/* Decorative circles — matches StatCard solid variant */}
-      <div className="pointer-events-none absolute -right-4 -top-4 w-20 h-20 rounded-full bg-white/10" />
-      <div className="pointer-events-none absolute -right-2 bottom-[-12px] w-14 h-14 rounded-full bg-white/10" />
-      <p className="relative text-[10px] font-semibold uppercase tracking-widest opacity-80">{label}</p>
-      <p className="relative text-2xl font-bold tabular-nums leading-none">{value}</p>
-    </div>
-  );
-}
+// ─── SummaryCard ──────────────────────────────────────────────────────────────
 
-// ─── Assignment Card (No Specialist / No Task) ────────────────────────────────
-
-function AssignmentCard({
-  title, count, nextHearing, bg,
-}: {
-  title: string;
-  count: number;
-  nextHearing: { claimant: string; hearing_date: string } | null;
-  bg: string;
+function SummaryCard({ label, value, bg, onClick }: {
+  label: string; value: number | string; bg: string; onClick?: () => void;
 }) {
   return (
-    <div className={cn("relative overflow-hidden rounded-xl px-4 py-3 text-white flex flex-col gap-1", bg)}>
-      {/* Decorative circles */}
-      <div className="pointer-events-none absolute -right-4 -top-4 w-20 h-20 rounded-full bg-white/10" />
-      <div className="pointer-events-none absolute -right-2 bottom-[-12px] w-14 h-14 rounded-full bg-white/10" />
-      <p className="relative text-[10px] font-semibold uppercase tracking-widest opacity-80">{title}</p>
-      <p className="relative text-2xl font-bold tabular-nums leading-none">{count}</p>
-      <div className="relative text-[10px] opacity-75 mt-0.5">
-        {nextHearing ? (
-          <>
-            <span className="mr-1">📅</span>
-            <span className="font-medium">
-              {new Date(nextHearing.hearing_date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-            </span>
-            {" — "}
-            {nextHearing.claimant.slice(0, 15)}…
-          </>
-        ) : (
-          <span className="opacity-60">No upcoming</span>
-        )}
+    <div
+      onClick={onClick}
+      className={cn(
+        "relative overflow-hidden rounded-xl p-4 sm:p-5 text-white flex flex-col gap-1",
+        bg, onClick && "cursor-pointer hover:opacity-90 transition-opacity"
+      )}
+    >
+      <div className="absolute -right-4 -top-4 h-24 w-24 rounded-full bg-white/10" />
+      <div className="relative z-10">
+        <p className="text-[10px] font-semibold tracking-widest uppercase opacity-80 mb-1">{label}</p>
+        <p className="text-2xl sm:text-3xl font-bold tabular-nums leading-none">{value}</p>
       </div>
     </div>
   );
 }
 
-// ─── Round Robin Banner ───────────────────────────────────────────────────────
+// ─── AssignmentCard ───────────────────────────────────────────────────────────
+
+const MONTH_LABELS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+function AssignmentCard({ title, count, nextHearing, nextIcon, gradientFrom, gradientTo, availableYears }: {
+  title: string; count: number;
+  nextHearing: { claimant: string; hearing_date: string } | null;
+  nextIcon?: string;
+  gradientFrom: string; gradientTo: string;
+  availableYears: number[];
+}) {
+  const [yearFilter,  setYearFilter]  = useState("");
+  const [monthFilter, setMonthFilter] = useState("");
+
+  const dateStr = nextHearing
+    ? new Date(nextHearing.hearing_date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })
+    : null;
+
+  return (
+    <div className="rounded-xl border border-border overflow-hidden w-fit min-w-45">
+      {/* Colored header: title left, count right */}
+      <div
+        className="flex items-center justify-between px-3 py-2"
+        style={{ background: `linear-gradient(135deg, ${gradientFrom}, ${gradientTo})` }}
+      >
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-white">{title}</span>
+        <span className="text-2xl font-bold text-white tabular-nums leading-none">{count}</span>
+      </div>
+      {/* White/card body: year+month selects + next indicator */}
+      <div className="px-3 py-2 bg-card">
+        <div className="flex gap-1.5 mb-2">
+          <select
+            value={yearFilter}
+            onChange={(e) => setYearFilter(e.target.value)}
+            className="flex-1 text-[10px] px-1.5 py-1 border border-border rounded bg-card text-foreground cursor-pointer"
+          >
+            <option value="">All Years</option>
+            {availableYears.map((y) => <option key={y} value={y}>{y}</option>)}
+          </select>
+          <select
+            value={monthFilter}
+            onChange={(e) => setMonthFilter(e.target.value)}
+            className="flex-1 text-[10px] px-1.5 py-1 border border-border rounded bg-card text-foreground cursor-pointer"
+          >
+            <option value="">All Months</option>
+            {MONTH_LABELS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+          </select>
+        </div>
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground pt-1.5 border-t border-border min-w-0">
+          {dateStr ? (
+            <>
+              <span className="shrink-0">{nextIcon ?? "📅"}</span>
+              <span className="font-semibold text-primary shrink-0">{dateStr}</span>
+              <span className="text-[10px] truncate">— {nextHearing!.claimant.slice(0, 14)}…</span>
+            </>
+          ) : (
+            <span className="opacity-50">No upcoming</span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── RoundRobinBanner ─────────────────────────────────────────────────────────
 
 function RoundRobinBanner({ rr }: { rr: RoundRobinState }) {
   return (
-    <div className="flex items-center gap-3 px-4 py-2 bg-card border border-border rounded-xl text-xs flex-wrap">
-      <span className="text-muted-foreground font-semibold">Round Robin:</span>
-      <span className="text-muted-foreground">Last:</span>
+    <div className="flex items-center gap-2 text-xs flex-wrap">
+      <span className="text-muted-foreground font-semibold text-[11px]">LAST:</span>
       <span className="px-2 py-0.5 rounded font-semibold text-white text-[11px]"
         style={{ backgroundColor: teamHex(rr.lastColor) }}>
         {rr.lastTeamName}
       </span>
-      <span className="text-muted-foreground">→ Next:</span>
+      <span className="text-muted-foreground">→</span>
+      <span className="text-muted-foreground font-semibold text-[11px]">NEXT:</span>
       <span className="px-2 py-0.5 rounded font-semibold text-white text-[11px] ring-2 ring-offset-1"
         style={{ backgroundColor: teamHex(rr.nextColor) }}>
         {rr.nextTeamName}
       </span>
-      <div className="flex gap-1.5 items-center ml-1">
+      <div className="hidden sm:flex gap-1 items-center">
         {rr.rotationOrder.map((c) => (
-          <span key={c} className={cn("w-2.5 h-2.5 rounded-full transition-transform", c === rr.nextColor ? "scale-125" : "opacity-30")}
-            style={{ backgroundColor: teamHex(c) }} />
+          <span key={c}
+            className={cn("w-2 h-2 rounded-full transition-transform", c === rr.nextColor ? "scale-125" : "opacity-30")}
+            style={{ backgroundColor: teamHex(c) }}
+          />
         ))}
       </div>
       {rr.nextUnassignedHearing && (
-        <div className="flex items-center gap-1.5 pl-3 border-l border-border ml-1">
-          <span className="text-primary font-semibold">📅</span>
-          <span className="text-foreground font-medium">
-            {new Date(rr.nextUnassignedHearing.hearing_date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+        <div className="hidden sm:flex items-center gap-1 pl-2 border-l border-border">
+          <span className="text-primary">📅</span>
+          <span className="font-semibold text-foreground text-[11px]">
+            {new Date(rr.nextUnassignedHearing.hearing_date + "T00:00:00")
+              .toLocaleDateString("en-US", { month: "short", day: "numeric" })}
           </span>
-          <span className="text-muted-foreground">— {rr.nextUnassignedHearing.claimant.slice(0, 15)}…</span>
+          <span className="text-muted-foreground text-[10px] truncate max-w-25">
+            — {rr.nextUnassignedHearing.claimant.slice(0, 14)}…
+          </span>
         </div>
       )}
     </div>
   );
 }
 
-// ─── Notification Bell ────────────────────────────────────────────────────────
+// ─── Shared set-toggle utility ────────────────────────────────────────────────
+// Used by AssignedByMonth row toggle, toggleMonth, and toggleTeam —
+// all share the identical "flip key membership in a Set" pattern.
+function toggleSetKey(
+  setter: React.Dispatch<React.SetStateAction<Set<string>>>,
+  key: string,
+) {
+  setter((prev) => {
+    const next = new Set(prev);
+    if (next.has(key)) { next.delete(key); } else { next.add(key); }
+    return next;
+  });
+}
 
-function NotificationBell({ notifications, onRefresh }: { notifications: NotificationItem[]; onRefresh: () => void }) {
-  const [open, setOpen] = useState(false);
+function NotificationBell({ notifications, onRefresh }: {
+  notifications: NotificationItem[];
+  onRefresh: () => void;
+}) {
+  const [open, setOpen]       = useState(false);
   const [seenIds, setSeenIds] = useState<Set<number>>(new Set());
-
   const unseen = notifications.filter((n) => !seenIds.has(n.id));
 
   function markSeen(id: number) {
@@ -208,12 +303,14 @@ function NotificationBell({ notifications, onRefresh }: { notifications: Notific
     <div className="relative">
       <button
         onClick={() => { setOpen((v) => !v); onRefresh(); }}
-        className={cn("relative w-9 h-9 flex items-center justify-center rounded-full border border-border bg-card hover:bg-muted transition-colors",
-          unseen.length > 0 && "animate-[bell-shake_0.5s_ease-in-out]")}
+        className={cn(
+          "relative w-9 h-9 flex items-center justify-center rounded-full border border-border bg-card hover:bg-muted transition-colors",
+          unseen.length > 0 && "animate-[bell-shake_0.5s_ease-in-out]"
+        )}
       >
         <Bell size={16} className="text-muted-foreground" />
         {unseen.length > 0 && (
-          <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 bg-red-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+          <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 bg-red-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
             {unseen.length > 99 ? "99+" : unseen.length}
           </span>
         )}
@@ -222,12 +319,16 @@ function NotificationBell({ notifications, onRefresh }: { notifications: Notific
       {open && (
         <>
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-11 z-40 w-80 bg-card border border-border rounded-xl shadow-xl overflow-hidden">
+          <div className="absolute right-0 top-11 z-40 w-72 sm:w-80 bg-card border border-border rounded-xl shadow-xl overflow-hidden">
             <div className="flex items-center justify-between px-4 py-2.5 bg-muted/30 border-b border-border">
               <span className="text-xs font-semibold text-foreground">Notifications</span>
               {unseen.length > 0 && (
-                <button onClick={() => notifications.forEach((n) => markSeen(n.id))}
-                  className="text-[11px] text-primary hover:underline">Mark all seen</button>
+                <button
+                  onClick={() => notifications.forEach((n) => markSeen(n.id))}
+                  className="text-[11px] text-primary hover:underline"
+                >
+                  Mark all seen
+                </button>
               )}
             </div>
             <div className="max-h-80 overflow-y-auto">
@@ -235,11 +336,13 @@ function NotificationBell({ notifications, onRefresh }: { notifications: Notific
                 <p className="text-xs text-muted-foreground text-center py-8">No new notifications</p>
               ) : (
                 notifications.map((n) => (
-                  <div key={n.id} onClick={() => markSeen(n.id)}
+                  <div
+                    key={n.id}
+                    onClick={() => markSeen(n.id)}
                     className={cn(
                       "px-4 py-3 border-b border-border cursor-pointer hover:bg-muted/40 transition-colors",
-                      n.notification_type === "withdrawal" ? "border-l-2 border-l-red-500" :
-                      n.notification_type === "status_change" ? "border-l-2 border-l-amber-400" : "border-l-2 border-l-blue-400"
+                      n.notification_type === "withdrawal"   ? "border-l-2 border-l-red-500"  :
+                      n.notification_type === "status_change"? "border-l-2 border-l-amber-400" : "border-l-2 border-l-blue-400"
                     )}
                   >
                     <div className="flex items-center justify-between mb-1">
@@ -263,7 +366,7 @@ function NotificationBell({ notifications, onRefresh }: { notifications: Notific
   );
 }
 
-// ─── MR Status Pivot Table ────────────────────────────────────────────────────
+// ─── MrStatusPivot ────────────────────────────────────────────────────────────
 
 function MrStatusPivot({ rows }: { rows: MrStatusByTeam[] }) {
   const columnTotals = STATUS_COLUMNS.reduce<Record<string, number>>((acc, col) => {
@@ -274,14 +377,21 @@ function MrStatusPivot({ rows }: { rows: MrStatusByTeam[] }) {
 
   return (
     <div className="overflow-x-auto">
+      {/* Theme-safe header: bg-muted instead of hardcoded #4a5568 */}
       <table className="w-full text-xs" style={{ minWidth: "900px" }}>
         <thead>
-          <tr className="bg-[#4a5568] text-white">
-            <th className="px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wide">MR Specialist</th>
+          <tr className="bg-muted border-b border-border">
+            <th className="px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wide text-foreground">
+              MR Specialist
+            </th>
             {STATUS_COLUMNS.map((col) => (
-              <th key={col} className="px-3 py-2.5 text-center text-[10px] font-semibold uppercase tracking-wide whitespace-nowrap">{col}</th>
+              <th key={col} className="px-3 py-2.5 text-center text-[10px] font-semibold uppercase tracking-wide whitespace-nowrap text-foreground">
+                {col}
+              </th>
             ))}
-            <th className="px-3 py-2.5 text-center text-[10px] font-semibold uppercase tracking-wide bg-[#2d3748]">Grand Total</th>
+            <th className="px-3 py-2.5 text-center text-[10px] font-semibold uppercase tracking-wide text-amber-600">
+              Grand Total
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -291,37 +401,48 @@ function MrStatusPivot({ rows }: { rows: MrStatusByTeam[] }) {
               <tr key={row.team} className="border-b border-border hover:bg-muted/30 transition-colors">
                 <td className="px-3 py-2 font-semibold text-foreground">
                   {row.color && (
-                    <span className="inline-block w-2 h-2 rounded-full mr-2 flex-shrink-0"
+                    <span className="inline-block w-2 h-2 rounded-full mr-2 shrink-0"
                       style={{ backgroundColor: teamHex(row.color) }} />
                   )}
                   {row.team}
                 </td>
                 {STATUS_COLUMNS.map((col) => {
                   const v = row.statuses[col] ?? 0;
-                  const isUrgent = col === "URGENT! NEEDS ATTENTION";
+                  const isUrgent   = col === "URGENT! NEEDS ATTENTION";
                   const isComplete = col === "Complete";
                   return (
                     <td key={col} className={cn("px-3 py-2 text-center tabular-nums",
-                      v === 0 ? "text-muted-foreground/30" : isUrgent ? "text-red-700 font-bold" : isComplete ? "text-[#6A4C93] font-semibold" : "text-foreground")}>
+                      v === 0     ? "text-muted-foreground/30"                                        :
+                      isUrgent    ? "text-red-600 font-bold"                                           :
+                      isComplete  ? "text-purple-600 dark:text-purple-400 font-semibold"               :
+                      "text-foreground"
+                    )}>
                       {v === 0 ? "—" : v}
                     </td>
                   );
                 })}
-                <td className="px-3 py-2 text-center font-bold text-foreground bg-muted/40 tabular-nums">{rowTotal}</td>
+                <td className="px-3 py-2 text-center font-bold text-amber-600 bg-amber-50/50 dark:bg-amber-900/10 tabular-nums">
+                  {rowTotal}
+                </td>
               </tr>
             );
           })}
         </tbody>
         <tfoot>
-          <tr className="border-t-2 border-border bg-muted/20 font-bold">
+          <tr className="border-t-2 border-border bg-muted/40 font-bold">
             <td className="px-3 py-2 text-foreground text-[11px] uppercase tracking-wide">Column Totals</td>
             {STATUS_COLUMNS.map((col) => (
               <td key={col} className={cn("px-3 py-2 text-center tabular-nums text-sm",
-                col === "URGENT! NEEDS ATTENTION" ? "text-red-700" : col === "Complete" ? "text-[#6A4C93]" : "text-foreground")}>
+                col === "URGENT! NEEDS ATTENTION" ? "text-red-600"                       :
+                col === "Complete"                ? "text-purple-600 dark:text-purple-400" :
+                "text-foreground"
+              )}>
                 {columnTotals[col]}
               </td>
             ))}
-            <td className="px-3 py-2 text-center text-sm font-bold text-foreground bg-muted/60 tabular-nums">{grandTotal}</td>
+            <td className="px-3 py-2 text-center text-sm font-bold text-amber-600 bg-amber-50/50 dark:bg-amber-900/10 tabular-nums">
+              {grandTotal}
+            </td>
           </tr>
         </tfoot>
       </table>
@@ -329,24 +450,23 @@ function MrStatusPivot({ rows }: { rows: MrStatusByTeam[] }) {
   );
 }
 
-// ─── Assigned Cases by Month ──────────────────────────────────────────────────
+// ─── AssignedByMonth ──────────────────────────────────────────────────────────
 
 function AssignedByMonth({ rows }: { rows: AssignedByMonthRow[] }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-
-  function toggle(key: string) {
-    setExpanded((p) => { const n = new Set(p); n.has(key) ? n.delete(key) : n.add(key); return n; });
-  }
-
   const grandTotal = rows.reduce((s, r) => s + r.total, 0);
+
+  function toggle(key: string) { toggleSetKey(setExpanded, key); }
 
   return (
     <div className="space-y-1">
       <div className="text-xs text-muted-foreground font-semibold px-1 mb-2">Grand Total: {grandTotal}</div>
       {rows.map((row) => (
         <div key={row.month_key}>
-          <button onClick={() => toggle(row.month_key)}
-            className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-muted/40 hover:bg-muted/60 transition-colors">
+          <button
+            onClick={() => toggle(row.month_key)}
+            className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-muted/40 hover:bg-muted/60 transition-colors"
+          >
             <div className="flex items-center gap-2">
               <span className="text-[10px]">{expanded.has(row.month_key) ? "▼" : "▶"}</span>
               <span className="text-xs font-semibold text-foreground">{row.month_label}</span>
@@ -356,8 +476,10 @@ function AssignedByMonth({ rows }: { rows: AssignedByMonthRow[] }) {
           {expanded.has(row.month_key) && (
             <div className="ml-4 mt-1 space-y-0.5">
               {row.teams.map((t) => (
-                <div key={t.team_name} className="flex items-center justify-between px-3 py-1.5 rounded border-l-2"
-                  style={{ borderColor: teamHex(t.team_color) }}>
+                <div key={t.team_name}
+                  className="flex items-center justify-between px-3 py-1.5 rounded border-l-2"
+                  style={{ borderColor: teamHex(t.team_color) }}
+                >
                   <div className="flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full" style={{ backgroundColor: teamHex(t.team_color) }} />
                     <span className="text-xs text-foreground">{t.team_name}</span>
@@ -373,7 +495,9 @@ function AssignedByMonth({ rows }: { rows: AssignedByMonthRow[] }) {
   );
 }
 
-// ─── Hearing Row ──────────────────────────────────────────────────────────────
+// ─── HearingRow ───────────────────────────────────────────────────────────────
+// Inline selects/checkboxes inside the fixed-column data grid stay as native
+// HTML elements intentionally — shadcn Select would break the compact layout.
 
 function HearingRow({
   h, teams, mrStatusOptions, hearingDecisionOptions, mannerOptions, permissions, onUpdate,
@@ -387,20 +511,26 @@ function HearingRow({
   onUpdate: (id: number, field: string, value: unknown) => void;
 }) {
   const dateStr = new Date(h.hearing_date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  const mrCls = MR_STATUS_CLS[h.medical_record_status ?? ""] ?? "bg-gray-100 text-gray-600";
-  const hrgCls = HRG_STATUS_CLS[h.hearing_decision_status ?? ""] ?? "bg-red-500 text-white";
+  // Badge classes for read-only spans
+  // Text-only classes for selects (bg-card, text + border-current only)
+  const mrTextCls  = MR_STATUS_TEXT[h.medical_record_status ?? ""]    ?? "text-muted-foreground";
+  const hrgTextCls = HRG_STATUS_TEXT[h.hearing_decision_status ?? ""] ?? "text-muted-foreground";
+  // Badge classes for read-only spans
+  const mrCls  = MR_STATUS_CLS[h.medical_record_status ?? ""]    ?? "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300";
+  const hrgCls = HRG_STATUS_CLS[h.hearing_decision_status ?? ""] ?? "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300";
 
   return (
-    <div className="grid gap-2 px-4 py-2 border-b border-border/40 hover:bg-muted/30 transition-colors text-[11px] items-center"
-      style={{ gridTemplateColumns: "200px 120px 36px 90px 160px 36px 100px 70px 36px 70px 80px", minWidth: "1200px" }}>
-
+    <div
+      className="grid gap-2 px-4 py-2 border-b border-border/40 hover:bg-muted/30 transition-colors text-[11px] items-center"
+      style={{ gridTemplateColumns: "200px 120px 36px 90px 160px 56px 100px 70px 36px 70px 80px", minWidth: "1200px" }}
+    >
       {/* Claimant */}
       <div>
         <div className="font-semibold text-foreground truncate">{h.claimant}</div>
         {h.rep_name && <div className="text-[9px] text-muted-foreground truncate">{h.rep_name}</div>}
       </div>
 
-      {/* MR Team */}
+      {/* MR Team — canEditMrTeam gate */}
       {permissions.canEditMrTeam ? (
         <select
           className="w-full text-[9px] px-1.5 py-1 rounded border-0 cursor-pointer font-medium"
@@ -408,8 +538,8 @@ function HearingRow({
           value={h.mr_team_id ?? ""}
           onChange={(e) => onUpdate(h.id, "mr_team", e.target.value ? Number(e.target.value) : null)}
         >
-          <option value="">Unassigned</option>
-          {teams.map((t) => <option key={t.id} value={t.id}>{t.team_name}</option>)}
+          <option value="" className="text-muted-foreground bg-card">Unassigned</option>
+          {teams.map((t) => <option key={t.id} value={t.id} className="text-foreground bg-card">{t.team_name}</option>)}
         </select>
       ) : (
         <span className="text-[9px] px-1.5 py-0.5 rounded font-medium"
@@ -418,12 +548,17 @@ function HearingRow({
         </span>
       )}
 
-      {/* Task */}
+      {/* Task — canEditTask gate */}
       <div className="text-center">
-        {permissions.canEditTask
-          ? <input type="checkbox" checked={h.task_assigned} className="w-3.5 h-3.5 cursor-pointer accent-emerald-500" onChange={(e) => onUpdate(h.id, "task_assigned", e.target.checked)} />
-          : <span className={h.task_assigned ? "text-emerald-500" : "text-muted-foreground/30"}>{h.task_assigned ? "✓" : "—"}</span>
-        }
+        {permissions.canEditTask ? (
+          <input type="checkbox" checked={h.task_assigned}
+            className="w-3.5 h-3.5 cursor-pointer accent-emerald-500"
+            onChange={(e) => onUpdate(h.id, "task_assigned", e.target.checked)} />
+        ) : (
+          <span className={h.task_assigned ? "text-emerald-500" : "text-muted-foreground/30"}>
+            {h.task_assigned ? "✓" : "—"}
+          </span>
+        )}
       </div>
 
       {/* Date */}
@@ -432,99 +567,129 @@ function HearingRow({
         {h.converted_time_est && <div className="text-[9px] text-muted-foreground">{h.converted_time_est}</div>}
       </div>
 
-      {/* MR Status */}
+      {/* MR Status — canManage gate */}
       {permissions.canManage ? (
         <select value={h.medical_record_status ?? ""}
-          className={cn("w-full text-[9px] px-1.5 py-1 rounded border-0 cursor-pointer", mrCls)}
+          className={cn(
+            "w-full text-[9px] px-1.5 py-1 rounded border cursor-pointer bg-card",
+            h.medical_record_status ? cn("border-current", mrTextCls) : "text-muted-foreground border-transparent hover:border-border",
+          )}
           onChange={(e) => onUpdate(h.id, "medical_record_status", e.target.value)}>
-          <option value="">No Status</option>
-          {mrStatusOptions.map((s) => <option key={s} value={s}>{s}</option>)}
+          <option value="" className="text-muted-foreground bg-card">No Status</option>
+          {mrStatusOptions.map((s) => <option key={s} value={s} className="text-foreground bg-card">{s}</option>)}
         </select>
       ) : (
-        <span className={cn("inline-block text-[9px] px-1.5 py-0.5 rounded", mrCls)}>{h.medical_record_status ?? "No Status"}</span>
+        <span className={cn("inline-block text-[9px] px-1.5 py-0.5 rounded", mrCls)}>
+          {h.medical_record_status ?? "No Status"}
+        </span>
       )}
 
-      {/* Credited */}
+      {/* Credited — canEditCredited gate */}
       <div className="text-center">
-        {permissions.canEditCredited
-          ? <input type="checkbox" checked={h.credited} className="w-3.5 h-3.5 cursor-pointer accent-blue-500" onChange={(e) => onUpdate(h.id, "credited", e.target.checked)} />
-          : <span className={h.credited ? "text-blue-500" : "text-muted-foreground/30"}>{h.credited ? "✓" : "—"}</span>
-        }
+        {permissions.canEditCredited ? (
+          <input type="checkbox" checked={h.credited}
+            className="w-3.5 h-3.5 cursor-pointer accent-blue-500"
+            onChange={(e) => onUpdate(h.id, "credited", e.target.checked)} />
+        ) : (
+          <span className={h.credited ? "text-blue-500" : "text-muted-foreground/30"}>
+            {h.credited ? "✓" : "—"}
+          </span>
+        )}
       </div>
 
-      {/* HRG Decision */}
+      {/* HRG Decision — canManage gate */}
       {permissions.canManage ? (
         <select value={h.hearing_decision_status ?? ""}
-          className={cn("w-full text-[9px] px-1.5 py-1 rounded border-0 cursor-pointer", hrgCls)}
+          className={cn(
+            "w-full text-[9px] px-1.5 py-1 rounded border cursor-pointer bg-card",
+            h.hearing_decision_status ? cn("border-current", hrgTextCls) : "text-muted-foreground border-transparent hover:border-border",
+          )}
           onChange={(e) => onUpdate(h.id, "hearing_decision_status", e.target.value)}>
-          <option value="">— Status —</option>
-          {hearingDecisionOptions.map((s) => <option key={s} value={s}>{s}</option>)}
+          <option value="" className="text-muted-foreground bg-card">— Status —</option>
+          {hearingDecisionOptions.map((s) => <option key={s} value={s} className="text-foreground bg-card">{s}</option>)}
         </select>
       ) : (
-        <span className={cn("inline-block text-[9px] px-1.5 py-0.5 rounded", hrgCls)}>{h.hearing_decision_status ?? "—"}</span>
+        <span className={cn("inline-block text-[9px] px-1.5 py-0.5 rounded", hrgCls)}>
+          {h.hearing_decision_status ?? "—"}
+        </span>
       )}
 
-      {/* MOA */}
+      {/* MOA — canEditMoa gate */}
       {permissions.canEditMoa ? (
         <select value={h.manner_of_hearing ?? ""}
-          className="w-full text-[9px] px-1.5 py-1 rounded border border-border bg-card cursor-pointer"
+          className="w-full text-[9px] px-1.5 py-1 rounded border border-border bg-card text-foreground cursor-pointer"
           onChange={(e) => onUpdate(h.id, "manner_of_hearing", e.target.value)}>
-          <option value="">—</option>
-          {mannerOptions.map((m) => <option key={m} value={m}>{m}</option>)}
+          <option value="" className="text-muted-foreground bg-card">—</option>
+          {mannerOptions.map((m) => <option key={m} value={m} className="text-foreground bg-card">{m}</option>)}
         </select>
-      ) : <span className="text-muted-foreground">{h.manner_of_hearing ?? "—"}</span>}
+      ) : (
+        <span className="text-muted-foreground">{h.manner_of_hearing ?? "—"}</span>
+      )}
 
-      {/* 5-Day */}
-      <div className="text-center">{h.five_day_letter ? <span className="text-emerald-500">✓</span> : <span className="text-muted-foreground/30">—</span>}</div>
+      {/* 5-Day — read-only for all */}
+      <div className="text-center">
+        {h.five_day_letter
+          ? <span className="text-emerald-500">✓</span>
+          : <span className="text-muted-foreground/30">—</span>}
+      </div>
 
       {/* Post HRG */}
-      <div>{h.post_hrg_status ? <span className="bg-yellow-100 text-yellow-800 px-1 py-0.5 rounded text-[9px] font-medium">📝</span> : <span className="text-muted-foreground/30">—</span>}</div>
+      <div>
+        {h.post_hrg_status
+          ? <span className="bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300 px-1 py-0.5 rounded text-[9px] font-medium">📝</span>
+          : <span className="text-muted-foreground/30">—</span>}
+      </div>
 
       {/* Worksheet */}
       <div>
         {h.mr_worksheet_link
-          ? <a href={h.mr_worksheet_link} target="_blank" rel="noreferrer" className="text-[9px] bg-blue-500 text-white px-1.5 py-0.5 rounded hover:bg-blue-600">📋 Sheet</a>
-          : <span className="text-muted-foreground/30">—</span>
-        }
+          ? <a href={h.mr_worksheet_link} target="_blank" rel="noreferrer"
+              className="text-[9px] bg-blue-600 hover:bg-blue-700 text-white px-1.5 py-0.5 rounded transition-colors">
+              📋 Sheet
+            </a>
+          : <span className="text-muted-foreground/30">—</span>}
       </div>
     </div>
   );
 }
 
-// ─── Main Client Component ────────────────────────────────────────────────────
+// ─── Props ────────────────────────────────────────────────────────────────────
 
-export function MrPivotClient(data: MrPivotPageData) {
-  const router = useRouter();
+type Props = MrPivotPageData & { userRole: UserRole };
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+
+export function MrPivotClient({ userRole, ...data }: Props) {
   const [isPending, startTransition] = useTransition();
 
-  // ── Hearings state ───────────────────────────────────────────────────────
-  const [hearings, setHearings] = useState<Hearing[]>([]);
-  const [totalHearings, setTotalHearings] = useState(data.statCards.totalHearings);
-  const [totalPages, setTotalPages] = useState(1);
+  // ── Hearings ─────────────────────────────────────────────────────────────
+  const [hearings,       setHearings]       = useState<Hearing[]>([]);
+  const [totalHearings,  setTotalHearings]  = useState(data.statCards.totalHearings);
+  const [totalPages,     setTotalPages]     = useState(1);
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
-  const [expandedTeams, setExpandedTeams] = useState<Set<string>>(new Set());
+  const [expandedTeams,  setExpandedTeams]  = useState<Set<string>>(new Set());
 
   const [filters, setFilters] = useState<HearingFilters>({
     search: "", month_filter: "", team_filter: "", status_filter: "",
     assignment_filter: "", sort_order: "asc", page: 1, per_page: 50,
   });
 
-  // ── Round robin ──────────────────────────────────────────────────────────
-  const [roundRobin, setRoundRobin] = useState<RoundRobinState>(data.roundRobin);
+  // ── Round robin ───────────────────────────────────────────────────────────
+  const [roundRobin,     setRoundRobin]     = useState<RoundRobinState>(data.roundRobin);
 
-  // ── Notifications ────────────────────────────────────────────────────────
-  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  // ── Notifications ─────────────────────────────────────────────────────────
+  const [notifications,  setNotifications]  = useState<NotificationItem[]>([]);
 
-  // ── View toggle ──────────────────────────────────────────────────────────
+  // ── View mode ─────────────────────────────────────────────────────────────
   const [viewMode, setViewMode] = useState<"date" | "team">("date");
 
-  // ── Modals ───────────────────────────────────────────────────────────────
+  // ── Modal visibility ──────────────────────────────────────────────────────
   const [showHearings,    setShowHearings]    = useState(false);
   const [showPostHrg,     setShowPostHrg]     = useState(false);
   const [showTeamStats,   setShowTeamStats]   = useState(false);
   const [showActivityLog, setShowActivityLog] = useState(false);
 
-  // ── Load hearings ────────────────────────────────────────────────────────
+  // ── Data loading ──────────────────────────────────────────────────────────
   const loadHearings = useCallback((f: HearingFilters) => {
     startTransition(async () => {
       const res = await getHearingsPaginated(f);
@@ -536,12 +701,18 @@ export function MrPivotClient(data: MrPivotPageData) {
 
   useEffect(() => { loadHearings(filters); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Refresh round robin ──────────────────────────────────────────────────
+  // Auto-expand months that contain search results
+  useEffect(() => {
+    if (!filters.search?.trim()) return;
+    const matchedMonths = new Set(hearings.map((h) => h.hearing_date.slice(0, 7)));
+    if (matchedMonths.size > 0) setExpandedMonths(matchedMonths);
+  }, [hearings, filters.search]);
+
+  // ── Refresh round robin + notifications every 30s ─────────────────────────
   useEffect(() => {
     const id = setInterval(async () => {
-      const rr = await getRoundRobinState();
+      const [rr, notifs] = await Promise.all([getRoundRobinState(), getNotifications()]);
       setRoundRobin(rr);
-      const notifs = await getNotifications();
       setNotifications(notifs);
     }, 30_000);
     return () => clearInterval(id);
@@ -559,26 +730,40 @@ export function MrPivotClient(data: MrPivotPageData) {
     loadHearings(next);
   }
 
+  // ── Row update handler ────────────────────────────────────────────────────
   async function handleUpdate(id: number, field: string, value: unknown) {
     const actions: Record<string, (v: unknown) => Promise<unknown>> = {
-      medical_record_status:    (v) => updateMrStatus(id, v as string),
-      hearing_decision_status:  (v) => updateHearingDecisionStatus(id, v as string),
-      mr_team:                  (v) => updateMrTeam(id, v as number | null),
-      task_assigned:            (v) => toggleTaskAssigned(id, v as boolean),
-      credited:                 (v) => toggleCredited(id, v as boolean),
-      manner_of_hearing:        (v) => updateMoa(id, v as string),
+      medical_record_status:   (v) => updateMrStatus(id, v as string),
+      hearing_decision_status: (v) => updateHearingDecisionStatus(id, v as string),
+      mr_team:                 (v) => updateMrTeam(id, v as number | null),
+      task_assigned:           (v) => toggleTaskAssigned(id, v as boolean),
+      credited:                (v) => toggleCredited(id, v as boolean),
+      manner_of_hearing:       (v) => updateMoa(id, v as string),
     };
     await actions[field]?.(value);
-    setHearings((prev) => prev.map((h) => h.id === id ? { ...h, [field]: value } : h));
+
+    // mr_team needs to update mr_team_id + derive mr_team_name/color from teams list
+    if (field === "mr_team") {
+      const teamId = value as number | null;
+      const team = teamId ? data.medical_teams.find((t) => t.id === teamId) : null;
+      setHearings((prev) => prev.map((h) => h.id === id
+        ? { ...h, mr_team_id: teamId, mr_team_name: team?.team_name ?? null, mr_team_color: team?.team_color ?? null }
+        : h
+      ));
+      // Refresh round robin immediately so the indicator reflects the new assignment
+      getRoundRobinState().then(setRoundRobin);
+    } else {
+      setHearings((prev) => prev.map((h) => h.id === id ? { ...h, [field]: value } : h));
+    }
   }
 
   async function handleAssignJerome() {
-    if (!confirm(`Assign Jerome's Team to all urgent unassigned hearings (next 4 weeks)?`)) return;
+    if (!confirm("Assign Jerome's Team to all urgent unassigned hearings (next 4 weeks)?")) return;
     const res = await assignJeromeUrgent();
     if (res.success) { alert(res.message); loadHearings(filters); }
   }
 
-  // Group hearings by month or team
+  // ── Group hearings ────────────────────────────────────────────────────────
   const groupedByMonth = hearings.reduce<Record<string, Hearing[]>>((acc, h) => {
     const key = h.hearing_date.slice(0, 7);
     (acc[key] ??= []).push(h);
@@ -591,14 +776,43 @@ export function MrPivotClient(data: MrPivotPageData) {
     return acc;
   }, {});
 
-  function toggleMonth(key: string) {
-    setExpandedMonths((p) => { const n = new Set(p); n.has(key) ? n.delete(key) : n.add(key); return n; });
-  }
+  // ── Virtualizer — flatten visible items into a single array ───────────────
+  const scrollRef    = useRef<HTMLDivElement>(null);
+  const scrollTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isScrolling, setIsScrolling] = useState(false);
+  const ROW_H  = 36;
+  const GROUP_H = 33;
 
-  function toggleTeam(key: string) {
-    setExpandedTeams((p) => { const n = new Set(p); n.has(key) ? n.delete(key) : n.add(key); return n; });
-  }
+  type FlatItem =
+    | { kind: "group-date"; key: string; count: number }
+    | { kind: "group-team"; key: string; color: string | null; count: number }
+    | { kind: "row"; hearing: Hearing };
 
+  const flatItems = useMemo<FlatItem[]>(() => {
+    if (viewMode === "date") {
+      return Object.entries(groupedByMonth).flatMap(([key, rows]) => {
+        const header: FlatItem = { kind: "group-date", key, count: rows.length };
+        if (!expandedMonths.has(key)) return [header];
+        return [header, ...rows.map((h): FlatItem => ({ kind: "row", hearing: h }))];
+      });
+    }
+    return Object.entries(groupedByTeam).flatMap(([key, rows]) => {
+      const color = rows[0]?.mr_team_color ?? null;
+      const header: FlatItem = { kind: "group-team", key, color, count: rows.length };
+      if (!expandedTeams.has(key)) return [header];
+      return [header, ...rows.map((h): FlatItem => ({ kind: "row", hearing: h }))];
+    });
+  }, [viewMode, groupedByMonth, groupedByTeam, expandedMonths, expandedTeams]);
+
+  const virtualizer = useVirtualizer({
+    count:            flatItems.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize:     (i) => flatItems[i]?.kind === "row" ? ROW_H : GROUP_H,
+    overscan:         15,
+  });
+
+  function toggleMonth(key: string) { toggleSetKey(setExpandedMonths, key); }
+  function toggleTeam(key: string)  { toggleSetKey(setExpandedTeams,  key); }
   function expandAll() {
     if (viewMode === "date") setExpandedMonths(new Set(Object.keys(groupedByMonth)));
     else setExpandedTeams(new Set(Object.keys(groupedByTeam)));
@@ -608,20 +822,15 @@ export function MrPivotClient(data: MrPivotPageData) {
     else setExpandedTeams(new Set());
   }
 
+  // ── Column headers (shared between both views) ────────────────────────────
   const columnHeaders = (
-    <div className="grid gap-2 px-4 py-2 bg-[#4a5568] text-white text-[9px] font-semibold uppercase tracking-wide flex-shrink-0"
-      style={{ gridTemplateColumns: "200px 120px 36px 90px 160px 36px 100px 70px 36px 70px 80px", minWidth: "1200px" }}>
-      <div>Claimant</div>
-      <div>MR Specialist</div>
-      <div>Task</div>
-      <div>Date</div>
-      <div>MR Status</div>
-      <div>Credited</div>
-      <div>Status</div>
-      <div>MOA</div>
-      <div>5Day</div>
-      <div>Post HRG</div>
-      <div>Worksheet</div>
+    <div
+      className="grid gap-2 px-4 py-2 bg-muted text-foreground text-[9px] font-semibold uppercase tracking-wide shrink-0 border-b border-border text-center"
+      style={{ gridTemplateColumns: "200px 120px 36px 90px 160px 56px 100px 70px 36px 70px 80px", minWidth: "1200px" }}
+    >
+      <div className="text-left">Claimant</div><div>MR Specialist</div><div>Task</div><div className="text-left">Date</div>
+      <div>MR Status</div><div>Credited</div><div>Status</div><div>MOA</div>
+      <div>5Day</div><div className="text-center">Post HRG</div><div className="text-center">Worksheet</div>
     </div>
   );
 
@@ -629,236 +838,391 @@ export function MrPivotClient(data: MrPivotPageData) {
   return (
     <>
       <AppHeader title="Medical Records" subtitle="MR Status Tracking &amp; Analytics" />
+      <DashboardNav userRole={userRole} />
 
-      <div className="max-w-[1800px] mx-auto px-6 py-6 space-y-5">
+      <div className="w-full max-w-450 mx-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-5">
 
-        {/* ── Top Controls ────────────────────────────────────────────── */}
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <RoundRobinBanner rr={roundRobin} />
-          <div className="flex items-center gap-2">
-            <NotificationBell notifications={notifications} onRefresh={async () => setNotifications(await getNotifications())} />
-            <button onClick={() => loadHearings(filters)} className="w-9 h-9 flex items-center justify-center rounded-full border border-border bg-card hover:bg-muted transition-colors">
-              <RefreshCw size={14} className={cn("text-muted-foreground", isPending && "animate-spin")} />
-            </button>
-          </div>
+        {/* ── Icon buttons (bell + refresh) ────────────────────────────── */}
+        <div className="flex items-center justify-end gap-2">
+          <NotificationBell
+            notifications={notifications}
+            onRefresh={async () => setNotifications(await getNotifications())}
+          />
+          <button
+            onClick={() => loadHearings(filters)}
+            className="w-9 h-9 flex items-center justify-center rounded-full border border-border bg-card hover:bg-muted transition-colors"
+          >
+            <RefreshCw size={14} className={cn("text-muted-foreground", isPending && "animate-spin")} />
+          </button>
         </div>
 
-        {/* ── Stats + Team Assignments ─────────────────────────────────── */}
-        <div className="grid grid-cols-[1fr_220px] gap-4 items-start">
+        {/* ── Summary Section: [1fr 300px] — matches PHP structure exactly ─ */}
+        {/* Left col: 6 status cards (3-col grid) + 2 assignment cards (flex) */}
+        {/* Right col: Team Assignments sidebar spanning full height           */}
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-5">
 
-          {/* Left: stat cards */}
-          <div className="space-y-3">
-            {/* 6 colored summary cards */}
-            <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
-              <SummaryCard label="Total"       value={totalHearings}              bg="bg-violet-600" />
-              <SummaryCard label="Complete"    value={data.statCards.complete}    bg="bg-[#6A4C93]" />
-              <SummaryCard label="In Progress" value={data.statCards.inProgress}  bg="bg-pink-500" />
-              <SummaryCard label="Ready"       value={data.statCards.ready}       bg="bg-emerald-500" />
-              <SummaryCard label="Not Started" value={data.statCards.notStarted}  bg="bg-red-500" />
-              <SummaryCard label="Urgent"      value={data.statCards.urgent}      bg="bg-red-700" />
+          {/* Left column */}
+          <div>
+            {/* 6 status summary cards — repeat(3, 1fr) */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-3">
+              <SummaryCard label="Total Hearings" value={totalHearings}             bg="bg-gradient-to-br from-[#667eea] to-[#764ba2]" />
+              <SummaryCard label="Complete"        value={data.statCards.complete}   bg="bg-gradient-to-br from-[#11998e] to-[#38ef7d]" />
+              <SummaryCard label="In Progress"     value={data.statCards.inProgress} bg="bg-gradient-to-br from-[#4facfe] to-[#00f2fe]" />
+              <SummaryCard label="Ready"           value={data.statCards.ready}      bg="bg-gradient-to-br from-[#56ab2f] to-[#a8e063]" />
+              <SummaryCard label="Not Started"     value={data.statCards.notStarted} bg="bg-gradient-to-br from-[#f093fb] to-[#f5576c]" />
+              <SummaryCard label="Urgent"          value={data.statCards.urgent}     bg="bg-gradient-to-br from-[#ff416c] to-[#ff4b2b]" />
             </div>
-            {/* 2 assignment cards */}
-            <div className="grid grid-cols-2 gap-3">
-              <AssignmentCard title="No Specialist"    count={data.statCards.noSpecialistCount}
-                nextHearing={data.statCards.nextUnassignedHearing} bg="bg-orange-500" />
-              <AssignmentCard title="No Task Assigned" count={data.statCards.noTaskCount}
-                nextHearing={data.statCards.nextUnassignedTask}    bg="bg-[#0d9488]" />
+            {/* 2 assignment cards — flex row, compact with header+body */}
+            <div className="flex gap-3">
+              <AssignmentCard
+                title="No Specialist"
+                count={data.statCards.noSpecialistCount}
+                nextHearing={data.statCards.nextUnassignedHearing}
+                nextIcon="📅"
+                gradientFrom="#667eea"
+                gradientTo="#764ba2"
+                availableYears={data.availableYears ?? []}
+              />
+              <AssignmentCard
+                title="No Task Assigned"
+                count={data.statCards.noTaskCount}
+                nextHearing={data.statCards.nextUnassignedTask}
+                nextIcon="☑️"
+                gradientFrom="#11998e"
+                gradientTo="#38ef7d"
+                availableYears={data.availableYears ?? []}
+              />
             </div>
           </div>
 
-          {/* Right: Team Assignments (spans both stat rows) */}
-          <div className="bg-card border border-border rounded-xl overflow-hidden">
-            <div className="px-4 py-2.5 bg-muted/30 border-b border-border">
-              <span className="text-xs font-semibold text-foreground">👥 Team Assignments</span>
+          {/* Right column: Team Assignments sidebar — spans full left height */}
+          <div className="bg-card border border-border rounded-xl overflow-hidden flex flex-col">
+            <div className="px-3 py-2 bg-muted/30 border-b border-border shrink-0 flex items-center justify-between">
+              <span className="text-[11px] font-semibold text-foreground">👥 Team Assignments</span>
             </div>
-            <div className="px-3 py-2 space-y-1.5 max-h-52 overflow-y-auto">
+            <div className="px-2 py-1.5 space-y-0.5 overflow-y-auto flex-1" style={{ maxHeight: "200px" }}>
               {data.teamGrandTotals.map((t) => (
-                <div key={t.team_name} className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: t.team_color ?? "#9ca3af" }} />
-                    <span className="text-[11px] text-foreground">{t.team_name}</span>
+                <div key={t.team_name} className="flex items-center justify-between px-1.5 py-1 rounded hover:bg-muted/40 transition-colors">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full shrink-0"
+                      style={{ backgroundColor: t.team_color ?? "#9ca3af" }} />
+                    <span className="text-[10px] font-medium text-foreground">{t.team_name}</span>
                   </div>
-                  <span className="text-xs font-bold tabular-nums text-foreground">{t.total}</span>
+                  <span className="text-[10px] font-bold tabular-nums text-foreground">{t.total}</span>
                 </div>
               ))}
             </div>
-            <div className="px-3 py-2 border-t border-border bg-muted/20 flex items-center justify-between">
-              <span className="text-[11px] font-semibold text-muted-foreground">Grand Total</span>
-              <span className="text-xs font-bold tabular-nums text-foreground">
-                {data.teamGrandTotals.reduce((s, t) => s + t.total, 0)}
-              </span>
+            <div className="px-2 py-1.5 border-t border-border bg-muted/20 shrink-0">
+              <div className="flex items-center justify-between px-1.5">
+                <span className="text-[10px] font-bold text-foreground">Grand Total</span>
+                <span className="text-xs font-bold tabular-nums text-primary">
+                  {data.teamGrandTotals.reduce((s, t) => s + t.total, 0)}
+                </span>
+              </div>
             </div>
           </div>
         </div>
 
-        {/* ── Filter Bar ───────────────────────────────────────────────── */}
-        <div className="flex flex-wrap gap-2 items-center bg-card border border-border rounded-xl px-4 py-3">
-            <input type="text" placeholder="🔍 Search claimant…" value={filters.search}
-              onChange={(e) => applyFilter({ search: e.target.value })}
-              className="text-xs px-3 py-1.5 rounded-lg border border-border bg-muted text-foreground focus:outline-none focus:border-primary min-w-[160px]" />
-            <select value={filters.sort_order} onChange={(e) => applyFilter({ sort_order: e.target.value as "asc" | "desc" })}
-              className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer">
-              <option value="asc">📅 Date Asc</option>
-              <option value="desc">📅 Date Desc</option>
-            </select>
-            <select value={filters.month_filter} onChange={(e) => applyFilter({ month_filter: e.target.value })}
-              className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer">
-              <option value="">All Months</option>
-              {data.availableMonths.map((m) => <option key={m.month_value} value={m.month_value}>{m.month_label}</option>)}
-            </select>
-            <select value={filters.team_filter} onChange={(e) => applyFilter({ team_filter: e.target.value })}
-              className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer">
-              <option value="">All Teams</option>
-              <option value="unassigned">Unassigned</option>
-              {data.medical_teams.map((t) => <option key={t.id} value={t.id}>{t.team_name}{t.team_type === "leadership_lead" ? " 👑" : t.team_type === "leadership_asst" ? " ⭐" : ""}</option>)}
-            </select>
-            <select value={filters.status_filter} onChange={(e) => applyFilter({ status_filter: e.target.value })}
-              className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer">
-              <option value="">All Statuses</option>
-              <option value="unassigned">No Status</option>
-              {data.medical_record_status_options.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-            <select value={filters.assignment_filter} onChange={(e) => applyFilter({ assignment_filter: e.target.value })}
-              className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer">
-              <option value="">All Assignments</option>
-              <option value="no_specialist">No Specialist</option>
-              <option value="no_task">No Task Assigned</option>
-              <option value="no_both">No Specialist &amp; No Task</option>
-            </select>
-            <button onClick={() => applyFilter({ search: "", month_filter: "", team_filter: "", status_filter: "", assignment_filter: "" })}
-              className="text-xs px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-muted-foreground transition-colors">
-              Clear
+        {/* ── Filter Bar (with RoundRobin at right end, matching PHP) ──────── */}
+        <div className="bg-card border border-border rounded-xl px-4 py-3">
+          <div className="flex flex-wrap gap-2 items-center">
+
+            {/* Search */}
+            <div className="relative min-w-35">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                placeholder="Search claimant…"
+                value={filters.search ?? ""}
+                onChange={(e) => applyFilter({ search: e.target.value })}
+                className="h-9 pl-8 text-xs"
+              />
+            </div>
+
+            {/* Sort order */}
+            <Select
+              value={filters.sort_order ?? "asc"}
+              onValueChange={(v) => applyFilter({ sort_order: v as "asc" | "desc" })}
+            >
+              <SelectTrigger className="h-9 w-auto min-w-32 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="asc">📅 Date Asc</SelectItem>
+                <SelectItem value="desc">📅 Date Desc</SelectItem>
+              </SelectContent>
+            </Select>
+
+            {/* Month */}
+            <Select
+              value={filters.month_filter || "__all__"}
+              onValueChange={(v) => applyFilter({ month_filter: v === "__all__" ? "" : v })}
+            >
+              <SelectTrigger className="h-9 w-auto min-w-36 text-xs">
+                <SelectValue placeholder="All Months" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All Months</SelectItem>
+                {data.availableMonths.map((m) => (
+                  <SelectItem key={m.month_value} value={m.month_value}>{m.month_label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {/* Team */}
+            <Select
+              value={filters.team_filter || "__all__"}
+              onValueChange={(v) => applyFilter({ team_filter: v === "__all__" ? "" : v })}
+            >
+              <SelectTrigger className="h-9 w-auto min-w-36 text-xs">
+                <SelectValue placeholder="All Teams" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All Teams</SelectItem>
+                <SelectItem value="unassigned">Unassigned</SelectItem>
+                {data.medical_teams.map((t) => (
+                  <SelectItem key={t.id} value={String(t.id)}>
+                    {t.team_name}
+                    {t.team_type === "leadership_lead" ? " 👑" : t.team_type === "leadership_asst" ? " ⭐" : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {/* MR Status */}
+            <Select
+              value={filters.status_filter || "__all__"}
+              onValueChange={(v) => applyFilter({ status_filter: v === "__all__" ? "" : v })}
+            >
+              <SelectTrigger className="h-9 w-auto min-w-36 text-xs">
+                <SelectValue placeholder="All Statuses" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All Statuses</SelectItem>
+                <SelectItem value="unassigned">No Status</SelectItem>
+                {data.medical_record_status_options.map((s) => (
+                  <SelectItem key={s} value={s}>{s}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {/* Assignment */}
+            <Select
+              value={filters.assignment_filter || "__all__"}
+              onValueChange={(v) => applyFilter({ assignment_filter: v === "__all__" ? "" : v })}
+            >
+              <SelectTrigger className="h-9 w-auto min-w-40 text-xs">
+                <SelectValue placeholder="All Assignments" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All Assignments</SelectItem>
+                <SelectItem value="no_specialist">No Specialist</SelectItem>
+                <SelectItem value="no_task">No Task Assigned</SelectItem>
+                <SelectItem value="no_both">No Specialist &amp; No Task</SelectItem>
+              </SelectContent>
+            </Select>
+
+            {/* Clear */}
+            <button
+              onClick={() => applyFilter({ search: "", month_filter: "", team_filter: "", status_filter: "", assignment_filter: "" })}
+              className="flex items-center gap-1.5 h-9 px-3 rounded-lg text-xs font-semibold bg-zinc-200 hover:bg-zinc-300 text-zinc-700 dark:bg-zinc-700 dark:hover:bg-zinc-600 dark:text-zinc-200 transition-colors"
+            >
+              <RefreshCw size={11} /> Clear
             </button>
+
+            {/* Round Robin — pushed to right end, matching PHP filter bar */}
+            <div className="ml-auto">
+              <RoundRobinBanner rr={roundRobin} />
+            </div>
+          </div>
         </div>
 
-        {/* ── Main Hearings Card ───────────────────────────────────────── */}
-        <div className="bg-card border border-border rounded-xl overflow-hidden flex flex-col" style={{ maxHeight: "calc(100vh - 280px)" }}>
-
+        {/* ── Main Hearings Card ────────────────────────────────────────── */}
+        <div
+          className="bg-card border border-border rounded-xl overflow-hidden flex flex-col"
+          style={{ maxHeight: "min(calc(100vh - 240px), 75vh)" }}
+        >
           {/* Card header */}
-          <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-border bg-muted/30 flex-wrap flex-shrink-0">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-border bg-muted/30 shrink-0">
             <div className="flex items-center gap-2">
               <span className="text-sm font-bold text-foreground">📁 Hearings</span>
               <span className="text-xs text-muted-foreground tabular-nums">({totalHearings})</span>
             </div>
-            <div className="flex items-center gap-2 flex-wrap">
+
+            <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
               {/* View toggle */}
               <div className="flex bg-muted rounded-lg p-0.5 gap-0.5">
-                {(["date","team"] as const).map((v) => (
+                {(["date", "team"] as const).map((v) => (
                   <button key={v} onClick={() => setViewMode(v)}
                     className={cn("px-3 py-1 text-[11px] font-medium rounded-md transition-all",
-                      viewMode === v ? "bg-card text-foreground shadow-sm border border-border" : "text-muted-foreground hover:text-foreground")}>
+                      viewMode === v
+                        ? "bg-card text-foreground shadow-sm border border-border"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}>
                     {v === "date" ? "📅 By Date" : "👥 By Team"}
                   </button>
                 ))}
               </div>
 
-              {/* Action buttons */}
+              {/* Jerome assign — canEditMrTeam only */}
               {data.permissions.canEditMrTeam && data.jeromeTeamInfo && roundRobin.urgentUnassignedCount > 0 && (
                 <button onClick={handleAssignJerome}
-                  className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white transition-colors">
-                  <AlertTriangle size={12} />⚡ &lt;4wk Jerome ({roundRobin.urgentUnassignedCount})
+                  className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-semibold transition-colors">
+                  <AlertTriangle size={12} />
+                  <span className="hidden sm:inline">⚡ &lt;4wk Jerome</span>
+                  <span className="sm:hidden">Jerome</span>
+                  ({roundRobin.urgentUnassignedCount})
                 </button>
               )}
+
+              {/* Post HRG */}
               {data.postHrgCount > 0 && (
                 <button onClick={() => setShowPostHrg(true)}
-                  className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-yellow-500 hover:bg-yellow-600 text-white transition-colors">
-                  <FileText size={12} />Post HRG ({data.postHrgCount})
+                  className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-yellow-500 hover:bg-yellow-600 text-white font-semibold transition-colors">
+                  <FileText size={12} /> Post HRG ({data.postHrgCount})
                 </button>
               )}
-              <button onClick={() => router.push("/patient-portal")}
-                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors">
-                <MonitorSmartphone size={12} />Patient Portal
-              </button>
               <button onClick={() => setShowActivityLog(true)}
-                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground transition-colors">
-                <ClipboardList size={12} />Activity Log
+                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground font-semibold transition-colors">
+                <ClipboardList size={12} />
+                <span className="hidden sm:inline">Activity Log</span>
+                <span className="sm:hidden">Log</span>
               </button>
+
               <button onClick={() => setShowTeamStats(true)}
-                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground transition-colors">
-                <BarChart3 size={12} />Stats
+                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground font-semibold transition-colors">
+                <BarChart3 size={12} /> Stats
               </button>
-              <button onClick={() => exportHearingsToCsv(hearings)} className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition-colors">
-                <Download size={12} />Export
+
+              <button onClick={() => exportHearingsToCsv(hearings)}
+                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold transition-colors">
+                <Download size={12} /> Export
               </button>
+
               <button onClick={() => setShowHearings(true)}
-                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-primary hover:bg-primary/90 text-white transition-colors">
+                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold transition-colors">
                 🔍 Details
               </button>
-              <button onClick={expandAll} className="text-[11px] px-2 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-muted-foreground transition-colors">+ Expand</button>
-              <button onClick={collapseAll} className="text-[11px] px-2 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-muted-foreground transition-colors">− Collapse</button>
+
+              <button onClick={expandAll}
+                className="text-[11px] px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold transition-colors">
+                + Expand
+              </button>
+              <button onClick={collapseAll}
+                className="text-[11px] px-2.5 py-1.5 rounded-lg bg-zinc-200 hover:bg-zinc-300 text-zinc-700 dark:bg-zinc-700 dark:hover:bg-zinc-600 dark:text-zinc-200 font-semibold transition-colors">
+                − Collapse
+              </button>
             </div>
           </div>
 
-          {/* Column headers (sticky) */}
-          <div className="overflow-x-auto flex-shrink-0">
+          {/* Column headers */}
+          <div className="overflow-x-auto shrink-0">
             {columnHeaders}
           </div>
 
-          {/* Scrollable body */}
-          <div className="flex-1 overflow-y-auto overflow-x-auto relative min-h-0">
+          {/* Scrollable body — TanStack virtualised */}
+          <div
+            ref={scrollRef}
+            className="flex-1 overflow-y-auto overflow-x-auto relative min-h-0"
+            onScroll={() => {
+              if (!isScrolling) setIsScrolling(true);
+              if (scrollTimer.current) clearTimeout(scrollTimer.current);
+              scrollTimer.current = setTimeout(() => setIsScrolling(false), 150);
+            }}
+          >
+            {/* Full-page loader during server action transitions */}
             {isPending && (
               <div className="absolute inset-0 bg-background/70 flex items-center justify-center z-10">
                 <Loader2 size={32} className="animate-spin text-primary" />
               </div>
             )}
 
-            {viewMode === "date" && Object.entries(groupedByMonth).map(([key, rows]) => (
-              <div key={key}>
-                <div className="flex items-center gap-3 px-4 py-2 bg-muted/30 border-b border-border cursor-pointer hover:bg-muted/50 select-none"
-                  style={{ minWidth: "1200px" }}
-                  onClick={() => toggleMonth(key)}>
-                  <span className="w-4 h-4 flex items-center justify-center bg-primary text-white rounded text-[9px] font-bold">{expandedMonths.has(key) ? "−" : "+"}</span>
-                  <span className="text-xs font-semibold text-foreground">
-                    {new Date(key + "-01").toLocaleDateString("en-US", { month: "long", year: "numeric" })}
-                  </span>
-                  <span className="text-[10px] text-muted-foreground">({rows.length})</span>
-                </div>
-                {expandedMonths.has(key) && rows.map((h) => (
-                  <HearingRow key={h.id} h={h} teams={data.medical_teams}
-                    mrStatusOptions={data.medical_record_status_options}
-                    hearingDecisionOptions={data.hearing_decision_status_options}
-                    mannerOptions={data.manner_options}
-                    permissions={data.permissions}
-                    onUpdate={handleUpdate} />
-                ))}
+            {/* Fast-scroll skeleton overlay — subtle, doesn't block interaction */}
+            {isScrolling && !isPending && (
+              <div className="absolute top-2 right-3 z-10 flex items-center gap-1.5 bg-card/80 border border-border rounded-full px-2.5 py-1 shadow-sm pointer-events-none">
+                <Loader2 size={11} className="animate-spin text-muted-foreground" />
+                <span className="text-[10px] text-muted-foreground">Loading...</span>
               </div>
-            ))}
+            )}
 
-            {viewMode === "team" && Object.entries(groupedByTeam).map(([key, rows]) => (
-              <div key={key}>
-                <div className="flex items-center gap-3 px-4 py-2 border-b border-border cursor-pointer hover:bg-muted/50 select-none bg-card"
-                  style={{ minWidth: "1200px" }}
-                  onClick={() => toggleTeam(key)}>
-                  <span className="w-4 h-4 flex items-center justify-center text-[9px] text-muted-foreground">{expandedTeams.has(key) ? "▼" : "▶"}</span>
-                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: teamHex(rows[0]?.mr_team_color) }} />
-                  <span className="text-xs font-semibold text-foreground">{key}</span>
-                  <span className="text-[10px] text-muted-foreground">({rows.length})</span>
-                </div>
-                {expandedTeams.has(key) && rows.map((h) => (
-                  <HearingRow key={h.id} h={h} teams={data.medical_teams}
-                    mrStatusOptions={data.medical_record_status_options}
-                    hearingDecisionOptions={data.hearing_decision_status_options}
-                    mannerOptions={data.manner_options}
-                    permissions={data.permissions}
-                    onUpdate={handleUpdate} />
-                ))}
-              </div>
-            ))}
-
-            {!isPending && hearings.length === 0 && (
+            {!isPending && hearings.length === 0 ? (
               <div className="flex items-center justify-center py-16 text-sm text-muted-foreground">
                 No hearings match the current filters.
+              </div>
+            ) : (
+              <div style={{ height: virtualizer.getTotalSize(), position: "relative", minWidth: "1200px" }}>
+                {virtualizer.getVirtualItems().map((vRow) => {
+                  const item = flatItems[vRow.index];
+                  if (!item) return null;
+
+                  if (item.kind === "group-date") {
+                    return (
+                      <div
+                        key={`gd-${item.key}`}
+                        style={{ position: "absolute", top: vRow.start, left: 0, right: 0, height: GROUP_H }}
+                        className="flex items-center gap-3 px-4 bg-muted/30 border-b border-border cursor-pointer hover:bg-muted/50 select-none"
+                        onClick={() => toggleMonth(item.key)}
+                      >
+                        <span className="w-4 h-4 flex items-center justify-center bg-primary text-primary-foreground rounded text-[9px] font-bold">
+                          {expandedMonths.has(item.key) ? "−" : "+"}
+                        </span>
+                        <span className="text-xs font-semibold text-foreground">
+                          {new Date(item.key + "-01").toLocaleDateString("en-US", { month: "long", year: "numeric" })}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">({item.count})</span>
+                      </div>
+                    );
+                  }
+
+                  if (item.kind === "group-team") {
+                    return (
+                      <div
+                        key={`gt-${item.key}`}
+                        style={{ position: "absolute", top: vRow.start, left: 0, right: 0, height: GROUP_H }}
+                        className="flex items-center gap-3 px-4 border-b border-border cursor-pointer hover:bg-muted/50 select-none bg-card"
+                        onClick={() => toggleTeam(item.key)}
+                      >
+                        <span className="w-4 h-4 flex items-center justify-center text-[9px] text-muted-foreground">
+                          {expandedTeams.has(item.key) ? "▼" : "▶"}
+                        </span>
+                        <span className="w-2 h-2 rounded-full shrink-0"
+                          style={{ backgroundColor: teamHex(item.color) }} />
+                        <span className="text-xs font-semibold text-foreground">{item.key}</span>
+                        <span className="text-[10px] text-muted-foreground">({item.count})</span>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div
+                      key={`r-${item.hearing.id}`}
+                      style={{ position: "absolute", top: vRow.start, left: 0, right: 0, height: ROW_H }}
+                    >
+                      <HearingRow
+                        h={item.hearing}
+                        teams={data.medical_teams}
+                        mrStatusOptions={data.medical_record_status_options}
+                        hearingDecisionOptions={data.hearing_decision_status_options}
+                        mannerOptions={data.manner_options}
+                        permissions={data.permissions}
+                        onUpdate={handleUpdate}
+                      />
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
 
           {/* Pagination */}
-          <div className="flex items-center justify-between gap-3 px-5 py-2.5 border-t border-border bg-muted/20 flex-shrink-0 flex-wrap">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-2.5 border-t border-border bg-muted/20 shrink-0">
             <span className="text-[11px] text-muted-foreground">
-              Showing {((filters.page ?? 1) - 1) * (filters.per_page as number) + 1}–{Math.min((filters.page ?? 1) * (filters.per_page as number), totalHearings)} of {totalHearings}
+              Showing {((filters.page ?? 1) - 1) * (filters.per_page as number) + 1}–{Math.min(
+                (filters.page ?? 1) * (filters.per_page as number), totalHearings
+              )} of {totalHearings}
             </span>
             <div className="flex items-center gap-2">
-              <select value={filters.per_page} onChange={(e) => applyFilter({ per_page: Number(e.target.value), page: 1 })}
+              <select value={filters.per_page}
+                onChange={(e) => applyFilter({ per_page: Number(e.target.value), page: 1 })}
                 className="text-xs px-2 py-1 rounded-lg border border-border bg-card text-foreground cursor-pointer">
                 <option value={50}>50/page</option>
                 <option value={100}>100/page</option>
@@ -866,30 +1230,41 @@ export function MrPivotClient(data: MrPivotPageData) {
                 <option value={500}>500/page</option>
               </select>
               <button onClick={() => goPage((filters.page ?? 1) - 1)} disabled={(filters.page ?? 1) <= 1}
-                className="text-[11px] px-3 py-1.5 rounded-lg border border-border bg-card disabled:opacity-40 hover:bg-muted transition-colors">
+                className="text-[11px] px-3 py-1.5 rounded-lg bg-zinc-200 hover:bg-zinc-300 text-zinc-700 dark:bg-zinc-700 dark:hover:bg-zinc-600 dark:text-zinc-200 font-semibold disabled:opacity-40 transition-colors">
                 ← Prev
               </button>
-              <span className="text-[11px] text-muted-foreground">Page {filters.page} of {totalPages}</span>
+              {/* Page jump select */}
+              <select
+                value={String(filters.page ?? 1)}
+                onChange={(e) => goPage(Number(e.target.value))}
+                className="text-[11px] px-2 py-1 rounded-lg border border-border bg-card text-foreground cursor-pointer tabular-nums"
+              >
+                {Array.from({ length: totalPages }, (_, i) => (
+                  <option key={i + 1} value={String(i + 1)}>Page {i + 1}</option>
+                ))}
+              </select>
+              <span className="text-[11px] text-muted-foreground">of {totalPages}</span>
               <button onClick={() => goPage((filters.page ?? 1) + 1)} disabled={(filters.page ?? 1) >= totalPages}
-                className="text-[11px] px-3 py-1.5 rounded-lg border border-border bg-card disabled:opacity-40 hover:bg-muted transition-colors">
+                className="text-[11px] px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold disabled:opacity-40 transition-colors">
                 Next →
               </button>
             </div>
           </div>
         </div>
 
-        {/* ── Bottom Grid: MR Status Pivot + Assigned by Month ────────── */}
-        <div className="grid grid-cols-[1fr_360px] gap-5">
+        {/* ── Bottom Grid: Pivot + Assigned by Month ────────────────────── */}
+        <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-4 sm:gap-5">
 
           {/* MR Status Pivot */}
           <div className="bg-card border border-border rounded-xl overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30">
               <span className="text-sm font-bold text-foreground">📊 Medical Records Status</span>
-              <button onClick={() => exportPivotToCsv(data.mrStatusByTeam)} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition-colors">
-                <Download size={12} />Export CSV
+              <button onClick={() => exportPivotToCsv(data.mrStatusByTeam)}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold transition-colors">
+                <Download size={12} /> Export CSV
               </button>
             </div>
-            <div className="p-0 overflow-auto max-h-96">
+            <div className="overflow-auto max-h-96">
               <MrStatusPivot rows={data.mrStatusByTeam} />
             </div>
           </div>
@@ -907,7 +1282,7 @@ export function MrPivotClient(data: MrPivotPageData) {
 
       </div>
 
-      {/* ── Modals ──────────────────────────────────────────────────────── */}
+      {/* ── Modals ────────────────────────────────────────────────────────── */}
       <HearingsModal
         open={showHearings}
         onClose={() => setShowHearings(false)}
@@ -927,10 +1302,11 @@ export function MrPivotClient(data: MrPivotPageData) {
       <TeamStatsModal
         open={showTeamStats}
         onClose={() => setShowTeamStats(false)}
+        teams={data.medical_teams}
       />
-    {showActivityLog && (
+      {showActivityLog && (
         <ActivityLogModal onClose={() => setShowActivityLog(false)} />
-    )}
+      )}
     </>
   );
 }

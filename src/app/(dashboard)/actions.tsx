@@ -478,7 +478,43 @@ export async function updateHearing(
     hearingId,
   ]);
 
-  // Log the update
+  // If a withdrawal-type decision was just set, push a sync_notification
+  // so the Medical Records page bell picks it up within 30 seconds
+  if (field === "hearing_decision_status") {
+    const isWithdrawal =
+      typeof value === "string" &&
+      (value.startsWith("Withdrawal") ||
+        value === "WD CLMT DECEASED" ||
+        value === "Dismissal");
+    if (isWithdrawal) {
+      try {
+        const { rows: hRows } = await db.query(
+          "SELECT claimant FROM hearings WHERE id = $1",
+          [hearingId],
+        );
+        const claimantName = (hRows[0]?.claimant as string | undefined) ?? `Hearing #${hearingId}`;
+        const { getSession } = await import("@/lib/session");
+        const session = await getSession();
+        const createdBy = session?.user?.id ?? null;
+        await db.query(
+          `INSERT INTO sync_notifications
+             (notification_type, hearing_id, claimant_name, message, created_by, expires_at)
+           VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '24 hours')`,
+          [
+            "withdrawal",
+            hearingId,
+            claimantName,
+            `Withdrawal decision recorded for ${claimantName}`,
+            createdBy,
+          ],
+        );
+      } catch {
+        // Never let notification creation break the field update
+      }
+    }
+  }
+
+  // Log the update — action names match PHP dashboard
   const claimant = await getClaimantName(hearingId);
   if (field === "assigned_rep_id" && value) {
     const { rows } = await db.query(
@@ -486,20 +522,23 @@ export async function updateHearing(
       [value],
     );
     await logAction(
-      "hearing_assigned",
-      `${claimant} assigned to ${rows[0]?.name || "unknown"}`,
+      "rep_assigned",
+      `Assigned ${rows[0]?.name || "unknown"} to: ${claimant}`,
     );
   } else if (field === "assigned_rep_id" && !value) {
-    await logAction("hearing_unassigned", `${claimant} unassigned`);
+    await logAction("rep_unassigned", `Unassigned from: ${claimant}`);
   } else if (field === "assignment_status") {
     await logAction(
-      "withdrawal",
-      `${claimant} status changed to ${value || "cleared"}`,
+      "status_assigned",
+      `Set ${value || "cleared"} for: ${claimant}`,
     );
   } else {
+    const fieldLabel = field
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, (l) => l.toUpperCase());
     await logAction(
-      "hearing_updated",
-      `${claimant}: ${field.replace(/_/g, " ")} updated`,
+      "field_updated",
+      `Set ${fieldLabel} to '${value ?? "cleared"}' for: ${claimant}`,
     );
   }
 }
@@ -508,7 +547,7 @@ export async function deleteHearing(hearingId: number) {
   const { logAction, getClaimantName } = await import("@/lib/activity-log");
   const claimant = await getClaimantName(hearingId);
   await db.query("DELETE FROM hearings WHERE id = $1", [hearingId]);
-  await logAction("hearing_deleted", `${claimant} deleted`);
+  await logAction("hearing_deleted", `Deleted hearing: ${claimant}`);
 }
 
 export async function autoAssignSingle(hearingId: number) {
@@ -522,8 +561,8 @@ export async function autoAssignSingle(hearingId: number) {
   const claimant = await getClaimantName(hearingId);
   if (result.success) {
     await logAction(
-      "hearing_auto_assigned",
-      `${claimant} auto-assigned to ${result.rep_name}`,
+      "rep_auto_assigned",
+      `Auto-assigned ${result.rep_name} to: ${claimant}`,
     );
   }
   return result;
@@ -680,7 +719,7 @@ export async function emailAllReps(monthFilter: string) {
 
   const { logAction } = await import("@/lib/activity-log");
   await logAction(
-    "email_sent",
+    "bulk_email",
     `Batch email sent to ${emailsSent} reps (${monthFilter})`,
   );
 
@@ -849,7 +888,7 @@ export async function unassignAll(options: {
 
   const { logAction } = await import("@/lib/activity-log");
   await logAction(
-    "hearing_unassigned",
+    "bulk_unassign",
     `Bulk unassign: ${rowCount ?? 0} hearings unassigned`,
   );
 
@@ -1023,6 +1062,7 @@ export async function fetchActivityLog(params: {
   dateFrom?: string;
   dateTo?: string;
   userId?: string;
+  excludeSystemAdmin?: boolean;
 }): Promise<{
   entries: ActivityLogEntry[];
   total: number;
@@ -1032,19 +1072,31 @@ export async function fetchActivityLog(params: {
   const values: unknown[] = [];
   let idx = 1;
 
-  // Category filter
+  // Category filter — action names match PHP dashboard logActivity() calls
   if (params.category && params.category !== "all") {
     const catMap: Record<string, string[]> = {
       assignments: [
-        "hearing_assigned",
-        "hearing_unassigned",
-        "hearing_auto_assigned",
-        "withdrawal",
+        "rep_assigned",
+        "rep_unassigned",
+        "rep_auto_assigned",
+        "batch_auto_assign",
+        "bulk_unassign",
+        "status_assigned",
       ],
-      emails: ["email_sent", "hearing_alert_minimal"],
-      fields: ["hearing_updated", "hearing_edited"],
-      hearings: ["hearing_created", "hearing_deleted", "hearing_imported"],
-      schedule: ["schedule_updated"],
+      emails: ["email_sent", "email_failed", "bulk_email"],
+      fields: [
+        "field_updated",
+        "post_hrg_note_added",
+        "post_hrg_deadline_updated",
+        "post_hrg_note_deleted",
+      ],
+      hearings: [
+        "hearing_updated",
+        "hearing_created",
+        "hearing_deleted",
+        "bulk_delete",
+      ],
+      schedule: ["schedule_updated", "schedule_lock_override"],
       reps: ["rep_created", "rep_updated", "rep_deleted", "token_revoked"],
     };
     const actions = catMap[params.category];
@@ -1080,6 +1132,11 @@ export async function fetchActivityLog(params: {
     idx++;
   }
 
+  // Optionally hide system_admin (user id=1) activities — matches PHP dashboard
+  if (params.excludeSystemAdmin) {
+    conditions.push(`(a.user_id IS NULL OR a.user_id != 1)`);
+  }
+
   const where =
     conditions.length > 0 ? "WHERE " + conditions.join(" AND ") : "";
 
@@ -1109,7 +1166,7 @@ export async function fetchActivityLog(params: {
       [...values, params.pageSize, (params.page - 1) * params.pageSize],
     ),
     db.query(
-      "SELECT id, full_name AS name FROM users WHERE is_active = true ORDER BY full_name",
+      "SELECT id, full_name AS name FROM users WHERE is_active = true AND id != 1 ORDER BY full_name",
     ),
   ]);
 
@@ -1196,4 +1253,209 @@ export async function fetchRepStats(params: {
       repCount: stats.filter((r) => r.assigned_count > 0).length,
     },
   };
+}
+
+// ── Bulk auto-assign selected hearing IDs ──
+export async function bulkAutoAssignSelected(
+  hearingIds: number[],
+  distributionMode: "priority" | "balanced" | "workload" = "priority",
+) {
+  const { assignSingleHearing } = await import("@/lib/auto-assign");
+  const { logAction } = await import("@/lib/activity-log");
+  const { rows: repRows } = await db.query(
+    "SELECT id FROM representatives WHERE is_active = true",
+  );
+  const repIds = repRows.map((r) => r.id as number);
+
+  let assigned = 0;
+  let failed = 0;
+  for (const id of hearingIds) {
+    const res = await assignSingleHearing(id, repIds, distributionMode);
+    if (res.success) assigned++;
+    else failed++;
+  }
+
+  await logAction(
+    "batch_auto_assign",
+    `Bulk auto-assigned ${assigned} of ${hearingIds.length} selected hearings`,
+  );
+  return { assigned, failed, total: hearingIds.length };
+}
+
+// ── Bulk email selected hearing reps ──
+export async function bulkEmailSelected(hearingIds: number[]) {
+  const { logAction } = await import("@/lib/activity-log");
+  // Get distinct reps for the selected hearings
+  const { rows } = await db.query(
+    `SELECT DISTINCT r.id, r.name, r.email, COUNT(h.id)::int AS hearing_count
+     FROM hearings h
+     JOIN representatives r ON r.id = h.assigned_rep_id
+     WHERE h.id = ANY($1) AND h.assigned_rep_id IS NOT NULL
+     GROUP BY r.id, r.name, r.email
+     ORDER BY r.name`,
+    [hearingIds],
+  );
+
+  const webhookUrl = process.env.N8N_WEBHOOK_URL;
+  const webhookSecret = process.env.N8N_WEBHOOK_SECRET;
+  let emailsSent = 0;
+  let emailsFailed = 0;
+
+  if (webhookUrl) {
+    for (const rep of rows) {
+      if (!rep.email) {
+        emailsFailed++;
+        continue;
+      }
+      try {
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
+        if (webhookSecret) headers["X-Webhook-Secret"] = webhookSecret;
+        const response = await fetch(webhookUrl, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            email_type: "hearing_alert_minimal",
+            to_email: rep.email,
+            to_name: rep.name,
+            hearing_count: rep.hearing_count,
+            month_filter: "selected",
+            dashboard_url:
+              process.env.NEXT_PUBLIC_APP_URL ||
+              "https://hearings.hogansmith.com",
+            source: "hsl_hearing_system",
+            sent_at: new Date().toISOString(),
+          }),
+        });
+        if (response.ok) emailsSent++;
+        else emailsFailed++;
+      } catch {
+        emailsFailed++;
+      }
+    }
+  }
+
+  await logAction(
+    "bulk_email",
+    `Bulk email sent to ${emailsSent} reps for ${hearingIds.length} selected hearings`,
+  );
+  return {
+    reps: rows.length,
+    emailsSent,
+    emailsFailed,
+    skippedNoRep:
+      hearingIds.length - rows.reduce((s, r) => s + r.hearing_count, 0),
+  };
+}
+
+// ── CSV Compare: fetch all hearings for client-side comparison ──
+export async function fetchAllHearingsForCompare() {
+  const { rows } = await db.query(
+    `SELECT id, LOWER(claimant) as claimant_lower, claimant, ssn_last_4, hearing_date::text, hearing_time, converted_time_est
+     FROM hearings ORDER BY hearing_date DESC`,
+  );
+  return { hearings: rows, totalCount: rows.length };
+}
+
+// ── CSV Compare: import new entries from Chronicle CSV ──
+export async function importChronicleEntries(
+  entries: {
+    claimant: string;
+    ssn_last_4: string;
+    claim_type: string;
+    hearing_date: string;
+    hearing_time: string;
+    time_zone: string;
+    claimant_location: string;
+    representative_location: string;
+    alj: string;
+    medical_expert: string;
+    vocational_expert: string;
+    status_date: string;
+    entered_hearing_level_date: string;
+  }[],
+) {
+  const { logAction } = await import("@/lib/activity-log");
+  let imported = 0;
+  let skipped = 0;
+
+  for (const e of entries) {
+    if (!e.claimant || !e.hearing_date) {
+      skipped++;
+      continue;
+    }
+    try {
+      await db.query(
+        `INSERT INTO hearings (claimant, ssn_last_4, claim_type, hearing_date, hearing_time, time_zone,
+         claimant_location, representative_location, alj, medical_expert, vocational_expert,
+         status_date, entered_hearing_level_date)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+        [
+          e.claimant,
+          e.ssn_last_4 || null,
+          e.claim_type || null,
+          e.hearing_date,
+          e.hearing_time || null,
+          e.time_zone || "ET",
+          e.claimant_location || null,
+          e.representative_location || null,
+          e.alj || null,
+          e.medical_expert || null,
+          e.vocational_expert || null,
+          e.status_date || null,
+          e.entered_hearing_level_date || null,
+        ],
+      );
+      imported++;
+    } catch {
+      skipped++;
+    }
+  }
+
+  if (imported > 0)
+    await logAction(
+      "hearing_imported",
+      `Imported ${imported} hearings from Chronicle CSV compare`,
+    );
+  return { imported, skipped };
+}
+
+// ── Export hearings to CSV (returns data for client-side download) ──
+export async function exportHearingsCsv(params: FetchPageParams) {
+  // Re-use the same filtering logic but without pagination
+  const exportParams = { ...params, page: 1, pageSize: 999999 };
+  const { hearings } = await fetchHearingsPage(exportParams);
+
+  // Join with rep names
+  const { rows: reps } = await db.query("SELECT id, name FROM representatives");
+  const repMap = new Map(reps.map((r) => [r.id as number, r.name as string]));
+  const { rows: teams } = await db.query("SELECT id, team_name FROM mr_teams");
+  const teamMap = new Map(
+    teams.map((t) => [t.id as number, t.team_name as string]),
+  );
+
+  const csvRows = hearings.map((h) => ({
+    Claimant: h.claimant,
+    SSN: h.ssn_last_4 || "",
+    "Claim Type": h.claim_type || "",
+    "Hearing Date": h.hearing_date || "",
+    "Hearing Time": h.hearing_time || "",
+    "Time Zone": h.time_zone || "",
+    "EST Time": h.converted_time_est || "",
+    Representative: h.assigned_rep_id
+      ? repMap.get(h.assigned_rep_id) || ""
+      : h.assignment_status || "Unassigned",
+    ALJ: h.alj || "",
+    City: h.city || "",
+    State: h.state || "",
+    "Claimant Location": h.claimant_location || "",
+    "Rep Location": h.representative_location || "",
+    "MR Team": h.mr_team_id ? teamMap.get(h.mr_team_id) || "" : "",
+    "Decision Status": h.hearing_decision_status || "",
+    MOA: h.manner_of_appearance || "",
+    "Status Date": h.status_date || "",
+  }));
+
+  return csvRows;
 }

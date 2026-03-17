@@ -2,15 +2,11 @@
 
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { X, Mail, Loader2 } from "lucide-react";
 import { emailAllReps, getEmailPreviewStats } from "@/app/(dashboard)/actions";
+
+const SEL =
+  "h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring";
 
 function getMonthOptions() {
   const months: { value: string; label: string }[] = [
@@ -92,7 +88,6 @@ export function EmailAllModal({ onClose }: { onClose: () => void }) {
         className="w-full max-w-md rounded-xl border bg-card shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
         <div className="flex items-center justify-between border-b px-5 py-4">
           <h2 className="text-sm font-semibold">
             Email All Assigned Representatives
@@ -101,33 +96,27 @@ export function EmailAllModal({ onClose }: { onClose: () => void }) {
             <X className="h-4 w-4" />
           </button>
         </div>
-
         <div className="px-5 py-4 space-y-4">
           <p className="text-xs text-muted-foreground">
             Send notification emails to all representatives with assigned
             hearings.
           </p>
-
-          {/* Month Filter */}
           <div>
             <label className="mb-1.5 block text-xs font-semibold">
               Filter by Month
             </label>
-            <Select value={monthFilter} onValueChange={setMonthFilter}>
-              <SelectTrigger className="h-9 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {getMonthOptions().map((m) => (
-                  <SelectItem key={m.value} value={m.value}>
-                    {m.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <select
+              className={SEL}
+              value={monthFilter}
+              onChange={(e) => setMonthFilter(e.target.value)}
+            >
+              {getMonthOptions().map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
           </div>
-
-          {/* Preview Stats */}
           <div className="rounded-lg border bg-muted/30 p-3 space-y-3">
             {loading ? (
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -144,7 +133,6 @@ export function EmailAllModal({ onClose }: { onClose: () => void }) {
                   hearings with assigned reps for{" "}
                   <span className="font-semibold">{monthLabel}</span>
                 </p>
-                {/* 3 stat boxes matching old dashboard */}
                 <div className="grid grid-cols-3 gap-2">
                   <div className="rounded-lg border bg-card p-2.5 text-center">
                     <p className="text-lg font-bold tabular-nums">
@@ -172,8 +160,6 @@ export function EmailAllModal({ onClose }: { onClose: () => void }) {
               </>
             ) : null}
           </div>
-
-          {/* Confirmation step */}
           {confirmStep && !result && (
             <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
               <p className="text-xs font-medium text-amber-800 dark:text-amber-300">
@@ -184,8 +170,6 @@ export function EmailAllModal({ onClose }: { onClose: () => void }) {
             </div>
           )}
         </div>
-
-        {/* Footer */}
         <div className="flex items-center justify-end gap-2 border-t px-5 py-3">
           <Button
             variant="outline"
