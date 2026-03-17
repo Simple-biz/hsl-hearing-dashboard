@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
     );
 
   const body = await req.json();
-  const { records, mapping, hyperlinks = {} } = body;
+  const { records, mapping, hyperlinks = {}, preserveExisting = false } = body;
 
   if (!records || records.length === 0) {
     return NextResponse.json({
@@ -64,6 +64,27 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  // Fields that are "assignment" fields — these get preserved when preserveExisting is on
+  const PROTECTED_FIELDS = new Set([
+    "assigned_rep_id",
+    "assignment_status",
+    "mr_team_id",
+    "medical_record_status",
+    "medical_record_link",
+    "rfc_status",
+    "brief_assigned_to",
+    "hearing_decision_status",
+    "rep_docs_assigned_to",
+    "task_assigned",
+    "rep_docs_complete",
+    "fee_agreement_complete",
+    "phi_sheet_complete",
+    "five_day_notice",
+    "post_hrg_review",
+    "post_hrg_deadline",
+    "post_hrg_notes",
+  ]);
+
   let updated = 0;
   const errors: string[] = [];
 
@@ -71,6 +92,16 @@ export async function POST(req: NextRequest) {
     if (!record.existing_id) continue;
 
     try {
+      // If preserveExisting, fetch current record to check which fields are already set
+      let existingRecord: Record<string, unknown> | null = null;
+      if (preserveExisting) {
+        const { rows: existRows } = await db.query(
+          "SELECT * FROM hearings WHERE id = $1",
+          [record.existing_id],
+        );
+        existingRecord = existRows[0] || null;
+      }
+
       const row = record.data as string[];
       const updates: Record<string, unknown> = {};
 
@@ -110,9 +141,21 @@ export async function POST(req: NextRequest) {
       if (record.downloadType) updates.download_type = record.downloadType;
       if (record.statusDate) updates.status_date = parseDate(record.statusDate);
 
-      const keys = Object.keys(updates).filter(
-        (k) => updates[k] !== null && updates[k] !== undefined,
-      );
+      const keys = Object.keys(updates).filter((k) => {
+        if (updates[k] === null || updates[k] === undefined) return false;
+        // If preserveExisting is on, skip protected fields that already have values in DB
+        if (preserveExisting && existingRecord && PROTECTED_FIELDS.has(k)) {
+          const existing = existingRecord[k];
+          if (
+            existing !== null &&
+            existing !== undefined &&
+            existing !== "" &&
+            existing !== false
+          )
+            return false;
+        }
+        return true;
+      });
       if (keys.length === 0) continue;
 
       const setClauses = keys.map((k, i) => `${k} = $${i + 1}`);

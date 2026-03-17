@@ -37,6 +37,9 @@ interface DuplicateResult {
   base_name?: string;
   original_claimant?: string;
   original_date?: string;
+  // Diff fields
+  changed_fields?: string[];
+  has_changes?: boolean;
 }
 
 interface CheckResult {
@@ -75,6 +78,7 @@ const DB_FIELDS: Record<string, string> = {
   ssn_last_4: "SSN (Last 4)",
   claim_type: "Claim Type",
   hearing_time: "Hearing Time",
+  converted_time_est: "Converted Time in EST",
   time_zone: "Time Zone",
   city: "City",
   state: "State",
@@ -149,7 +153,14 @@ const AUTO_MAP: Record<string, string[]> = {
   claimant: ["claimant", "claimant name", "name", "client name", "client"],
   ssn_last_4: ["ssn", "ssn last 4", "ssn_last_4", "last 4 ssn", "social"],
   hearing_date: ["hearing date", "date", "hearing_date", "hrg date"],
-  hearing_time: ["hearing time", "time", "hearing_time", "hrg time"],
+  hearing_time: ["hearing time", "hearing_time", "hrg time"],
+  converted_time_est: [
+    "converted time in est",
+    "converted time",
+    "converted_time_est",
+    "est time",
+    "time in est",
+  ],
   time_zone: ["time zone", "timezone", "time_zone", "tz"],
   city: ["city", "hearing city"],
   state: ["state", "hearing state"],
@@ -230,6 +241,10 @@ export function ImportClient({ userRole }: { userRole: string }) {
     "new" | "duplicate" | "update-preview" | "rescheduled" | "skipped"
   >("new");
   const [updateDuplicates, setUpdateDuplicates] = useState(false);
+  const [preserveExisting, setPreserveExisting] = useState(true);
+  const [fieldChangeSummary, setFieldChangeSummary] = useState<
+    Record<string, number>
+  >({});
 
   // Step 4: Import progress
   const [importing, setImporting] = useState(false);
@@ -289,6 +304,7 @@ export function ImportClient({ userRole }: { userRole: string }) {
             const json = XLSX.utils.sheet_to_json<unknown[]>(ws, {
               header: 1,
               defval: "",
+              raw: false,
             });
             const headers = (json[0] as string[]) || [];
             const rows = json
@@ -482,6 +498,7 @@ export function ImportClient({ userRole }: { userRole: string }) {
       const allDup: DuplicateResult[] = [];
       const allSkip: DuplicateResult[] = [];
       const allResched: DuplicateResult[] = [];
+      const allFieldChanges: Record<string, number> = {};
 
       for (let i = 0; i < sheet.rows.length; i += BATCH_SIZE) {
         const batchRows = sheet.rows.slice(i, i + BATCH_SIZE);
@@ -511,6 +528,13 @@ export function ImportClient({ userRole }: { userRole: string }) {
           allSkip.push(...result.skipped_records);
           if (result.rescheduled_records)
             allResched.push(...result.rescheduled_records);
+          if (result.field_change_summary) {
+            for (const [f, c] of Object.entries(
+              result.field_change_summary as Record<string, number>,
+            )) {
+              allFieldChanges[f] = (allFieldChanges[f] || 0) + c;
+            }
+          }
         } else {
           toast(
             `Batch ${Math.floor(i / BATCH_SIZE) + 1} failed: ${result.message || "Unknown error"}`,
@@ -531,6 +555,7 @@ export function ImportClient({ userRole }: { userRole: string }) {
         skippedRecords: allSkip,
         rescheduledRecords: allResched,
       });
+      setFieldChangeSummary(allFieldChanges);
     } catch (e) {
       toast("Error checking duplicates");
       console.error(e);
@@ -548,42 +573,53 @@ export function ImportClient({ userRole }: { userRole: string }) {
     setImportStatus("Starting import...");
 
     const records = checkResult.newRecords;
-    const BATCH = 50;
+    const BATCH = 250;
+    const PARALLEL = 3; // send 3 batches concurrently
     let imported = 0;
     let skipped = 0;
     const errors: string[] = [];
     const importedIds: number[] = [];
 
+    // Build all batches
+    const batches: DuplicateResult[][] = [];
     for (let i = 0; i < records.length; i += BATCH) {
-      const batch = records.slice(i, i + BATCH);
-      try {
-        const res = await fetch("/api/import/insert", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            records: batch,
-            mapping,
-            headers: currentSheet!.headers,
-            hyperlinks: currentSheet!.hyperlinks || {},
-          }),
-        });
-        const result = await res.json();
-        if (result.success) {
-          imported += result.imported;
-          skipped += result.skipped;
-          if (result.errors) errors.push(...result.errors);
-          if (result.importedIds) importedIds.push(...result.importedIds);
-        } else {
-          errors.push(`Batch ${Math.floor(i / BATCH) + 1}: ${result.message}`);
-        }
-      } catch {
-        errors.push(`Batch ${Math.floor(i / BATCH) + 1}: Network error`);
-      }
-      const progress = Math.min(
-        100,
-        Math.round(((i + batch.length) / records.length) * 100),
+      batches.push(records.slice(i, i + BATCH));
+    }
+
+    // Process batches in parallel groups
+    for (let g = 0; g < batches.length; g += PARALLEL) {
+      const group = batches.slice(g, g + PARALLEL);
+      const results = await Promise.allSettled(
+        group.map((batch) =>
+          fetch("/api/import/insert", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              records: batch,
+              mapping,
+              hyperlinks: currentSheet!.hyperlinks || {},
+            }),
+          }).then((r) => r.json()),
+        ),
       );
-      setImportProgress(progress);
+      for (const r of results) {
+        if (r.status === "fulfilled" && r.value.success) {
+          imported += r.value.imported;
+          skipped += r.value.skipped;
+          if (r.value.errors) errors.push(...r.value.errors);
+          if (r.value.importedIds) importedIds.push(...r.value.importedIds);
+        } else {
+          const msg =
+            r.status === "rejected"
+              ? "Network error"
+              : r.value?.message || "Unknown error";
+          errors.push(`Batch failed: ${msg}`);
+        }
+      }
+      const done = Math.min((g + PARALLEL) * BATCH, records.length);
+      setImportProgress(
+        Math.min(100, Math.round((done / records.length) * 100)),
+      );
       setImportStatus(`Imported ${imported} of ${records.length} records...`);
     }
 
@@ -601,8 +637,8 @@ export function ImportClient({ userRole }: { userRole: string }) {
     setImportProgress(0);
     setImportStatus("Updating existing records...");
 
-    const records = checkResult.duplicateRecords;
-    const BATCH = 50;
+    const records = checkResult.duplicateRecords.filter((r) => r.has_changes);
+    const BATCH = 250;
     let updated = 0;
     const errors: string[] = [];
 
@@ -617,6 +653,7 @@ export function ImportClient({ userRole }: { userRole: string }) {
             mapping,
             headers: currentSheet!.headers,
             hyperlinks: currentSheet!.hyperlinks || {},
+            preserveExisting,
           }),
         });
         const result = await res.json();
@@ -636,7 +673,7 @@ export function ImportClient({ userRole }: { userRole: string }) {
     toast(`Updated ${updated} existing records`, "success");
     // Go back to step 3 to continue with new records import
     setStep(3);
-  }, [checkResult, mapping, currentSheet, toast]);
+  }, [checkResult, mapping, currentSheet, toast, preserveExisting]);
 
   // ── Process rescheduled ──
 
@@ -655,7 +692,7 @@ export function ImportClient({ userRole }: { userRole: string }) {
     setImportStatus("Processing rescheduled hearings...");
 
     const records = checkResult.rescheduledRecords;
-    const BATCH = 50;
+    const BATCH = 250;
     let updated = 0;
     const errors: string[] = [];
 
@@ -669,6 +706,7 @@ export function ImportClient({ userRole }: { userRole: string }) {
             records: batch,
             mapping,
             hyperlinks: currentSheet!.hyperlinks || {},
+            preserveExisting,
           }),
         });
         const result = await res.json();
@@ -696,7 +734,7 @@ export function ImportClient({ userRole }: { userRole: string }) {
       prev ? { ...prev, rescheduledRecords: [] } : prev,
     );
     setStep(3);
-  }, [checkResult, mapping, currentSheet, toast]);
+  }, [checkResult, mapping, currentSheet, toast, preserveExisting]);
 
   // ── Download template ──
 
@@ -757,6 +795,7 @@ export function ImportClient({ userRole }: { userRole: string }) {
     setImportResult(null);
     setImportProgress(0);
     setUpdateDuplicates(false);
+    setPreserveExisting(true);
     if (fileRef.current) fileRef.current.value = "";
   }, []);
 
@@ -1307,6 +1346,17 @@ export function ImportClient({ userRole }: { userRole: string }) {
                     </div>
                     <div className="text-xs text-amber-600 dark:text-amber-500">
                       Duplicates
+                      {checkResult.duplicateRecords.filter((r) => r.has_changes)
+                        .length > 0 && (
+                        <span className="block text-amber-800 dark:text-amber-300 font-semibold">
+                          {
+                            checkResult.duplicateRecords.filter(
+                              (r) => r.has_changes,
+                            ).length
+                          }{" "}
+                          with changes
+                        </span>
+                      )}
                     </div>
                   </div>
                   {checkResult.rescheduledRecords.length > 0 && (
@@ -1327,9 +1377,33 @@ export function ImportClient({ userRole }: { userRole: string }) {
                   </div>
                 </div>
 
+                {/* Debug: Field change breakdown — shows which fields are triggering "with changes" */}
+                {Object.keys(fieldChangeSummary).length > 0 &&
+                  checkResult.duplicateRecords.filter((r) => r.has_changes)
+                    .length > 0 && (
+                    <div className="mb-4 rounded-lg bg-slate-50 dark:bg-slate-900/30 border border-slate-200 dark:border-slate-700 px-4 py-3">
+                      <div className="text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5">
+                        📊 Fields triggering changes in duplicates:
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {Object.entries(fieldChangeSummary)
+                          .sort(([, a], [, b]) => b - a)
+                          .map(([field, count]) => (
+                            <span
+                              key={field}
+                              className="inline-flex items-center gap-1 rounded-full bg-slate-200 dark:bg-slate-700 px-2.5 py-0.5 text-xs text-slate-700 dark:text-slate-300"
+                            >
+                              {DB_FIELDS[field] || field}:{" "}
+                              <strong>{count}</strong>
+                            </span>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+
                 {/* Update duplicates option */}
                 {checkResult.duplicateRecords.length > 0 && (
-                  <div className="mb-4 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 p-4">
+                  <div className="mb-4 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 p-4 space-y-3">
                     <label className="flex items-start gap-3 cursor-pointer">
                       <input
                         type="checkbox"
@@ -1346,6 +1420,34 @@ export function ImportClient({ userRole }: { userRole: string }) {
                           new values from the import file. Only fields that have
                           values in the import will be updated; existing data
                           won&apos;t be cleared.
+                        </p>
+                      </div>
+                    </label>
+                  </div>
+                )}
+
+                {/* Preserve existing assignments option — shown when updates or rescheduled exist */}
+                {(checkResult.duplicateRecords.length > 0 ||
+                  checkResult.rescheduledRecords.length > 0) && (
+                  <div className="mb-4 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-300 dark:border-blue-800 p-4">
+                    <label className="flex items-start gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={preserveExisting}
+                        onChange={(e) => setPreserveExisting(e.target.checked)}
+                        className="mt-0.5 accent-blue-600"
+                      />
+                      <div>
+                        <div className="font-medium text-sm text-blue-900 dark:text-blue-200">
+                          🛡️ Preserve existing assignments
+                        </div>
+                        <p className="text-xs text-blue-700 dark:text-blue-400 mt-1">
+                          When enabled, fields that already have values in the
+                          database (Rep, MR Team, MR Status, Brief, Decision,
+                          etc.) will NOT be overwritten by the import — even if
+                          the import file has different values. Only empty/unset
+                          fields in the DB will be filled in. Turn off to allow
+                          the import to overwrite everything.
                         </p>
                       </div>
                     </label>
@@ -1526,6 +1628,12 @@ export function ImportClient({ userRole }: { userRole: string }) {
                                 Original Record
                               </th>
                             )}
+                            {(dupTab === "duplicate" ||
+                              dupTab === "update-preview") && (
+                              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">
+                                Changes
+                              </th>
+                            )}
                           </tr>
                         </thead>
                         <tbody>
@@ -1534,7 +1642,13 @@ export function ImportClient({ userRole }: { userRole: string }) {
                             return (
                               <tr
                                 key={i}
-                                className="border-t hover:bg-muted/50"
+                                className={cn(
+                                  "border-t hover:bg-muted/50",
+                                  (dupTab === "duplicate" ||
+                                    dupTab === "update-preview") &&
+                                    r.has_changes &&
+                                    "bg-amber-50/50 dark:bg-amber-950/10",
+                                )}
                               >
                                 <td className="px-3 py-1.5 text-muted-foreground">
                                   {r.row}
@@ -1546,6 +1660,10 @@ export function ImportClient({ userRole }: { userRole: string }) {
                                       "px-3 py-1.5 max-w-48 truncate",
                                       col.field === "claimant" && "font-medium",
                                       col.field === "ssn_last_4" && "font-mono",
+                                      (dupTab === "duplicate" ||
+                                        dupTab === "update-preview") &&
+                                        r.changed_fields?.includes(col.field) &&
+                                        "text-amber-700 dark:text-amber-400 font-semibold",
                                     )}
                                   >
                                     {fmtCell(col.field, row[col.idx])}
@@ -1560,6 +1678,20 @@ export function ImportClient({ userRole }: { userRole: string }) {
                                   <td className="px-3 py-1.5 text-violet-600 dark:text-violet-400 text-xs">
                                     Original: {r.original_claimant} (
                                     {r.original_date})
+                                  </td>
+                                )}
+                                {(dupTab === "duplicate" ||
+                                  dupTab === "update-preview") && (
+                                  <td className="px-3 py-1.5 text-xs whitespace-nowrap">
+                                    {r.has_changes ? (
+                                      <span className="text-amber-600 dark:text-amber-400 font-medium">
+                                        {r.changed_fields?.length} changed
+                                      </span>
+                                    ) : (
+                                      <span className="text-muted-foreground">
+                                        No changes
+                                      </span>
+                                    )}
                                   </td>
                                 )}
                               </tr>
@@ -1600,12 +1732,18 @@ export function ImportClient({ userRole }: { userRole: string }) {
                       </button>
                     )}
                     {updateDuplicates &&
-                      checkResult.duplicateRecords.length > 0 && (
+                      checkResult.duplicateRecords.filter((r) => r.has_changes)
+                        .length > 0 && (
                         <button
                           className={BTN_WARNING}
                           onClick={updateDuplicateRecords}
                         >
-                          🔄 Update {checkResult.duplicateRecords.length}{" "}
+                          🔄 Update{" "}
+                          {
+                            checkResult.duplicateRecords.filter(
+                              (r) => r.has_changes,
+                            ).length
+                          }{" "}
                           Duplicates
                         </button>
                       )}

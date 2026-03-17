@@ -147,18 +147,29 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const { repLookup, teamLookup } = await loadLookups();
+  // Only load lookups if mapping includes fields that need them
+  const needsRepLookup = mapping.representative !== undefined;
+  const needsTeamLookup = mapping.mr_team_id !== undefined;
+  let repLookup: Record<string, number> = {};
+  let teamLookup: Record<string, number> = {};
+  if (needsRepLookup || needsTeamLookup) {
+    const loaded = await loadLookups();
+    if (needsRepLookup) repLookup = loaded.repLookup;
+    if (needsTeamLookup) teamLookup = loaded.teamLookup;
+  }
   let imported = 0;
   let skipped = 0;
   const errors: string[] = [];
   const importedIds: number[] = [];
+
+  // ── Phase 1: Process all records into field maps ──
+  const processedRows: { fields: Record<string, unknown>; row: number }[] = [];
 
   for (const record of records) {
     try {
       const row = record.data as string[];
       const fields: Record<string, unknown> = {};
 
-      // Map each field from the row
       for (const [dbField, colIdx] of Object.entries(mapping) as [
         string,
         number,
@@ -167,9 +178,7 @@ export async function POST(req: NextRequest) {
         const rawValue = String(row[colIdx] ?? "").trim();
         if (!rawValue) continue;
 
-        // Handle special fields
         if (dbField === "representative") {
-          // Lookup rep by name
           const key = rawValue.toLowerCase().trim();
           if (key === "wd - never assigned" || key === "never assigned") {
             fields.assignment_status = "wd_never_assigned";
@@ -186,14 +195,10 @@ export async function POST(req: NextRequest) {
         }
 
         if (dbField === "medical_record_source") {
-          // Extract hyperlink from the cell
-          // Find the cell reference for this column/row
-          // Hyperlinks are keyed by cell ref like "F2", "F3"
           const colLetter = String.fromCharCode(65 + colIdx);
           const cellRef = `${colLetter}${record.rowIndex + 2}`;
-          if (hyperlinks[cellRef]) {
+          if (hyperlinks[cellRef])
             fields.medical_record_link = hyperlinks[cellRef];
-          }
           continue;
         }
 
@@ -205,7 +210,6 @@ export async function POST(req: NextRequest) {
 
         if (!IMPORTABLE.has(dbField)) continue;
 
-        // Parse special field types
         if (
           dbField === "hearing_date" ||
           dbField === "status_date" ||
@@ -213,7 +217,10 @@ export async function POST(req: NextRequest) {
           dbField === "post_hrg_deadline"
         ) {
           fields[dbField] = parseDate(rawValue);
-        } else if (dbField === "hearing_time") {
+        } else if (
+          dbField === "hearing_time" ||
+          dbField === "converted_time_est"
+        ) {
           fields[dbField] = parseTime(rawValue);
         } else if (dbField === "ssn_last_4") {
           fields[dbField] = formatSSN(rawValue);
@@ -247,37 +254,86 @@ export async function POST(req: NextRequest) {
       if (record.statusDate && !fields.status_date)
         fields.status_date = parseDate(record.statusDate);
 
-      // Compute converted_time_est
-      if (fields.hearing_time && fields.time_zone) {
+      if (
+        !fields.converted_time_est &&
+        fields.hearing_time &&
+        fields.time_zone
+      ) {
         fields.converted_time_est = convertToEST(
           fields.hearing_time as string,
           fields.time_zone as string,
         );
       }
 
-      // Require claimant + hearing_date
       if (!fields.claimant || !fields.hearing_date) {
         skipped++;
         continue;
       }
 
-      // Build INSERT
-      const keys = Object.keys(fields).filter((k) => IMPORTABLE.has(k));
-      const vals = keys.map((k) => fields[k]);
-      const placeholders = keys.map((_, i) => `$${i + 1}`);
-
-      const result = await db.query(
-        `INSERT INTO hearings (${keys.join(", ")}) VALUES (${placeholders.join(", ")}) RETURNING id`,
-        vals,
-      );
-
-      if (result.rows[0]?.id) {
-        importedIds.push(result.rows[0].id);
-        imported++;
-      }
+      processedRows.push({ fields, row: record.row });
     } catch (e) {
       errors.push(`Row ${record.row}: ${(e as Error).message}`);
       skipped++;
+    }
+  }
+
+  // ── Phase 2: Bulk INSERT in chunks of 100 rows ──
+  if (processedRows.length > 0) {
+    // Collect all unique column names across all rows
+    const allKeys = new Set<string>();
+    for (const { fields } of processedRows) {
+      for (const k of Object.keys(fields)) {
+        if (IMPORTABLE.has(k)) allKeys.add(k);
+      }
+    }
+    const columns = Array.from(allKeys);
+    const CHUNK = 100; // 100 rows × ~30 cols = ~3000 params per query (well under 32k limit)
+
+    for (let c = 0; c < processedRows.length; c += CHUNK) {
+      const chunk = processedRows.slice(c, c + CHUNK);
+      const values: unknown[] = [];
+      const placeholders: string[] = [];
+      let idx = 1;
+
+      for (const { fields } of chunk) {
+        const ph: string[] = [];
+        for (const col of columns) {
+          ph.push(`$${idx++}`);
+          values.push(fields[col] ?? null);
+        }
+        placeholders.push(`(${ph.join(", ")})`);
+      }
+
+      try {
+        const result = await db.query(
+          `INSERT INTO hearings (${columns.join(", ")}) VALUES ${placeholders.join(", ")} RETURNING id`,
+          values,
+        );
+        for (const row of result.rows) {
+          importedIds.push(row.id);
+          imported++;
+        }
+      } catch {
+        // Fallback: insert individually for this chunk
+        for (const { fields, row: rowNum } of chunk) {
+          try {
+            const keys = Object.keys(fields).filter((k) => IMPORTABLE.has(k));
+            const vals = keys.map((k) => fields[k]);
+            const ph = keys.map((_, i) => `$${i + 1}`);
+            const result = await db.query(
+              `INSERT INTO hearings (${keys.join(", ")}) VALUES (${ph.join(", ")}) RETURNING id`,
+              vals,
+            );
+            if (result.rows[0]?.id) {
+              importedIds.push(result.rows[0].id);
+              imported++;
+            }
+          } catch (err) {
+            errors.push(`Row ${rowNum}: ${(err as Error).message}`);
+            skipped++;
+          }
+        }
+      }
     }
   }
 

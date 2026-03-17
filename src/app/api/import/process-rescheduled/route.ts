@@ -113,7 +113,7 @@ export async function POST(req: NextRequest) {
     );
 
   const body = await req.json();
-  const { records, mapping, hyperlinks = {} } = body;
+  const { records, mapping, hyperlinks = {}, preserveExisting = false } = body;
 
   if (!records || records.length === 0) {
     return NextResponse.json({
@@ -133,6 +133,28 @@ export async function POST(req: NextRequest) {
   for (const t of teamsRes.rows)
     teamLookup[t.team_name.toLowerCase().trim()] = t.id;
 
+  // Fields that are "assignment" fields — preserved when preserveExisting is on
+  // Note: claimant and hearing_date are NEVER protected — they're the rescheduled data
+  const PROTECTED_FIELDS = new Set([
+    "assigned_rep_id",
+    "assignment_status",
+    "mr_team_id",
+    "medical_record_status",
+    "medical_record_link",
+    "rfc_status",
+    "brief_assigned_to",
+    "hearing_decision_status",
+    "rep_docs_assigned_to",
+    "task_assigned",
+    "rep_docs_complete",
+    "fee_agreement_complete",
+    "phi_sheet_complete",
+    "five_day_notice",
+    "post_hrg_review",
+    "post_hrg_deadline",
+    "post_hrg_notes",
+  ]);
+
   let updated = 0;
   const errors: string[] = [];
 
@@ -141,9 +163,11 @@ export async function POST(req: NextRequest) {
     if (!originalId) continue;
 
     try {
-      // Get original record
+      // Get original record — full row when preserveExisting, minimal otherwise
       const { rows: origRows } = await db.query(
-        "SELECT claimant, hearing_date::text, assigned_rep_id FROM hearings WHERE id = $1",
+        preserveExisting
+          ? "SELECT * FROM hearings WHERE id = $1"
+          : "SELECT claimant, hearing_date::text, assigned_rep_id FROM hearings WHERE id = $1",
         [originalId],
       );
       if (origRows.length === 0) {
@@ -268,9 +292,22 @@ export async function POST(req: NextRequest) {
       }
 
       // Build UPDATE
-      const keys = Object.keys(updateData).filter(
-        (k) => updateData[k] !== undefined,
-      );
+      const keys = Object.keys(updateData).filter((k) => {
+        if (updateData[k] === undefined) return false;
+        // If preserveExisting, skip protected fields that already have values in DB
+        // But ALWAYS allow claimant and hearing_date (these are the rescheduled data)
+        if (preserveExisting && PROTECTED_FIELDS.has(k)) {
+          const existing = original[k];
+          if (
+            existing !== null &&
+            existing !== undefined &&
+            existing !== "" &&
+            existing !== false
+          )
+            return false;
+        }
+        return true;
+      });
       if (keys.length === 0) {
         errors.push(`Row ${rec.row}: No data to update`);
         continue;
