@@ -1,4 +1,4 @@
-import { requireAuth } from "@/lib/auth";
+import { requireAuth } from "@/lib/session";
 import { getPortalPageData } from "./action";
 import { PatientPortalClient } from "./patient-portal-client";
 
