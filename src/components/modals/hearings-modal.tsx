@@ -201,35 +201,35 @@ function HearingRow({
         {permissions.canEditMoa ? (
           <select
             className="w-full text-[10px] px-1.5 py-1 rounded border border-border bg-card text-foreground cursor-pointer"
-            value={h.manner_of_hearing ?? ""}
-            onChange={(e) => onUpdate(h.id, "manner_of_hearing", e.target.value)}
+            value={h.manner_of_appearance ?? ""}
+            onChange={(e) => onUpdate(h.id, "manner_of_appearance", e.target.value)}
           >
             <option value="">—</option>
             {mannerOptions.map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
         ) : (
-          <span className="text-[10px] text-muted-foreground">{h.manner_of_hearing ?? "—"}</span>
+          <span className="text-[10px] text-muted-foreground">{h.manner_of_appearance ?? "—"}</span>
         )}
       </div>
 
       {/* 5-Day */}
       <div className="text-center text-[10px]">
-        {h.five_day_letter
+        {h.five_day_notice
           ? <span className="text-emerald-500 font-bold">✓</span>
           : <span className="text-muted-foreground/40">—</span>}
       </div>
 
       {/* Post HRG */}
       <div className="text-[10px]">
-        {h.post_hrg_status ? (
+        {h.post_hrg_review ? (
           <span className="bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300 px-1.5 py-0.5 rounded font-medium">📝 PHR</span>
         ) : <span className="text-muted-foreground/40">—</span>}
       </div>
 
       {/* Worksheet */}
       <div>
-        {h.mr_worksheet_link ? (
-          <a href={h.mr_worksheet_link} target="_blank" rel="noreferrer"
+        {h.medical_record_link ? (
+          <a href={h.medical_record_link} target="_blank" rel="noreferrer"
             className="text-[10px] bg-blue-600 hover:bg-blue-700 text-white px-2 py-0.5 rounded transition-colors">
             📋 Sheet
           </a>
@@ -247,7 +247,7 @@ function StatsBar({ stats }: {
   stats: { total: number; complete: number; in_progress: number; ready: number; not_started: number; urgent: number };
 }) {
   return (
-    <div className="flex gap-2 px-4 py-2 bg-muted/30 border-b border-border flex-wrap items-center flex-shrink-0">
+    <div className="flex gap-2 px-4 py-2 bg-muted/30 border-b border-border flex-wrap items-center shrink-0">
       <span className="text-[11px] font-semibold px-3 py-1 rounded-full bg-muted text-muted-foreground">
         Total: {stats.total}
       </span>
@@ -323,7 +323,7 @@ export function HearingsModal({
       mr_team:                 (v) => updateMrTeam(id, v as number | null),
       task_assigned:           (v) => toggleTaskAssigned(id, v as boolean),
       credited:                (v) => toggleCredited(id, v as boolean),
-      manner_of_hearing:       (v) => updateMoa(id, v as string),
+      manner_of_appearance:    (v) => updateMoa(id, v as string),
     };
     await actions[field]?.(value);
     setHearings((prev) => prev.map((h) => h.id === id ? { ...h, [field]: value } : h));
@@ -359,13 +359,13 @@ export function HearingsModal({
       }
     >
       {/* ── Filter Bar — flex-shrink-0, never scrolls away ─────────────── */}
-      <div className="flex flex-wrap gap-2 px-4 py-2.5 bg-muted/20 border-b border-border flex-shrink-0">
+      <div className="flex flex-wrap gap-2 px-4 py-2.5 bg-muted/20 border-b border-border shrink-0">
         <input
           type="text"
           placeholder="🔍 Search claimant…"
           value={filters.search}
           onChange={(e) => applyFilter({ search: e.target.value })}
-          className="text-xs px-3 py-1.5 rounded-lg border border-border bg-card text-foreground focus:outline-none focus:border-primary min-w-[160px]"
+          className="text-xs px-3 py-1.5 rounded-lg border border-border bg-card text-foreground focus:outline-none focus:border-primary min-w-40"
         />
         <select value={filters.sort_order} onChange={(e) => applyFilter({ sort_order: e.target.value as "asc" | "desc" })}
           className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer">
@@ -421,7 +421,7 @@ export function HearingsModal({
       <StatsBar stats={stats} />
 
       {/* ── Column Headers — flex-shrink-0, sticky above scrollable body ── */}
-      <div className="flex-shrink-0 overflow-x-auto border-b border-border">
+      <div className="shrink-0 overflow-x-auto border-b border-border">
         <div
           className="grid gap-3 px-4 py-2 bg-muted text-foreground text-[10px] font-semibold uppercase tracking-wide"
           style={{ gridTemplateColumns: "180px 120px 40px 100px 170px 120px 40px 100px 80px 48px 80px 90px", minWidth: "1260px" }}
@@ -449,11 +449,15 @@ export function HearingsModal({
                 className="flex items-center gap-3 px-4 py-2 bg-muted/40 border-b border-border cursor-pointer hover:bg-muted/60 transition-colors select-none"
                 onClick={() => setExpandedMonths((p) => {
                   const n = new Set(p);
-                  n.has(monthKey) ? n.delete(monthKey) : n.add(monthKey);
+                  if (n.has(monthKey)) {
+                    n.delete(monthKey)
+                  } else {
+                    n.add(monthKey)
+                  }
                   return n;
                 })}
               >
-                <span className="w-5 h-5 flex items-center justify-center bg-primary text-white rounded text-[10px] font-bold flex-shrink-0">
+                <span className="w-5 h-5 flex items-center justify-center bg-primary text-white rounded text-[10px] font-bold shrink-0">
                   {expanded ? "−" : "+"}
                 </span>
                 <span className="text-xs font-semibold text-foreground">{label}</span>
@@ -482,7 +486,7 @@ export function HearingsModal({
       </div>
 
       {/* ── Pagination Footer — flex-shrink-0 ──────────────────────────── */}
-      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-t border-border bg-muted/20 flex-shrink-0">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-t border-border bg-muted/20 shrink-0">
         <span className="text-xs text-muted-foreground">
           Showing {((filters.page ?? 1) - 1) * (filters.per_page as number) + 1}–{Math.min(
             (filters.page ?? 1) * (filters.per_page as number), total
