@@ -60,9 +60,9 @@ function exportPortalCsv(entries: PortalEntry[]) {
     .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(","))
     .join("\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement("a");
-  a.href     = url;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
   a.download = `patient-portal-${new Date().toISOString().slice(0, 10)}.csv`;
   a.click();
   URL.revokeObjectURL(url);
@@ -95,10 +95,10 @@ function NotesModal({
   onClose: () => void;
   onNoteAdded?: () => void;
 }) {
-  const [notes, setNotes]                     = useState<PortalNote[]>([]);
-  const [notesLoading, startNotesTransition]  = useTransition();
-  const [newNote, setNewNote]                 = useState("");
-  const [saving, setSaving]                   = useState(false);
+  const [notes, setNotes] = useState<PortalNote[]>([]);
+  const [notesLoading, startNotesTransition] = useTransition();
+  const [newNote, setNewNote] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const FIELD_LABELS = {
     username: "Username Notes",
@@ -238,7 +238,7 @@ function LinkModal({
   onClose: () => void;
   onSaved: (id: number, field: string, url: string) => void;
 }) {
-  const [url, setUrl]     = useState(currentUrl);
+  const [url, setUrl] = useState(currentUrl);
   const [saving, setSaving] = useState(false);
 
   // Parent passes key={id+field} so this remounts on each new link —
@@ -319,20 +319,20 @@ function AddEditModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const isEdit      = !!entry;
+  const isEdit = !!entry;
   const [saving, setSaving] = useState(false);
-  const [error, setError]   = useState("");
-  const [form, setForm]     = useState<EntryForm>({
-    entry_date:      entry?.entry_date      ?? new Date().toISOString().slice(0, 10),
-    hearing_date:    entry?.hearing_date    ?? "",
-    client_name:     entry?.client_name     ?? "",
-    provider:        entry?.provider        ?? "",
-    mycase_link:     entry?.mycase_link     ?? "",
-    portal_link:     entry?.portal_link     ?? "",
+  const [error, setError] = useState("");
+  const [form, setForm] = useState<EntryForm>({
+    entry_date: entry?.entry_date ?? new Date().toISOString().slice(0, 10),
+    hearing_date: entry?.hearing_date ?? "",
+    client_name: entry?.client_name ?? "",
+    provider: entry?.provider ?? "",
+    mycase_link: entry?.mycase_link ?? "",
+    portal_link: entry?.portal_link ?? "",
     portal_username: entry?.portal_username ?? "",
     portal_password: entry?.portal_password ?? "",
-    got_mr:          entry?.got_mr          ?? false,
-    approved_by_tl:  entry?.approved_by_tl  ?? false,
+    got_mr: entry?.got_mr ?? false,
+    approved_by_tl: entry?.approved_by_tl ?? false,
   });
 
   const set = (k: keyof EntryForm, v: string | boolean) =>
@@ -344,7 +344,7 @@ function AddEditModal({
     setError("");
     const input = {
       ...form,
-      entry_date:   form.entry_date   || null,
+      entry_date: form.entry_date || null,
       hearing_date: form.hearing_date || null,
     };
     const r = isEdit
@@ -518,13 +518,13 @@ function AddEditModal({
 // ─── Activity Log Modal ───────────────────────────────────────────────────────
 
 function ActivityLogModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [entries, setEntries]               = useState<PortalActivityEntry[]>([]);
-  const [total, setTotal]                   = useState(0);
-  const [page, setPage]                     = useState(1);
-  const [actLoading, startActTransition]    = useTransition();
-  const [dateRange, setDateRange]           = useState<"all" | "today" | "week" | "month">("all");
-  const [userId, setUserId]                 = useState("");
-  const [users, setUsers]                   = useState<Array<{ id: number; full_name: string }>>([]);
+  const [entries, setEntries] = useState<PortalActivityEntry[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [actLoading, startActTransition] = useTransition();
+  const [dateRange, setDateRange] = useState<"all" | "today" | "week" | "month">("all");
+  const [userId, setUserId] = useState("");
+  const [users, setUsers] = useState<Array<{ id: number; full_name: string }>>([]);
   const totalPages = Math.max(1, Math.ceil(total / 50));
 
   const load = useCallback((p: number, dr: string, uid: string) => {
@@ -685,8 +685,8 @@ function ViewDetailsModal({
   onClose: () => void;
   onEdit: (e: PortalEntry) => void;
 }) {
-  const [tab, setTab]                   = useState<"info" | "activity">("info");
-  const [activities, setActivities]     = useState<PortalActivityEntry[]>([]);
+  const [tab, setTab] = useState<"info" | "activity">("info");
+  const [activities, setActivities] = useState<PortalActivityEntry[]>([]);
   const [loadingAct, startActTransition] = useTransition();
 
   useEffect(() => {
@@ -952,7 +952,7 @@ function PortalRow({
           ? <input type="text" value={entry.provider ?? ""} className={cn(inp, "w-full")}
               placeholder="Add provider…"
               onChange={(e) => onUpdate(entry.id, "provider", e.target.value)} />
-          : <span className="text-[11px] leading-tight break-words line-clamp-2">{entry.provider ?? "—"}</span>}
+          : <span className="text-[11px] leading-tight wrap-break-word line-clamp-2">{entry.provider ?? "—"}</span>}
       </div>
 
       {/* MyCase Link */}
@@ -1098,12 +1098,6 @@ function PortalRow({
 }
 
 // ─── Main Client Component ────────────────────────────────────────────────────
-
-const TABLE_COLS = [
-  "Date","Hearing Date","MR Specialist","Client Name","Provider",
-  "MyCase","Portal Link","Username","Password","Got MR?","Approved TL","Actions",
-];
-
 export function PatientPortalClient(data: PortalPageData) {
   const router                        = useRouter();
   const [isPending, startTransition]  = useTransition();

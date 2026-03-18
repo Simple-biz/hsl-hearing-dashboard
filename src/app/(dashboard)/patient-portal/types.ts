@@ -12,9 +12,9 @@ export interface PortalPermissions {
 
 export function derivePortalPermissions(role: PortalUserRole): PortalPermissions {
   return {
-    canManage:          ["admin","manager","mr_admin","mr_lead","hearings_admin"].includes(role),
-    canEdit:            ["admin","manager","mr_admin","mr_lead","mr_agent","hearings_admin"].includes(role),
-    canAssignSpecialist:["admin","mr_admin"].includes(role),
+    canManage: ["admin","manager","mr_admin","mr_lead","hearings_admin"].includes(role),
+    canEdit: ["admin","manager","mr_admin","mr_lead","mr_agent","hearings_admin"].includes(role),
+    canAssignSpecialist: ["admin","mr_admin"].includes(role),
   };
 }
 

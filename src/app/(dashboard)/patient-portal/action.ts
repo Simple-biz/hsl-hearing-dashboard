@@ -44,26 +44,26 @@ function parseNotes(raw: unknown): PortalNote[] {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function mapRow(row: Record<string, any>): PortalEntry {
   return {
-    id:               row.id,
-    entry_date:       row.entry_date   ?? null,
-    hearing_date:     row.hearing_date ?? null,
-    client_name:      row.client_name,
-    provider:         row.provider     ?? null,
-    mycase_link:      row.mycase_link  ?? null,
-    portal_link:      row.portal_link  ?? null,
-    portal_username:  row.portal_username ?? null,
-    portal_password:  row.portal_password ?? null,
-    got_mr:           Boolean(row.got_mr),
-    approved_by_tl:   Boolean(row.approved_by_tl),
+    id: row.id,
+    entry_date: row.entry_date   ?? null,
+    hearing_date: row.hearing_date ?? null,
+    client_name: row.client_name,
+    provider: row.provider     ?? null,
+    mycase_link: row.mycase_link  ?? null,
+    portal_link: row.portal_link  ?? null,
+    portal_username: row.portal_username ?? null,
+    portal_password: row.portal_password ?? null,
+    got_mr: Boolean(row.got_mr),
+    approved_by_tl: Boolean(row.approved_by_tl),
     mr_specialist_id: row.mr_specialist_id ?? null,
-    username_notes:   parseNotes(row.username_notes),
-    password_notes:   parseNotes(row.password_notes),
-    approved_notes:   parseNotes(row.approved_notes),
-    created_at:       row.created_at,
-    updated_at:       row.updated_at,
-    created_by:       row.created_by ?? null,
+    username_notes: parseNotes(row.username_notes),
+    password_notes: parseNotes(row.password_notes),
+    approved_notes: parseNotes(row.approved_notes),
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    created_by: row.created_by ?? null,
     // Joined columns from mr_specialists
-    specialist_name:  row.specialist_name  ?? null,
+    specialist_name: row.specialist_name  ?? null,
     specialist_color: row.specialist_color ?? null,
   };
 }
@@ -72,7 +72,7 @@ function mapRow(row: Record<string, any>): PortalEntry {
 
 export async function getPortalPageData(): Promise<PortalPageData> {
   const session = await requireAuth();
-  const role    = (session.user.role ?? "mr_agent") as PortalUserRole;
+  const role = (session.user.role ?? "mr_agent") as PortalUserRole;
 
   // Stats — four parallel scalar queries
   const [totalRes, portalRes, mrRes, approvedRes] = await Promise.all([
@@ -83,10 +83,10 @@ export async function getPortalPageData(): Promise<PortalPageData> {
   ]);
 
   const stats: PortalStats = {
-    total:       totalRes.rows[0]?.n    ?? 0,
+    total: totalRes.rows[0]?.n    ?? 0,
     with_portal: portalRes.rows[0]?.n   ?? 0,
-    got_mr:      mrRes.rows[0]?.n       ?? 0,
-    approved:    approvedRes.rows[0]?.n ?? 0,
+    got_mr: mrRes.rows[0]?.n       ?? 0,
+    approved: approvedRes.rows[0]?.n ?? 0,
   };
 
   // Active specialists ordered by display_order
@@ -104,7 +104,7 @@ export async function getPortalPageData(): Promise<PortalPageData> {
   );
 
   const availableMonths = dateRows.map((r) => ({
-    val:   r.val,
+    val: r.val,
     label: new Date(r.val + "-01").toLocaleDateString("en-US", { month: "long", year: "numeric" }),
   }));
 
@@ -120,8 +120,8 @@ export async function getPortalPageData(): Promise<PortalPageData> {
 
 export async function getPortalEntries(filters: PortalFilters): Promise<PortalPaginatedResult> {
   const conditions: string[] = ["1=1"];
-  const params: unknown[]    = [];
-  let   p = 0; // param counter
+  const params: unknown[] = [];
+  let p = 0; // param counter
 
   // Search
   if (filters.search?.trim()) {
@@ -155,12 +155,12 @@ export async function getPortalEntries(filters: PortalFilters): Promise<PortalPa
     }
   }
 
-  const where    = conditions.join(" AND ");
-  const dir      = filters.sort_order === "asc" ? "ASC" : "DESC";
-  const page     = Math.max(1, filters.page ?? 1);
-  const isAll    = filters.per_page === "all";
-  const perPage  = isAll ? 500 : Math.min(500, (filters.per_page as number) ?? 50);
-  const offset   = (page - 1) * perPage;
+  const where = conditions.join(" AND ");
+  const dir = filters.sort_order === "asc" ? "ASC" : "DESC";
+  const page = Math.max(1, filters.page ?? 1);
+  const isAll = filters.per_page === "all";
+  const perPage = isAll ? 500 : Math.min(500, (filters.per_page as number) ?? 50);
+  const offset = (page - 1) * perPage;
 
   // Count query (reuses same params)
   const { rows: countRows } = await db.query(
@@ -188,10 +188,10 @@ export async function getPortalEntries(filters: PortalFilters): Promise<PortalPa
   );
 
   return {
-    entries:     rows.map(mapRow),
+    entries: rows.map(mapRow),
     total,
     page,
-    per_page:    perPage,
+    per_page: perPage,
     total_pages: isAll ? 1 : Math.max(1, Math.ceil(total / perPage)),
   };
 }
@@ -246,12 +246,12 @@ export async function updatePortalEntry(
        got_mr = $9, approved_by_tl = $10, updated_at = NOW()
      WHERE id = $11`,
     [
-      input.entry_date   || null,
+      input.entry_date || null,
       input.hearing_date || null,
       input.client_name.trim(),
-      input.provider        || null,
-      input.mycase_link     || null,
-      input.portal_link     || null,
+      input.provider || null,
+      input.mycase_link || null,
+      input.portal_link || null,
       input.portal_username || null,
       input.portal_password || null,
       Boolean(input.got_mr),
@@ -352,10 +352,10 @@ export async function getPortalNotes(
   if (!rows[0]) return { success: false };
 
   return {
-    success:     true,
-    notes:       parseNotes(rows[0].notes),
+    success: true,
+    notes: parseNotes(rows[0].notes),
     client_name: rows[0].client_name,
-    provider:    rows[0].provider ?? undefined,
+    provider: rows[0].provider ?? undefined,
   };
 }
 
@@ -367,7 +367,7 @@ export async function addPortalNote(
   if (!note.trim()) return { success: false, message: "Note text is required" };
 
   const session = await requireAuth();
-  const col     = `${field}_notes`;
+  const col = `${field}_notes`;
 
   // Fetch existing notes + client name
   const { rows } = await db.query(
@@ -401,7 +401,7 @@ export async function addPortalNote(
 
 const PORTAL_ACTIONS = [
   "portal_entry_created", "portal_field_updated", "portal_entry_deleted",
-  "portal_bulk_import",   "portal_note_added",    "portal_note_deleted",
+  "portal_bulk_import", "portal_note_added", "portal_note_deleted",
 ];
 
 export async function getPortalActivityLog(filters: {
@@ -410,8 +410,8 @@ export async function getPortalActivityLog(filters: {
   user_id?: string;
 }): Promise<{ entries: PortalActivityEntry[]; total: number; total_pages: number }> {
   const perPage = 50;
-  const page    = Math.max(1, filters.page ?? 1);
-  const offset  = (page - 1) * perPage;
+  const page = Math.max(1, filters.page ?? 1);
+  const offset = (page - 1) * perPage;
 
   // Filter to portal actions only — do NOT filter by user_id here so entries
   // logged as system admin (id=1) or NULL are still visible.
@@ -419,7 +419,7 @@ export async function getPortalActivityLog(filters: {
     "a.action = ANY($1::text[])",
   ];
   const params: unknown[] = [PORTAL_ACTIONS];
-  let   p = 1;
+  let p = 1;
 
   if (filters.date_range === "today") {
     conditions.push("DATE(a.created_at) = CURRENT_DATE");
@@ -457,11 +457,11 @@ export async function getPortalActivityLog(filters: {
   const total = countRes.rows[0]?.total ?? 0;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const entries: PortalActivityEntry[] = dataRes.rows.map((row: any) => ({
-    id:         row.id,
-    user_id:    row.user_id,
-    user_name:  row.user_name ?? "System",
-    action:     row.action,
-    details:    row.description ?? "",
+    id: row.id,
+    user_id: row.user_id,
+    user_name: row.user_name ?? "System",
+    action: row.action,
+    details: row.description ?? "",
     created_at: row.created_at,
   }));
 
@@ -497,9 +497,9 @@ export async function getPortalStats(): Promise<PortalStats> {
     db.query("SELECT COUNT(*)::int AS n FROM mr_patient_portal WHERE approved_by_tl = true"),
   ]);
   return {
-    total:       totalRes.rows[0]?.n    ?? 0,
+    total: totalRes.rows[0]?.n    ?? 0,
     with_portal: portalRes.rows[0]?.n   ?? 0,
-    got_mr:      mrRes.rows[0]?.n       ?? 0,
-    approved:    approvedRes.rows[0]?.n ?? 0,
+    got_mr: mrRes.rows[0]?.n       ?? 0,
+    approved: approvedRes.rows[0]?.n ?? 0,
   };
 }
