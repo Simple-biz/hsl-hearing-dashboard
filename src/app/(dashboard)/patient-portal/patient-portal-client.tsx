@@ -25,7 +25,9 @@ import type {
 
 function fmtDate(d: string | null | undefined) {
   if (!d) return "—";
-  return new Date(d + "T00:00:00").toLocaleDateString("en-US", {
+  // Postgres DATE columns may come back as full ISO timestamp — take only the date part
+  const datePart = d.slice(0, 10);
+  return new Date(datePart + "T00:00:00").toLocaleDateString("en-US", {
     month: "short", day: "numeric", year: "2-digit",
   });
 }
@@ -201,7 +203,7 @@ function NotesModal({
                         })}
                       </span>
                     </div>
-                    <p className="text-xs text-foreground whitespace-pre-wrap break-words">{n.note}</p>
+                    <p className="text-xs text-foreground whitespace-pre-wrap wrap-break-word">{n.note}</p>
                   </div>
                 ))}
               </div>
@@ -860,7 +862,11 @@ function ViewDetailsModal({
 }
 
 // ─── Portal Table Row ─────────────────────────────────────────────────────────
-// Module-level component — never nested inside another component.
+// Shared grid — header and rows must use identical values.
+// Date(90) | HearingDate(90) | Specialist(130) | ClientName(160) | Provider(130) |
+// MyCase(75) | PortalLink(75) | Username(160) | Password(140) | GotMR(70) | ApprovedTL(95) | Actions(70)
+const PORTAL_GRID = "90px 90px 130px 160px 130px 75px 75px 160px 140px 70px 95px 70px";
+const PORTAL_MIN_W = "1335px";
 
 function PortalRow({
   entry, specialists, permissions,
@@ -892,29 +898,32 @@ function PortalRow({
   const inp = "text-[10px] border border-border rounded px-1.5 py-0.5 bg-card text-foreground focus:outline-none focus:border-primary";
 
   return (
-    <tr className="border-b border-border/40 hover:bg-muted/30 transition-colors group text-[11px]">
+    <div
+      className="grid px-2 py-1.5 border-b border-border/40 hover:bg-muted/30 transition-colors text-[11px] items-center"
+      style={{ gridTemplateColumns: PORTAL_GRID, minWidth: PORTAL_MIN_W }}
+    >
       {/* Date */}
-      <td className="px-2 py-1.5 whitespace-nowrap">
+      <div className="px-1">
         {canEdit
-          ? <input type="date" value={entry.entry_date ?? ""} className={cn(inp, "w-28")}
+          ? <input type="date" value={entry.entry_date ?? ""} className={cn(inp, "w-full")}
               onChange={(e) => onUpdate(entry.id, "entry_date", e.target.value)} />
           : <span>{fmtDate(entry.entry_date)}</span>}
-      </td>
+      </div>
 
       {/* Hearing Date */}
-      <td className="px-2 py-1.5 whitespace-nowrap">
+      <div className="px-1 text-center">
         {canEdit
-          ? <input type="date" value={entry.hearing_date ?? ""} className={cn(inp, "w-28")}
+          ? <input type="date" value={entry.hearing_date ?? ""} className={cn(inp, "w-full")}
               onChange={(e) => onUpdate(entry.id, "hearing_date", e.target.value)} />
           : <span>{fmtDate(entry.hearing_date)}</span>}
-      </td>
+      </div>
 
       {/* Specialist */}
-      <td className="px-2 py-1.5 whitespace-nowrap">
+      <div className="px-1">
         {canAssignSpecialist
           ? <select
               value={entry.mr_specialist_id ?? ""}
-              className="text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer min-w-30"
+              className="w-full text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer font-medium"
               style={specColor ? specStyle(specColor) : { backgroundColor: "#f3f4f6", color: "#374151" }}
               onChange={(e) => onUpdate(entry.id, "mr_specialist_id", e.target.value ? Number(e.target.value) : null)}
             >
@@ -927,27 +936,27 @@ function PortalRow({
               </span>
             : <span className="text-muted-foreground/40">—</span>
         }
-      </td>
+      </div>
 
       {/* Client Name */}
-      <td className="px-2 py-1.5">
+      <div className="px-1 min-w-0">
         {canEdit
-          ? <input type="text" value={entry.client_name} className={cn(inp, "w-36")}
+          ? <input type="text" value={entry.client_name} className={cn(inp, "w-full")}
               onChange={(e) => onUpdate(entry.id, "client_name", e.target.value)} />
-          : <strong className="text-foreground">{entry.client_name}</strong>}
-      </td>
+          : <strong className="text-foreground truncate block">{entry.client_name}</strong>}
+      </div>
 
       {/* Provider */}
-      <td className="px-2 py-1.5">
+      <div className="px-1 min-w-0">
         {canEdit
-          ? <input type="text" value={entry.provider ?? ""} className={cn(inp, "w-28")}
+          ? <input type="text" value={entry.provider ?? ""} className={cn(inp, "w-full")}
               placeholder="Add provider…"
               onChange={(e) => onUpdate(entry.id, "provider", e.target.value)} />
-          : <span>{entry.provider ?? "—"}</span>}
-      </td>
+          : <span className="text-[11px] leading-tight break-words line-clamp-2">{entry.provider ?? "—"}</span>}
+      </div>
 
       {/* MyCase Link */}
-      <td className="px-2 py-1.5 text-center whitespace-nowrap">
+      <div className="px-1 flex justify-center items-center gap-1 whitespace-nowrap">
         {entry.mycase_link
           ? <>
               <a href={entry.mycase_link} target="_blank" rel="noreferrer"
@@ -955,28 +964,23 @@ function PortalRow({
                 <ExternalLink size={8} className="mr-0.5" />📄
               </a>
               {canEdit && (
-                <button
-                  onClick={() => onOpenLink(entry.id, "mycase_link", "📄 MyCase Link", entry.mycase_link!)}
-                  className="ml-1 text-[9px] border border-border px-1 py-0.5 rounded hover:bg-muted"
-                  aria-label="Edit MyCase link"
-                >
+                <button onClick={() => onOpenLink(entry.id, "mycase_link", "📄 MyCase Link", entry.mycase_link!)}
+                  className="text-[9px] border border-border px-1 py-0.5 rounded hover:bg-muted" aria-label="Edit MyCase link">
                   ✏️
                 </button>
               )}
             </>
           : canEdit
-            ? <button
-                onClick={() => onOpenLink(entry.id, "mycase_link", "📄 MyCase Link", "")}
-                className="text-[10px] text-muted-foreground hover:text-foreground border border-dashed border-border rounded px-1.5 py-0.5"
-              >
+            ? <button onClick={() => onOpenLink(entry.id, "mycase_link", "📄 MyCase Link", "")}
+                className="text-[10px] text-muted-foreground hover:text-foreground border border-dashed border-border rounded px-1.5 py-0.5">
                 + Link
               </button>
             : <span className="text-muted-foreground/30">—</span>
         }
-      </td>
+      </div>
 
       {/* Portal Link */}
-      <td className="px-2 py-1.5 text-center whitespace-nowrap">
+      <div className="px-1 flex justify-center items-center gap-1 whitespace-nowrap">
         {entry.portal_link
           ? <>
               <a href={entry.portal_link} target="_blank" rel="noreferrer"
@@ -984,159 +988,112 @@ function PortalRow({
                 <ExternalLink size={8} className="mr-0.5" />🔗
               </a>
               {canEdit && (
-                <button
-                  onClick={() => onOpenLink(entry.id, "portal_link", "🔗 Portal Link", entry.portal_link!)}
-                  className="ml-1 text-[9px] border border-border px-1 py-0.5 rounded hover:bg-muted"
-                  aria-label="Edit portal link"
-                >
+                <button onClick={() => onOpenLink(entry.id, "portal_link", "🔗 Portal Link", entry.portal_link!)}
+                  className="text-[9px] border border-border px-1 py-0.5 rounded hover:bg-muted" aria-label="Edit portal link">
                   ✏️
                 </button>
               )}
             </>
           : canEdit
-            ? <button
-                onClick={() => onOpenLink(entry.id, "portal_link", "🔗 Portal Link", "")}
-                className="text-[10px] text-muted-foreground hover:text-foreground border border-dashed border-border rounded px-1.5 py-0.5"
-              >
+            ? <button onClick={() => onOpenLink(entry.id, "portal_link", "🔗 Portal Link", "")}
+                className="text-[10px] text-muted-foreground hover:text-foreground border border-dashed border-border rounded px-1.5 py-0.5">
                 + Link
               </button>
             : <span className="text-muted-foreground/30">—</span>
         }
-      </td>
+      </div>
 
       {/* Username */}
-      <td className="px-2 py-1.5">
-        <div className="flex items-center gap-1">
-          {canEdit
-            ? <input type="text" value={entry.portal_username ?? ""} className={cn(inp, "flex-1 min-w-0 w-28")}
-                placeholder="Username"
-                onChange={(e) => onUpdate(entry.id, "portal_username", e.target.value)} />
-            : <span className="flex-1 text-[10px]">{entry.portal_username ?? "—"}</span>}
-          <button
-            onClick={() => onOpenNotes(entry.id, "username", entry.client_name, entry.provider)}
-            className={cn(
-              "shrink-0 text-[9px] px-1 py-0.5 rounded border transition-colors",
-              entry.username_notes.length > 0
-                ? "bg-blue-100 border-blue-300 text-blue-700"
-                : "border-border text-muted-foreground hover:bg-muted",
-            )}
-            aria-label={`Username notes (${entry.username_notes.length})`}
-          >
-            <StickyNote size={9} className="inline" />
-            {entry.username_notes.length > 0 ? entry.username_notes.length : ""}
-          </button>
-        </div>
-      </td>
+      <div className="px-1 flex items-center gap-1 min-w-0">
+        {canEdit
+          ? <input type="text" value={entry.portal_username ?? ""} className={cn(inp, "flex-1 min-w-0")}
+              placeholder="Username"
+              onChange={(e) => onUpdate(entry.id, "portal_username", e.target.value)} />
+          : <span className="flex-1 text-[10px] truncate">{entry.portal_username ?? "—"}</span>}
+        <button onClick={() => onOpenNotes(entry.id, "username", entry.client_name, entry.provider)}
+          className={cn("shrink-0 text-[9px] px-1 py-0.5 rounded border transition-colors",
+            entry.username_notes.length > 0 ? "bg-blue-100 border-blue-300 text-blue-700" : "border-border text-muted-foreground hover:bg-muted")}
+          aria-label={`Username notes (${entry.username_notes.length})`}>
+          <StickyNote size={9} className="inline" />
+          {entry.username_notes.length > 0 ? entry.username_notes.length : ""}
+        </button>
+      </div>
 
       {/* Password */}
-      <td className="px-2 py-1.5">
-        <div className="flex items-center gap-1">
-          {canEdit
-            ? <input type="text" value={entry.portal_password ?? ""} className={cn(inp, "flex-1 min-w-0 w-24")}
-                placeholder="Password"
-                onChange={(e) => onUpdate(entry.id, "portal_password", e.target.value)} />
-            : <span className="flex-1 text-[10px]">{entry.portal_password ? "••••••" : "—"}</span>}
-          {entry.portal_password && (
-            <button
-              onClick={() => navigator.clipboard.writeText(entry.portal_password!)}
-              className="shrink-0 text-muted-foreground hover:text-primary p-0.5 rounded"
-              aria-label="Copy password"
-            >
-              <Copy size={10} />
-            </button>
-          )}
-          <button
-            onClick={() => onOpenNotes(entry.id, "password", entry.client_name, entry.provider)}
-            className={cn(
-              "shrink-0 text-[9px] px-1 py-0.5 rounded border transition-colors",
-              entry.password_notes.length > 0
-                ? "bg-blue-100 border-blue-300 text-blue-700"
-                : "border-border text-muted-foreground hover:bg-muted",
-            )}
-            aria-label={`Password notes (${entry.password_notes.length})`}
-          >
-            <StickyNote size={9} className="inline" />
-            {entry.password_notes.length > 0 ? entry.password_notes.length : ""}
+      <div className="px-1 flex items-center gap-1 min-w-0">
+        {canEdit
+          ? <input type="text" value={entry.portal_password ?? ""} className={cn(inp, "flex-1 min-w-0")}
+              placeholder="Password"
+              onChange={(e) => onUpdate(entry.id, "portal_password", e.target.value)} />
+          : <span className="flex-1 text-[10px]">{entry.portal_password ? "••••••" : "—"}</span>}
+        {entry.portal_password && (
+          <button onClick={() => navigator.clipboard.writeText(entry.portal_password!)}
+            className="shrink-0 text-muted-foreground hover:text-primary p-0.5 rounded" aria-label="Copy password">
+            <Copy size={10} />
           </button>
-        </div>
-      </td>
+        )}
+        <button onClick={() => onOpenNotes(entry.id, "password", entry.client_name, entry.provider)}
+          className={cn("shrink-0 text-[9px] px-1 py-0.5 rounded border transition-colors",
+            entry.password_notes.length > 0 ? "bg-blue-100 border-blue-300 text-blue-700" : "border-border text-muted-foreground hover:bg-muted")}
+          aria-label={`Password notes (${entry.password_notes.length})`}>
+          <StickyNote size={9} className="inline" />
+          {entry.password_notes.length > 0 ? entry.password_notes.length : ""}
+        </button>
+      </div>
 
       {/* Got MR? */}
-      <td className="px-2 py-1.5 whitespace-nowrap">
+      <div className="px-1">
         {canEdit
-          ? <select
-              value={entry.got_mr ? "1" : "0"}
-              className={cn(
-                "text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer font-medium min-w-15",
-                entry.got_mr ? "bg-emerald-100 text-emerald-700" : "bg-red-50 text-red-600",
-              )}
-              onChange={(e) => onUpdate(entry.id, "got_mr", e.target.value === "1")}
-            >
+          ? <select value={entry.got_mr ? "1" : "0"}
+              className={cn("w-full text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer font-medium",
+                entry.got_mr ? "bg-emerald-100 text-emerald-700" : "bg-red-50 text-red-600")}
+              onChange={(e) => onUpdate(entry.id, "got_mr", e.target.value === "1")}>
               <option value="0">No</option>
               <option value="1">Yes</option>
             </select>
-          : <span className={cn(
-              "px-1.5 py-0.5 rounded text-[10px] font-medium",
-              entry.got_mr ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-600",
-            )}>
+          : <span className={cn("px-1.5 py-0.5 rounded text-[10px] font-medium",
+              entry.got_mr ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-600")}>
               {entry.got_mr ? "✅ Yes" : "⏳ No"}
             </span>
         }
-      </td>
+      </div>
 
       {/* Approved by TL */}
-      <td className="px-2 py-1.5 text-center">
-        <div className="flex items-center justify-center gap-1">
-          {canEdit
-            ? <input
-                type="checkbox"
-                checked={entry.approved_by_tl}
-                className="w-4 h-4 cursor-pointer accent-blue-500"
-                onChange={(e) => onUpdate(entry.id, "approved_by_tl", e.target.checked)}
-                aria-label="Approved by TL"
-              />
-            : entry.approved_by_tl
-              ? <Check size={14} className="text-blue-500" />
-              : <span className="text-muted-foreground/30 text-xs">—</span>
-          }
-          <button
-            onClick={() => onOpenNotes(entry.id, "approved", entry.client_name, entry.provider)}
-            className={cn(
-              "text-[9px] px-1 py-0.5 rounded border transition-colors",
-              entry.approved_notes.length > 0
-                ? "bg-blue-100 border-blue-300 text-blue-700"
-                : "border-border text-muted-foreground hover:bg-muted",
-            )}
-            aria-label={`Approval notes (${entry.approved_notes.length})`}
-          >
-            <StickyNote size={9} className="inline" />
-            {entry.approved_notes.length > 0 ? entry.approved_notes.length : ""}
-          </button>
-        </div>
-      </td>
+      <div className="px-1 flex items-center justify-center gap-1">
+        {canEdit
+          ? <input type="checkbox" checked={entry.approved_by_tl}
+              className="w-4 h-4 cursor-pointer accent-blue-500"
+              onChange={(e) => onUpdate(entry.id, "approved_by_tl", e.target.checked)}
+              aria-label="Approved by TL" />
+          : entry.approved_by_tl
+            ? <Check size={14} className="text-blue-500" />
+            : <span className="text-muted-foreground/30 text-xs">—</span>
+        }
+        <button onClick={() => onOpenNotes(entry.id, "approved", entry.client_name, entry.provider)}
+          className={cn("text-[9px] px-1 py-0.5 rounded border transition-colors",
+            entry.approved_notes.length > 0 ? "bg-blue-100 border-blue-300 text-blue-700" : "border-border text-muted-foreground hover:bg-muted")}
+          aria-label={`Approval notes (${entry.approved_notes.length})`}>
+          <StickyNote size={9} className="inline" />
+          {entry.approved_notes.length > 0 ? entry.approved_notes.length : ""}
+        </button>
+      </div>
 
       {/* Actions */}
-      <td className="px-2 py-1.5 text-center whitespace-nowrap">
-        <button
-          onClick={() => onViewDetails(entry)}
+      <div className="px-1 flex items-center justify-center gap-0.5">
+        <button onClick={() => onViewDetails(entry)}
           className="text-[10px] p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
-          title="View Details"
-          aria-label="View details"
-        >
+          title="View Details" aria-label="View details">
           <Eye size={13} />
         </button>
         {canManage && (
-          <button
-            onClick={() => onDelete(entry.id)}
+          <button onClick={() => onDelete(entry.id)}
             className="text-[10px] p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 hover:text-red-700"
-            title="Delete"
-            aria-label="Delete entry"
-          >
+            title="Delete" aria-label="Delete entry">
             <Trash2 size={13} />
           </button>
         )}
-      </td>
-    </tr>
+      </div>
+    </div>
   );
 }
 
@@ -1352,49 +1309,36 @@ export function PatientPortalClient(data: PortalPageData) {
           {/* Column headers */}
           <div className="overflow-x-auto shrink-0">
             <div
-              className="bg-[#4a5568] text-white text-[9px] font-semibold uppercase tracking-wide"
-              style={{ minWidth: "1400px" }}
+              className="grid px-2 py-2.5 bg-muted text-muted-foreground text-[9px] font-semibold uppercase tracking-wide border-b border-border items-center"
+              style={{ gridTemplateColumns: PORTAL_GRID, minWidth: PORTAL_MIN_W }}
             >
-              <div className="flex gap-0 px-2 py-2.5">
-                {TABLE_COLS.map((c) => (
-                  <div key={c} className={cn("shrink-0 px-1",
-                    c === "Date"          ? "w-25"    :
-                    c === "Hearing Date"  ? "w-25"    :
-                    c === "MR Specialist" ? "w-32.5"  :
-                    c === "Client Name"   ? "w-38.75" :
-                    c === "Provider"      ? "w-30"    :
-                    c === "MyCase"        ? "w-18.75" :
-                    c === "Portal Link"   ? "w-18.75" :
-                    c === "Username"      ? "w-38.75" :
-                    c === "Password"      ? "w-35"    :
-                    c === "Got MR?"       ? "w-17.5"  :
-                    c === "Approved TL"   ? "w-22.5"  :
-                    "w-17.5",
-                  )}>
-                    {c}
-                  </div>
-                ))}
-              </div>
+              <div className="px-1 text-left">Date</div>
+              <div className="px-1 text-center">Hearing Date</div>
+              <div className="px-1 text-left">MR Specialist</div>
+              <div className="px-1">Client Name</div>
+              <div className="px-1">Provider</div>
+              <div className="px-1 text-center">MyCase</div>
+              <div className="px-1 text-center">Portal Link</div>
+              <div className="px-1">Username</div>
+              <div className="px-1">Password</div>
+              <div className="px-1 text-center">Got MR?</div>
+              <div className="px-1 text-center">Approved TL</div>
+              <div className="px-1 text-center">Actions</div>
             </div>
           </div>
 
-          {/* Scrollable table body */}
+          {/* Scrollable body */}
           <div className="flex-1 overflow-y-auto overflow-x-auto min-h-0 relative">
             {isPending && (
               <div className="absolute inset-0 bg-background/70 flex items-center justify-center z-10">
                 <Loader2 size={28} className="animate-spin text-primary" />
               </div>
             )}
-            <table className="w-full" style={{ minWidth: "1400px" }}>
-              <tbody>
-                {!isPending && entries.length === 0
-                  ? <tr>
-                      <td colSpan={12} className="text-center py-16 text-sm text-muted-foreground">
-                        No entries found.
-                      </td>
-                    </tr>
-                  : entries.map((e) => (
-                      <PortalRow
+            <div style={{ minWidth: PORTAL_MIN_W }}>
+              {!isPending && entries.length === 0
+                ? <div className="text-center py-16 text-sm text-muted-foreground">No entries found.</div>
+                : entries.map((e) => (
+                    <PortalRow
                         key={e.id}
                         entry={e}
                         specialists={data.specialists}
@@ -1411,8 +1355,7 @@ export function PatientPortalClient(data: PortalPageData) {
                       />
                     ))
                 }
-              </tbody>
-            </table>
+              </div>
           </div>
 
           {/* Pagination */}

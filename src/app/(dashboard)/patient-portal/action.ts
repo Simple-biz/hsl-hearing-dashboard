@@ -175,6 +175,8 @@ export async function getPortalEntries(filters: PortalFilters): Promise<PortalPa
 
   const { rows } = await db.query(
     `SELECT p.*,
+            p.entry_date::text   AS entry_date,
+            p.hearing_date::text AS hearing_date,
             s.name     AS specialist_name,
             s.bg_color AS specialist_color
      FROM mr_patient_portal p
@@ -411,9 +413,10 @@ export async function getPortalActivityLog(filters: {
   const page    = Math.max(1, filters.page ?? 1);
   const offset  = (page - 1) * perPage;
 
+  // Filter to portal actions only — do NOT filter by user_id here so entries
+  // logged as system admin (id=1) or NULL are still visible.
   const conditions: string[] = [
     "a.action = ANY($1::text[])",
-    "a.user_id != 1",
   ];
   const params: unknown[] = [PORTAL_ACTIONS];
   let   p = 1;
@@ -456,7 +459,7 @@ export async function getPortalActivityLog(filters: {
   const entries: PortalActivityEntry[] = dataRes.rows.map((row: any) => ({
     id:         row.id,
     user_id:    row.user_id,
-    user_name:  row.user_name ?? null,
+    user_name:  row.user_name ?? "System",
     action:     row.action,
     details:    row.description ?? "",
     created_at: row.created_at,
@@ -471,7 +474,6 @@ export async function getPortalActivityUsers(): Promise<Array<{ id: number; full
      FROM activity_log a
      JOIN users u ON u.id = a.user_id
      WHERE a.action = ANY($1::text[])
-       AND a.user_id != 1
      ORDER BY u.full_name`,
     [PORTAL_ACTIONS],
   );
@@ -485,4 +487,19 @@ function buildDisplayValue(field: string, value: string | number | boolean | nul
   if (field === "portal_password") return "****";
   if (field === "mr_specialist_id") return value ? String(value) : "Unassigned";
   return value == null ? "(cleared)" : String(value);
+}
+
+export async function getPortalStats(): Promise<PortalStats> {
+  const [totalRes, portalRes, mrRes, approvedRes] = await Promise.all([
+    db.query("SELECT COUNT(*)::int AS n FROM mr_patient_portal"),
+    db.query("SELECT COUNT(*)::int AS n FROM mr_patient_portal WHERE portal_link IS NOT NULL AND portal_link <> ''"),
+    db.query("SELECT COUNT(*)::int AS n FROM mr_patient_portal WHERE got_mr = true"),
+    db.query("SELECT COUNT(*)::int AS n FROM mr_patient_portal WHERE approved_by_tl = true"),
+  ]);
+  return {
+    total:       totalRes.rows[0]?.n    ?? 0,
+    with_portal: portalRes.rows[0]?.n   ?? 0,
+    got_mr:      mrRes.rows[0]?.n       ?? 0,
+    approved:    approvedRes.rows[0]?.n ?? 0,
+  };
 }
