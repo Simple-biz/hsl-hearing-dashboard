@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useTransition, useCallback, useRef, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { AppHeader } from "@/components/layout/app-header";
 import { DashboardNav } from "@/components/layout/dashboard-nav";
@@ -807,6 +808,7 @@ type Props = MrPivotPageData & { userRole: UserRole };
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function MrPivotClient({ userRole, ...data }: Props) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
   // ── Hearings ─────────────────────────────────────────────────────────────
@@ -1254,11 +1256,12 @@ export function MrPivotClient({ userRole, ...data }: Props) {
               </a>
 
               {/* RFC Documents */}
-              <a href="/rfc"
-                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-semibold transition-colors">
-                📋 RFC Documents
-              </a>
-
+              <button onClick={() => router.push("/rfc")}
+                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-[#6A4C93] hover:bg-[#5a3d80] text-white font-semibold transition-colors">
+                <ClipboardList size={12} />
+                <span className="hidden sm:inline">RFC Docs</span>
+                <span className="sm:hidden">RFC</span>
+              </button>
               <button onClick={() => setShowActivityLog(true)}
                 className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground font-semibold transition-colors">
                 <ClipboardList size={12} />
