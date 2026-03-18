@@ -7,6 +7,7 @@ import {
   getPostHrgHearings,
   getPostHrgNotes,
   updatePostHrgDeadline,
+  addPostHrgNote,
 } from "@/app/(dashboard)/medical-records/action";
 import type {
   Hearing, PostHrgNote, MrTeam, HearingFilters,
@@ -45,34 +46,85 @@ function DeadlineStatus({ deadline }: { deadline: string | null }) {
 // ─── NotesList ────────────────────────────────────────────────────────────────
 
 function NotesList({ hearingId }: { hearingId: number }) {
-  const [notes,   setNotes]   = useState<PostHrgNote[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [notes,   setNotes]  = useState<PostHrgNote[]>([]);
+  const [newNote, setNewNote] = useState("");
+  const [saving,  setSaving] = useState(false);
+  const [loading, startTransition] = useTransition();
 
   useEffect(() => {
-    setLoading(true);
-    getPostHrgNotes(hearingId).then((n) => { setNotes(n); setLoading(false); });
+    startTransition(async () => {
+      const n = await getPostHrgNotes(hearingId);
+      setNotes(n);
+    });
   }, [hearingId]);
+
+  async function handleAddNote() {
+    if (!newNote.trim()) return;
+    setSaving(true);
+    const r = await addPostHrgNote(hearingId, newNote.trim());
+    if (r.success) {
+      startTransition(async () => {
+        const updated = await getPostHrgNotes(hearingId);
+        setNotes(updated);
+      });
+      setNewNote("");
+    }
+    setSaving(false);
+  }
 
   if (loading) return (
     <div className="py-6 text-center text-sm text-muted-foreground">
       <Loader2 size={18} className="animate-spin inline mr-2" />Loading notes…
     </div>
   );
-  if (!notes.length) return (
-    <div className="py-6 text-center text-sm text-muted-foreground italic">No notes yet.</div>
-  );
 
   return (
-    <div className="border border-border rounded-lg overflow-hidden max-h-72 overflow-y-auto">
-      {notes.map((n) => (
-        <div key={n.id} className="px-4 py-3 border-b border-border last:border-0 hover:bg-muted/40">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-xs font-semibold text-primary">{n.author_name}</span>
-            <span className="text-[10px] text-muted-foreground">{new Date(n.created_at).toLocaleString()}</span>
-          </div>
-          <p className="text-sm text-foreground whitespace-pre-wrap">{n.content}</p>
+    <div className="space-y-3">
+      {/* Add note input */}
+      <div className="space-y-2">
+        <textarea
+          rows={3}
+          value={newNote}
+          onChange={(e) => setNewNote(e.target.value)}
+          placeholder="Add a post HRG note…"
+          className="w-full text-xs rounded-lg border border-border bg-muted px-3 py-2 resize-none text-foreground focus:outline-none focus:border-primary"
+        />
+        <div className="flex justify-end">
+          <button
+            onClick={handleAddNote}
+            disabled={saving || !newNote.trim()}
+            className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground disabled:opacity-50 flex items-center gap-1.5"
+          >
+            {saving && <Loader2 size={10} className="animate-spin" />}
+            💬 Add Note
+          </button>
         </div>
-      ))}
+      </div>
+
+      {/* Notes history */}
+      <p className="text-[11px] font-semibold text-muted-foreground">
+        Notes History <span className="font-normal">({notes.length})</span>
+      </p>
+      {notes.length === 0 ? (
+        <div className="py-4 text-center text-sm text-muted-foreground italic">No notes yet.</div>
+      ) : (
+        <div className="border border-border rounded-lg overflow-hidden max-h-60 overflow-y-auto">
+          {notes.map((n, i) => (
+            <div key={i} className="px-4 py-3 border-b border-border last:border-0 hover:bg-muted/40">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-semibold text-primary">{n.author_name}</span>
+                <span className="text-[10px] text-muted-foreground">
+                  {new Date(n.created_at).toLocaleString("en-US", {
+                    month: "short", day: "numeric",
+                    hour: "numeric", minute: "2-digit",
+                  })}
+                </span>
+              </div>
+              <p className="text-sm text-foreground whitespace-pre-wrap">{n.content}</p>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -149,7 +201,7 @@ function HearingDetailPanel({
 
       {/* Notes */}
       <div>
-        <p className="text-sm font-semibold text-foreground mb-2">Post HRG Notes</p>
+        <p className="text-sm font-semibold text-foreground mb-2">📝 Post HRG Notes</p>
         <NotesList hearingId={h.id} />
         <p className="mt-3 text-xs text-center text-blue-600 dark:text-blue-400">
           Full post-hearing management is available in the{" "}

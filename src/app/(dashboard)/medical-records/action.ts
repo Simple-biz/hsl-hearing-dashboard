@@ -763,7 +763,7 @@ export async function updateMoa(
   manner: string,
 ): Promise<{ success: boolean }> {
   await db.query(
-    `UPDATE hearings SET manner_of_hearing = $1 WHERE id = $2`,
+    `UPDATE hearings SET manner_of_appearance = $1 WHERE id = $2`,
     [manner, hearingId],
   );
   await logActivity("moa_updated", `MOA updated to "${manner}" for hearing #${hearingId}`);
@@ -775,7 +775,7 @@ export async function updateWorksheetLink(
   link: string,
 ): Promise<{ success: boolean }> {
   await db.query(
-    `UPDATE hearings SET mr_worksheet_link = $1 WHERE id = $2`,
+    `UPDATE hearings SET medical_record_link = $1 WHERE id = $2`,
     [link, hearingId],
   );
   await logActivity("mr_link_updated", `Worksheet link updated for hearing #${hearingId}`);
@@ -1062,21 +1062,71 @@ export async function getActivityLog(params: {
   };
 }
 
-export async function getPostHrgNotes(hearingId: number): Promise<PostHrgNote[]> {
-  // post_hrg_notes is a Phase 4 table — return empty until migrated
+// ─── Post HRG Notes helpers ───────────────────────────────────────────────────
+// Notes are stored as a JSON array in hearings.post_hrg_notes (TEXT column).
+// Shape: [{ author: string; date: string; content: string }]
+// post_hrg_review (BOOLEAN) is set to true whenever a note is added.
+
+function parsePostHrgNotes(raw: unknown): PostHrgNote[] {
+  if (!raw) return [];
   try {
-    const result = await db.query(
-      `SELECT n.*, u.full_name AS author_name
-       FROM post_hrg_notes n
-       JOIN users u ON n.user_id = u.id
-       WHERE n.hearing_id = $1
-       ORDER BY n.created_at DESC`,
+    const parsed = JSON.parse(typeof raw === "string" ? raw : JSON.stringify(raw));
+    if (Array.isArray(parsed)) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return parsed.map((n: any, i: number) => ({
+        id:          i,
+        hearing_id:  0,
+        author_name: n.author ?? n.author_name ?? "Unknown",
+        content:     n.content ?? "",
+        created_at:  n.date   ?? n.created_at  ?? new Date().toISOString(),
+      }));
+    }
+  } catch { /* fall through */ }
+  return [];
+}
+
+export async function getPostHrgNotes(hearingId: number): Promise<PostHrgNote[]> {
+  try {
+    const { rows } = await db.query(
+      `SELECT post_hrg_notes FROM hearings WHERE id = $1`,
       [hearingId],
     );
-    return result.rows as PostHrgNote[];
+    return parsePostHrgNotes(rows[0]?.post_hrg_notes);
   } catch {
     return [];
   }
+}
+
+export async function addPostHrgNote(
+  hearingId: number,
+  content: string,
+): Promise<{ success: boolean; message?: string }> {
+  if (!content.trim()) return { success: false, message: "Note cannot be empty" };
+
+  const session = await getSession();
+  const authorName = session?.user?.name ?? "Unknown";
+
+  // Fetch existing notes
+  const { rows } = await db.query(
+    `SELECT post_hrg_notes FROM hearings WHERE id = $1`,
+    [hearingId],
+  );
+  if (!rows[0]) return { success: false, message: "Hearing not found" };
+
+  const existing = parsePostHrgNotes(rows[0].post_hrg_notes);
+  const updated = [
+    { author: authorName, date: new Date().toISOString(), content: content.trim() },
+    ...existing,
+  ];
+
+  // Write back + flip post_hrg_review flag to true
+  await db.query(
+    `UPDATE hearings SET post_hrg_notes = $1, post_hrg_review = true, updated_at = NOW() WHERE id = $2`,
+    [JSON.stringify(updated), hearingId],
+  );
+
+  await logActivity("post_hrg_note_added", `Post HRG note added for hearing #${hearingId}`);
+  return { success: true };
 }
 
 export async function updatePostHrgDeadline(
