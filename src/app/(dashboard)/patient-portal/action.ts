@@ -8,244 +8,481 @@ export type {
 
 import { derivePortalPermissions } from "../patient-portal/types";
 import type {
-  MrSpecialist, PortalEntry, PortalNote, PortalStats, PortalFilters,
+  PortalUserRole, MrSpecialist, PortalEntry, PortalNote, PortalStats, PortalFilters,
   PortalPaginatedResult, PortalPageData, PortalAddEntryInput, PortalActivityEntry,
 } from "../patient-portal/types";
 
-// ─── Stub constants ───────────────────────────────────────────────────────────
+import { db } from "@/lib/db";
+import { requireAuth } from "@/lib/session";
+import { logAction } from "@/lib/activity-log";
 
-const STUB_SPECIALISTS: MrSpecialist[] = [
-  { id:  1, name: "Vicky Mortos",        bg_color: "#fed7aa", display_order:  1, is_active: true },
-  { id:  2, name: "Noah Villanueva",     bg_color: "#fef9c3", display_order:  2, is_active: true },
-  { id:  3, name: "Carol Ebardo",        bg_color: "#fed7aa", display_order:  3, is_active: true },
-  { id:  4, name: "Trina Malazarte",     bg_color: "#fed7aa", display_order:  4, is_active: true },
-  { id:  5, name: "Maya Tampos",         bg_color: "#86efac", display_order:  5, is_active: true },
-  { id:  6, name: "Nina Cruz",           bg_color: "#86efac", display_order:  6, is_active: true },
-  { id:  7, name: "Van Petigayon",       bg_color: null,      display_order:  7, is_active: true },
-  { id:  8, name: "Jerome Aguirre",      bg_color: "#86efac", display_order:  8, is_active: true },
-  { id:  9, name: "Vera del Prado",      bg_color: null,      display_order:  9, is_active: true },
-  { id: 10, name: "Gail Quillosa",       bg_color: "#86efac", display_order: 10, is_active: true },
-  { id: 11, name: "Fred Sevilla",        bg_color: null,      display_order: 11, is_active: true },
-  { id: 12, name: "Kourtney Benito",     bg_color: "#e9d5ff", display_order: 12, is_active: true },
-  { id: 13, name: "Emerald Faeldan",     bg_color: "#fef9c3", display_order: 13, is_active: true },
-  { id: 14, name: "Glenda Villanueva",   bg_color: null,      display_order: 14, is_active: true },
-  { id: 15, name: "Claire Cortes",       bg_color: "#fed7aa", display_order: 15, is_active: true },
-  { id: 16, name: "Milton Baillo",       bg_color: "#fef9c3", display_order: 16, is_active: true },
-  { id: 17, name: "Winter Generalao",    bg_color: "#fef9c3", display_order: 17, is_active: true },
-  { id: 18, name: "Tracy Caldoza",       bg_color: null,      display_order: 18, is_active: true },
-  { id: 19, name: "Naomi Gaspar",        bg_color: "#86efac", display_order: 19, is_active: true },
-  { id: 20, name: "Scarlet Estologa",    bg_color: "#86efac", display_order: 20, is_active: true },
-  { id: 21, name: "Jasper Soljon",       bg_color: "#fef9c3", display_order: 21, is_active: true },
-  { id: 22, name: "Jerry Adove",         bg_color: "#86efac", display_order: 22, is_active: true },
-  { id: 23, name: "Ashton Asackil",      bg_color: "#fef9c3", display_order: 23, is_active: true },
-  { id: 24, name: "Ralph Ramirez",       bg_color: "#fed7aa", display_order: 24, is_active: true },
-  { id: 25, name: "Dexter Tagulinao",    bg_color: "#86efac", display_order: 25, is_active: true },
-  { id: 26, name: "Jettson Vasquez",     bg_color: "#86efac", display_order: 26, is_active: true },
-  { id: 27, name: "Charles Dela Cruz",   bg_color: null,      display_order: 27, is_active: true },
-  { id: 28, name: "Carlyle Cortes",      bg_color: "#86efac", display_order: 28, is_active: true },
-];
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const STUB_CLIENTS = [
-  "Smith, John","Doe, Jane","Johnson, Michael","Williams, Sarah","Brown, David",
-  "Jones, Emily","Miller, Robert","Davis, Linda","Wilson, James","Taylor, Mary",
-  "Anderson, Thomas","Martinez, Patricia","Garcia, Charles","Rodriguez, Barbara",
-  "Lee, Christopher","Walker, Nancy","Hall, Daniel","Allen, Karen","Young, Paul",
-  "Hernandez, Sandra",
-];
-
-const STUB_PROVIDERS = [
-  "Quest Diagnostics","LabCorp","Mayo Clinic","CVS Health","Walgreens Health",
-  "Kaiser Permanente","UPMC","Anthem","Aetna","Humana",
-  "United Healthcare","Blue Cross","Cigna","WellCare","Centene",
-];
-
-const MONTHS = ["2025-10","2025-11","2025-12","2026-01","2026-02","2026-03"];
-
-function buildStubEntries(): PortalEntry[] {
-  return Array.from({ length: 90 }, (_, i) => {
-    const month = MONTHS[i % MONTHS.length];
-    const day   = String((i % 28) + 1).padStart(2, "0");
-    const spec  = i % 8 === 0 ? null : STUB_SPECIALISTS[i % STUB_SPECIALISTS.length];
-    const hasPortal = i % 3 !== 0;
-    const gotMr = i % 4 === 0;
-    const approved = i % 5 === 0;
-    return {
-      id: i + 1,
-      entry_date: `${month}-${day}`,
-      hearing_date: `${month}-${String(((i + 7) % 28) + 1).padStart(2, "0")}`,
-      client_name: STUB_CLIENTS[i % STUB_CLIENTS.length],
-      provider: STUB_PROVIDERS[i % STUB_PROVIDERS.length],
-      mycase_link: i % 2 === 0 ? "https://app.mycase.com/stub" : null,
-      portal_link: hasPortal ? "https://portal.example.com/stub" : null,
-      portal_username: hasPortal ? `user${i + 1}@portal.com` : null,
-      portal_password: hasPortal ? `Pass${i + 1}!` : null,
-      got_mr: gotMr,
-      approved_by_tl: approved,
-      mr_specialist_id: spec?.id ?? null,
-      username_notes: i % 6 === 0 ? [{ user: "Admin", date: `${month}-${day}T10:00:00Z`, note: "Sample username note" }] : [],
-      password_notes: i % 7 === 0 ? [{ user: "Admin", date: `${month}-${day}T10:00:00Z`, note: "Sample password note" }] : [],
-      approved_notes: i % 8 === 0 ? [{ user: "Admin", date: `${month}-${day}T10:00:00Z`, note: "Approved after review" }] : [],
-      created_at: `${month}-${day}T09:00:00Z`,
-      updated_at: `${month}-${day}T09:00:00Z`,
-      created_by: 1,
-      specialist_name: spec?.name ?? null,
-      specialist_color: spec?.bg_color ?? null,
-    };
-  });
+/**
+ * Parse a raw JSON notes column value (TEXT in DB, stored as JSON array).
+ * Handles legacy plain-text rows and malformed JSON gracefully.
+ */
+function parseNotes(raw: unknown): PortalNote[] {
+  if (!raw) return [];
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed as PortalNote[];
+      // Legacy: plain-text row converted to array format
+      return [{ user: "System", date: new Date().toISOString(), note: raw }];
+    } catch {
+      return [{ user: "System", date: new Date().toISOString(), note: raw }];
+    }
+  }
+  if (Array.isArray(raw)) return raw as PortalNote[];
+  return [];
 }
 
-function computeStats(entries: PortalEntry[]): PortalStats {
+/**
+ * Map a raw Neon query row to a typed PortalEntry.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapRow(row: Record<string, any>): PortalEntry {
   return {
-    total: entries.length,
-    with_portal: entries.filter((e) => e.portal_link).length,
-    got_mr: entries.filter((e) => e.got_mr).length,
-    approved: entries.filter((e) => e.approved_by_tl).length,
+    id:               row.id,
+    entry_date:       row.entry_date   ?? null,
+    hearing_date:     row.hearing_date ?? null,
+    client_name:      row.client_name,
+    provider:         row.provider     ?? null,
+    mycase_link:      row.mycase_link  ?? null,
+    portal_link:      row.portal_link  ?? null,
+    portal_username:  row.portal_username ?? null,
+    portal_password:  row.portal_password ?? null,
+    got_mr:           Boolean(row.got_mr),
+    approved_by_tl:   Boolean(row.approved_by_tl),
+    mr_specialist_id: row.mr_specialist_id ?? null,
+    username_notes:   parseNotes(row.username_notes),
+    password_notes:   parseNotes(row.password_notes),
+    approved_notes:   parseNotes(row.approved_notes),
+    created_at:       row.created_at,
+    updated_at:       row.updated_at,
+    created_by:       row.created_by ?? null,
+    // Joined columns from mr_specialists
+    specialist_name:  row.specialist_name  ?? null,
+    specialist_color: row.specialist_color ?? null,
   };
 }
 
-// ─── Server Actions ───────────────────────────────────────────────────────────
+// ─── Page Bootstrap ───────────────────────────────────────────────────────────
 
 export async function getPortalPageData(): Promise<PortalPageData> {
-  // TODO: replace with real DB queries
-  const all = buildStubEntries();
-  const stats = computeStats(all);
+  const session = await requireAuth();
+  const role    = (session.user.role ?? "mr_agent") as PortalUserRole;
 
-  const monthSet = new Set<string>();
-  all.forEach((e) => { if (e.hearing_date) monthSet.add(e.hearing_date.slice(0, 7)); });
-  const availableMonths = Array.from(monthSet)
-    .sort((a, b) => b.localeCompare(a))
-    .map((val) => ({
-      val,
-      label: new Date(val + "-01").toLocaleDateString("en-US", { month: "long", year: "numeric" }),
-    }));
+  // Stats — four parallel scalar queries
+  const [totalRes, portalRes, mrRes, approvedRes] = await Promise.all([
+    db.query("SELECT COUNT(*)::int AS n FROM mr_patient_portal"),
+    db.query("SELECT COUNT(*)::int AS n FROM mr_patient_portal WHERE portal_link IS NOT NULL AND portal_link <> ''"),
+    db.query("SELECT COUNT(*)::int AS n FROM mr_patient_portal WHERE got_mr = true"),
+    db.query("SELECT COUNT(*)::int AS n FROM mr_patient_portal WHERE approved_by_tl = true"),
+  ]);
+
+  const stats: PortalStats = {
+    total:       totalRes.rows[0]?.n    ?? 0,
+    with_portal: portalRes.rows[0]?.n   ?? 0,
+    got_mr:      mrRes.rows[0]?.n       ?? 0,
+    approved:    approvedRes.rows[0]?.n ?? 0,
+  };
+
+  // Active specialists ordered by display_order
+  const { rows: specialists } = await db.query(
+    "SELECT id, name, bg_color, display_order, is_active FROM mr_specialists WHERE is_active = true ORDER BY display_order",
+  );
+
+  // Available months derived from hearing_date (latest 12)
+  const { rows: dateRows } = await db.query(
+    `SELECT DISTINCT TO_CHAR(hearing_date, 'YYYY-MM') AS val
+     FROM mr_patient_portal
+     WHERE hearing_date IS NOT NULL
+     ORDER BY val DESC
+     LIMIT 12`,
+  );
+
+  const availableMonths = dateRows.map((r) => ({
+    val:   r.val,
+    label: new Date(r.val + "-01").toLocaleDateString("en-US", { month: "long", year: "numeric" }),
+  }));
 
   return {
     stats,
-    specialists: STUB_SPECIALISTS,
+    specialists,
     availableMonths,
-    permissions: derivePortalPermissions("admin"),
+    permissions: derivePortalPermissions(role),
   };
 }
 
+// ─── Paginated Entry List ─────────────────────────────────────────────────────
+
 export async function getPortalEntries(filters: PortalFilters): Promise<PortalPaginatedResult> {
-  // TODO: replace with parameterised DB query — stub filters in-memory
-  let entries = buildStubEntries();
+  const conditions: string[] = ["1=1"];
+  const params: unknown[]    = [];
+  let   p = 0; // param counter
 
   // Search
   if (filters.search?.trim()) {
-    const q = filters.search.toLowerCase();
-    entries = entries.filter((e) =>
-      e.client_name.toLowerCase().includes(q) ||
-      e.provider?.toLowerCase().includes(q)
-    );
+    p += 2;
+    conditions.push(`(p.client_name ILIKE $${p - 1} OR p.provider ILIKE $${p})`);
+    params.push(`%${filters.search.trim()}%`, `%${filters.search.trim()}%`);
   }
 
-  // Status
-  if (filters.mr_status === "got") entries = entries.filter((e) => e.got_mr);
-  if (filters.mr_status === "pending") entries = entries.filter((e) => !e.got_mr);
+  // MR status
+  if (filters.mr_status === "got") {
+    conditions.push("p.got_mr = true");
+  } else if (filters.mr_status === "pending") {
+    conditions.push("p.got_mr = false");
+  }
 
-  // Month (on hearing_date)
+  // Month filter (YYYY-MM on hearing_date)
   if (filters.month) {
-    entries = entries.filter((e) => e.hearing_date?.startsWith(filters.month!));
+    p++;
+    conditions.push(`TO_CHAR(p.hearing_date, 'YYYY-MM') = $${p}`);
+    params.push(filters.month);
   }
 
-  // Specialist
+  // Specialist filter
   if (filters.specialist) {
-    if (filters.specialist === "unassigned") entries = entries.filter((e) => !e.mr_specialist_id);
-    else entries = entries.filter((e) => String(e.mr_specialist_id) === String(filters.specialist));
+    if (filters.specialist === "unassigned") {
+      conditions.push("p.mr_specialist_id IS NULL");
+    } else {
+      p++;
+      conditions.push(`p.mr_specialist_id = $${p}`);
+      params.push(Number(filters.specialist));
+    }
   }
 
-  // Sort by entry_date
-  entries.sort((a, b) => {
-    const da = a.entry_date ?? "";
-    const db = b.entry_date ?? "";
-    return filters.sort_order === "asc" ? da.localeCompare(db) : db.localeCompare(da);
-  });
+  const where    = conditions.join(" AND ");
+  const dir      = filters.sort_order === "asc" ? "ASC" : "DESC";
+  const page     = Math.max(1, filters.page ?? 1);
+  const isAll    = filters.per_page === "all";
+  const perPage  = isAll ? 500 : Math.min(500, (filters.per_page as number) ?? 50);
+  const offset   = (page - 1) * perPage;
 
-  // Paginate
-  const page = Math.max(1, filters.page ?? 1);
-  const rawPer = filters.per_page;
-  const perPage = rawPer === "all" ? entries.length || 1 : Math.min(500, (rawPer as number) ?? 50);
-  const paginated = entries.slice((page - 1) * perPage, page * perPage);
+  // Count query (reuses same params)
+  const { rows: countRows } = await db.query(
+    `SELECT COUNT(*)::int AS total FROM mr_patient_portal p WHERE ${where}`,
+    params,
+  );
+  const total = countRows[0]?.total ?? 0;
+
+  // Data query with optional LIMIT/OFFSET
+  const dataParams = isAll ? params : [...params, perPage, offset];
+  const limitClause = isAll ? "" : `LIMIT $${p + 1} OFFSET $${p + 2}`;
+
+  const { rows } = await db.query(
+    `SELECT p.*,
+            s.name     AS specialist_name,
+            s.bg_color AS specialist_color
+     FROM mr_patient_portal p
+     LEFT JOIN mr_specialists s ON s.id = p.mr_specialist_id
+     WHERE ${where}
+     ORDER BY p.entry_date ${dir} NULLS LAST, p.id ${dir}
+     ${limitClause}`,
+    dataParams,
+  );
 
   return {
-    entries: paginated,
-    total: entries.length,
+    entries:     rows.map(mapRow),
+    total,
     page,
-    per_page: perPage,
-    total_pages: rawPer === "all" ? 1 : Math.max(1, Math.ceil(entries.length / perPage)),
+    per_page:    perPage,
+    total_pages: isAll ? 1 : Math.max(1, Math.ceil(total / perPage)),
   };
 }
 
+// ─── Mutations ────────────────────────────────────────────────────────────────
+
 export async function addPortalEntry(
-  input: PortalAddEntryInput
+  input: PortalAddEntryInput,
 ): Promise<{ success: boolean; id?: number; message?: string }> {
-  // TODO: INSERT INTO mr_patient_portal
-  if (!input.client_name?.trim()) return { success: false, message: "Client name is required" };
-  void input;
-  return { success: true, id: Math.floor(Math.random() * 9000) + 1000 };
+  if (!input.client_name?.trim())
+    return { success: false, message: "Client name is required" };
+
+  const session = await requireAuth();
+
+  const { rows } = await db.query(
+    `INSERT INTO mr_patient_portal
+       (entry_date, hearing_date, client_name, provider, mycase_link,
+        portal_link, portal_username, portal_password, got_mr, approved_by_tl, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+     RETURNING id`,
+    [
+      input.entry_date   || null,
+      input.hearing_date || null,
+      input.client_name.trim(),
+      input.provider        || null,
+      input.mycase_link     || null,
+      input.portal_link     || null,
+      input.portal_username || null,
+      input.portal_password || null,
+      Boolean(input.got_mr),
+      Boolean(input.approved_by_tl),
+      Number(session.user.id),
+    ],
+  );
+
+  await logAction("portal_entry_created", `Created portal entry for: ${input.client_name.trim()}`);
+
+  return { success: true, id: rows[0]?.id };
 }
 
 export async function updatePortalEntry(
   id: number,
-  input: Partial<PortalAddEntryInput>
+  input: Partial<PortalAddEntryInput>,
 ): Promise<{ success: boolean; message?: string }> {
-  // TODO: UPDATE mr_patient_portal SET ... WHERE id = ?
-  void id; void input;
+  if (!input.client_name?.trim())
+    return { success: false, message: "Client name is required" };
+
+  await db.query(
+    `UPDATE mr_patient_portal SET
+       entry_date = $1, hearing_date = $2, client_name = $3, provider = $4,
+       mycase_link = $5, portal_link = $6, portal_username = $7, portal_password = $8,
+       got_mr = $9, approved_by_tl = $10, updated_at = NOW()
+     WHERE id = $11`,
+    [
+      input.entry_date   || null,
+      input.hearing_date || null,
+      input.client_name.trim(),
+      input.provider        || null,
+      input.mycase_link     || null,
+      input.portal_link     || null,
+      input.portal_username || null,
+      input.portal_password || null,
+      Boolean(input.got_mr),
+      Boolean(input.approved_by_tl),
+      id,
+    ],
+  );
+
+  await logAction("portal_field_updated", `Updated portal entry for: ${input.client_name.trim()}`);
+
   return { success: true };
 }
+
+const ALLOWED_FIELDS = [
+  "entry_date", "hearing_date", "client_name", "provider", "mycase_link",
+  "portal_link", "portal_username", "portal_password", "got_mr", "approved_by_tl",
+  "mr_specialist_id",
+] as const;
+
+type AllowedField = (typeof ALLOWED_FIELDS)[number];
 
 export async function updatePortalField(
   id: number,
   field: string,
   value: string | number | boolean | null,
 ): Promise<{ success: boolean; message?: string }> {
-  const allowed = [
-    "entry_date","hearing_date","client_name","provider","mycase_link",
-    "portal_link","portal_username","portal_password","got_mr","approved_by_tl","mr_specialist_id",
-  ];
-  if (!allowed.includes(field)) return { success: false, message: "Invalid field" };
-  void id; void value;
+  if (!(ALLOWED_FIELDS as readonly string[]).includes(field))
+    return { success: false, message: "Invalid field" };
+
+  const session = await requireAuth();
+
+  // Server-side permission guard for specialist assignment
+  if (field === "mr_specialist_id") {
+    const role = session.user.role ?? "";
+    if (!["admin", "mr_admin"].includes(role))
+      return { success: false, message: "Only Admin or MR Admin can assign specialists" };
+  }
+
+  // Normalise empty specialist to null
+  let dbValue: string | number | boolean | null = value;
+  if (field === "mr_specialist_id" && (value === "" || value === 0)) dbValue = null;
+
+  await db.query(
+    `UPDATE mr_patient_portal SET ${field as AllowedField} = $1, updated_at = NOW() WHERE id = $2`,
+    [dbValue, id],
+  );
+
+  // Fetch client name for activity log
+  const { rows } = await db.query(
+    "SELECT client_name FROM mr_patient_portal WHERE id = $1",
+    [id],
+  );
+
+  const LABELS: Record<string, string> = {
+    entry_date: "Date", hearing_date: "Hearing Date", client_name: "Client Name",
+    provider: "Provider", mycase_link: "MyCase Link", portal_link: "Portal Link",
+    portal_username: "Username", portal_password: "Password",
+    got_mr: "Got MR", approved_by_tl: "Approved by TL", mr_specialist_id: "MR Specialist",
+  };
+
+  await logAction(
+    "portal_field_updated",
+    `Updated ${LABELS[field] ?? field} to '${buildDisplayValue(field, dbValue)}' for: ${rows[0]?.client_name ?? "Unknown"}`,
+  );
+
   return { success: true };
 }
 
-export async function deletePortalEntry(id: number): Promise<{ success: boolean; message?: string }> {
-  // TODO: DELETE FROM mr_patient_portal WHERE id = ?
-  void id;
+export async function deletePortalEntry(
+  id: number,
+): Promise<{ success: boolean; message?: string }> {
+  // Fetch client name before deleting for the activity log
+  const { rows } = await db.query(
+    "SELECT client_name FROM mr_patient_portal WHERE id = $1",
+    [id],
+  );
+  const clientName = rows[0]?.client_name ?? "Unknown";
+
+  await db.query("DELETE FROM mr_patient_portal WHERE id = $1", [id]);
+  await logAction("portal_entry_deleted", `Deleted portal entry for: ${clientName}`);
+
   return { success: true };
 }
+
+// ─── Notes ────────────────────────────────────────────────────────────────────
 
 export async function getPortalNotes(
   id: number,
-  field: "username" | "password" | "approved"
+  field: "username" | "password" | "approved",
 ): Promise<{ success: boolean; notes?: PortalNote[]; client_name?: string; provider?: string }> {
-  // TODO: SELECT <field>_notes FROM mr_patient_portal WHERE id = ?
-  void id; void field;
-  return { success: true, notes: [], client_name: "Demo Client", provider: "Demo Provider" };
+  const col = `${field}_notes`;
+
+  const { rows } = await db.query(
+    `SELECT id, client_name, provider, ${col} AS notes FROM mr_patient_portal WHERE id = $1`,
+    [id],
+  );
+
+  if (!rows[0]) return { success: false };
+
+  return {
+    success:     true,
+    notes:       parseNotes(rows[0].notes),
+    client_name: rows[0].client_name,
+    provider:    rows[0].provider ?? undefined,
+  };
 }
 
 export async function addPortalNote(
   id: number,
   field: "username" | "password" | "approved",
-  note: string
+  note: string,
 ): Promise<{ success: boolean; message?: string }> {
-  // TODO: prepend to JSON array in <field>_notes column
   if (!note.trim()) return { success: false, message: "Note text is required" };
-  void id; void field;
+
+  const session = await requireAuth();
+  const col     = `${field}_notes`;
+
+  // Fetch existing notes + client name
+  const { rows } = await db.query(
+    `SELECT client_name, ${col} AS notes FROM mr_patient_portal WHERE id = $1`,
+    [id],
+  );
+  if (!rows[0]) return { success: false, message: "Entry not found" };
+
+  const existing = parseNotes(rows[0].notes);
+  const updated: PortalNote[] = [
+    {
+      user: session.user.name ?? "Unknown",
+      date: new Date().toISOString(),
+      note: note.trim(),
+    },
+    ...existing,
+  ];
+
+  await db.query(
+    `UPDATE mr_patient_portal SET ${col} = $1, updated_at = NOW() WHERE id = $2`,
+    [JSON.stringify(updated), id],
+  );
+
+  const FIELD_LABELS = { username: "Username", password: "Password", approved: "Approved by TL" };
+  await logAction("portal_note_added", `Added ${FIELD_LABELS[field]} note for: ${rows[0].client_name}`);
+
   return { success: true };
 }
+
+// ─── Activity Log ─────────────────────────────────────────────────────────────
+
+const PORTAL_ACTIONS = [
+  "portal_entry_created", "portal_field_updated", "portal_entry_deleted",
+  "portal_bulk_import",   "portal_note_added",    "portal_note_deleted",
+];
 
 export async function getPortalActivityLog(filters: {
   page?: number;
   date_range?: "all" | "today" | "week" | "month";
   user_id?: string;
 }): Promise<{ entries: PortalActivityEntry[]; total: number; total_pages: number }> {
-  // TODO: SELECT FROM activity_log WHERE action IN ('portal_entry_created', ...)
-  void filters;
-  return { entries: [], total: 0, total_pages: 1 };
+  const perPage = 50;
+  const page    = Math.max(1, filters.page ?? 1);
+  const offset  = (page - 1) * perPage;
+
+  const conditions: string[] = [
+    "a.action = ANY($1::text[])",
+    "a.user_id != 1",
+  ];
+  const params: unknown[] = [PORTAL_ACTIONS];
+  let   p = 1;
+
+  if (filters.date_range === "today") {
+    conditions.push("DATE(a.created_at) = CURRENT_DATE");
+  } else if (filters.date_range === "week") {
+    conditions.push("a.created_at >= NOW() - INTERVAL '7 days'");
+  } else if (filters.date_range === "month") {
+    conditions.push("a.created_at >= NOW() - INTERVAL '30 days'");
+  }
+
+  if (filters.user_id) {
+    p++;
+    conditions.push(`a.user_id = $${p}`);
+    params.push(Number(filters.user_id));
+  }
+
+  const where = conditions.join(" AND ");
+
+  const [countRes, dataRes] = await Promise.all([
+    db.query(
+      `SELECT COUNT(*)::int AS total FROM activity_log a WHERE ${where}`,
+      params,
+    ),
+    db.query(
+      `SELECT a.id, a.user_id, a.action, a.description, a.created_at,
+              u.full_name AS user_name
+       FROM activity_log a
+       LEFT JOIN users u ON u.id = a.user_id
+       WHERE ${where}
+       ORDER BY a.created_at DESC, a.id DESC
+       LIMIT $${p + 1} OFFSET $${p + 2}`,
+      [...params, perPage, offset],
+    ),
+  ]);
+
+  const total = countRes.rows[0]?.total ?? 0;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const entries: PortalActivityEntry[] = dataRes.rows.map((row: any) => ({
+    id:         row.id,
+    user_id:    row.user_id,
+    user_name:  row.user_name ?? null,
+    action:     row.action,
+    details:    row.description ?? "",
+    created_at: row.created_at,
+  }));
+
+  return { entries, total, total_pages: Math.max(1, Math.ceil(total / perPage)) };
 }
 
 export async function getPortalActivityUsers(): Promise<Array<{ id: number; full_name: string }>> {
-  // TODO: SELECT DISTINCT users from portal activity_log
-  return [];
+  const { rows } = await db.query(
+    `SELECT DISTINCT u.id, u.full_name
+     FROM activity_log a
+     JOIN users u ON u.id = a.user_id
+     WHERE a.action = ANY($1::text[])
+       AND a.user_id != 1
+     ORDER BY u.full_name`,
+    [PORTAL_ACTIONS],
+  );
+  return rows;
+}
+
+// ─── Internal helpers ─────────────────────────────────────────────────────────
+
+function buildDisplayValue(field: string, value: string | number | boolean | null): string {
+  if (field === "got_mr" || field === "approved_by_tl") return value ? "Yes" : "No";
+  if (field === "portal_password") return "****";
+  if (field === "mr_specialist_id") return value ? String(value) : "Unassigned";
+  return value == null ? "(cleared)" : String(value);
 }

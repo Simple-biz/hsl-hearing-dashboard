@@ -1246,6 +1246,19 @@ export function MrPivotClient({ userRole, ...data }: Props) {
                   <FileText size={12} /> Post HRG ({data.postHrgCount})
                 </button>
               )}
+
+              {/* Patient Portal */}
+              <a href="/patient-portal"
+                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-semibold transition-colors">
+                🏥 Patient Portal
+              </a>
+
+              {/* RFC Documents */}
+              <a href="/rfc"
+                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-semibold transition-colors">
+                📋 RFC Documents
+              </a>
+
               <button onClick={() => setShowActivityLog(true)}
                 className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground font-semibold transition-colors">
                 <ClipboardList size={12} />
