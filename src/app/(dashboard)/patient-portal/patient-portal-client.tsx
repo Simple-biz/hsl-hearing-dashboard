@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import { AppHeader } from "@/components/layout/app-header";
 import {
   Download, Plus, Trash2, ExternalLink, ClipboardList, Loader2,
-  X, ChevronLeft, ChevronRight, Copy, Eye, Check, StickyNote,
+  X, ChevronLeft, ChevronRight, Copy, Eye, Check, StickyNote, FileText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -861,6 +861,146 @@ function ViewDetailsModal({
   );
 }
 
+// ─── Mobile Card ─────────────────────────────────────────────────────────────
+// Shown on small screens instead of the wide data grid.
+
+function PortalMobileCard({
+  entry, permissions,
+  onViewDetails, onEdit, onDelete, onOpenNotes, onOpenLink,
+}: {
+  entry: PortalEntry;
+  permissions: PortalPageData["permissions"];
+  onViewDetails: (e: PortalEntry) => void;
+  onEdit: (e: PortalEntry) => void;
+  onDelete: (id: number) => void;
+  onOpenNotes: (id: number, field: "username" | "password" | "approved", clientName: string, provider: string | null) => void;
+  onOpenLink: (id: number, field: "mycase_link" | "portal_link", title: string, url: string) => void;
+}) {
+  const { canEdit, canManage } = permissions;
+  const specColor = entry.specialist_color;
+
+  return (
+    <div className="border-b border-border/40 px-4 py-3 space-y-2 hover:bg-muted/20 transition-colors">
+      {/* Header row: client + actions */}
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="font-semibold text-sm text-primary truncate">{entry.client_name}</p>
+          {entry.provider && (
+            <p className="text-[11px] text-muted-foreground truncate">{entry.provider}</p>
+          )}
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          <button onClick={() => onViewDetails(entry)}
+            className="p-1.5 rounded hover:bg-muted text-muted-foreground" aria-label="View details">
+            <Eye size={14} />
+          </button>
+          {canEdit && (
+            <button onClick={() => onEdit(entry)}
+              className="p-1.5 rounded hover:bg-muted text-muted-foreground" aria-label="Edit entry">
+              <FileText size={14} />
+            </button>
+          )}
+          {canManage && (
+            <button onClick={() => onDelete(entry.id)}
+              className="p-1.5 rounded hover:bg-red-50 text-red-500" aria-label="Delete">
+              <Trash2 size={14} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Dates + Specialist */}
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+        {entry.entry_date && <span>📅 Entry: <span className="text-foreground">{fmtDate(entry.entry_date)}</span></span>}
+        {entry.hearing_date && <span>🎧 Hearing: <span className="text-foreground">{fmtDate(entry.hearing_date)}</span></span>}
+        {entry.specialist_name && (
+          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium" style={specStyle(specColor ?? null)}>
+            {entry.specialist_name}
+          </span>
+        )}
+      </div>
+
+      {/* Links row */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {entry.mycase_link
+          ? <a href={entry.mycase_link} target="_blank" rel="noreferrer"
+              className="inline-flex items-center gap-1 text-[10px] bg-primary text-primary-foreground px-2 py-0.5 rounded">
+              <ExternalLink size={9} />MyCase
+            </a>
+          : canEdit && (
+              <button onClick={() => onOpenLink(entry.id, "mycase_link", "📄 MyCase Link", "")}
+                className="text-[10px] border border-dashed border-border rounded px-2 py-0.5 text-muted-foreground">
+                + MyCase
+              </button>
+            )
+        }
+        {entry.portal_link
+          ? <a href={entry.portal_link} target="_blank" rel="noreferrer"
+              className="inline-flex items-center gap-1 text-[10px] bg-emerald-600 text-white px-2 py-0.5 rounded">
+              <ExternalLink size={9} />Portal
+            </a>
+          : canEdit && (
+              <button onClick={() => onOpenLink(entry.id, "portal_link", "🔗 Portal Link", "")}
+                className="text-[10px] border border-dashed border-border rounded px-2 py-0.5 text-muted-foreground">
+                + Portal
+              </button>
+            )
+        }
+      </div>
+
+      {/* Credentials */}
+      {(entry.portal_username || entry.portal_password) && (
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
+          {entry.portal_username && (
+            <span className="flex items-center gap-1">
+              <span className="text-muted-foreground">User:</span>
+              <span className="font-mono">{entry.portal_username}</span>
+              <button onClick={() => onOpenNotes(entry.id, "username", entry.client_name, entry.provider)}
+                className={cn("text-[9px] px-1 py-0.5 rounded border",
+                  entry.username_notes.length > 0 ? "bg-blue-100 border-blue-300 text-blue-700" : "border-border text-muted-foreground")}>
+                <StickyNote size={8} className="inline" />{entry.username_notes.length > 0 ? entry.username_notes.length : ""}
+              </button>
+            </span>
+          )}
+          {entry.portal_password && (
+            <span className="flex items-center gap-1">
+              <span className="text-muted-foreground">Pass:</span>
+              <span>••••••</span>
+              <button onClick={() => navigator.clipboard.writeText(entry.portal_password!)}
+                className="text-muted-foreground hover:text-primary" aria-label="Copy password">
+                <Copy size={10} />
+              </button>
+              <button onClick={() => onOpenNotes(entry.id, "password", entry.client_name, entry.provider)}
+                className={cn("text-[9px] px-1 py-0.5 rounded border",
+                  entry.password_notes.length > 0 ? "bg-blue-100 border-blue-300 text-blue-700" : "border-border text-muted-foreground")}>
+                <StickyNote size={8} className="inline" />{entry.password_notes.length > 0 ? entry.password_notes.length : ""}
+              </button>
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Status badges */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className={cn("px-2 py-0.5 rounded text-[10px] font-medium",
+          entry.got_mr ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-600")}>
+          {entry.got_mr ? "✅ Got MR" : "⏳ Pending MR"}
+        </span>
+        {entry.approved_by_tl && (
+          <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700">
+            ✓ Approved TL
+          </span>
+        )}
+        <button onClick={() => onOpenNotes(entry.id, "approved", entry.client_name, entry.provider)}
+          className={cn("text-[9px] px-1.5 py-0.5 rounded border",
+            entry.approved_notes.length > 0 ? "bg-blue-100 border-blue-300 text-blue-700" : "border-border text-muted-foreground")}>
+          <StickyNote size={8} className="inline" /> Approval Notes {entry.approved_notes.length > 0 ? `(${entry.approved_notes.length})` : ""}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Portal Table Row ─────────────────────────────────────────────────────────
 // Shared grid — header and rows must use identical values.
 // Date(90) | HearingDate(90) | Specialist(130) | ClientName(160) | Provider(130) |
@@ -1203,7 +1343,7 @@ export function PatientPortalClient(data: PortalPageData) {
               type="text"
               placeholder="🔍 Search client or provider…"
               value={filters.search}
-              className="text-xs px-3 py-1.5 rounded-lg border border-border bg-muted text-foreground focus:outline-none focus:border-primary min-w-50"
+              className="text-xs px-3 py-1.5 rounded-lg border border-border bg-muted text-foreground focus:outline-none focus:border-primary w-full sm:min-w-50 sm:w-auto"
               onChange={(e) => {
                 const v = e.target.value;
                 setFilters((p) => ({ ...p, search: v }));
@@ -1300,6 +1440,37 @@ export function PatientPortalClient(data: PortalPageData) {
             </div>
           </div>
 
+          {/* ── Mobile: card list (hidden on sm+) ─────────────────────────── */}
+          <div className="block sm:hidden flex-1 overflow-y-auto min-h-0">
+            {isPending && (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 size={24} className="animate-spin text-primary" />
+              </div>
+            )}
+            {!isPending && entries.length === 0
+              ? <div className="text-center py-16 text-sm text-muted-foreground">No entries found.</div>
+              : entries.map((e) => (
+                  <PortalMobileCard
+                    key={e.id}
+                    entry={e}
+                    permissions={data.permissions}
+                    onViewDetails={(entry) => setViewEntry(entry)}
+                    onEdit={(entry) => setEditEntry(entry)}
+                    onDelete={handleDelete}
+                    onOpenNotes={(id, field, cn, prov) =>
+                      setNotesState({ open: true, id, field, clientName: cn, provider: prov })
+                    }
+                    onOpenLink={(id, field, title, url) =>
+                      setLinkState({ open: true, id, field, title, currentUrl: url })
+                    }
+                  />
+                ))
+            }
+          </div>
+
+          {/* ── Desktop: fixed-width grid (hidden on mobile) ───────────────── */}
+          <div className="hidden sm:contents">
+
           {/* Column headers */}
           <div className="overflow-x-auto shrink-0">
             <div
@@ -1351,6 +1522,8 @@ export function PatientPortalClient(data: PortalPageData) {
                 }
               </div>
           </div>
+
+          </div> {/* end sm:contents */}
 
           {/* Pagination */}
           <div className="flex items-center justify-between gap-3 px-5 py-2.5 border-t bg-muted/20 shrink-0 flex-wrap">
