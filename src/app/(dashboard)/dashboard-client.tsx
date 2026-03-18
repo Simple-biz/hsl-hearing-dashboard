@@ -1127,7 +1127,6 @@ const FilterBar = memo(function FilterBar({
   onFilterChange: (f: HearingFilters) => void;
   repCounts: RepWithCount[];
   nextUnassigned: NextUnassignedRow | null;
-  userRole: UserRole;
   showRepFilter: boolean;
   showNextUnassigned: boolean;
 }) {
@@ -1372,7 +1371,6 @@ const COL_W = {
   ssn_last_4: 62,
   actions: 44,
 };
-
 const ALL_COLUMNS: ColumnDef[] = [
   { key: "checkbox", label: "", w: COL_W.checkbox, frozen: true },
   {
@@ -1612,7 +1610,6 @@ const HearingTable = memo(function HearingTable({
   showCheckbox: showCheckboxProp,
   onToggleAll,
   scrollRef,
-  onScrollSync,
 }: {
   hearings: HearingRow[];
   userRole: UserRole;
@@ -1631,7 +1628,6 @@ const HearingTable = memo(function HearingTable({
   showCheckbox: boolean;
   onToggleAll: () => void;
   scrollRef: React.RefObject<HTMLDivElement | null>;
-  onScrollSync: () => void;
 }) {
   "use no memo";
 
@@ -1897,9 +1893,8 @@ const HearingTable = memo(function HearingTable({
               ).current = node;
             }
           }}
-          className="hide-scrollbar overflow-x-auto overflow-y-auto"
+          className="overflow-x-auto overflow-y-auto"
           style={{ maxHeight: "calc(100vh - 320px)" }}
-          onScroll={onScrollSync}
           onWheel={(e) => {
             if (e.shiftKey) {
               e.currentTarget.scrollLeft += e.deltaY;
@@ -1909,7 +1904,8 @@ const HearingTable = memo(function HearingTable({
         >
           <table
             data-hearing-table
-            className="w-max min-w-full border-collapse text-sm"
+            className="border-collapse text-sm"
+            style={{ minWidth: columns.reduce((s, c) => s + c.w, 0) }}
           >
             <thead className="sticky top-0 z-30">
               <tr>
@@ -2393,24 +2389,6 @@ export function DashboardClient({
 
   // Scroll sync for sticky horizontal scrollbar
   const tableScrollRef = useRef<HTMLDivElement>(null);
-  const fakeScrollRef = useRef<HTMLDivElement>(null);
-  const scrollSyncing = useRef(false);
-  // Compute visible columns for scrollbar width
-  const visibleKeys = getVisibleColumns(userRole) || ["ALL"];
-  const visibleColumns =
-    visibleKeys[0] === "ALL"
-      ? ALL_COLUMNS
-      : ALL_COLUMNS.filter((col) => {
-          if (col.key === "checkbox") return showCheckbox;
-          if (col.key === "actions") return true;
-          if (col.key === "location")
-            return (
-              visibleKeys.includes("city") || visibleKeys.includes("state")
-            );
-          return visibleKeys.includes(col.key);
-        });
-  const tableWidth = visibleColumns.reduce((s, c) => s + c.w, 0);
-  const [tableContainerWidth, setTableContainerWidth] = useState(0);
 
   // Native event delegation for checkbox clicks — zero React overhead
   useEffect(() => {
@@ -2433,37 +2411,6 @@ export function DashboardClient({
       if (table) table.removeEventListener("change", handler);
     };
   }, [syncBulkBar]);
-
-  useEffect(() => {
-    const el = tableScrollRef.current;
-    if (!el) return;
-    const obs = new ResizeObserver((entries) => {
-      for (const entry of entries)
-        setTableContainerWidth(entry.contentRect.width);
-    });
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, []);
-
-  const handleTableScroll = useCallback(() => {
-    if (scrollSyncing.current) return;
-    scrollSyncing.current = true;
-    if (tableScrollRef.current && fakeScrollRef.current)
-      fakeScrollRef.current.scrollLeft = tableScrollRef.current.scrollLeft;
-    requestAnimationFrame(() => {
-      scrollSyncing.current = false;
-    });
-  }, []);
-
-  const handleFakeScroll = useCallback(() => {
-    if (scrollSyncing.current) return;
-    scrollSyncing.current = true;
-    if (tableScrollRef.current && fakeScrollRef.current)
-      tableScrollRef.current.scrollLeft = fakeScrollRef.current.scrollLeft;
-    requestAnimationFrame(() => {
-      scrollSyncing.current = false;
-    });
-  }, []);
 
   // Bulk selection — pure DOM, zero React re-renders on checkbox click
   const toggleAll = useCallback(() => {
@@ -2643,7 +2590,6 @@ export function DashboardClient({
           onFilterChange={handleFilterChange}
           repCounts={repCounts}
           nextUnassigned={nextUnassigned}
-          userRole={userRole}
           showRepFilter={showRepFilter}
           showNextUnassigned={showNextUnassigned}
         />
@@ -2789,7 +2735,6 @@ export function DashboardClient({
             showCheckbox={showCheckbox}
             onToggleAll={toggleAll}
             scrollRef={tableScrollRef}
-            onScrollSync={handleTableScroll}
           />
         </div>
       </div>
@@ -3262,29 +3207,6 @@ export function DashboardClient({
                 </div>
               </div>
             </div>
-          </div>,
-          document.body,
-        )}
-
-      {/* Fixed horizontal scrollbar — always at viewport bottom */}
-      {/* Fixed horizontal scrollbar — thick and visible */}
-      {tableContainerWidth > 0 &&
-        tableWidth > tableContainerWidth &&
-        createPortal(
-          <div
-            data-scroll-spacer
-            ref={fakeScrollRef}
-            onScroll={handleFakeScroll}
-            style={{
-              bottom: 0, // adjusted by syncBulkBar via data-scroll-spacer
-              left: "var(--sidebar-width, 0px)",
-              height: 28,
-              scrollbarWidth: "auto",
-              scrollbarColor: "#71717a #e4e4e7",
-            }}
-            className="fixed right-0 z-80 overflow-x-scroll overflow-y-hidden border-t-2 border-zinc-300 bg-zinc-200 dark:border-zinc-700 dark:bg-zinc-800 [&::-webkit-scrollbar]:h-5 [&::-webkit-scrollbar-track]:bg-zinc-200 dark:[&::-webkit-scrollbar-track]:bg-zinc-800 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-4 [&::-webkit-scrollbar-thumb]:border-solid [&::-webkit-scrollbar-thumb]:border-transparent [&::-webkit-scrollbar-thumb]:bg-zinc-500 [&::-webkit-scrollbar-thumb]:bg-clip-padding dark:[&::-webkit-scrollbar-thumb]:bg-zinc-500 hover:[&::-webkit-scrollbar-thumb]:bg-zinc-600 dark:hover:[&::-webkit-scrollbar-thumb]:bg-zinc-400"
-          >
-            <div style={{ width: tableWidth, height: 1 }} />
           </div>,
           document.body,
         )}
