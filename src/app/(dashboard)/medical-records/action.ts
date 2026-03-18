@@ -329,7 +329,7 @@ export async function getMrPivotPageData(
     db.query(`
       SELECT id, team_name, team_color
       FROM mr_teams
-      WHERE team_color IN ('blue', 'orange', 'green', 'yellow', 'purple')
+      WHERE team_color IN ('blue', 'orange', 'green', 'yellow', 'purple', 'pink')
         AND is_active = true
         AND is_assignable = true
       ORDER BY
@@ -347,7 +347,7 @@ export async function getMrPivotPageData(
       SELECT t.id, t.team_name, t.team_color
       FROM hearings h
       JOIN mr_teams t ON h.mr_team_id = t.id
-      WHERE t.team_color IN ('blue', 'orange', 'green', 'yellow', 'purple')
+      WHERE t.team_color IN ('blue', 'orange', 'green', 'yellow', 'purple', 'pink')
         AND h.mr_team_assigned_at IS NOT NULL
         AND (h.medical_record_status != 'WITHDRAWAL' OR h.medical_record_status IS NULL)
       ORDER BY h.mr_team_assigned_at DESC
@@ -454,7 +454,7 @@ export async function getMrPivotPageData(
   // const monthly = Object.values(monthlyMap);
 
   // ── Shape: round-robin state ────────────────────────────────────────────────
-  const ROTATION_ORDER = ["blue", "orange", "green", "yellow", "purple"];
+  const ROTATION_ORDER = ["blue", "orange", "green", "yellow", "purple", "pink"];
   const colorToTeam: Record<string, { id: number; name: string; color: string }> = {};
   for (const rt of rotationTeamsRows.rows as Record<string, unknown>[]) {
     colorToTeam[rt.team_color as string] = { id: Number(rt.id), name: rt.team_name as string, color: rt.team_color as string };
@@ -467,7 +467,7 @@ export async function getMrPivotPageData(
       SELECT t.id, t.team_name, t.team_color
       FROM hearings h
       JOIN mr_teams t ON h.mr_team_id = t.id
-      WHERE t.team_color IN ('blue', 'orange', 'green', 'yellow', 'purple')
+      WHERE t.team_color IN ('blue', 'orange', 'green', 'yellow', 'purple', 'pink')
       ORDER BY h.id DESC
       LIMIT 1
     `);
@@ -641,7 +641,9 @@ export async function getHearingsPaginated(
 
   const totalCount = Number(statsResult.rows[0]?.total ?? 0);
   const page    = Math.max(1, filters.page ?? 1);
-  const perPage = filters.per_page === "all" ? Math.min(totalCount, 500) : Math.min(500, Number(filters.per_page ?? 50));
+  const perPage = filters.per_page === "all"
+    ? Math.max(1, Math.min(totalCount, 500))
+    : Math.max(1, Math.min(500, Number(filters.per_page ?? 50)));
   const offset  = (page - 1) * perPage;
 
   params.push(perPage); const limitIdx  = params.length;
@@ -706,6 +708,15 @@ export async function updateHearingDecisionStatus(
     [status, hearingId],
   );
   await logActivity("decision_status_updated", `Decision status updated to "${status}" for hearing #${hearingId}`);
+
+  // If this is a withdrawal-type decision, push a notification for the MR bell
+  const isWithdrawal = status.startsWith("Withdrawal") || status === "WD CLMT DECEASED" || status === "Dismissal";
+  if (isWithdrawal) {
+    const row = await db.query(`SELECT claimant FROM hearings WHERE id = $1`, [hearingId]);
+    const claimant = (row.rows[0]?.claimant as string | undefined) ?? `Hearing #${hearingId}`;
+    await createWithdrawalNotification(hearingId, claimant);
+  }
+
   return { success: true };
 }
 
@@ -752,7 +763,7 @@ export async function updateMoa(
   manner: string,
 ): Promise<{ success: boolean }> {
   await db.query(
-    `UPDATE hearings SET manner_of_hearing = $1 WHERE id = $2`,
+    `UPDATE hearings SET manner_of_appearance = $1 WHERE id = $2`,
     [manner, hearingId],
   );
   await logActivity("moa_updated", `MOA updated to "${manner}" for hearing #${hearingId}`);
@@ -764,7 +775,7 @@ export async function updateWorksheetLink(
   link: string,
 ): Promise<{ success: boolean }> {
   await db.query(
-    `UPDATE hearings SET mr_worksheet_link = $1 WHERE id = $2`,
+    `UPDATE hearings SET medical_record_link = $1 WHERE id = $2`,
     [link, hearingId],
   );
   await logActivity("mr_link_updated", `Worksheet link updated for hearing #${hearingId}`);
@@ -812,19 +823,19 @@ export async function assignJeromeUrgent(): Promise<{
 }
 
 export async function getRoundRobinState(): Promise<RoundRobinState> {
-  const ROTATION_ORDER = ["blue", "orange", "green", "yellow", "purple"];
+  const ROTATION_ORDER = ["blue", "orange", "green", "yellow", "purple", "pink"];
 
   const [rotationRows, lastAssignedRows, nextHearingRows, urgentRows] = await Promise.all([
     db.query(`
       SELECT id, team_name, team_color FROM mr_teams
-      WHERE team_color IN ('blue','orange','green','yellow','purple')
+      WHERE team_color IN ('blue','orange','green','yellow','purple','pink')
         AND is_active = true AND is_assignable = true
-      ORDER BY CASE team_color WHEN 'blue' THEN 1 WHEN 'orange' THEN 2 WHEN 'green' THEN 3 WHEN 'yellow' THEN 4 WHEN 'purple' THEN 5 END
+      ORDER BY CASE team_color WHEN 'blue' THEN 1 WHEN 'orange' THEN 2 WHEN 'green' THEN 3 WHEN 'yellow' THEN 4 WHEN 'purple' THEN 5 WHEN 'pink' THEN 6 END
     `),
     db.query(`
       SELECT t.team_name, t.team_color FROM hearings h
       JOIN mr_teams t ON h.mr_team_id = t.id
-      WHERE t.team_color IN ('blue','orange','green','yellow','purple')
+      WHERE t.team_color IN ('blue','orange','green','yellow','purple','pink')
         AND h.mr_team_assigned_at IS NOT NULL
         AND (h.medical_record_status != 'WITHDRAWAL' OR h.medical_record_status IS NULL)
       ORDER BY h.mr_team_assigned_at DESC LIMIT 1
@@ -866,7 +877,29 @@ export async function getRoundRobinState(): Promise<RoundRobinState> {
   };
 }
 
-export async function getTeamStats(): Promise<TeamStatsData> {
+export async function getTeamStats(params?: {
+  dateFrom?: string;
+  dateTo?: string;
+  teamId?: number | null;
+}): Promise<TeamStatsData> {
+  const extraWhere: string[] = [];
+  const extraParams: unknown[] = [];
+
+  if (params?.dateFrom) {
+    extraParams.push(params.dateFrom);
+    extraWhere.push(`h.hearing_date >= $${extraParams.length}`);
+  }
+  if (params?.dateTo) {
+    extraParams.push(params.dateTo);
+    extraWhere.push(`h.hearing_date <= $${extraParams.length}`);
+  }
+  if (params?.teamId) {
+    extraParams.push(params.teamId);
+    extraWhere.push(`h.mr_team_id = $${extraParams.length}`);
+  }
+
+  const extraClause = extraWhere.length ? `AND ${extraWhere.join(" AND ")}` : "";
+
   const [weeklyRows, monthlyRows] = await Promise.all([
     db.query(`
       SELECT
@@ -884,13 +917,13 @@ export async function getTeamStats(): Promise<TeamStatsData> {
         SUM(CASE WHEN h.medical_record_status = 'URGENT! NEEDS ATTENTION' THEN 1 ELSE 0 END) AS urgent
       FROM hearings h
       LEFT JOIN mr_teams t ON h.mr_team_id = t.id
-      WHERE ${WITHDRAWN_FILTER}
+      WHERE ${WITHDRAWN_FILTER} ${extraClause}
       GROUP BY TO_CHAR(h.hearing_date,'IYYY-IW'),
                TO_CHAR(date_trunc('week',h.hearing_date),'Mon DD'),
                TO_CHAR(date_trunc('week',h.hearing_date)+INTERVAL '6 days','Mon DD, YYYY'),
                t.team_name, t.team_color, t.display_order
       ORDER BY week_key DESC, COALESCE(t.display_order,9999) ASC
-    `),
+    `, extraParams),
     db.query(`
       SELECT
         TO_CHAR(h.hearing_date, 'YYYY-MM') AS month_key,
@@ -906,11 +939,11 @@ export async function getTeamStats(): Promise<TeamStatsData> {
         SUM(CASE WHEN h.medical_record_status = 'URGENT! NEEDS ATTENTION' THEN 1 ELSE 0 END) AS urgent
       FROM hearings h
       LEFT JOIN mr_teams t ON h.mr_team_id = t.id
-      WHERE ${WITHDRAWN_FILTER}
+      WHERE ${WITHDRAWN_FILTER} ${extraClause}
       GROUP BY TO_CHAR(h.hearing_date,'YYYY-MM'), TO_CHAR(h.hearing_date,'Mon YYYY'),
                t.team_name, t.team_color, t.display_order
       ORDER BY month_key DESC, COALESCE(t.display_order,9999) ASC
-    `),
+    `, extraParams),
   ]);
 
   const buildMap = (rows: Record<string, unknown>[], getKey: (r: Record<string, unknown>) => string, getLabel: (r: Record<string, unknown>) => string) => {
@@ -933,7 +966,6 @@ export async function getTeamStats(): Promise<TeamStatsData> {
 }
 
 export async function getNotifications(): Promise<NotificationItem[]> {
-  // sync_notifications is a Phase 4 table — return empty until migrated
   try {
     const result = await db.query(`
       SELECT n.*, u.full_name AS created_by_name
@@ -945,7 +977,34 @@ export async function getNotifications(): Promise<NotificationItem[]> {
     `);
     return result.rows as NotificationItem[];
   } catch {
+    // sync_notifications table not yet migrated — return empty
     return [];
+  }
+}
+
+// Called by Hearings Dashboard when a withdrawal decision is saved.
+// Writes a notification that the MR page bell polls every 30s.
+export async function createWithdrawalNotification(
+  hearingId: number,
+  claimantName: string,
+): Promise<void> {
+  try {
+    const session = await getSession();
+    const createdBy = session?.user?.id ?? null;
+    await db.query(
+      `INSERT INTO sync_notifications
+         (notification_type, hearing_id, claimant_name, message, created_by, expires_at)
+       VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '24 hours')`,
+      [
+        "withdrawal",
+        hearingId,
+        claimantName,
+        `Withdrawal decision recorded for ${claimantName}`,
+        createdBy,
+      ],
+    );
+  } catch {
+    // Never let notification creation break the mutation that called it
   }
 }
 
@@ -954,11 +1013,17 @@ export async function getActivityLog(params: {
   date_from?: string;
   date_to?: string;
   page?: number;
+  excludeSystemAdmin?: boolean;
 }): Promise<{ items: ActivityLogItem[]; total: number }> {
   const where: string[] = [
     `a.action IN ('mr_status_updated','mr_team_assigned','mr_link_updated','decision_status_updated','moa_updated','five_day_notice_updated','credited_updated','bulk_mr_team_assigned','bulk_mr_status_updated','urgent_team_assigned')`,
   ];
   const qParams: unknown[] = [];
+
+  // Exempt system_admin (user id=1) by default — matches dashboard activity log behaviour
+  if (params.excludeSystemAdmin !== false) {
+    where.push(`u.role != 'system_admin'`);
+  }
 
   if (params.type) {
     qParams.push(params.type);
@@ -997,6 +1062,29 @@ export async function getActivityLog(params: {
   };
 }
 
+// ─── Post HRG Notes helpers ───────────────────────────────────────────────────
+// Notes are stored as a JSON array in hearings.post_hrg_notes (TEXT column).
+// Shape: [{ author: string; date: string; content: string }]
+// post_hrg_review (BOOLEAN) is set to true whenever a note is added.
+
+function parsePostHrgNotes(raw: unknown): PostHrgNote[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(typeof raw === "string" ? raw : JSON.stringify(raw));
+    if (Array.isArray(parsed)) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return parsed.map((n: any, i: number) => ({
+        id:          i,
+        hearing_id:  0,
+        author_name: n.author ?? n.author_name ?? "Unknown",
+        content:     n.content ?? "",
+        created_at:  n.date   ?? n.created_at  ?? new Date().toISOString(),
+      }));
+    }
+  } catch { /* fall through */ }
+  return [];
+}
+
 export async function getPostHrgNotes(hearingId: number): Promise<PostHrgNote[]> {
   // post_hrg_notes is a Phase 4 table — return empty until migrated
   try {
@@ -1012,6 +1100,38 @@ export async function getPostHrgNotes(hearingId: number): Promise<PostHrgNote[]>
   } catch {
     return [];
   }
+}
+
+export async function addPostHrgNote(
+  hearingId: number,
+  content: string,
+): Promise<{ success: boolean; message?: string }> {
+  if (!content.trim()) return { success: false, message: "Note cannot be empty" };
+
+  const session = await getSession();
+  const authorName = session?.user?.name ?? "Unknown";
+
+  // Fetch existing notes
+  const { rows } = await db.query(
+    `SELECT post_hrg_notes FROM hearings WHERE id = $1`,
+    [hearingId],
+  );
+  if (!rows[0]) return { success: false, message: "Hearing not found" };
+
+  const existing = parsePostHrgNotes(rows[0].post_hrg_notes);
+  const updated = [
+    { author: authorName, date: new Date().toISOString(), content: content.trim() },
+    ...existing,
+  ];
+
+  // Write back + flip post_hrg_review flag to true
+  await db.query(
+    `UPDATE hearings SET post_hrg_notes = $1, post_hrg_review = true, updated_at = NOW() WHERE id = $2`,
+    [JSON.stringify(updated), hearingId],
+  );
+
+  await logActivity("post_hrg_note_added", `Post HRG note added for hearing #${hearingId}`);
+  return { success: true };
 }
 
 export async function updatePostHrgDeadline(

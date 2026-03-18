@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useTransition } from "react";
-import { BarChart3, Loader2 } from "lucide-react";
+import { BarChart3, Loader2, X } from "lucide-react";
 import { ModalShell } from "@/components/modals/modal-shell";
 import { getTeamStats } from "@/app/(dashboard)/medical-records/action";
 import type { MonthlyTeamStat } from "@/app/(dashboard)/medical-records/action";
@@ -9,6 +9,7 @@ import type { MonthlyTeamStat } from "@/app/(dashboard)/medical-records/action";
 interface Props {
   open: boolean;
   onClose: () => void;
+  teams?: Array<{ id: number; team_name: string; team_color: string | null }>;
 }
 
 // ─── Colour helpers ───────────────────────────────────────────────────────────
@@ -72,6 +73,13 @@ function PeriodBlock({ stat }: { stat: MonthlyTeamStat }) {
 // ─── StatsTable ───────────────────────────────────────────────────────────────
 
 function StatsTable({ stats }: { stats: MonthlyTeamStat[] }) {
+  if (stats.length === 0) {
+    return (
+      <div className="flex items-center justify-center py-16 text-sm text-muted-foreground">
+        No data for the selected filters.
+      </div>
+    );
+  }
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
@@ -96,20 +104,49 @@ function StatsTable({ stats }: { stats: MonthlyTeamStat[] }) {
 
 // ─── Main Modal ───────────────────────────────────────────────────────────────
 
-export function TeamStatsModal({ open, onClose }: Props) {
+export function TeamStatsModal({ open, onClose, teams = [] }: Props) {
   const [isPending, startTransition] = useTransition();
-  const [weekly,  setWeekly]  = useState<MonthlyTeamStat[]>([]);
+  const [weekly, setWeekly]  = useState<MonthlyTeamStat[]>([]);
   const [monthly, setMonthly] = useState<MonthlyTeamStat[]>([]);
-  const [view, setView]       = useState<"weekly" | "monthly">("weekly");
+  const [view, setView]    = useState<"weekly" | "monthly">("weekly");
 
-  useEffect(() => {
-    if (!open) return;
+  // ── Filters ──────────────────────────────────────────────────────────────
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo]   = useState("");
+  const [teamId, setTeamId]   = useState<number | null>(null);
+
+  function load(df: string, dt: string, tid: number | null) {
     startTransition(async () => {
-      const d = await getTeamStats();
+      const d = await getTeamStats({
+        dateFrom: df || undefined,
+        dateTo: dt || undefined,
+        teamId: tid ?? undefined,
+      });
       setWeekly(d.weekly);
       setMonthly(d.monthly);
     });
-  }, [open]);
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    load(dateFrom, dateTo, teamId);
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function applyFilters(df: string, dt: string, tid: number | null) {
+    setDateFrom(df);
+    setDateTo(dt);
+    setTeamId(tid);
+    load(df, dt, tid);
+  }
+
+  function clearFilters() {
+    setDateFrom("");
+    setDateTo("");
+    setTeamId(null);
+    load("", "", null);
+  }
+
+  const hasActiveFilters = dateFrom || dateTo || teamId;
 
   if (!open) return null;
 
@@ -121,22 +158,71 @@ export function TeamStatsModal({ open, onClose }: Props) {
       maxWidth="max-w-4xl"
       layout="bare"
     >
-      {/* Period toggle bar — flex-shrink-0 so it never scrolls away */}
-      <div className="flex items-center gap-1 px-5 py-3 border-b border-border bg-muted/10 flex-shrink-0">
-        <div className="flex bg-muted rounded-lg p-0.5 gap-0.5">
-          {(["weekly", "monthly"] as const).map((v) => (
-            <button
-              key={v}
-              onClick={() => setView(v)}
-              className={`px-4 py-1.5 text-xs font-medium rounded-md transition-all capitalize ${
-                view === v
-                  ? "bg-card text-primary shadow-sm border border-border"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {v}
-            </button>
-          ))}
+      {/* Period toggle + filters */}
+      <div className="flex flex-col gap-2 px-5 py-3 border-b border-border bg-muted/10 shrink-0">
+        {/* Period toggle */}
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex bg-muted rounded-lg p-0.5 gap-0.5">
+            {(["weekly", "monthly"] as const).map((v) => (
+              <button
+                key={v}
+                onClick={() => setView(v)}
+                className={`px-4 py-1.5 text-xs font-medium rounded-md transition-all capitalize ${
+                  view === v
+                    ? "bg-card text-primary shadow-sm border border-border"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {v}
+              </button>
+            ))}
+          </div>
+
+          {/* Filters row */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Date from */}
+            <div className="flex items-center gap-1">
+              <label className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">From</label>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => applyFilters(e.target.value, dateTo, teamId)}
+                className="text-xs px-2 py-1 rounded border border-border bg-card text-foreground focus:outline-none focus:border-primary h-7"
+              />
+            </div>
+            {/* Date to */}
+            <div className="flex items-center gap-1">
+              <label className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">To</label>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => applyFilters(dateFrom, e.target.value, teamId)}
+                className="text-xs px-2 py-1 rounded border border-border bg-card text-foreground focus:outline-none focus:border-primary h-7"
+              />
+            </div>
+            {/* Team filter */}
+            {teams.length > 0 && (
+              <select
+                value={teamId ?? ""}
+                onChange={(e) => applyFilters(dateFrom, dateTo, e.target.value ? Number(e.target.value) : null)}
+                className="text-xs px-2 py-1 rounded border border-border bg-card text-foreground cursor-pointer h-7"
+              >
+                <option value="">All Teams</option>
+                {teams.map((t) => (
+                  <option key={t.id} value={t.id}>{t.team_name}</option>
+                ))}
+              </select>
+            )}
+            {/* Clear filters */}
+            {hasActiveFilters && (
+              <button
+                onClick={clearFilters}
+                className="flex items-center gap-1 text-[10px] px-2 py-1 rounded border border-border bg-card hover:bg-muted text-muted-foreground transition-colors h-7"
+              >
+                <X size={10} /> Clear
+              </button>
+            )}
+          </div>
         </div>
       </div>
 

@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useTransition, useCallback } from "react";
+import { useState, useEffect, useTransition, useCallback, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { AppHeader } from "@/components/layout/app-header";
 import { DashboardNav } from "@/components/layout/dashboard-nav";
 import { Input } from "@/components/ui/input";
@@ -27,6 +28,7 @@ import {
   toggleTaskAssigned,
   toggleCredited,
   updateMoa,
+  updateWorksheetLink,
   assignJeromeUrgent,
   getRoundRobinState,
   getNotifications,
@@ -70,6 +72,29 @@ function teamHex(color: string | null | undefined): string {
 }
 
 // Theme-safe status badge classes (no hardcoded light-only colours)
+// Text-only color maps — bg is always bg-card; only text + border-current changes
+const MR_STATUS_TEXT: Record<string, string> = {
+  "Complete":                "text-purple-700 dark:text-purple-300",
+  "In Progress":             "text-pink-700 dark:text-pink-300",
+  "Ready":                   "text-green-700 dark:text-green-300",
+  "Not Started":             "text-red-700 dark:text-red-300",
+  "URGENT! NEEDS ATTENTION": "text-red-700 dark:text-red-400 font-semibold",
+  "WITHDRAWAL":              "text-zinc-400 line-through",
+  "Overpayment":             "text-amber-700 dark:text-amber-300",
+};
+
+const HRG_STATUS_TEXT: Record<string, string> = {
+  "Scheduled":            "text-violet-700 dark:text-violet-300",
+  "Favorable":            "text-emerald-700 dark:text-emerald-300",
+  "Unfavorable":          "text-orange-700 dark:text-orange-300",
+  "Post HRG Review/ Dev": "text-yellow-700 dark:text-yellow-300",
+  "Continued":            "text-zinc-600 dark:text-zinc-400",
+  "Pending Decision":     "text-yellow-700 dark:text-yellow-300",
+  "OTR at Hrg":           "text-green-700 dark:text-green-400",
+  "Dismissal":            "text-red-700 dark:text-red-300",
+};
+
+// Badge maps (read-only display — keeps bg+text for spans)
 const MR_STATUS_CLS: Record<string, string> = {
   "Complete":                "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300",
   "In Progress":             "bg-pink-100 text-pink-800 dark:bg-pink-900/40 dark:text-pink-300",
@@ -109,8 +134,8 @@ function exportHearingsToCsv(hearings: Hearing[]) {
   const rows = hearings.map((h) => [
     h.id, h.claimant, h.rep_name ?? "", h.hearing_date, h.converted_time_est ?? "",
     h.mr_team_name ?? "", h.medical_record_status ?? "", h.hearing_decision_status ?? "",
-    h.manner_of_hearing ?? "", h.task_assigned ? "Yes" : "No", h.credited ? "Yes" : "No",
-    h.five_day_letter ? "Yes" : "No", h.post_hrg_status ?? "", h.mr_worksheet_link ?? "",
+    h.manner_of_appearance ?? "", h.task_assigned ? "Yes" : "No", h.credited ? "Yes" : "No",
+    h.five_day_notice ? "Yes" : "No", h.post_hrg_review ?? "", h.medical_record_link ?? "",
   ]);
   exportToCsv(`hearings-export-${new Date().toISOString().slice(0,10)}.csv`, [headers, ...rows] as string[][]);
 }
@@ -250,7 +275,19 @@ function RoundRobinBanner({ rr }: { rr: RoundRobinState }) {
   );
 }
 
-// ─── NotificationBell ─────────────────────────────────────────────────────────
+// ─── Shared set-toggle utility ────────────────────────────────────────────────
+// Used by AssignedByMonth row toggle, toggleMonth, and toggleTeam —
+// all share the identical "flip key membership in a Set" pattern.
+function toggleSetKey(
+  setter: React.Dispatch<React.SetStateAction<Set<string>>>,
+  key: string,
+) {
+  setter((prev) => {
+    const next = new Set(prev);
+    if (next.has(key)) { next.delete(key); } else { next.add(key); }
+    return next;
+  });
+}
 
 function NotificationBell({ notifications, onRefresh }: {
   notifications: NotificationItem[];
@@ -421,9 +458,7 @@ function AssignedByMonth({ rows }: { rows: AssignedByMonthRow[] }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const grandTotal = rows.reduce((s, r) => s + r.total, 0);
 
-  function toggle(key: string) {
-    setExpanded((p) => { const n = new Set(p); n.has(key) ? n.delete(key) : n.add(key); return n; });
-  }
+  function toggle(key: string) { toggleSetKey(setExpanded, key); }
 
   return (
     <div className="space-y-1">
@@ -462,12 +497,113 @@ function AssignedByMonth({ rows }: { rows: AssignedByMonthRow[] }) {
   );
 }
 
+// ─── WorksheetLinkModal ───────────────────────────────────────────────────────
+
+function WorksheetLinkModal({
+  hearing,
+  onClose,
+  onSaved,
+}: {
+  hearing: Hearing;
+  onClose: () => void;
+  onSaved: (id: number, link: string) => void;
+}) {
+  const [link, setLink]     = useState(hearing.medical_record_link ?? "");
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave() {
+    setSaving(true);
+    await updateWorksheetLink(hearing.id, link);
+    onSaved(hearing.id, link);
+    setSaving(false);
+    onClose();
+  }
+
+  async function handleRemove() {
+    if (!confirm("Remove the MR Worksheet link for this hearing?")) return;
+    setSaving(true);
+    await updateWorksheetLink(hearing.id, "");
+    onSaved(hearing.id, "");
+    setSaving(false);
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div className="w-full max-w-md rounded-xl border bg-card shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex items-center justify-between border-b bg-muted/50 px-4 py-3">
+          <h3 className="text-sm font-semibold">📄 Medical Record Link</h3>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">✕</button>
+        </div>
+
+        {/* Body */}
+        <div className="px-4 py-4 space-y-3">
+          <p className="text-[11px] text-muted-foreground">
+            <span className="font-medium text-foreground">{hearing.claimant}</span>
+            {hearing.hearing_date && (
+              <> · {new Date(hearing.hearing_date + "T00:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" })}</>
+            )}
+          </p>
+          <div>
+            <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-1 block">
+              Google Sheet URL
+            </label>
+            <input
+              type="url"
+              value={link}
+              onChange={(e) => setLink(e.target.value)}
+              placeholder="https://docs.google.com/spreadsheets/…"
+              className="w-full text-xs rounded-lg border border-border bg-muted px-3 py-2 text-foreground focus:outline-none focus:border-primary"
+            />
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between gap-2 border-t px-4 py-3">
+          <div>
+            {hearing.medical_record_link && (
+              <button
+                onClick={handleRemove}
+                disabled={saving}
+                className="text-xs px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white disabled:opacity-50"
+              >
+                Remove
+              </button>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="text-xs px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground">
+              Cancel
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="text-xs px-3 py-1.5 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground disabled:opacity-50 flex items-center gap-1"
+            >
+              {saving && <Loader2 size={10} className="animate-spin" />}
+              Save
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── HearingRow ───────────────────────────────────────────────────────────────
 // Inline selects/checkboxes inside the fixed-column data grid stay as native
 // HTML elements intentionally — shadcn Select would break the compact layout.
 
+// Shared grid template — must match columnHeaders exactly.
+// Month(120) | MR Specialist(150) | Task(52) | Date(96) | Claimant(200) |
+// MR Status(160) | Credited(60) | Status(120) | MOA(110) | 5Day(48) | Post HRG(110) | MR Worksheet(130)
+const GRID_COLS = "120px 150px 52px 96px 200px 160px 60px 120px 110px 48px 110px 130px";
+const MIN_W     = "1356px";
+
 function HearingRow({
-  h, teams, mrStatusOptions, hearingDecisionOptions, mannerOptions, permissions, onUpdate,
+  h, teams, mrStatusOptions, hearingDecisionOptions, mannerOptions, permissions,
+  onUpdate, onOpenPostHrg, onOpenWorksheet,
 }: {
   h: Hearing;
   teams: MrPivotPageData["medical_teams"];
@@ -476,23 +612,24 @@ function HearingRow({
   mannerOptions: string[];
   permissions: MrPivotPageData["permissions"];
   onUpdate: (id: number, field: string, value: unknown) => void;
+  onOpenPostHrg: (h: Hearing) => void;
+  onOpenWorksheet: (h: Hearing) => void;
 }) {
   const dateStr = new Date(h.hearing_date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  const mrCls   = MR_STATUS_CLS[h.medical_record_status ?? ""]   ?? "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300";
-  const hrgCls  = HRG_STATUS_CLS[h.hearing_decision_status ?? ""] ?? "bg-red-500 text-white";
+  const mrTextCls  = MR_STATUS_TEXT[h.medical_record_status ?? ""]    ?? "text-muted-foreground";
+  const hrgTextCls = HRG_STATUS_TEXT[h.hearing_decision_status ?? ""] ?? "text-muted-foreground";
+  const mrCls  = MR_STATUS_CLS[h.medical_record_status ?? ""]    ?? "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300";
+  const hrgCls = HRG_STATUS_CLS[h.hearing_decision_status ?? ""] ?? "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300";
 
   return (
     <div
-      className="grid gap-2 px-4 py-2 border-b border-border/40 hover:bg-muted/30 transition-colors text-[11px] items-center"
-      style={{ gridTemplateColumns: "200px 120px 36px 90px 160px 36px 100px 70px 36px 70px 80px", minWidth: "1200px" }}
+      className="grid gap-x-2 px-4 border-b border-border/40 hover:bg-muted/30 transition-colors text-[11px] items-center"
+      style={{ gridTemplateColumns: GRID_COLS, minWidth: MIN_W, height: "44px" }}
     >
-      {/* Claimant */}
-      <div>
-        <div className="font-semibold text-foreground truncate">{h.claimant}</div>
-        {h.rep_name && <div className="text-[9px] text-muted-foreground truncate">{h.rep_name}</div>}
-      </div>
+      {/* Month — blank spacer in data rows */}
+      <div />
 
-      {/* MR Team — canEditMrTeam gate */}
+      {/* MR Specialist — colored pill select */}
       {permissions.canEditMrTeam ? (
         <select
           className="w-full text-[9px] px-1.5 py-1 rounded border-0 cursor-pointer font-medium"
@@ -500,8 +637,8 @@ function HearingRow({
           value={h.mr_team_id ?? ""}
           onChange={(e) => onUpdate(h.id, "mr_team", e.target.value ? Number(e.target.value) : null)}
         >
-          <option value="">Unassigned</option>
-          {teams.map((t) => <option key={t.id} value={t.id}>{t.team_name}</option>)}
+          <option value="" className="text-muted-foreground bg-card">Unassigned</option>
+          {teams.map((t) => <option key={t.id} value={t.id} className="text-foreground bg-card">{t.team_name}</option>)}
         </select>
       ) : (
         <span className="text-[9px] px-1.5 py-0.5 rounded font-medium"
@@ -510,32 +647,51 @@ function HearingRow({
         </span>
       )}
 
-      {/* Task — canEditTask gate */}
+      {/* Task Assigned — checkbox centered */}
+      <div className="flex justify-center">
+        <input
+          type="checkbox"
+          checked={h.task_assigned}
+          disabled={!permissions.canEditTask}
+          className="w-3.5 h-3.5 accent-emerald-500 cursor-pointer disabled:cursor-default"
+          onChange={(e) => onUpdate(h.id, "task_assigned", e.target.checked)}
+        />
+      </div>
+
+      {/* Hearing Date — date + time stacked, centered */}
       <div className="text-center">
-        {permissions.canEditTask ? (
-          <input type="checkbox" checked={h.task_assigned}
-            className="w-3.5 h-3.5 cursor-pointer accent-emerald-500"
-            onChange={(e) => onUpdate(h.id, "task_assigned", e.target.checked)} />
-        ) : (
-          <span className={h.task_assigned ? "text-emerald-500" : "text-muted-foreground/30"}>
-            {h.task_assigned ? "✓" : "—"}
-          </span>
+        <div className="text-foreground font-medium">{dateStr}</div>
+        {h.converted_time_est && (
+          <div className="text-[9px] text-muted-foreground">{h.converted_time_est}</div>
         )}
       </div>
 
-      {/* Date */}
-      <div className="text-foreground font-medium">
-        {dateStr}
-        {h.converted_time_est && <div className="text-[9px] text-muted-foreground">{h.converted_time_est}</div>}
+      {/* Claimant — primary-colored name (matches PHP link style) + rep below */}
+      <div className="min-w-0">
+        <div className="font-semibold text-primary truncate flex items-center gap-1">
+          {h.claimant}
+          {h.mr_team_id && (
+            <span className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
+              style={{ backgroundColor: teamHex(h.mr_team_color) }} />
+          )}
+        </div>
+        {h.rep_name && (
+          <div className="text-[9px] text-muted-foreground truncate">{h.rep_name}</div>
+        )}
       </div>
 
-      {/* MR Status — canManage gate */}
+      {/* MR Status — colored pill select */}
       {permissions.canManage ? (
         <select value={h.medical_record_status ?? ""}
-          className={cn("w-full text-[9px] px-1.5 py-1 rounded border-0 cursor-pointer", mrCls)}
+          className={cn(
+            "w-full text-[9px] px-1.5 py-1 rounded border cursor-pointer bg-card",
+            h.medical_record_status
+              ? cn("border-current", mrTextCls)
+              : "text-muted-foreground border-transparent hover:border-border",
+          )}
           onChange={(e) => onUpdate(h.id, "medical_record_status", e.target.value)}>
-          <option value="">No Status</option>
-          {mrStatusOptions.map((s) => <option key={s} value={s}>{s}</option>)}
+          <option value="" className="text-muted-foreground bg-card">No Status</option>
+          {mrStatusOptions.map((s) => <option key={s} value={s} className="text-foreground bg-card">{s}</option>)}
         </select>
       ) : (
         <span className={cn("inline-block text-[9px] px-1.5 py-0.5 rounded", mrCls)}>
@@ -543,26 +699,29 @@ function HearingRow({
         </span>
       )}
 
-      {/* Credited — canEditCredited gate */}
-      <div className="text-center">
-        {permissions.canEditCredited ? (
-          <input type="checkbox" checked={h.credited}
-            className="w-3.5 h-3.5 cursor-pointer accent-blue-500"
-            onChange={(e) => onUpdate(h.id, "credited", e.target.checked)} />
-        ) : (
-          <span className={h.credited ? "text-blue-500" : "text-muted-foreground/30"}>
-            {h.credited ? "✓" : "—"}
-          </span>
-        )}
+      {/* Credited — checkbox centered */}
+      <div className="flex justify-center">
+        <input
+          type="checkbox"
+          checked={h.credited}
+          disabled={!permissions.canEditCredited}
+          className="w-3.5 h-3.5 accent-blue-500 cursor-pointer disabled:cursor-default"
+          onChange={(e) => onUpdate(h.id, "credited", e.target.checked)}
+        />
       </div>
 
-      {/* HRG Decision — canManage gate */}
+      {/* HRG Decision Status — colored badge select */}
       {permissions.canManage ? (
         <select value={h.hearing_decision_status ?? ""}
-          className={cn("w-full text-[9px] px-1.5 py-1 rounded border-0 cursor-pointer", hrgCls)}
+          className={cn(
+            "w-full text-[9px] px-1.5 py-1 rounded border cursor-pointer bg-card",
+            h.hearing_decision_status
+              ? cn("border-current", hrgTextCls)
+              : "text-muted-foreground border-transparent hover:border-border",
+          )}
           onChange={(e) => onUpdate(h.id, "hearing_decision_status", e.target.value)}>
-          <option value="">— Status —</option>
-          {hearingDecisionOptions.map((s) => <option key={s} value={s}>{s}</option>)}
+          <option value="" className="text-muted-foreground bg-card">— Status —</option>
+          {hearingDecisionOptions.map((s) => <option key={s} value={s} className="text-foreground bg-card">{s}</option>)}
         </select>
       ) : (
         <span className={cn("inline-block text-[9px] px-1.5 py-0.5 rounded", hrgCls)}>
@@ -570,40 +729,73 @@ function HearingRow({
         </span>
       )}
 
-      {/* MOA — canEditMoa gate */}
+      {/* MOA — dropdown select */}
       {permissions.canEditMoa ? (
-        <select value={h.manner_of_hearing ?? ""}
+        <select value={h.manner_of_appearance ?? ""}
           className="w-full text-[9px] px-1.5 py-1 rounded border border-border bg-card text-foreground cursor-pointer"
-          onChange={(e) => onUpdate(h.id, "manner_of_hearing", e.target.value)}>
-          <option value="">—</option>
-          {mannerOptions.map((m) => <option key={m} value={m}>{m}</option>)}
+          onChange={(e) => onUpdate(h.id, "manner_of_appearance", e.target.value)}>
+          <option value="" className="text-muted-foreground bg-card">—</option>
+          {mannerOptions.map((m) => <option key={m} value={m} className="text-foreground bg-card">{m}</option>)}
         </select>
       ) : (
-        <span className="text-muted-foreground">{h.manner_of_hearing ?? "—"}</span>
+        <span className="text-[9px] text-muted-foreground">{h.manner_of_appearance ?? "—"}</span>
       )}
 
-      {/* 5-Day — read-only for all */}
-      <div className="text-center">
-        {h.five_day_letter
-          ? <span className="text-emerald-500">✓</span>
-          : <span className="text-muted-foreground/30">—</span>}
+      {/* 5-Day — checkbox centered */}
+      <div className="flex justify-center">
+        <input
+          type="checkbox"
+          checked={h.five_day_notice}
+          disabled={!permissions.canManage}
+          className="w-3.5 h-3.5 accent-emerald-500 cursor-pointer disabled:cursor-default"
+          onChange={(e) => onUpdate(h.id, "five_day_notice", e.target.checked)}
+        />
       </div>
 
-      {/* Post HRG */}
-      <div>
-        {h.post_hrg_status
-          ? <span className="bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300 px-1 py-0.5 rounded text-[9px] font-medium">📝</span>
-          : <span className="text-muted-foreground/30">—</span>}
+      {/* Post HRG — 📝 + Add or 📝 Notes N, centered */}
+      <div className="flex justify-center">
+        <button
+          onClick={() => onOpenPostHrg(h)}
+          className={cn(
+            "inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded border transition-colors whitespace-nowrap",
+            h.post_hrg_review
+              ? "bg-yellow-50 border-yellow-300 text-yellow-800 hover:bg-yellow-100 dark:bg-yellow-900/30 dark:border-yellow-700 dark:text-yellow-300"
+              : "border-border text-muted-foreground hover:bg-muted",
+          )}
+        >
+          📝 {h.post_hrg_review ? <span className="font-semibold">Notes 1</span> : <span>+ Add</span>}
+        </button>
       </div>
 
-      {/* Worksheet */}
-      <div>
-        {h.mr_worksheet_link
-          ? <a href={h.mr_worksheet_link} target="_blank" rel="noreferrer"
-              className="text-[9px] bg-blue-600 hover:bg-blue-700 text-white px-1.5 py-0.5 rounded transition-colors">
-              📋 Sheet
+      {/* MR Worksheet — 📄 opens link + ✏️ opens edit modal; "+ Link" when empty */}
+      <div className="flex items-center justify-center gap-1.5">
+        {h.medical_record_link ? (
+          <>
+            <a
+              href={h.medical_record_link}
+              target="_blank"
+              rel="noreferrer"
+              title="Open MR Worksheet"
+              className="text-[15px] leading-none hover:opacity-70 transition-opacity"
+            >
+              📄
             </a>
-          : <span className="text-muted-foreground/30">—</span>}
+            <button
+              onClick={() => onOpenWorksheet(h)}
+              title="Edit MR Worksheet link"
+              className="text-[15px] leading-none hover:opacity-70 transition-opacity"
+            >
+              ✏️
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={() => onOpenWorksheet(h)}
+            className="text-[9px] text-muted-foreground hover:text-foreground border border-dashed border-border rounded px-1.5 py-0.5 transition-colors whitespace-nowrap"
+          >
+            + Link
+          </button>
+        )}
       </div>
     </div>
   );
@@ -646,6 +838,10 @@ export function MrPivotClient({ userRole, ...data }: Props) {
   const [showTeamStats,   setShowTeamStats]   = useState(false);
   const [showActivityLog, setShowActivityLog] = useState(false);
 
+  // ── Per-row modal state ───────────────────────────────────────────────────
+  const [postHrgHearing, setPostHrgHearing] = useState<Hearing | null>(null);
+  const [worksheetHearing, setWorksheetHearing] = useState<Hearing | null>(null);
+
   // ── Data loading ──────────────────────────────────────────────────────────
   const loadHearings = useCallback((f: HearingFilters) => {
     startTransition(async () => {
@@ -658,6 +854,13 @@ export function MrPivotClient({ userRole, ...data }: Props) {
 
   useEffect(() => { loadHearings(filters); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Auto-expand months that contain search results
+  useEffect(() => {
+    if (!filters.search?.trim()) return;
+    const matchedMonths = new Set(hearings.map((h) => h.hearing_date.slice(0, 7)));
+    if (matchedMonths.size > 0) setExpandedMonths(matchedMonths);
+  }, [hearings, filters.search]);
+
   // ── Refresh round robin + notifications every 30s ─────────────────────────
   useEffect(() => {
     const id = setInterval(async () => {
@@ -668,7 +871,6 @@ export function MrPivotClient({ userRole, ...data }: Props) {
     return () => clearInterval(id);
   }, []);
 
-  // ── Filter helpers ────────────────────────────────────────────────────────
   function applyFilter(patch: Partial<HearingFilters>) {
     const next = { ...filters, ...patch, page: 1 };
     setFilters(next);
@@ -689,10 +891,24 @@ export function MrPivotClient({ userRole, ...data }: Props) {
       mr_team:                 (v) => updateMrTeam(id, v as number | null),
       task_assigned:           (v) => toggleTaskAssigned(id, v as boolean),
       credited:                (v) => toggleCredited(id, v as boolean),
-      manner_of_hearing:       (v) => updateMoa(id, v as string),
+      manner_of_appearance:    (v) => updateMoa(id, v as string),
+      medical_record_link:     (v) => updateWorksheetLink(id, v as string),
     };
     await actions[field]?.(value);
-    setHearings((prev) => prev.map((h) => h.id === id ? { ...h, [field]: value } : h));
+
+    // mr_team needs to update mr_team_id + derive mr_team_name/color from teams list
+    if (field === "mr_team") {
+      const teamId = value as number | null;
+      const team = teamId ? data.medical_teams.find((t) => t.id === teamId) : null;
+      setHearings((prev) => prev.map((h) => h.id === id
+        ? { ...h, mr_team_id: teamId, mr_team_name: team?.team_name ?? null, mr_team_color: team?.team_color ?? null }
+        : h
+      ));
+      // Refresh round robin immediately so the indicator reflects the new assignment
+      getRoundRobinState().then(setRoundRobin);
+    } else {
+      setHearings((prev) => prev.map((h) => h.id === id ? { ...h, [field]: value } : h));
+    }
   }
 
   async function handleAssignJerome() {
@@ -714,12 +930,47 @@ export function MrPivotClient({ userRole, ...data }: Props) {
     return acc;
   }, {});
 
-  function toggleMonth(key: string) {
-    setExpandedMonths((p) => { const n = new Set(p); n.has(key) ? n.delete(key) : n.add(key); return n; });
-  }
-  function toggleTeam(key: string) {
-    setExpandedTeams((p) => { const n = new Set(p); n.has(key) ? n.delete(key) : n.add(key); return n; });
-  }
+  // ── Virtualizer — flatten visible items into a single array ───────────────
+  const scrollRef    = useRef<HTMLDivElement>(null);
+  const scrollTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isScrolling, setIsScrolling] = useState(false);
+  const ROW_H  = 44;
+  const GROUP_H = 33;
+
+  type FlatItem =
+    | { kind: "group-date"; key: string; count: number; completeCount: number; inProgressCount: number }
+    | { kind: "group-team"; key: string; color: string | null; count: number; completeCount: number; inProgressCount: number }
+    | { kind: "row"; hearing: Hearing };
+
+  const flatItems = useMemo<FlatItem[]>(() => {
+    if (viewMode === "date") {
+      return Object.entries(groupedByMonth).flatMap(([key, rows]) => {
+        const completeCount    = rows.filter((h) => h.medical_record_status === "Complete").length;
+        const inProgressCount  = rows.filter((h) => h.medical_record_status === "In Progress").length;
+        const header: FlatItem = { kind: "group-date", key, count: rows.length, completeCount, inProgressCount };
+        if (!expandedMonths.has(key)) return [header];
+        return [header, ...rows.map((h): FlatItem => ({ kind: "row", hearing: h }))];
+      });
+    }
+    return Object.entries(groupedByTeam).flatMap(([key, rows]) => {
+      const color       = rows[0]?.mr_team_color ?? null;
+      const completeCount    = rows.filter((h) => h.medical_record_status === "Complete").length;
+      const inProgressCount  = rows.filter((h) => h.medical_record_status === "In Progress").length;
+      const header: FlatItem = { kind: "group-team", key, color, count: rows.length, completeCount, inProgressCount };
+      if (!expandedTeams.has(key)) return [header];
+      return [header, ...rows.map((h): FlatItem => ({ kind: "row", hearing: h }))];
+    });
+  }, [viewMode, groupedByMonth, groupedByTeam, expandedMonths, expandedTeams]);
+
+  const virtualizer = useVirtualizer({
+    count:            flatItems.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize:     (i) => flatItems[i]?.kind === "row" ? ROW_H : GROUP_H,
+    overscan:         15,
+  });
+
+  function toggleMonth(key: string) { toggleSetKey(setExpandedMonths, key); }
+  function toggleTeam(key: string)  { toggleSetKey(setExpandedTeams,  key); }
   function expandAll() {
     if (viewMode === "date") setExpandedMonths(new Set(Object.keys(groupedByMonth)));
     else setExpandedTeams(new Set(Object.keys(groupedByTeam)));
@@ -732,12 +983,21 @@ export function MrPivotClient({ userRole, ...data }: Props) {
   // ── Column headers (shared between both views) ────────────────────────────
   const columnHeaders = (
     <div
-      className="grid gap-2 px-4 py-2 bg-muted text-foreground text-[9px] font-semibold uppercase tracking-wide shrink-0 border-b border-border"
-      style={{ gridTemplateColumns: "200px 120px 36px 90px 160px 36px 100px 70px 36px 70px 80px", minWidth: "1200px" }}
+      className="grid gap-x-2 px-4 py-2.5 bg-muted text-muted-foreground text-[9px] font-semibold uppercase tracking-wide shrink-0 border-b border-border items-center"
+      style={{ gridTemplateColumns: GRID_COLS, minWidth: MIN_W }}
     >
-      <div>Claimant</div><div>MR Specialist</div><div>Task</div><div>Date</div>
-      <div>MR Status</div><div>Credited</div><div>Status</div><div>MOA</div>
-      <div>5Day</div><div>Post HRG</div><div>Worksheet</div>
+      <div className="text-left">{viewMode === "date" ? "Month" : "Team"}</div>
+      <div className="text-center">MR Specialist</div>
+      <div className="text-center">Task Assigned</div>
+      <div className="text-center">Hearing Date</div>
+      <div className="text-left">Claimant</div>
+      <div className="text-center">MR Status</div>
+      <div className="text-center">Credited</div>
+      <div className="text-center">Status</div>
+      <div className="text-center">MOA</div>
+      <div className="text-center">5Day</div>
+      <div className="text-center">Post HRG</div>
+      <div className="text-center">MR Worksheet</div>
     </div>
   );
 
@@ -1034,69 +1294,122 @@ export function MrPivotClient({ userRole, ...data }: Props) {
             {columnHeaders}
           </div>
 
-          {/* Scrollable body */}
-          <div className="flex-1 overflow-y-auto overflow-x-auto relative min-h-0">
+          {/* Scrollable body — TanStack virtualised */}
+          <div
+            ref={scrollRef}
+            className="flex-1 overflow-y-auto overflow-x-auto relative min-h-0"
+            onScroll={() => {
+              if (!isScrolling) setIsScrolling(true);
+              if (scrollTimer.current) clearTimeout(scrollTimer.current);
+              scrollTimer.current = setTimeout(() => setIsScrolling(false), 150);
+            }}
+          >
+            {/* Full-page loader during server action transitions */}
             {isPending && (
               <div className="absolute inset-0 bg-background/70 flex items-center justify-center z-10">
                 <Loader2 size={32} className="animate-spin text-primary" />
               </div>
             )}
 
-            {viewMode === "date" && Object.entries(groupedByMonth).map(([key, rows]) => (
-              <div key={`month-${key}`}>
-                <div
-                  className="flex items-center gap-3 px-4 py-2 bg-muted/30 border-b border-border cursor-pointer hover:bg-muted/50 select-none"
-                  style={{ minWidth: "1200px" }}
-                  onClick={() => toggleMonth(key)}
-                >
-                  <span className="w-4 h-4 flex items-center justify-center bg-primary text-white rounded text-[9px] font-bold">
-                    {expandedMonths.has(key) ? "−" : "+"}
-                  </span>
-                  <span className="text-xs font-semibold text-foreground">
-                    {new Date(key + "-01").toLocaleDateString("en-US", { month: "long", year: "numeric" })}
-                  </span>
-                  <span className="text-[10px] text-muted-foreground">({rows.length})</span>
-                </div>
-                {expandedMonths.has(key) && rows.map((h) => (
-                  <HearingRow key={`mh-${h.id}`} h={h} teams={data.medical_teams}
-                    mrStatusOptions={data.medical_record_status_options}
-                    hearingDecisionOptions={data.hearing_decision_status_options}
-                    mannerOptions={data.manner_options}
-                    permissions={data.permissions}
-                    onUpdate={handleUpdate} />
-                ))}
+            {/* Fast-scroll skeleton overlay — subtle, doesn't block interaction */}
+            {isScrolling && !isPending && (
+              <div className="absolute top-2 right-3 z-10 flex items-center gap-1.5 bg-card/80 border border-border rounded-full px-2.5 py-1 shadow-sm pointer-events-none">
+                <Loader2 size={11} className="animate-spin text-muted-foreground" />
+                <span className="text-[10px] text-muted-foreground">Loading...</span>
               </div>
-            ))}
+            )}
 
-            {viewMode === "team" && Object.entries(groupedByTeam).map(([key, rows]) => (
-              <div key={`team-${key}`}>
-                <div
-                  className="flex items-center gap-3 px-4 py-2 border-b border-border cursor-pointer hover:bg-muted/50 select-none bg-card"
-                  style={{ minWidth: "1200px" }}
-                  onClick={() => toggleTeam(key)}
-                >
-                  <span className="w-4 h-4 flex items-center justify-center text-[9px] text-muted-foreground">
-                    {expandedTeams.has(key) ? "▼" : "▶"}
-                  </span>
-                  <span className="w-2 h-2 rounded-full"
-                    style={{ backgroundColor: teamHex(rows[0]?.mr_team_color) }} />
-                  <span className="text-xs font-semibold text-foreground">{key}</span>
-                  <span className="text-[10px] text-muted-foreground">({rows.length})</span>
-                </div>
-                {expandedTeams.has(key) && rows.map((h) => (
-                  <HearingRow key={`th-${h.id}`} h={h} teams={data.medical_teams}
-                    mrStatusOptions={data.medical_record_status_options}
-                    hearingDecisionOptions={data.hearing_decision_status_options}
-                    mannerOptions={data.manner_options}
-                    permissions={data.permissions}
-                    onUpdate={handleUpdate} />
-                ))}
-              </div>
-            ))}
-
-            {!isPending && hearings.length === 0 && (
+            {!isPending && hearings.length === 0 ? (
               <div className="flex items-center justify-center py-16 text-sm text-muted-foreground">
                 No hearings match the current filters.
+              </div>
+            ) : (
+              <div style={{ height: virtualizer.getTotalSize(), position: "relative", minWidth: MIN_W }}>
+                {virtualizer.getVirtualItems().map((vRow) => {
+                  const item = flatItems[vRow.index];
+                  if (!item) return null;
+
+                  if (item.kind === "group-date") {
+                    return (
+                      <div
+                        key={`gd-${item.key}`}
+                        style={{ position: "absolute", top: vRow.start, left: 0, right: 0, height: GROUP_H, minWidth: MIN_W }}
+                        className="flex items-center gap-2 px-4 bg-muted/40 border-b border-border cursor-pointer hover:bg-muted/60 select-none"
+                        onClick={() => toggleMonth(item.key)}
+                      >
+                        <span className="w-4 h-4 flex items-center justify-center bg-primary text-primary-foreground rounded text-[9px] font-bold shrink-0">
+                          {expandedMonths.has(item.key) ? "−" : "+"}
+                        </span>
+                        <span className="text-xs font-bold text-foreground min-w-0">
+                          {new Date(item.key + "-01").toLocaleDateString("en-US", { month: "short", year: "numeric" })}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground font-medium whitespace-nowrap">
+                          Total: {item.count}
+                        </span>
+                        {item.completeCount > 0 && (
+                          <span className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 font-semibold whitespace-nowrap">
+                            {item.completeCount}✓
+                          </span>
+                        )}
+                        {item.inProgressCount > 0 && (
+                          <span className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 font-semibold whitespace-nowrap">
+                            {item.inProgressCount}⏳
+                          </span>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  if (item.kind === "group-team") {
+                    return (
+                      <div
+                        key={`gt-${item.key}`}
+                        style={{ position: "absolute", top: vRow.start, left: 0, right: 0, height: GROUP_H, minWidth: MIN_W }}
+                        className="flex items-center gap-2 px-4 border-b border-border cursor-pointer hover:bg-muted/50 select-none bg-muted/40"
+                        onClick={() => toggleTeam(item.key)}
+                      >
+                        <span className="w-4 h-4 flex items-center justify-center bg-primary text-primary-foreground rounded text-[9px] font-bold shrink-0">
+                          {expandedTeams.has(item.key) ? "−" : "+"}
+                        </span>
+                        <span className="w-2 h-2 rounded-full shrink-0"
+                          style={{ backgroundColor: teamHex(item.color) }} />
+                        <span className="text-xs font-bold text-foreground">{item.key}</span>
+                        <span className="text-[10px] text-muted-foreground font-medium">
+                          Total: {item.count}
+                        </span>
+                        {item.completeCount > 0 && (
+                          <span className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 font-semibold whitespace-nowrap">
+                            {item.completeCount}✓
+                          </span>
+                        )}
+                        {item.inProgressCount > 0 && (
+                          <span className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 font-semibold whitespace-nowrap">
+                            {item.inProgressCount}⏳
+                          </span>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div
+                      key={`r-${item.hearing.id}`}
+                      style={{ position: "absolute", top: vRow.start, left: 0, right: 0, height: ROW_H }}
+                    >
+                      <HearingRow
+                        h={item.hearing}
+                        teams={data.medical_teams}
+                        mrStatusOptions={data.medical_record_status_options}
+                        hearingDecisionOptions={data.hearing_decision_status_options}
+                        mannerOptions={data.manner_options}
+                        permissions={data.permissions}
+                        onUpdate={handleUpdate}
+                        onOpenPostHrg={(h) => setPostHrgHearing(h)}
+                        onOpenWorksheet={(h) => setWorksheetHearing(h)}
+                      />
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1121,7 +1434,17 @@ export function MrPivotClient({ userRole, ...data }: Props) {
                 className="text-[11px] px-3 py-1.5 rounded-lg bg-zinc-200 hover:bg-zinc-300 text-zinc-700 dark:bg-zinc-700 dark:hover:bg-zinc-600 dark:text-zinc-200 font-semibold disabled:opacity-40 transition-colors">
                 ← Prev
               </button>
-              <span className="text-[11px] text-muted-foreground">Page {filters.page} of {totalPages}</span>
+              {/* Page jump select */}
+              <select
+                value={String(filters.page ?? 1)}
+                onChange={(e) => goPage(Number(e.target.value))}
+                className="text-[11px] px-2 py-1 rounded-lg border border-border bg-card text-foreground cursor-pointer tabular-nums"
+              >
+                {Array.from({ length: totalPages }, (_, i) => (
+                  <option key={i + 1} value={String(i + 1)}>Page {i + 1}</option>
+                ))}
+              </select>
+              <span className="text-[11px] text-muted-foreground">of {totalPages}</span>
               <button onClick={() => goPage((filters.page ?? 1) + 1)} disabled={(filters.page ?? 1) >= totalPages}
                 className="text-[11px] px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold disabled:opacity-40 transition-colors">
                 Next →
@@ -1171,15 +1494,45 @@ export function MrPivotClient({ userRole, ...data }: Props) {
         availableMonths={data.availableMonths}
         permissions={data.permissions}
       />
-      <PostHrgModal
-        open={showPostHrg}
-        onClose={() => setShowPostHrg(false)}
-        teams={data.medical_teams}
-        mrStatusOptions={data.medical_record_status_options}
-      />
+
+      {/* Per-row Post HRG modal — opened from the 📝 button in each row */}
+      {postHrgHearing && (
+        <PostHrgModal
+          open={true}
+          hearingId={postHrgHearing.id}
+          onClose={() => setPostHrgHearing(null)}
+          teams={data.medical_teams}
+          mrStatusOptions={data.medical_record_status_options}
+        />
+      )}
+
+      {/* Global Post HRG modal — opened from the header button */}
+      {showPostHrg && !postHrgHearing && (
+        <PostHrgModal
+          open={showPostHrg}
+          onClose={() => setShowPostHrg(false)}
+          teams={data.medical_teams}
+          mrStatusOptions={data.medical_record_status_options}
+        />
+      )}
+
+      {/* Per-row MR Worksheet link edit modal */}
+      {worksheetHearing && (
+        <WorksheetLinkModal
+          hearing={worksheetHearing}
+          onClose={() => setWorksheetHearing(null)}
+          onSaved={(id, link) => {
+            setHearings((prev) =>
+              prev.map((h) => h.id === id ? { ...h, medical_record_link: link || null } : h)
+            );
+          }}
+        />
+      )}
+
       <TeamStatsModal
         open={showTeamStats}
         onClose={() => setShowTeamStats(false)}
+        teams={data.medical_teams}
       />
       {showActivityLog && (
         <ActivityLogModal onClose={() => setShowActivityLog(false)} />
