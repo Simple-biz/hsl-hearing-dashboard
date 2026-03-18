@@ -153,6 +153,18 @@ function fmtDate(dateStr: string, opts?: Intl.DateTimeFormatOptions): string {
     opts || { month: "short", day: "numeric", year: "2-digit" },
   );
 }
+
+function fmtTime(timeStr: string | null | undefined): string {
+  if (!timeStr) return "";
+  const parts = timeStr.slice(0, 5).split(":");
+  if (parts.length !== 2) return timeStr;
+  let h = parseInt(parts[0], 10);
+  const m = parts[1];
+  const ampm = h >= 12 ? "PM" : "AM";
+  if (h > 12) h -= 12;
+  if (h === 0) h = 12;
+  return `${h}:${m} ${ampm}`;
+}
 // function getDateMonth(dateStr: string): number {
 //   return parseDate(dateStr).getMonth();
 // }
@@ -1331,7 +1343,7 @@ const FilterBar = memo(function FilterBar({
                 day: "numeric",
               })}
               {nextUnassigned.converted_time_est &&
-                ` @ ${nextUnassigned.converted_time_est.slice(0, 5)}`}
+                ` @ ${fmtTime(nextUnassigned.converted_time_est)}`}
               <span className="ml-1 font-normal text-amber-700 dark:text-amber-400">
                 — {nextUnassigned.claimant?.substring(0, 20)}
               </span>
@@ -1448,7 +1460,7 @@ function HearingCard({
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
           <span className="tabular-nums">
             {fmtDate(hearing.hearing_date)} at{" "}
-            {hearing.converted_time_est?.slice(0, 5)} {hearing.time_zone}
+            {fmtTime(hearing.converted_time_est)}
           </span>
           {hearing.city && (
             <span>
@@ -1714,7 +1726,7 @@ const HearingTable = memo(function HearingTable({
       case "hearing_time":
         return (
           <span className="text-xs tabular-nums">
-            {hearing.converted_time_est?.slice(0, 5)} {hearing.time_zone}
+            {fmtTime(hearing.converted_time_est)}
           </span>
         );
       case "claimant":
