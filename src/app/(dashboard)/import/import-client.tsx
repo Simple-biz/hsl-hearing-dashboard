@@ -1,1475 +1,1871 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { AppHeader } from "@/components/layout/app-header";
-import { DashboardNav } from "@/components/layout/dashboard-nav";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
-import {
-  Upload,
-  FileSpreadsheet,
-  ArrowRight,
-  CheckCircle2,
-  AlertTriangle,
-  RefreshCw,
-  Search,
-  Trash2,
-  X,
-  Loader2,
-} from "lucide-react";
+import { useState, useRef, useCallback } from "react";
+import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { AppHeader } from "@/components/layout";
+import { DashboardNav } from "@/components/layout/dashboard-nav";
+import type { UserRole } from "@/lib/roles";
+import * as XLSX from "xlsx";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-interface MappedRow {
+interface SheetData {
+  name: string;
+  headers: string[];
+  rows: unknown[][];
+  hyperlinks?: Record<string, string>;
+}
+
+interface DuplicateResult {
+  row: number;
   rowIndex: number;
-  data: Record<string, string>;
-}
-
-interface AnalyzeResult {
-  newRecords: MappedRow[];
-  duplicateRecords: (MappedRow & { existingId: number })[];
-  rescheduledRecords: (MappedRow & { originalId: number; baseName: string })[];
-  skippedRecords: (MappedRow & { reason: string })[];
-  repsMatched: number;
-  repsUnmatched: number;
-  teamsMatched: number;
-  teamsUnmatched: number;
-  matchedDbIds: number[];
-  totalDbCount: number;
-}
-
-interface NotInSheetRow {
-  id: number;
   claimant: string;
   hearing_date: string;
-  ssn_last_4: string | null;
-  hearing_time: string | null;
-  rep_name: string | null;
+  ssn: string | null;
+  claim_type: string;
+  claimantLocation: string;
+  repLocation: string;
+  downloadType: string;
+  statusDate: string;
+  data: unknown[];
+  existing_id?: number;
+  reason?: string;
+  // Rescheduled fields
+  is_rescheduled?: boolean;
+  original_id?: number;
+  base_name?: string;
+  original_claimant?: string;
+  original_date?: string;
+  // Diff fields
+  changed_fields?: string[];
+  has_changes?: boolean;
 }
 
-type Step =
-  | "upload"
-  | "sheets"
-  | "mapping"
-  | "analyzing"
-  | "review"
-  | "processing"
-  | "complete";
-type ReviewTab = "new" | "duplicate" | "rescheduled" | "notInSheet" | "skipped";
-
-// ─── API helper ─────────────────────────────────────────────────────────────
-
-async function api<T>(
-  action: string,
-  payload: Record<string, unknown>,
-): Promise<T> {
-  const res = await fetch("/api/import", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action, ...payload }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || "Request failed");
-  }
-  return res.json();
+interface CheckResult {
+  newRecords: DuplicateResult[];
+  duplicateRecords: DuplicateResult[];
+  skippedRecords: DuplicateResult[];
+  rescheduledRecords: DuplicateResult[];
 }
 
-// ─── Field config ───────────────────────────────────────────────────────────
+interface ImportResult {
+  imported: number;
+  skipped: number;
+  errors: string[];
+  importedIds: number[];
+}
 
-const DB_FIELDS: { key: string; label: string; required?: boolean }[] = [
-  { key: "claimant", label: "Claimant *", required: true },
-  { key: "ssn_last_4", label: "SSN (Last 4)" },
-  { key: "claim_type", label: "Claim Type" },
-  { key: "hearing_date", label: "Hearing Date *", required: true },
-  { key: "hearing_time", label: "Hearing Time" },
-  { key: "time_zone", label: "Time Zone" },
-  { key: "city", label: "City" },
-  { key: "state", label: "State" },
-  { key: "claimant_location", label: "Claimant Location" },
-  { key: "representative_location", label: "Rep Location" },
-  { key: "alj", label: "ALJ" },
-  { key: "medical_expert", label: "Medical Expert" },
-  { key: "vocational_expert", label: "Vocational Expert" },
-  { key: "status_date", label: "Status Date" },
-  { key: "entered_hearing_level_date", label: "Entered Hearing Level" },
-  { key: "download_type", label: "Download Type" },
-  { key: "manner_of_appearance", label: "Manner of Appearance" },
-  { key: "hearing_decision_status", label: "Decision" },
-  { key: "phi_sheet_complete", label: "PHI" },
-  { key: "rep_docs_complete", label: "Rep Docs" },
-  { key: "fee_agreement_complete", label: "Fee Agmt" },
-  { key: "five_day_notice", label: "5-Day" },
-  { key: "rfc_status", label: "RFC" },
-  { key: "task_assigned", label: "Task" },
-  { key: "brief_assigned_to", label: "Brief" },
-  { key: "mr_team_id", label: "Medical Team (lookup)" },
-  { key: "medical_record_status", label: "MR Status" },
-  { key: "medical_record_link", label: "MR Worksheet" },
-  { key: "representative", label: "Representative (lookup)" },
-  { key: "claimant_link", label: "Claimant Link" },
-  { key: "post_hrg_deadline", label: "Post HRG Deadline" },
-  { key: "post_hrg_notes", label: "Post HRG Notes" },
-];
+interface LookupConfig {
+  enabled: boolean;
+  sheetIndex: number | null;
+  ssnCol: string;
+  claimantLocationCol: string;
+  repLocationCol: string;
+  downloadTypeCol: string;
+  statusDateCol: string;
+  claimantCol: string;
+  dateCol: string;
+  claimTypeCol: string;
+  useClaimTypeMatch: boolean;
+}
 
-const AUTO_MATCH: Record<string, string[]> = {
-  claimant: ["claimant", "client", "name"],
-  representative: ["rep", "representative", "attorney"],
-  ssn_last_4: ["ssn", "social", "last 4"],
-  claim_type: ["claim type", "type"],
-  hearing_date: ["hearing date", "date"],
-  hearing_time: ["time", "hearing time"],
-  time_zone: ["tz", "time zone", "timezone"],
-  claimant_location: ["claimant location", "claimant city"],
-  representative_location: ["rep location", "rep city"],
-  city: ["city"],
-  state: ["state", "st"],
-  alj: ["alj", "judge"],
-  medical_expert: ["med expert", "medical expert"],
-  vocational_expert: ["voc expert", "vocational expert"],
-  status_date: ["status date"],
-  download_type: ["download type", "download"],
-  entered_hearing_level_date: ["entered hearing"],
-  manner_of_appearance: ["manner", "moa", "appearance"],
-  hearing_decision_status: ["decision", "hearing decision"],
-  phi_sheet_complete: ["phi"],
-  rep_docs_complete: ["rep docs"],
-  fee_agreement_complete: ["fee ag", "fee agreement"],
-  five_day_notice: ["5-day", "five day", "5 day"],
-  rfc_status: ["rfc"],
-  task_assigned: ["task"],
-  brief_assigned_to: ["brief"],
-  mr_team_id: ["mr team", "medical records team", "medical team", "team"],
-  medical_record_status: ["mr status", "medical record status"],
-  medical_record_link: ["mr worksheet", "medical record link"],
-  claimant_link: ["claimant link"],
-  post_hrg_deadline: ["post hrg", "post hearing", "deadline"],
-  post_hrg_notes: ["post hrg notes", "post hearing notes"],
+// ─── Constants ──────────────────────────────────────────────────────────────
+
+const DB_FIELDS: Record<string, string> = {
+  claimant: "Claimant *",
+  hearing_date: "Hearing Date *",
+  ssn_last_4: "SSN (Last 4)",
+  claim_type: "Claim Type",
+  hearing_time: "Hearing Time",
+  converted_time_est: "Converted Time in EST",
+  time_zone: "Time Zone",
+  city: "City",
+  state: "State",
+  claimant_location: "Claimant Location",
+  representative_location: "Rep Location",
+  alj: "ALJ",
+  medical_expert: "Medical Expert",
+  vocational_expert: "Vocational Expert",
+  status_date: "Status Date",
+  entered_hearing_level_date: "Entered Hearing Level",
+  download_type: "Download Type",
+  manner_of_appearance: "Manner of Appearance",
+  hearing_decision_status: "Decision",
+  phi_sheet_complete: "PHI",
+  rep_docs_complete: "Rep Docs",
+  fee_agreement_complete: "Fee Agmt",
+  five_day_notice: "5-Day",
+  rfc_status: "RFC",
+  task_assigned: "Task",
+  brief_assigned_to: "Brief",
+  mr_team_id: "Medical Team",
+  medical_record_status: "MR Status",
+  medical_record_link: "MR Worksheet",
+  claimant_link: "Claimant Link",
+  post_hrg_deadline: "Post HRG Deadline",
+  post_hrg_notes: "Post HRG Notes",
+  representative: "Representative (lookup)",
+  medical_record_source: "MR Worksheet Link (hyperlink only)",
 };
 
-const ANALYZE_CHUNK = 5000; // analysis is in-memory now, send large batches
-const WRITE_CHUNK = 200; // keep writes smaller to avoid timeouts
+// Sort: required fields first, then alphabetical
+const SORTED_FIELDS = Object.entries(DB_FIELDS).sort(([, a], [, b]) => {
+  const aReq = a.includes("*");
+  const bReq = b.includes("*");
+  if (aReq && !bReq) return -1;
+  if (!aReq && bReq) return 1;
+  return a.localeCompare(b);
+});
+
+const STEP_LABELS = [
+  { num: 1, label: "Upload File" },
+  { num: 2, label: "Map Columns" },
+  { num: 3, label: "Check Duplicates" },
+  { num: 4, label: "Import" },
+  { num: 5, label: "Results" },
+];
+
+const BTN =
+  "inline-flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium rounded-lg border-none cursor-pointer transition-all duration-150";
+const BTN_PRIMARY = cn(
+  BTN,
+  "bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed",
+);
+const BTN_SECONDARY = cn(BTN, "bg-muted text-foreground hover:bg-muted/80");
+const BTN_SUCCESS = cn(
+  BTN,
+  "bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed",
+);
+const BTN_WARNING = cn(
+  BTN,
+  "bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed",
+);
+const BTN_OUTLINE = cn(
+  BTN,
+  "bg-transparent border border-border text-foreground hover:bg-muted",
+);
+const CARD = "rounded-xl border bg-card p-6 shadow-sm";
+
+// ─── Auto-map logic ─────────────────────────────────────────────────────────
+
+const AUTO_MAP: Record<string, string[]> = {
+  claimant: ["claimant", "claimant name", "name", "client name", "client"],
+  ssn_last_4: ["ssn", "ssn last 4", "ssn_last_4", "last 4 ssn", "social"],
+  hearing_date: ["hearing date", "date", "hearing_date", "hrg date"],
+  hearing_time: ["hearing time", "hearing_time", "hrg time"],
+  converted_time_est: [
+    "converted time in est",
+    "converted time",
+    "converted_time_est",
+    "est time",
+    "time in est",
+  ],
+  time_zone: ["time zone", "timezone", "time_zone", "tz"],
+  city: ["city", "hearing city"],
+  state: ["state", "hearing state"],
+  alj: ["alj", "judge", "administrative law judge"],
+  claim_type: ["claim type", "claim_type", "type"],
+  claimant_location: ["claimant location", "claimant_location", "cl location"],
+  representative_location: [
+    "rep location",
+    "representative_location",
+    "representative location",
+  ],
+  manner_of_appearance: ["manner of appearance", "moa", "appearance"],
+  medical_expert: ["medical expert", "me"],
+  vocational_expert: ["vocational expert", "ve"],
+  status_date: ["status date", "status_date"],
+  download_type: ["download type", "download_type"],
+  entered_hearing_level_date: ["entered hearing level", "ehl", "ehl date"],
+  hearing_decision_status: ["decision", "decision status"],
+  representative: ["representative", "rep", "rep name", "attorney"],
+  medical_record_link: ["mr worksheet", "mr link", "medical record link"],
+  medical_record_source: ["mr worksheet link", "mr source"],
+  claimant_link: ["claimant link", "client link"],
+};
+
+function autoMap(headers: string[]): Record<string, number> {
+  const mapping: Record<string, number> = {};
+  const norm = headers.map((h) => h.toLowerCase().trim());
+  for (const [field, aliases] of Object.entries(AUTO_MAP)) {
+    for (const alias of aliases) {
+      const idx = norm.indexOf(alias);
+      if (idx !== -1 && !Object.values(mapping).includes(idx)) {
+        mapping[field] = idx;
+        break;
+      }
+    }
+  }
+  return mapping;
+}
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
-export function ImportClient() {
-  const [step, setStep] = useState<Step>("upload");
-  const [fileName, setFileName] = useState("");
-  const [sheetNames, setSheetNames] = useState<string[]>([]);
-  const [selectedSheet, setSelectedSheet] = useState(0);
-  const [headers, setHeaders] = useState<string[]>([]);
-  const [rawRows, setRawRows] = useState<string[][]>([]);
-  const [mapping, setMapping] = useState<Record<string, number | null>>({});
-  const [dragOver, setDragOver] = useState(false);
+export function ImportClient({ userRole }: { userRole: string }) {
+  const [step, setStep] = useState(1);
 
-  // Cross-sheet SSN lookup
-  const [enableCrossSheet, setEnableCrossSheet] = useState(false);
-  const [crossSheetIdx, setCrossSheetIdx] = useState(-1);
-  const [crossSheetHeaders, setCrossSheetHeaders] = useState<string[]>([]);
-  const [crossSheetSsnCol, setCrossSheetSsnCol] = useState(-1);
-  const [crossSheetClaimantCol, setCrossSheetClaimantCol] = useState(-1);
-  const [crossSheetDateCol, setCrossSheetDateCol] = useState(-1);
-  const [crossSheetLocClaimantCol, setCrossSheetLocClaimantCol] = useState(-1);
-  const [crossSheetLocRepCol, setCrossSheetLocRepCol] = useState(-1);
-  const [crossSheetDownloadCol, setCrossSheetDownloadCol] = useState(-1);
-  const [crossSheetStatusDateCol, setCrossSheetStatusDateCol] = useState(-1);
-  const [crossSheetRows, setCrossSheetRows] = useState<string[][]>([]);
+  // Step 1: Upload
+  const [file, setFile] = useState<File | null>(null);
+  const [sheets, setSheets] = useState<SheetData[]>([]);
+  const [selectedSheet, setSelectedSheet] = useState<number>(-1);
+  const [parsing, setParsing] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
-  // Analysis results
-  const [analysis, setAnalysis] = useState<{
-    new: MappedRow[];
-    dup: (MappedRow & { existingId: number })[];
-    resched: (MappedRow & { originalId: number; baseName: string })[];
-    skip: (MappedRow & { reason: string })[];
-    notInSheet: NotInSheetRow[];
-    repsM: number;
-    repsU: number;
-    teamsM: number;
-    teamsU: number;
-  } | null>(null);
-  const [reviewTab, setReviewTab] = useState<ReviewTab>("new");
-  const [analyzeProgress, setAnalyzeProgress] = useState("");
-  const [processLog, setProcessLog] = useState<string[]>([]);
-  const [result, setResult] = useState<{
-    imported: number;
-    updated: number;
-    rescheduled: number;
-    skipped: number;
-  } | null>(null);
-  const [error, setError] = useState("");
+  // Cross-sheet lookup
+  const [lookup, setLookup] = useState<LookupConfig>({
+    enabled: false,
+    sheetIndex: null,
+    ssnCol: "",
+    claimantLocationCol: "",
+    repLocationCol: "",
+    downloadTypeCol: "",
+    statusDateCol: "",
+    claimantCol: "",
+    dateCol: "",
+    claimTypeCol: "",
+    useClaimTypeMatch: false,
+  });
+  const [lookupBuilt, setLookupBuilt] = useState(false);
+  const [lookupTable, setLookupTable] = useState<
+    Map<string, Record<string, string>>
+  >(new Map());
 
-  // Workbook ref
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [wbRef, setWbRef] = useState<any>(null);
+  // Step 2: Mapping
+  const [mapping, setMapping] = useState<Record<string, number>>({});
 
-  // ── File parse ──
-  const parseFile = useCallback(async (file: File) => {
-    setFileName(file.name);
-    setError("");
-    const XLSX = await import("xlsx");
-    const buf = await file.arrayBuffer();
-    const wb = XLSX.read(buf, { type: "array" });
-    setWbRef(wb);
-    setSheetNames(wb.SheetNames);
+  // Step 3: Duplicates
+  const [checking, setChecking] = useState(false);
+  const [checkResult, setCheckResult] = useState<CheckResult | null>(null);
+  const [dupTab, setDupTab] = useState<
+    "new" | "duplicate" | "update-preview" | "rescheduled" | "skipped"
+  >("new");
+  const [updateDuplicates, setUpdateDuplicates] = useState(false);
+  const [preserveExisting, setPreserveExisting] = useState(true);
+  const [fieldChangeSummary, setFieldChangeSummary] = useState<
+    Record<string, number>
+  >({});
 
-    if (wb.SheetNames.length > 1) {
-      setStep("sheets");
-    } else {
-      loadSheetFromWb(wb, 0);
-    }
-  }, []);
+  // Step 4: Import progress
+  const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState(0);
+  const [importStatus, setImportStatus] = useState("");
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const loadSheetFromWb = async (wb: any, idx: number) => {
-    const XLSX = await import("xlsx");
-    const ws = wb.Sheets[wb.SheetNames[idx]];
-    const data: unknown[][] = XLSX.utils.sheet_to_json(ws, {
-      header: 1,
-      defval: "",
-    });
-    if (data.length < 2) {
-      setError("Sheet has no data rows");
-      return;
-    }
+  // Step 5: Results
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
 
-    const hdrs = (data[0] as unknown[]).map((h) => String(h ?? "").trim());
-    setHeaders(hdrs);
-    setRawRows(
-      data
-        .slice(1)
-        .map((r) => (r as unknown[]).map((c) => String(c ?? "").trim())),
-    );
-    setSelectedSheet(idx);
+  // ── Helpers ──
 
-    // Auto-map
-    const autoMap: Record<string, number | null> = {};
-    DB_FIELDS.forEach((f) => {
-      const matchers = AUTO_MATCH[f.key] || [f.key.replace(/_/g, " ")];
-      const i = hdrs.findIndex((h) =>
-        matchers.some((m) => h.toLowerCase().includes(m)),
-      );
-      autoMap[f.key] = i >= 0 ? i : null;
-    });
-    setMapping(autoMap);
-    setStep("mapping");
-  };
+  const currentSheet = selectedSheet >= 0 ? sheets[selectedSheet] : null;
+  const lookupSheet =
+    lookup.sheetIndex !== null && lookup.sheetIndex >= 0
+      ? sheets[lookup.sheetIndex]
+      : null;
 
-  const loadCrossSheet = async (idx: number) => {
-    setCrossSheetIdx(idx);
-    if (idx < 0 || !wbRef) {
-      setCrossSheetHeaders([]);
-      setCrossSheetRows([]);
-      return;
-    }
-    const XLSX = await import("xlsx");
-    const ws = wbRef.Sheets[wbRef.SheetNames[idx]];
-    const data: unknown[][] = XLSX.utils.sheet_to_json(ws, {
-      header: 1,
-      defval: "",
-    });
-    if (data.length < 2) return;
-    setCrossSheetHeaders(
-      (data[0] as unknown[]).map((h) => String(h ?? "").trim()),
-    );
-    setCrossSheetRows(
-      data
-        .slice(1)
-        .map((r) => (r as unknown[]).map((c) => String(c ?? "").trim())),
-    );
-  };
-
-  const handleFileInput = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (file) parseFile(file);
+  const toast = useCallback(
+    (msg: string, type: "success" | "error" = "error") => {
+      // Simple toast — could be replaced with a toast library
+      const el = document.createElement("div");
+      el.className = `fixed top-4 right-4 z-[9999] px-4 py-3 rounded-lg shadow-lg text-sm font-medium text-white transition-opacity ${type === "error" ? "bg-red-600" : "bg-emerald-600"}`;
+      el.textContent = msg;
+      document.body.appendChild(el);
+      setTimeout(() => {
+        el.style.opacity = "0";
+        setTimeout(() => el.remove(), 300);
+      }, 3000);
     },
-    [parseFile],
+    [],
+  );
+
+  // ── Step 1: File handling ──
+
+  const handleFile = useCallback(
+    (f: File) => {
+      if (!f) return;
+      const ext = f.name.split(".").pop()?.toLowerCase();
+      if (!["xlsx", "xls", "csv"].includes(ext || "")) {
+        toast("Only .xlsx, .xls, and .csv files are supported");
+        return;
+      }
+      setFile(f);
+      setParsing(true);
+      setSheets([]);
+      setSelectedSheet(-1);
+      setLookup((p) => ({ ...p, enabled: false, sheetIndex: null }));
+      setLookupBuilt(false);
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = new Uint8Array(e.target!.result as ArrayBuffer);
+          const wb = XLSX.read(data, { type: "array", cellStyles: true });
+          const parsed: SheetData[] = wb.SheetNames.map((name) => {
+            const ws = wb.Sheets[name];
+            const json = XLSX.utils.sheet_to_json<unknown[]>(ws, {
+              header: 1,
+              defval: "",
+              raw: false,
+            });
+            const headers = (json[0] as string[]) || [];
+            const rows = json
+              .slice(1)
+              .filter((r: unknown[]) => r.some((c) => c !== ""));
+            // Extract hyperlinks
+            const hyperlinks: Record<string, string> = {};
+            for (const [cell, val] of Object.entries(ws)) {
+              if (cell.startsWith("!")) continue;
+              const v = val as { l?: { Target?: string } };
+              if (v.l?.Target) hyperlinks[cell] = v.l.Target;
+            }
+            return { name, headers, rows, hyperlinks };
+          });
+          setSheets(parsed);
+          if (parsed.length === 1) {
+            setSelectedSheet(0);
+            setMapping(autoMap(parsed[0].headers));
+          }
+          setParsing(false);
+        } catch {
+          toast("Failed to parse file");
+          setParsing(false);
+        }
+      };
+      reader.readAsArrayBuffer(f);
+    },
+    [toast],
   );
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
-      setDragOver(false);
-      const file = e.dataTransfer.files[0];
-      if (file) parseFile(file);
+      e.stopPropagation();
+      const f = e.dataTransfer.files[0];
+      if (f) handleFile(f);
     },
-    [parseFile],
+    [handleFile],
   );
 
-  // ── Build mapped rows with cross-sheet lookup applied client-side ──
-  const buildMappedRows = (): MappedRow[] => {
-    const crossLookup: Record<string, Record<string, string>> = {};
-    if (
-      enableCrossSheet &&
-      crossSheetRows.length > 0 &&
-      crossSheetClaimantCol >= 0
-    ) {
-      for (const row of crossSheetRows) {
-        const claimant = (row[crossSheetClaimantCol] || "")
-          .trim()
-          .toLowerCase();
-        if (!claimant) continue;
-        const date =
-          crossSheetDateCol >= 0 ? (row[crossSheetDateCol] || "").trim() : "";
-        const key = date ? `${claimant}|${date}` : claimant;
-        const entry: Record<string, string> = {};
-        if (crossSheetSsnCol >= 0 && row[crossSheetSsnCol])
-          entry.ssn_last_4 = row[crossSheetSsnCol];
-        if (crossSheetLocClaimantCol >= 0 && row[crossSheetLocClaimantCol])
-          entry.claimant_location = row[crossSheetLocClaimantCol];
-        if (crossSheetLocRepCol >= 0 && row[crossSheetLocRepCol])
-          entry.representative_location = row[crossSheetLocRepCol];
-        if (crossSheetDownloadCol >= 0 && row[crossSheetDownloadCol])
-          entry.download_type = row[crossSheetDownloadCol];
-        if (crossSheetStatusDateCol >= 0 && row[crossSheetStatusDateCol])
-          entry.status_date = row[crossSheetStatusDateCol];
-        crossLookup[key] = entry;
-      }
-    }
+  const selectSheet = useCallback(
+    (idx: number) => {
+      setSelectedSheet(idx);
+      if (sheets[idx]) setMapping(autoMap(sheets[idx].headers));
+    },
+    [sheets],
+  );
 
-    return rawRows.map((row, i) => {
-      const data: Record<string, string> = {};
-      Object.entries(mapping).forEach(([field, colIdx]) => {
-        if (colIdx != null && colIdx >= 0) data[field] = row[colIdx] || "";
-      });
-
-      if (enableCrossSheet && Object.keys(crossLookup).length > 0) {
-        const claimant = (data.claimant || "").trim().toLowerCase();
-        const date = data.hearing_date || "";
-        const entry =
-          crossLookup[`${claimant}|${date}`] || crossLookup[claimant];
-        if (entry) {
-          if (entry.ssn_last_4 && !data.ssn_last_4)
-            data.ssn_last_4 = entry.ssn_last_4;
-          if (entry.claimant_location)
-            data.claimant_location = entry.claimant_location;
-          if (entry.representative_location)
-            data.representative_location = entry.representative_location;
-          if (entry.download_type) data.download_type = entry.download_type;
-          if (entry.status_date) data.status_date = entry.status_date;
-        }
-      }
-
-      return { rowIndex: i, data };
-    });
-  };
-
-  // ── Analyze (chunked via API route) ──
-  const handleAnalyze = async () => {
-    setStep("analyzing");
-    setError("");
-    try {
-      const mapped = buildMappedRows();
-      const totals = {
-        new: [] as MappedRow[],
-        dup: [] as (MappedRow & { existingId: number })[],
-        resched: [] as (MappedRow & { originalId: number; baseName: string })[],
-        skip: [] as (MappedRow & { reason: string })[],
-        repsM: 0,
-        repsU: 0,
-        teamsM: 0,
-        teamsU: 0,
-        allMatchedDbIds: [] as number[],
-      };
-
-      for (let i = 0; i < mapped.length; i += ANALYZE_CHUNK) {
-        const chunk = mapped.slice(i, i + ANALYZE_CHUNK);
-        setAnalyzeProgress(
-          `Analyzing rows ${i + 1}–${Math.min(i + ANALYZE_CHUNK, mapped.length)} of ${mapped.length}...`,
-        );
-        const r = await api<AnalyzeResult>("analyze", { rows: chunk });
-        totals.new.push(...r.newRecords);
-        totals.dup.push(...r.duplicateRecords);
-        totals.resched.push(...r.rescheduledRecords);
-        totals.skip.push(...r.skippedRecords);
-        totals.repsM += r.repsMatched;
-        totals.repsU += r.repsUnmatched;
-        totals.teamsM += r.teamsMatched;
-        totals.teamsU += r.teamsUnmatched;
-        totals.allMatchedDbIds.push(...r.matchedDbIds);
-      }
-
-      setAnalyzeProgress("Checking for records not in sheet...");
-      const notInSheet = await api<NotInSheetRow[]>("notInSheet", {
-        matchedIds: totals.allMatchedDbIds,
-      });
-
-      setAnalysis({ ...totals, notInSheet });
-      setStep("review");
-      setReviewTab("new");
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Analysis failed");
-      setStep("mapping");
-    }
-  };
-
-  // ── Process (chunked via API route) ──
-  const handleProcess = async () => {
-    if (!analysis) return;
-    setStep("processing");
-    setProcessLog([]);
-    setError("");
-    try {
-      const log: string[] = [];
-      let imported = 0,
-        updated = 0,
-        rescheduled = 0;
-
-      if (analysis.resched.length > 0) {
-        log.push(`Updating ${analysis.resched.length} rescheduled...`);
-        setProcessLog([...log]);
-        for (let i = 0; i < analysis.resched.length; i += WRITE_CHUNK) {
-          const r = await api<{ count: number }>("updateRescheduled", {
-            records: analysis.resched.slice(i, i + WRITE_CHUNK),
-          });
-          rescheduled += r.count;
-        }
-        log.push(`✓ ${rescheduled} rescheduled`);
-        setProcessLog([...log]);
-      }
-
-      if (analysis.new.length > 0) {
-        log.push(`Importing ${analysis.new.length} new...`);
-        setProcessLog([...log]);
-        for (let i = 0; i < analysis.new.length; i += WRITE_CHUNK) {
-          const r = await api<{ imported: number }>("import", {
-            records: analysis.new.slice(i, i + WRITE_CHUNK),
-          });
-          imported += r.imported;
-        }
-        log.push(`✓ ${imported} imported`);
-        setProcessLog([...log]);
-      }
-
-      if (analysis.dup.length > 0) {
-        log.push(`Updating ${analysis.dup.length} duplicates...`);
-        setProcessLog([...log]);
-        for (let i = 0; i < analysis.dup.length; i += WRITE_CHUNK) {
-          const r = await api<{ updated: number }>("update", {
-            records: analysis.dup.slice(i, i + WRITE_CHUNK),
-          });
-          updated += r.updated;
-        }
-        log.push(`✓ ${updated} updated`);
-        setProcessLog([...log]);
-      }
-
-      setResult({
-        imported,
-        updated,
-        rescheduled,
-        skipped: analysis.skip.length,
-      });
-      setStep("complete");
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Processing failed");
-      setStep("review");
-    }
-  };
-
-  const handleDeleteNotInSheet = async (ids: number[]) => {
-    if (!analysis) return;
-    try {
-      await api("deleteNotInSheet", { ids });
-      setAnalysis({
-        ...analysis,
-        notInSheet: analysis.notInSheet.filter((r) => !ids.includes(r.id)),
-      });
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Delete failed");
-    }
-  };
-
-  const handleReset = () => {
-    setStep("upload");
-    setFileName("");
-    setSheetNames([]);
-    setHeaders([]);
-    setRawRows([]);
+  const removeFile = useCallback(() => {
+    setFile(null);
+    setSheets([]);
+    setSelectedSheet(-1);
     setMapping({});
-    setAnalysis(null);
-    setResult(null);
-    setProcessLog([]);
-    setWbRef(null);
-    setEnableCrossSheet(false);
-    setCrossSheetIdx(-1);
-    setError("");
-  };
+    setLookup((p) => ({ ...p, enabled: false, sheetIndex: null }));
+    setLookupBuilt(false);
+    if (fileRef.current) fileRef.current.value = "";
+  }, []);
 
-  const mappedCount = Object.values(mapping).filter((v) => v != null).length;
-  const requiredMapped = DB_FIELDS.filter((f) => f.required).every(
-    (f) => mapping[f.key] != null,
-  );
-  const steps = [
-    { key: "upload", label: "Upload" },
-    { key: "sheets", label: "Sheet" },
-    { key: "mapping", label: "Map" },
-    { key: "review", label: "Review" },
-    { key: "complete", label: "Done" },
-  ];
-  const stepOrder = [
-    "upload",
-    "sheets",
-    "mapping",
-    "analyzing",
-    "review",
-    "processing",
-    "complete",
-  ];
-  const ci = stepOrder.indexOf(step);
+  // ── Cross-sheet lookup ──
+
+  const buildLookupTable = useCallback(() => {
+    if (!lookupSheet || !lookup.claimantCol || !lookup.dateCol) {
+      toast("Please configure the Claimant and Hearing Date match columns");
+      return;
+    }
+    if (
+      !lookup.ssnCol &&
+      !lookup.claimantLocationCol &&
+      !lookup.repLocationCol &&
+      !lookup.downloadTypeCol &&
+      !lookup.statusDateCol
+    ) {
+      toast(
+        "Please select at least one data column to pull (SSN, Location, etc.)",
+      );
+      return;
+    }
+    const headers = lookupSheet.headers;
+    const ci = headers.indexOf(lookup.claimantCol);
+    const di = headers.indexOf(lookup.dateCol);
+    const si = lookup.ssnCol ? headers.indexOf(lookup.ssnCol) : -1;
+    const cli = lookup.claimantLocationCol
+      ? headers.indexOf(lookup.claimantLocationCol)
+      : -1;
+    const rli = lookup.repLocationCol
+      ? headers.indexOf(lookup.repLocationCol)
+      : -1;
+    const dti = lookup.downloadTypeCol
+      ? headers.indexOf(lookup.downloadTypeCol)
+      : -1;
+    const sdi = lookup.statusDateCol
+      ? headers.indexOf(lookup.statusDateCol)
+      : -1;
+    const cti =
+      lookup.useClaimTypeMatch && lookup.claimTypeCol
+        ? headers.indexOf(lookup.claimTypeCol)
+        : -1;
+
+    const table = new Map<string, Record<string, string>>();
+    for (const row of lookupSheet.rows) {
+      const r = row as string[];
+      const claimant = String(r[ci] || "")
+        .trim()
+        .toLowerCase();
+      const date = String(r[di] || "").trim();
+      if (!claimant || !date) continue;
+      const key =
+        cti >= 0
+          ? `${claimant}|${date}|${String(r[cti] || "")
+              .trim()
+              .toLowerCase()}`
+          : `${claimant}|${date}`;
+      const entry: Record<string, string> = {};
+      if (si >= 0 && r[si]) entry.ssn = String(r[si]);
+      if (cli >= 0 && r[cli]) entry.claimantLocation = String(r[cli]);
+      if (rli >= 0 && r[rli]) entry.repLocation = String(r[rli]);
+      if (dti >= 0 && r[dti]) entry.downloadType = String(r[dti]);
+      if (sdi >= 0 && r[sdi]) entry.statusDate = String(r[sdi]);
+      table.set(key, entry);
+    }
+    setLookupTable(table);
+    setLookupBuilt(true);
+    toast(`Lookup table built: ${table.size} entries`, "success");
+  }, [lookupSheet, lookup, toast]);
+
+  // ── Step 2: Mapping ──
+
+  const updateMapping = useCallback((field: string, colIdx: number | null) => {
+    setMapping((prev) => {
+      const next = { ...prev };
+      if (colIdx === null) {
+        delete next[field];
+      } else {
+        next[field] = colIdx;
+      }
+      return next;
+    });
+  }, []);
+
+  // ── Step 3: Check duplicates (batched for large datasets) ──
+
+  const [checkProgress, setCheckProgress] = useState(0);
+
+  const goToCheckDuplicates = useCallback(async () => {
+    if (mapping.claimant === undefined) {
+      toast("Please map the Claimant Name field");
+      return;
+    }
+    if (mapping.hearing_date === undefined) {
+      toast("Please map the Hearing Date field");
+      return;
+    }
+    setStep(3);
+    setChecking(true);
+    setCheckResult(null);
+    setCheckProgress(0);
+    setDupTab("new");
+
+    try {
+      const sheet = currentSheet!;
+      // Build cross-sheet lookups
+      const crossSheetLookups: Record<number, Record<string, string>> = {};
+      if (lookup.enabled && lookupBuilt && lookupTable.size > 0) {
+        const ci = mapping.claimant;
+        const di = mapping.hearing_date;
+        const cti = mapping.claim_type;
+        sheet.rows.forEach((row, j) => {
+          const r = row as string[];
+          const claimant = String(r[ci] || "")
+            .trim()
+            .toLowerCase();
+          const date = String(r[di] || "").trim();
+          const claimType =
+            cti !== undefined
+              ? String(r[cti] || "")
+                  .trim()
+                  .toLowerCase()
+              : "";
+          if (!claimant || !date) return;
+          const key = lookup.useClaimTypeMatch
+            ? `${claimant}|${date}|${claimType}`
+            : `${claimant}|${date}`;
+          const data = lookupTable.get(key);
+          if (data && Object.keys(data).length > 0) crossSheetLookups[j] = data;
+        });
+      }
+
+      // Batch rows — 500 per request to avoid payload/timeout issues
+      const BATCH_SIZE = 2000;
+      const allNew: DuplicateResult[] = [];
+      const allDup: DuplicateResult[] = [];
+      const allSkip: DuplicateResult[] = [];
+      const allResched: DuplicateResult[] = [];
+      const allFieldChanges: Record<string, number> = {};
+
+      for (let i = 0; i < sheet.rows.length; i += BATCH_SIZE) {
+        const batchRows = sheet.rows.slice(i, i + BATCH_SIZE);
+        // Build cross-sheet lookups for this batch (re-index to batch-local indices)
+        const batchLookups: Record<number, Record<string, string>> = {};
+        for (let j = 0; j < batchRows.length; j++) {
+          const globalIdx = i + j;
+          if (crossSheetLookups[globalIdx])
+            batchLookups[j] = crossSheetLookups[globalIdx];
+        }
+
+        const res = await fetch("/api/import/check-duplicates", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mapping,
+            headers: sheet.headers,
+            rows: batchRows,
+            crossSheetLookups: batchLookups,
+            rowOffset: i, // server uses this to compute correct row numbers
+          }),
+        });
+        const result = await res.json();
+        if (result.success) {
+          allNew.push(...result.new_records);
+          allDup.push(...result.duplicate_records);
+          allSkip.push(...result.skipped_records);
+          if (result.rescheduled_records)
+            allResched.push(...result.rescheduled_records);
+          if (result.field_change_summary) {
+            for (const [f, c] of Object.entries(
+              result.field_change_summary as Record<string, number>,
+            )) {
+              allFieldChanges[f] = (allFieldChanges[f] || 0) + c;
+            }
+          }
+        } else {
+          toast(
+            `Batch ${Math.floor(i / BATCH_SIZE) + 1} failed: ${result.message || "Unknown error"}`,
+          );
+        }
+
+        setCheckProgress(
+          Math.min(
+            100,
+            Math.round(((i + batchRows.length) / sheet.rows.length) * 100),
+          ),
+        );
+      }
+
+      setCheckResult({
+        newRecords: allNew,
+        duplicateRecords: allDup,
+        skippedRecords: allSkip,
+        rescheduledRecords: allResched,
+      });
+      setFieldChangeSummary(allFieldChanges);
+    } catch (e) {
+      toast("Error checking duplicates");
+      console.error(e);
+    }
+    setChecking(false);
+  }, [mapping, currentSheet, lookup, lookupBuilt, lookupTable, toast]);
+
+  // ── Step 4: Import ──
+
+  const importRecords = useCallback(async () => {
+    if (!checkResult) return;
+    setStep(4);
+    setImporting(true);
+    setImportProgress(0);
+    setImportStatus("Starting import...");
+
+    const records = checkResult.newRecords;
+    const BATCH = 250;
+    const PARALLEL = 3; // send 3 batches concurrently
+    let imported = 0;
+    let skipped = 0;
+    const errors: string[] = [];
+    const importedIds: number[] = [];
+
+    // Build all batches
+    const batches: DuplicateResult[][] = [];
+    for (let i = 0; i < records.length; i += BATCH) {
+      batches.push(records.slice(i, i + BATCH));
+    }
+
+    // Process batches in parallel groups
+    for (let g = 0; g < batches.length; g += PARALLEL) {
+      const group = batches.slice(g, g + PARALLEL);
+      const results = await Promise.allSettled(
+        group.map((batch) =>
+          fetch("/api/import/insert", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              records: batch,
+              mapping,
+              hyperlinks: currentSheet!.hyperlinks || {},
+            }),
+          }).then((r) => r.json()),
+        ),
+      );
+      for (const r of results) {
+        if (r.status === "fulfilled" && r.value.success) {
+          imported += r.value.imported;
+          skipped += r.value.skipped;
+          if (r.value.errors) errors.push(...r.value.errors);
+          if (r.value.importedIds) importedIds.push(...r.value.importedIds);
+        } else {
+          const msg =
+            r.status === "rejected"
+              ? "Network error"
+              : r.value?.message || "Unknown error";
+          errors.push(`Batch failed: ${msg}`);
+        }
+      }
+      const done = Math.min((g + PARALLEL) * BATCH, records.length);
+      setImportProgress(
+        Math.min(100, Math.round((done / records.length) * 100)),
+      );
+      setImportStatus(`Imported ${imported} of ${records.length} records...`);
+    }
+
+    setImporting(false);
+    setImportResult({ imported, skipped, errors, importedIds });
+    setStep(5);
+  }, [checkResult, mapping, currentSheet]);
+
+  // ── Update duplicates ──
+
+  const updateDuplicateRecords = useCallback(async () => {
+    if (!checkResult || checkResult.duplicateRecords.length === 0) return;
+    setStep(4);
+    setImporting(true);
+    setImportProgress(0);
+    setImportStatus("Updating existing records...");
+
+    const records = checkResult.duplicateRecords.filter((r) => r.has_changes);
+    const BATCH = 250;
+    let updated = 0;
+    const errors: string[] = [];
+
+    for (let i = 0; i < records.length; i += BATCH) {
+      const batch = records.slice(i, i + BATCH);
+      try {
+        const res = await fetch("/api/import/update-duplicates", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            records: batch,
+            mapping,
+            headers: currentSheet!.headers,
+            hyperlinks: currentSheet!.hyperlinks || {},
+            preserveExisting,
+          }),
+        });
+        const result = await res.json();
+        if (result.success) updated += result.updated;
+        else
+          errors.push(`Batch ${Math.floor(i / BATCH) + 1}: ${result.message}`);
+      } catch {
+        errors.push(`Batch ${Math.floor(i / BATCH) + 1}: Network error`);
+      }
+      setImportProgress(
+        Math.min(100, Math.round(((i + batch.length) / records.length) * 100)),
+      );
+      setImportStatus(`Updated ${updated} of ${records.length} records...`);
+    }
+
+    setImporting(false);
+    toast(`Updated ${updated} existing records`, "success");
+    // Go back to step 3 to continue with new records import
+    setStep(3);
+  }, [checkResult, mapping, currentSheet, toast, preserveExisting]);
+
+  // ── Process rescheduled ──
+
+  const processRescheduled = useCallback(async () => {
+    if (!checkResult || checkResult.rescheduledRecords.length === 0) return;
+    if (
+      !confirm(
+        `Update ${checkResult.rescheduledRecords.length} rescheduled hearing(s)?\n\nThis will update original records with the new hearing data (date, rep, etc.) and rename them with the "(Rescheduled)" tag.`,
+      )
+    )
+      return;
+
+    setStep(4);
+    setImporting(true);
+    setImportProgress(0);
+    setImportStatus("Processing rescheduled hearings...");
+
+    const records = checkResult.rescheduledRecords;
+    const BATCH = 250;
+    let updated = 0;
+    const errors: string[] = [];
+
+    for (let i = 0; i < records.length; i += BATCH) {
+      const batch = records.slice(i, i + BATCH);
+      try {
+        const res = await fetch("/api/import/process-rescheduled", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            records: batch,
+            mapping,
+            hyperlinks: currentSheet!.hyperlinks || {},
+            preserveExisting,
+          }),
+        });
+        const result = await res.json();
+        if (result.success) updated += result.updated;
+        else
+          errors.push(`Batch ${Math.floor(i / BATCH) + 1}: ${result.message}`);
+      } catch {
+        errors.push(`Batch ${Math.floor(i / BATCH) + 1}: Network error`);
+      }
+      setImportProgress(
+        Math.min(100, Math.round(((i + batch.length) / records.length) * 100)),
+      );
+      setImportStatus(
+        `Updated ${updated} of ${records.length} rescheduled records...`,
+      );
+    }
+
+    setImporting(false);
+    toast(
+      `Updated ${updated} rescheduled hearing(s)${errors.length > 0 ? ` (${errors.length} errors)` : ""}`,
+      errors.length > 0 ? "error" : "success",
+    );
+    // Clear rescheduled from results and go back to step 3
+    setCheckResult((prev) =>
+      prev ? { ...prev, rescheduledRecords: [] } : prev,
+    );
+    setStep(3);
+  }, [checkResult, mapping, currentSheet, toast, preserveExisting]);
+
+  // ── Download template ──
+
+  const downloadTemplate = useCallback(() => {
+    const headers = SORTED_FIELDS.map(([, label]) => label.replace(" *", ""));
+    const ws = XLSX.utils.aoa_to_sheet([headers]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Template");
+    XLSX.writeFile(wb, "hearing_import_template.xlsx");
+  }, []);
+
+  // ── Download imported records ──
+
+  const downloadImported = useCallback(async () => {
+    if (!importResult || importResult.importedIds.length === 0) return;
+    try {
+      const res = await fetch("/api/import/download-imported", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: importResult.importedIds }),
+      });
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "imported_hearings.xlsx";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast("Failed to download");
+    }
+  }, [importResult, toast]);
+
+  // ── Reset ──
+
+  const resetImport = useCallback(() => {
+    setStep(1);
+    setFile(null);
+    setSheets([]);
+    setSelectedSheet(-1);
+    setMapping({});
+    setLookup({
+      enabled: false,
+      sheetIndex: null,
+      ssnCol: "",
+      claimantLocationCol: "",
+      repLocationCol: "",
+      downloadTypeCol: "",
+      statusDateCol: "",
+      claimantCol: "",
+      dateCol: "",
+      claimTypeCol: "",
+      useClaimTypeMatch: false,
+    });
+    setLookupBuilt(false);
+    setLookupTable(new Map());
+    setCheckResult(null);
+    setImportResult(null);
+    setImportProgress(0);
+    setUpdateDuplicates(false);
+    setPreserveExisting(true);
+    if (fileRef.current) fileRef.current.value = "";
+  }, []);
+
+  // ─── Render ───────────────────────────────────────────────────────────────
+
+  const mappedCount = Object.keys(mapping).length;
+  const canProceedToMap =
+    selectedSheet >= 0 && currentSheet && currentSheet.rows.length > 0;
 
   return (
     <>
       <AppHeader
         title="Import Hearings"
-        subtitle="Upload hearing schedules from XLSX"
+        subtitle="Upload and import hearing data from spreadsheets"
       />
       <div className="flex flex-col gap-4 p-4 lg:p-6">
-        <DashboardNav
-          userRole={"system_admin" as import("@/lib/roles").UserRole}
-        />
+        <DashboardNav userRole={userRole as UserRole} />
 
-        {/* Error banner */}
-        {error && (
-          <div className="rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive flex items-center justify-between">
-            <span>{error}</span>
-            <button onClick={() => setError("")}>
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        )}
-
-        {/* Progress */}
-        <div className="flex items-center gap-2">
-          {steps.map((s, i) => (
-            <div key={s.key} className="flex items-center gap-2">
-              <div
-                className={cn(
-                  "flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold",
-                  ci > stepOrder.indexOf(s.key)
-                    ? "bg-emerald-500 text-white"
-                    : step === s.key ||
-                        (s.key === "review" && step === "analyzing")
-                      ? "bg-primary text-primary-foreground"
-                      : "border text-muted-foreground",
-                )}
-              >
-                {ci > stepOrder.indexOf(s.key) ? (
-                  <CheckCircle2 className="h-3.5 w-3.5" />
-                ) : (
-                  i + 1
-                )}
-              </div>
-              <span
-                className={cn(
-                  "text-sm font-medium",
-                  step === s.key ? "text-foreground" : "text-muted-foreground",
-                )}
-              >
-                {s.label}
-              </span>
-              {i < steps.length - 1 && <div className="h-px w-8 bg-border" />}
+        {/* ── Step Indicator ── */}
+        <div className="flex flex-col sm:flex-row gap-2">
+          {STEP_LABELS.map((s) => (
+            <div
+              key={s.num}
+              className={cn(
+                "flex-1 rounded-lg px-4 py-3 text-center font-medium text-sm transition-all",
+                step === s.num
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : step > s.num
+                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400"
+                    : "bg-muted text-muted-foreground",
+              )}
+            >
+              <span className="font-bold mr-1.5">Step {s.num}</span>
+              {s.label}
             </div>
           ))}
         </div>
 
-        {/* ── Upload ── */}
-        {step === "upload" && (
-          <Card
-            className="border-dashed border-2"
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragOver(true);
-            }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={handleDrop}
-          >
-            <CardContent
-              className={cn(
-                "flex flex-col items-center py-16",
-                dragOver && "bg-primary/5",
-              )}
-            >
-              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-muted mb-4">
-                <FileSpreadsheet className="h-7 w-7 text-muted-foreground" />
+        {/* ════════════════ STEP 1: Upload ════════════════ */}
+        {step === 1 && (
+          <div className={CARD}>
+            <h2 className="text-lg font-semibold mb-1">
+              📁 Upload Spreadsheet
+            </h2>
+
+            {/* CSV notice */}
+            {file && (
+              <div className="mb-4 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 px-4 py-3 text-sm text-blue-800 dark:text-blue-300">
+                <strong>✅ Client-Side Parsing:</strong> XLSX files are parsed
+                in your browser using SheetJS. Hyperlinks will be automatically
+                extracted!
               </div>
-              <h2 className="text-lg font-semibold">Upload Hearing Schedule</h2>
-              <p className="text-sm text-muted-foreground mt-1 mb-6">
-                Drag & drop or click to browse
-              </p>
-              <label>
-                <Button asChild className="cursor-pointer gap-2">
-                  <span>
-                    <Upload className="h-4 w-4" /> Choose File
-                  </span>
-                </Button>
+            )}
+
+            {/* Upload zone */}
+            {!file && (
+              <div
+                className="border-2 border-dashed border-border rounded-xl p-12 text-center cursor-pointer hover:border-primary/50 hover:bg-muted/30 transition-all"
+                onClick={() => fileRef.current?.click()}
+                onDrop={handleDrop}
+                onDragOver={(e) => e.preventDefault()}
+              >
+                <div className="text-4xl mb-3">📄</div>
+                <div className="text-base font-medium text-foreground">
+                  Drag & drop your file here, or click to browse
+                </div>
+                <div className="text-sm text-muted-foreground mt-1">
+                  Supports .xlsx, .xls, and .csv files
+                </div>
                 <input
+                  ref={fileRef}
                   type="file"
                   accept=".xlsx,.xls,.csv"
-                  onChange={handleFileInput}
                   className="hidden"
+                  onChange={(e) =>
+                    e.target.files?.[0] && handleFile(e.target.files[0])
+                  }
                 />
-              </label>
-              <p className="text-xs text-muted-foreground mt-3">
-                Supports .xlsx, .xls, .csv
-              </p>
-            </CardContent>
-          </Card>
-        )}
+              </div>
+            )}
 
-        {/* ── Sheet Selection ── */}
-        {step === "sheets" && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">
-                Select Sheet to Import
-              </CardTitle>
-              <p className="text-sm text-muted-foreground">
-                {fileName} — {sheetNames.length} sheets found
-              </p>
-            </CardHeader>
-            <Separator />
-            <CardContent className="py-4 space-y-2">
-              {sheetNames.map((name, i) => {
-                const isRecommended =
-                  name.toLowerCase().includes("hearing") &&
-                  name.toLowerCase().includes("detail");
-                const isRaw = name.toLowerCase() === "raw";
-                return (
-                  <button
-                    key={i}
-                    onClick={() => loadSheetFromWb(wbRef, i)}
-                    className={cn(
-                      "w-full text-left rounded-lg border px-4 py-3 text-sm font-medium transition-colors hover:bg-muted/50",
-                      isRecommended && "border-primary/50 bg-primary/5",
-                    )}
-                  >
-                    <FileSpreadsheet className="inline h-4 w-4 mr-2 text-muted-foreground" />
-                    {name}
-                    {isRecommended && (
-                      <span className="ml-2 text-xs text-primary font-normal">
-                        (recommended — hearing data)
-                      </span>
-                    )}
-                    {isRaw && (
-                      <span className="ml-2 text-xs text-muted-foreground font-normal">
-                        (use for cross-sheet SSN lookup)
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </CardContent>
-          </Card>
-        )}
+            {/* File info */}
+            {file && (
+              <div className="flex items-center gap-3 rounded-lg bg-muted/50 px-4 py-3 mb-4">
+                <span className="text-2xl">📊</span>
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-sm truncate">
+                    {file.name}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {(file.size / 1024).toFixed(1)} KB
+                  </div>
+                </div>
+                <button
+                  className="text-muted-foreground hover:text-destructive text-lg"
+                  onClick={removeFile}
+                >
+                  ✕
+                </button>
+              </div>
+            )}
 
-        {/* ── Column Mapping ── */}
-        {step === "mapping" && (
-          <div className="space-y-4">
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between">
-                <div>
-                  <CardTitle className="text-base">Map Columns</CardTitle>
-                  <p className="text-sm text-muted-foreground mt-0.5">
-                    <FileSpreadsheet className="inline h-3.5 w-3.5 mr-1" />
-                    {fileName} → {sheetNames[selectedSheet]} — {headers.length}{" "}
-                    cols, {rawRows.length.toLocaleString()} rows · {mappedCount}{" "}
-                    mapped
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={handleReset}>
-                    <X className="h-3.5 w-3.5 mr-1" /> Cancel
-                  </Button>
-                  <Button
-                    size="sm"
-                    disabled={!requiredMapped}
-                    onClick={handleAnalyze}
-                    className="gap-1.5"
-                  >
-                    Analyze <ArrowRight className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-              </CardHeader>
-              <Separator />
-              <CardContent className="py-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {DB_FIELDS.map((f) => (
-                    <div key={f.key} className="flex items-center gap-3">
-                      <span
-                        className={cn(
-                          "w-44 shrink-0 text-sm",
-                          f.required
-                            ? "font-semibold"
-                            : "text-muted-foreground",
-                        )}
-                      >
-                        {f.label}
-                      </span>
+            {/* Parsing spinner */}
+            {parsing && (
+              <div className="flex items-center justify-center gap-3 py-8">
+                <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                <span className="text-sm text-muted-foreground">
+                  Reading file...
+                </span>
+              </div>
+            )}
+
+            {/* Sheet selection */}
+            {sheets.length > 1 && (
+              <div className="mb-4 space-y-2">
+                <label className="text-sm font-medium">
+                  📑 Select Sheet to Import:
+                </label>
+                <select
+                  className="w-full rounded-lg border bg-background px-3 py-2 text-sm"
+                  value={selectedSheet}
+                  onChange={(e) => selectSheet(Number(e.target.value))}
+                >
+                  <option value={-1}>-- Select a sheet --</option>
+                  {sheets.map((s, i) => (
+                    <option key={i} value={i}>
+                      {s.name} ({s.rows.length} rows)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Sheet info */}
+            {currentSheet && (
+              <div className="mb-4 text-sm text-muted-foreground">
+                Sheet <strong>&qout;{currentSheet.name}&qout;</strong>:{" "}
+                {currentSheet.headers.length} columns,{" "}
+                {currentSheet.rows.length} rows
+              </div>
+            )}
+
+            {/* Cross-sheet lookup */}
+            {sheets.length > 1 && selectedSheet >= 0 && (
+              <div className="mb-4 rounded-lg border p-4 space-y-3">
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={lookup.enabled}
+                    onChange={(e) => {
+                      setLookup((p) => ({ ...p, enabled: e.target.checked }));
+                      setLookupBuilt(false);
+                    }}
+                    className="mt-0.5 accent-primary"
+                  />
+                  <div>
+                    <div className="font-medium text-sm">
+                      🔗 Enable Cross-Sheet Lookup
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      Pull SSN, Locations, Download Type, and Status Date from
+                      another sheet by matching Claimant + Hearing Date
+                    </div>
+                  </div>
+                </label>
+
+                {lookup.enabled && (
+                  <div className="space-y-3 pl-7">
+                    <div>
+                      <label className="text-xs font-medium">
+                        Lookup Sheet (contains SSN/Locations):
+                      </label>
                       <select
-                        value={mapping[f.key] ?? ""}
-                        onChange={(e) =>
-                          setMapping((p) => ({
-                            ...p,
-                            [f.key]:
-                              e.target.value === ""
-                                ? null
-                                : Number(e.target.value),
-                          }))
-                        }
-                        className={cn(
-                          "flex-1 h-9 rounded-md border px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring",
-                          mapping[f.key] != null
-                            ? "border-emerald-300 bg-emerald-50/50 dark:bg-emerald-950/20 dark:border-emerald-800"
-                            : "border-input bg-background",
-                        )}
+                        className="w-full rounded-lg border bg-background px-3 py-2 text-sm mt-1"
+                        value={lookup.sheetIndex ?? ""}
+                        onChange={(e) => {
+                          const idx = e.target.value
+                            ? Number(e.target.value)
+                            : null;
+                          if (idx !== null && sheets[idx]) {
+                            const h = sheets[idx].headers.map((s) =>
+                              s.toLowerCase().trim(),
+                            );
+                            const find = (aliases: string[]) => {
+                              for (const a of aliases) {
+                                const i = h.indexOf(a);
+                                if (i >= 0) return sheets[idx].headers[i];
+                              }
+                              return "";
+                            };
+                            setLookup((p) => ({
+                              ...p,
+                              sheetIndex: idx,
+                              ssnCol: find([
+                                "ssn",
+                                "ssn last 4",
+                                "ssn_last_4",
+                                "last 4 ssn",
+                                "social",
+                              ]),
+                              claimantLocationCol: find([
+                                "claimant location",
+                                "claimant_location",
+                                "cl location",
+                              ]),
+                              repLocationCol: find([
+                                "rep location",
+                                "representative location",
+                                "representative_location",
+                              ]),
+                              downloadTypeCol: find([
+                                "download type",
+                                "download_type",
+                              ]),
+                              statusDateCol: find([
+                                "status date",
+                                "status_date",
+                              ]),
+                              claimantCol: find([
+                                "claimant",
+                                "claimant name",
+                                "name",
+                                "client name",
+                              ]),
+                              dateCol: find([
+                                "hearing date",
+                                "date",
+                                "hearing_date",
+                                "hrg date",
+                              ]),
+                              claimTypeCol: find([
+                                "claim type",
+                                "claim_type",
+                                "type",
+                              ]),
+                            }));
+                          } else {
+                            setLookup((p) => ({ ...p, sheetIndex: idx }));
+                          }
+                          setLookupBuilt(false);
+                        }}
                       >
-                        <option value="">— Skip —</option>
-                        {headers.map((h, i) => (
-                          <option key={i} value={i}>
-                            Col {String.fromCharCode(65 + (i % 26))}: {h}
-                          </option>
-                        ))}
+                        <option value="">-- Select sheet --</option>
+                        {sheets.map(
+                          (s, i) =>
+                            i !== selectedSheet && (
+                              <option key={i} value={i}>
+                                {s.name} ({s.rows.length} rows)
+                              </option>
+                            ),
+                        )}
                       </select>
                     </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
 
-            {/* Cross-Sheet Lookup */}
-            {sheetNames.length > 1 && (
-              <Card>
-                <CardHeader className="py-3">
-                  <label className="flex items-center gap-2.5 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={enableCrossSheet}
-                      onChange={(e) => setEnableCrossSheet(e.target.checked)}
-                      className="h-4 w-4 accent-primary"
-                    />
-                    <CardTitle className="text-sm">
-                      🔗 Cross-Sheet Lookup
-                    </CardTitle>
-                    <span className="text-xs text-muted-foreground font-normal">
-                      Pull SSN, locations, download type, status date from
-                      another sheet (e.g. RAW)
-                    </span>
-                  </label>
-                </CardHeader>
-                {enableCrossSheet && (
-                  <>
-                    <Separator />
-                    <CardContent className="py-4 space-y-3">
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                        <div>
-                          <label className="mb-1 block text-xs font-medium">
-                            Lookup Sheet
-                          </label>
-                          <select
-                            value={crossSheetIdx}
+                    {lookupSheet && (
+                      <>
+                        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+                          {[
+                            { key: "ssnCol" as const, label: "SSN Column" },
+                            {
+                              key: "claimantLocationCol" as const,
+                              label: "Claimant Location (optional)",
+                            },
+                            {
+                              key: "repLocationCol" as const,
+                              label: "Rep Location (optional)",
+                            },
+                            {
+                              key: "downloadTypeCol" as const,
+                              label: "Download Type (optional)",
+                            },
+                            {
+                              key: "statusDateCol" as const,
+                              label: "Status Date (optional)",
+                            },
+                          ].map((f) => (
+                            <div key={f.key}>
+                              <label className="text-xs font-medium">
+                                {f.label}:
+                              </label>
+                              <select
+                                className="w-full rounded-lg border bg-background px-3 py-2 text-sm mt-1"
+                                value={lookup[f.key]}
+                                onChange={(e) =>
+                                  setLookup((p) => ({
+                                    ...p,
+                                    [f.key]: e.target.value,
+                                  }))
+                                }
+                              >
+                                <option value="">
+                                  --{" "}
+                                  {f.label.includes("optional")
+                                    ? "Don't import"
+                                    : "Select column"}{" "}
+                                  --
+                                </option>
+                                {lookupSheet.headers.map((h, i) => (
+                                  <option key={i} value={h}>
+                                    {h}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-xs font-medium">
+                              Claimant Column (in lookup sheet):
+                            </label>
+                            <select
+                              className="w-full rounded-lg border bg-background px-3 py-2 text-sm mt-1"
+                              value={lookup.claimantCol}
+                              onChange={(e) =>
+                                setLookup((p) => ({
+                                  ...p,
+                                  claimantCol: e.target.value,
+                                }))
+                              }
+                            >
+                              <option value="">-- Select column --</option>
+                              {lookupSheet.headers.map((h, i) => (
+                                <option key={i} value={h}>
+                                  {h}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-xs font-medium">
+                              Hearing Date Column (in lookup sheet):
+                            </label>
+                            <select
+                              className="w-full rounded-lg border bg-background px-3 py-2 text-sm mt-1"
+                              value={lookup.dateCol}
+                              onChange={(e) =>
+                                setLookup((p) => ({
+                                  ...p,
+                                  dateCol: e.target.value,
+                                }))
+                              }
+                            >
+                              <option value="">-- Select column --</option>
+                              {lookupSheet.headers.map((h, i) => (
+                                <option key={i} value={h}>
+                                  {h}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+
+                        <label className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={lookup.useClaimTypeMatch}
                             onChange={(e) =>
-                              loadCrossSheet(Number(e.target.value))
+                              setLookup((p) => ({
+                                ...p,
+                                useClaimTypeMatch: e.target.checked,
+                              }))
                             }
-                            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                          >
-                            <option value={-1}>— Select —</option>
-                            {sheetNames.map(
-                              (n, i) =>
-                                i !== selectedSheet && (
-                                  <option key={i} value={i}>
-                                    {n}
-                                  </option>
-                                ),
-                            )}
-                          </select>
-                        </div>
-                        {crossSheetHeaders.length > 0 && (
-                          <>
-                            <div>
-                              <label className="mb-1 block text-xs font-medium">
-                                Claimant Col *
-                              </label>
-                              <select
-                                value={crossSheetClaimantCol}
-                                onChange={(e) =>
-                                  setCrossSheetClaimantCol(
-                                    Number(e.target.value),
-                                  )
-                                }
-                                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                              >
-                                <option value={-1}>—</option>
-                                {crossSheetHeaders.map((h, i) => (
-                                  <option key={i} value={i}>
-                                    {h}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                            <div>
-                              <label className="mb-1 block text-xs font-medium">
-                                Date Col
-                              </label>
-                              <select
-                                value={crossSheetDateCol}
-                                onChange={(e) =>
-                                  setCrossSheetDateCol(Number(e.target.value))
-                                }
-                                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                              >
-                                <option value={-1}>—</option>
-                                {crossSheetHeaders.map((h, i) => (
-                                  <option key={i} value={i}>
-                                    {h}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                            <div>
-                              <label className="mb-1 block text-xs font-medium">
-                                SSN Col
-                              </label>
-                              <select
-                                value={crossSheetSsnCol}
-                                onChange={(e) =>
-                                  setCrossSheetSsnCol(Number(e.target.value))
-                                }
-                                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                              >
-                                <option value={-1}>—</option>
-                                {crossSheetHeaders.map((h, i) => (
-                                  <option key={i} value={i}>
-                                    {h}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                          </>
+                            className="accent-primary"
+                          />
+                          Also match by Claim Type (for duplicate claimants with
+                          same date)
+                        </label>
+                        {lookup.useClaimTypeMatch && (
+                          <div>
+                            <label className="text-xs font-medium">
+                              Claim Type Column:
+                            </label>
+                            <select
+                              className="w-full rounded-lg border bg-background px-3 py-2 text-sm mt-1"
+                              value={lookup.claimTypeCol}
+                              onChange={(e) =>
+                                setLookup((p) => ({
+                                  ...p,
+                                  claimTypeCol: e.target.value,
+                                }))
+                              }
+                            >
+                              <option value="">-- Select column --</option>
+                              {lookupSheet.headers.map((h, i) => (
+                                <option key={i} value={h}>
+                                  {h}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
                         )}
-                      </div>
-                      {crossSheetHeaders.length > 0 && (
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                          <div>
-                            <label className="mb-1 block text-xs font-medium">
-                              Claimant Location
-                            </label>
-                            <select
-                              value={crossSheetLocClaimantCol}
-                              onChange={(e) =>
-                                setCrossSheetLocClaimantCol(
-                                  Number(e.target.value),
-                                )
-                              }
-                              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                            >
-                              <option value={-1}>— Skip —</option>
-                              {crossSheetHeaders.map((h, i) => (
-                                <option key={i} value={i}>
-                                  {h}
-                                </option>
-                              ))}
-                            </select>
+
+                        {lookupBuilt && (
+                          <div className="text-sm text-emerald-600 dark:text-emerald-400 font-medium">
+                            ✅ Lookup table built: {lookupTable.size} entries
                           </div>
-                          <div>
-                            <label className="mb-1 block text-xs font-medium">
-                              Rep Location
-                            </label>
-                            <select
-                              value={crossSheetLocRepCol}
-                              onChange={(e) =>
-                                setCrossSheetLocRepCol(Number(e.target.value))
-                              }
-                              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                            >
-                              <option value={-1}>— Skip —</option>
-                              {crossSheetHeaders.map((h, i) => (
-                                <option key={i} value={i}>
-                                  {h}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                          <div>
-                            <label className="mb-1 block text-xs font-medium">
-                              Download Type
-                            </label>
-                            <select
-                              value={crossSheetDownloadCol}
-                              onChange={(e) =>
-                                setCrossSheetDownloadCol(Number(e.target.value))
-                              }
-                              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                            >
-                              <option value={-1}>— Skip —</option>
-                              {crossSheetHeaders.map((h, i) => (
-                                <option key={i} value={i}>
-                                  {h}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                          <div>
-                            <label className="mb-1 block text-xs font-medium">
-                              Status Date
-                            </label>
-                            <select
-                              value={crossSheetStatusDateCol}
-                              onChange={(e) =>
-                                setCrossSheetStatusDateCol(
-                                  Number(e.target.value),
-                                )
-                              }
-                              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                            >
-                              <option value={-1}>— Skip —</option>
-                              {crossSheetHeaders.map((h, i) => (
-                                <option key={i} value={i}>
-                                  {h}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        </div>
-                      )}
-                    </CardContent>
-                  </>
+                        )}
+
+                        <button
+                          className={BTN_SECONDARY}
+                          onClick={buildLookupTable}
+                        >
+                          🔍 Build Lookup Table
+                        </button>
+                      </>
+                    )}
+                  </div>
                 )}
-              </Card>
+              </div>
+            )}
+
+            {/* Bottom actions */}
+            <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+              <button className={BTN_OUTLINE} onClick={downloadTemplate}>
+                📥 Download Template
+              </button>
+              <button
+                className={BTN_PRIMARY}
+                disabled={!canProceedToMap}
+                onClick={() => setStep(2)}
+              >
+                Next: Map Columns →
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ════════════════ STEP 2: Map Columns ════════════════ */}
+        {step === 2 && currentSheet && (
+          <div className={CARD}>
+            <h2 className="text-lg font-semibold mb-1">
+              🔗 Map Columns to Fields
+            </h2>
+            <p className="text-sm text-muted-foreground mb-5">
+              Match your spreadsheet columns to the hearing database fields.
+              Fields marked with{" "}
+              <span className="text-destructive font-bold">*</span> are
+              required.
+              <span className="ml-2 text-xs text-emerald-600 dark:text-emerald-400">
+                {mappedCount} fields mapped
+              </span>
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {SORTED_FIELDS.map(([field, label]) => (
+                <div key={field} className="space-y-1">
+                  <label
+                    className={cn(
+                      "text-sm font-medium",
+                      label.includes("*") && "text-destructive",
+                    )}
+                  >
+                    {label}
+                  </label>
+                  <select
+                    className={cn(
+                      "w-full rounded-lg border bg-background px-3 py-2 text-sm",
+                      mapping[field] !== undefined &&
+                        "border-emerald-500 bg-emerald-50/50 dark:bg-emerald-950/20",
+                    )}
+                    value={mapping[field] ?? ""}
+                    onChange={(e) =>
+                      updateMapping(
+                        field,
+                        e.target.value === "" ? null : Number(e.target.value),
+                      )
+                    }
+                  >
+                    <option value="">-- Don&apos;t import --</option>
+                    {currentSheet.headers.map((h, i) => (
+                      <option key={i} value={i}>
+                        {h}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-6 flex items-center justify-between gap-3">
+              <button className={BTN_SECONDARY} onClick={() => setStep(1)}>
+                ← Back
+              </button>
+              <button className={BTN_PRIMARY} onClick={goToCheckDuplicates}>
+                Next: Check Duplicates →
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ════════════════ STEP 3: Check Duplicates ════════════════ */}
+        {step === 3 && (
+          <div className={CARD}>
+            <h2 className="text-lg font-semibold mb-1">
+              🔍 Check for Duplicates
+            </h2>
+
+            {checking && (
+              <div className="flex flex-col items-center gap-3 py-12">
+                <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                <span className="text-sm text-muted-foreground">
+                  Checking database for existing records...
+                </span>
+                {checkProgress > 0 && (
+                  <div className="w-full max-w-md space-y-1">
+                    <div className="h-2 rounded-full bg-muted overflow-hidden">
+                      <div
+                        className="h-full bg-primary rounded-full transition-all duration-300"
+                        style={{ width: `${checkProgress}%` }}
+                      />
+                    </div>
+                    <div className="text-xs text-center text-muted-foreground">
+                      {checkProgress}%
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {checkResult && (
+              <>
+                {/* Summary stats */}
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-4">
+                  <div className="rounded-lg bg-muted/50 p-3 text-center">
+                    <div className="text-2xl font-bold">
+                      {checkResult.newRecords.length +
+                        checkResult.duplicateRecords.length +
+                        checkResult.rescheduledRecords.length +
+                        checkResult.skippedRecords.length}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      Total Rows
+                    </div>
+                  </div>
+                  <div className="rounded-lg bg-emerald-50 dark:bg-emerald-950/30 p-3 text-center">
+                    <div className="text-2xl font-bold text-emerald-700 dark:text-emerald-400">
+                      {checkResult.newRecords.length}
+                    </div>
+                    <div className="text-xs text-emerald-600 dark:text-emerald-500">
+                      New Records
+                    </div>
+                  </div>
+                  <div className="rounded-lg bg-amber-50 dark:bg-amber-950/30 p-3 text-center">
+                    <div className="text-2xl font-bold text-amber-700 dark:text-amber-400">
+                      {checkResult.duplicateRecords.length}
+                    </div>
+                    <div className="text-xs text-amber-600 dark:text-amber-500">
+                      Duplicates
+                      {checkResult.duplicateRecords.filter((r) => r.has_changes)
+                        .length > 0 && (
+                        <span className="block text-amber-800 dark:text-amber-300 font-semibold">
+                          {
+                            checkResult.duplicateRecords.filter(
+                              (r) => r.has_changes,
+                            ).length
+                          }{" "}
+                          with changes
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {checkResult.rescheduledRecords.length > 0 && (
+                    <div className="rounded-lg bg-violet-50 dark:bg-violet-950/30 p-3 text-center">
+                      <div className="text-2xl font-bold text-violet-700 dark:text-violet-400">
+                        {checkResult.rescheduledRecords.length}
+                      </div>
+                      <div className="text-xs text-violet-600 dark:text-violet-500">
+                        🔄 Rescheduled
+                      </div>
+                    </div>
+                  )}
+                  <div className="rounded-lg bg-gray-50 dark:bg-gray-900/30 p-3 text-center">
+                    <div className="text-2xl font-bold text-gray-600 dark:text-gray-400">
+                      {checkResult.skippedRecords.length}
+                    </div>
+                    <div className="text-xs text-gray-500">Skipped</div>
+                  </div>
+                </div>
+
+                {/* Debug: Field change breakdown — shows which fields are triggering "with changes" */}
+                {Object.keys(fieldChangeSummary).length > 0 &&
+                  checkResult.duplicateRecords.filter((r) => r.has_changes)
+                    .length > 0 && (
+                    <div className="mb-4 rounded-lg bg-slate-50 dark:bg-slate-900/30 border border-slate-200 dark:border-slate-700 px-4 py-3">
+                      <div className="text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5">
+                        📊 Fields triggering changes in duplicates:
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {Object.entries(fieldChangeSummary)
+                          .sort(([, a], [, b]) => b - a)
+                          .map(([field, count]) => (
+                            <span
+                              key={field}
+                              className="inline-flex items-center gap-1 rounded-full bg-slate-200 dark:bg-slate-700 px-2.5 py-0.5 text-xs text-slate-700 dark:text-slate-300"
+                            >
+                              {DB_FIELDS[field] || field}:{" "}
+                              <strong>{count}</strong>
+                            </span>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+
+                {/* Update duplicates option */}
+                {checkResult.duplicateRecords.length > 0 && (
+                  <div className="mb-4 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 p-4 space-y-3">
+                    <label className="flex items-start gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={updateDuplicates}
+                        onChange={(e) => setUpdateDuplicates(e.target.checked)}
+                        className="mt-0.5 accent-amber-600"
+                      />
+                      <div>
+                        <div className="font-medium text-sm text-amber-900 dark:text-amber-200">
+                          🔄 Update existing records with new data
+                        </div>
+                        <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
+                          When enabled, duplicate records will be updated with
+                          new values from the import file. Only fields that have
+                          values in the import will be updated; existing data
+                          won&apos;t be cleared.
+                        </p>
+                      </div>
+                    </label>
+                  </div>
+                )}
+
+                {/* Preserve existing assignments option — shown when updates or rescheduled exist */}
+                {(checkResult.duplicateRecords.length > 0 ||
+                  checkResult.rescheduledRecords.length > 0) && (
+                  <div className="mb-4 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-300 dark:border-blue-800 p-4">
+                    <label className="flex items-start gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={preserveExisting}
+                        onChange={(e) => setPreserveExisting(e.target.checked)}
+                        className="mt-0.5 accent-blue-600"
+                      />
+                      <div>
+                        <div className="font-medium text-sm text-blue-900 dark:text-blue-200">
+                          🛡️ Preserve existing assignments
+                        </div>
+                        <p className="text-xs text-blue-700 dark:text-blue-400 mt-1">
+                          When enabled, fields that already have values in the
+                          database (Rep, MR Team, MR Status, Brief, Decision,
+                          etc.) will NOT be overwritten by the import — even if
+                          the import file has different values. Only empty/unset
+                          fields in the DB will be filled in. Turn off to allow
+                          the import to overwrite everything.
+                        </p>
+                      </div>
+                    </label>
+                  </div>
+                )}
+
+                {/* Tabs */}
+                <div className="flex flex-wrap gap-1.5 mb-3">
+                  <button
+                    className={cn(
+                      "px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
+                      dupTab === "new"
+                        ? "bg-emerald-600 text-white"
+                        : "bg-muted text-muted-foreground hover:bg-muted/80",
+                    )}
+                    onClick={() => setDupTab("new")}
+                  >
+                    ✅ New Records ({checkResult.newRecords.length})
+                  </button>
+                  <button
+                    className={cn(
+                      "px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
+                      dupTab === "duplicate"
+                        ? "bg-amber-600 text-white"
+                        : "bg-muted text-muted-foreground hover:bg-muted/80",
+                    )}
+                    onClick={() => setDupTab("duplicate")}
+                  >
+                    ⚠️ Duplicates ({checkResult.duplicateRecords.length})
+                  </button>
+                  {updateDuplicates &&
+                    checkResult.duplicateRecords.length > 0 && (
+                      <button
+                        className={cn(
+                          "px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
+                          dupTab === "update-preview"
+                            ? "bg-blue-600 text-white"
+                            : "bg-muted text-muted-foreground hover:bg-muted/80",
+                        )}
+                        onClick={() => setDupTab("update-preview")}
+                      >
+                        🔄 Update Preview ({checkResult.duplicateRecords.length}
+                        )
+                      </button>
+                    )}
+                  {checkResult.rescheduledRecords.length > 0 && (
+                    <button
+                      className={cn(
+                        "px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
+                        dupTab === "rescheduled"
+                          ? "bg-violet-600 text-white"
+                          : "bg-muted text-muted-foreground hover:bg-muted/80",
+                      )}
+                      onClick={() => setDupTab("rescheduled")}
+                    >
+                      🔄 Rescheduled ({checkResult.rescheduledRecords.length})
+                    </button>
+                  )}
+                  <button
+                    className={cn(
+                      "px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
+                      dupTab === "skipped"
+                        ? "bg-gray-600 text-white"
+                        : "bg-muted text-muted-foreground hover:bg-muted/80",
+                    )}
+                    onClick={() => setDupTab("skipped")}
+                  >
+                    ⏭️ Skipped ({checkResult.skippedRecords.length})
+                  </button>
+                </div>
+
+                {/* Preview table — shows all mapped columns */}
+                {(() => {
+                  // Build ordered column list from mapping
+                  const mappedCols = Object.entries(mapping)
+                    .filter(([, idx]) => idx !== null && idx !== undefined)
+                    .sort(([, a], [, b]) => (a as number) - (b as number))
+                    .map(([field, idx]) => ({
+                      field,
+                      idx: idx as number,
+                      label: DB_FIELDS[field] || field,
+                    }));
+
+                  const activeRecords =
+                    dupTab === "new"
+                      ? checkResult.newRecords
+                      : dupTab === "duplicate" || dupTab === "update-preview"
+                        ? checkResult.duplicateRecords
+                        : dupTab === "rescheduled"
+                          ? checkResult.rescheduledRecords
+                          : checkResult.skippedRecords;
+
+                  // Format cell for display — converts Excel serial values
+                  const fmtCell = (field: string, raw: unknown): string => {
+                    const s = String(raw ?? "").trim();
+                    if (!s) return "—";
+                    const n = Number(s);
+
+                    // Time fields: Excel serial time (0.0–1.0) → HH:MM AM/PM
+                    if (
+                      field === "hearing_time" &&
+                      !isNaN(n) &&
+                      n >= 0 &&
+                      n < 1
+                    ) {
+                      const totalMin = Math.round(n * 1440);
+                      let h = Math.floor(totalMin / 60);
+                      const m = totalMin % 60;
+                      const ampm = h >= 12 ? "PM" : "AM";
+                      if (h > 12) h -= 12;
+                      if (h === 0) h = 12;
+                      return `${h}:${String(m).padStart(2, "0")} ${ampm}`;
+                    }
+
+                    // Date fields: Excel serial date (40000–60000) → MM/DD/YYYY
+                    if (
+                      (field === "hearing_date" ||
+                        field === "status_date" ||
+                        field === "entered_hearing_level_date" ||
+                        field === "post_hrg_deadline") &&
+                      !isNaN(n) &&
+                      n > 40000 &&
+                      n < 60000
+                    ) {
+                      const d = new Date((n - 25569) * 86400000);
+                      return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+                    }
+
+                    // Boolean fields
+                    if (
+                      [
+                        "phi_sheet_complete",
+                        "rep_docs_complete",
+                        "fee_agreement_complete",
+                        "five_day_notice",
+                        "task_assigned",
+                      ].includes(field)
+                    ) {
+                      return s === "1" ||
+                        s.toLowerCase() === "true" ||
+                        s.toLowerCase() === "yes"
+                        ? "✓"
+                        : "—";
+                    }
+
+                    // SSN: show last 4
+                    if (field === "ssn_last_4") {
+                      const digits = s.replace(/\D/g, "").slice(-4);
+                      return digits.length === 4 ? digits : s;
+                    }
+
+                    return s;
+                  };
+
+                  return (
+                    <div className="max-h-96 overflow-auto rounded-lg border">
+                      <table className="w-full text-xs">
+                        <thead className="sticky top-0 bg-muted z-10">
+                          <tr>
+                            <th className="px-3 py-2 text-left font-medium whitespace-nowrap">
+                              Row
+                            </th>
+                            {mappedCols.map((col) => (
+                              <th
+                                key={col.field}
+                                className="px-3 py-2 text-left font-medium whitespace-nowrap"
+                              >
+                                {col.label.replace(" *", "")}
+                              </th>
+                            ))}
+                            {dupTab === "skipped" && (
+                              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">
+                                Reason
+                              </th>
+                            )}
+                            {dupTab === "rescheduled" && (
+                              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">
+                                Original Record
+                              </th>
+                            )}
+                            {(dupTab === "duplicate" ||
+                              dupTab === "update-preview") && (
+                              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">
+                                Changes
+                              </th>
+                            )}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {activeRecords.map((r, i) => {
+                            const row = r.data as string[];
+                            return (
+                              <tr
+                                key={i}
+                                className={cn(
+                                  "border-t hover:bg-muted/50",
+                                  (dupTab === "duplicate" ||
+                                    dupTab === "update-preview") &&
+                                    r.has_changes &&
+                                    "bg-amber-50/50 dark:bg-amber-950/10",
+                                )}
+                              >
+                                <td className="px-3 py-1.5 text-muted-foreground">
+                                  {r.row}
+                                </td>
+                                {mappedCols.map((col) => (
+                                  <td
+                                    key={col.field}
+                                    className={cn(
+                                      "px-3 py-1.5 max-w-48 truncate",
+                                      col.field === "claimant" && "font-medium",
+                                      col.field === "ssn_last_4" && "font-mono",
+                                      (dupTab === "duplicate" ||
+                                        dupTab === "update-preview") &&
+                                        r.changed_fields?.includes(col.field) &&
+                                        "text-amber-700 dark:text-amber-400 font-semibold",
+                                    )}
+                                  >
+                                    {fmtCell(col.field, row[col.idx])}
+                                  </td>
+                                ))}
+                                {dupTab === "skipped" && (
+                                  <td className="px-3 py-1.5 text-destructive">
+                                    {r.reason}
+                                  </td>
+                                )}
+                                {dupTab === "rescheduled" && (
+                                  <td className="px-3 py-1.5 text-violet-600 dark:text-violet-400 text-xs">
+                                    Original: {r.original_claimant} (
+                                    {r.original_date})
+                                  </td>
+                                )}
+                                {(dupTab === "duplicate" ||
+                                  dupTab === "update-preview") && (
+                                  <td className="px-3 py-1.5 text-xs whitespace-nowrap">
+                                    {r.has_changes ? (
+                                      <span className="text-amber-600 dark:text-amber-400 font-medium">
+                                        {r.changed_fields?.length} changed
+                                      </span>
+                                    ) : (
+                                      <span className="text-muted-foreground">
+                                        No changes
+                                      </span>
+                                    )}
+                                  </td>
+                                )}
+                              </tr>
+                            );
+                          })}
+                          {activeRecords.length === 0 && (
+                            <tr>
+                              <td
+                                colSpan={mappedCols.length + 2}
+                                className="px-3 py-6 text-center text-muted-foreground"
+                              >
+                                No records
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })()}
+
+                {/* Bottom actions */}
+                <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+                  <button className={BTN_SECONDARY} onClick={() => setStep(2)}>
+                    ← Back
+                  </button>
+                  <div className="flex flex-wrap gap-3">
+                    {checkResult.rescheduledRecords.length > 0 && (
+                      <button
+                        className={cn(
+                          BTN,
+                          "bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed",
+                        )}
+                        onClick={processRescheduled}
+                      >
+                        🔄 Update {checkResult.rescheduledRecords.length}{" "}
+                        Rescheduled
+                      </button>
+                    )}
+                    {updateDuplicates &&
+                      checkResult.duplicateRecords.filter((r) => r.has_changes)
+                        .length > 0 && (
+                        <button
+                          className={BTN_WARNING}
+                          onClick={updateDuplicateRecords}
+                        >
+                          🔄 Update{" "}
+                          {
+                            checkResult.duplicateRecords.filter(
+                              (r) => r.has_changes,
+                            ).length
+                          }{" "}
+                          Duplicates
+                        </button>
+                      )}
+                    <button
+                      className={BTN_SUCCESS}
+                      disabled={checkResult.newRecords.length === 0}
+                      onClick={importRecords}
+                    >
+                      ✅ Import {checkResult.newRecords.length} New Hearings
+                    </button>
+                  </div>
+                </div>
+              </>
             )}
           </div>
         )}
 
-        {/* ── Analyzing ── */}
-        {step === "analyzing" && (
-          <Card>
-            <CardContent className="flex flex-col items-center py-16">
-              <Loader2 className="h-10 w-10 animate-spin text-primary mb-4" />
-              <h2 className="text-lg font-semibold">Analyzing...</h2>
-              <p className="text-sm text-muted-foreground mt-1">
-                {analyzeProgress}
-              </p>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* ── Review ── */}
-        {step === "review" && analysis && (
-          <div className="space-y-4">
-            <Card>
-              <div className="flex items-center gap-1.5 p-3 border-b overflow-x-auto">
-                {[
-                  {
-                    key: "new" as const,
-                    label: "New",
-                    count: analysis.new.length,
-                    icon: CheckCircle2,
-                    color: "text-emerald-600",
-                  },
-                  {
-                    key: "duplicate" as const,
-                    label: "Duplicates",
-                    count: analysis.dup.length,
-                    icon: AlertTriangle,
-                    color: "text-amber-600",
-                  },
-                  {
-                    key: "rescheduled" as const,
-                    label: "Rescheduled",
-                    count: analysis.resched.length,
-                    icon: RefreshCw,
-                    color: "text-blue-600",
-                  },
-                  {
-                    key: "notInSheet" as const,
-                    label: "Not in Sheet",
-                    count: analysis.notInSheet.length,
-                    icon: Search,
-                    color: "text-purple-600",
-                  },
-                  {
-                    key: "skipped" as const,
-                    label: "Skipped",
-                    count: analysis.skip.length,
-                    icon: X,
-                    color: "text-muted-foreground",
-                  },
-                ].map((tab) => {
-                  const Icon = tab.icon;
-                  return (
-                    <button
-                      key={tab.key}
-                      onClick={() => setReviewTab(tab.key)}
-                      className={cn(
-                        "flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors",
-                        reviewTab === tab.key
-                          ? "bg-primary text-primary-foreground"
-                          : "text-muted-foreground hover:bg-muted",
-                      )}
-                    >
-                      <Icon
-                        className={cn(
-                          "h-3.5 w-3.5",
-                          reviewTab === tab.key ? "" : tab.color,
-                        )}
-                      />
-                      {tab.label}
-                      <span
-                        className={cn(
-                          "rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums",
-                          reviewTab === tab.key
-                            ? "bg-primary-foreground/20"
-                            : "bg-muted",
-                        )}
-                      >
-                        {tab.count.toLocaleString()}
-                      </span>
-                    </button>
-                  );
-                })}
+        {/* ════════════════ STEP 4: Import Progress ════════════════ */}
+        {step === 4 && (
+          <div className={CARD}>
+            <h2 className="text-lg font-semibold mb-4">
+              📥 Importing Hearings
+            </h2>
+            <div className="space-y-4">
+              <div className="h-4 rounded-full bg-muted overflow-hidden">
+                <div
+                  className="h-full bg-primary rounded-full transition-all duration-300 ease-out"
+                  style={{ width: `${importProgress}%` }}
+                />
               </div>
-              <CardContent className="py-0">
-                {/* Reusable preview table for rows with mapped data */}
-                {(reviewTab === "new" ||
-                  reviewTab === "duplicate" ||
-                  reviewTab === "rescheduled" ||
-                  reviewTab === "skipped") &&
-                  (() => {
-                    const rows: (MappedRow & {
-                      existingId?: number;
-                      originalId?: number;
-                      baseName?: string;
-                      reason?: string;
-                    })[] =
-                      reviewTab === "new"
-                        ? analysis.new
-                        : reviewTab === "duplicate"
-                          ? analysis.dup
-                          : reviewTab === "rescheduled"
-                            ? analysis.resched
-                            : analysis.skip;
-                    const displayFields = DB_FIELDS.filter(
-                      (f) =>
-                        mapping[f.key] != null || f.key === "representative",
-                    );
-                    const maxRows = 500; // virtualize for performance
-                    const shown = rows.slice(0, maxRows);
-
-                    if (rows.length === 0) {
-                      return (
-                        <div className="py-8 text-center text-sm text-muted-foreground">
-                          No{" "}
-                          {reviewTab === "new"
-                            ? "new"
-                            : reviewTab === "duplicate"
-                              ? "duplicate"
-                              : reviewTab === "rescheduled"
-                                ? "rescheduled"
-                                : "skipped"}{" "}
-                          records
-                        </div>
-                      );
-                    }
-
-                    return (
-                      <div>
-                        {/* Summary banner */}
-                        <div
-                          className={cn(
-                            "px-4 py-2.5 text-sm font-medium border-b",
-                            reviewTab === "new"
-                              ? "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/20 dark:text-emerald-300"
-                              : reviewTab === "duplicate"
-                                ? "bg-amber-50 text-amber-800 dark:bg-amber-950/20 dark:text-amber-300"
-                                : reviewTab === "rescheduled"
-                                  ? "bg-blue-50 text-blue-800 dark:bg-blue-950/20 dark:text-blue-300"
-                                  : "bg-muted text-muted-foreground",
-                          )}
-                        >
-                          {reviewTab === "new" &&
-                            `${rows.length.toLocaleString()} new records ready to import`}
-                          {reviewTab === "duplicate" &&
-                            `${rows.length.toLocaleString()} existing records will be updated (rep assignments preserved unless mapped)`}
-                          {reviewTab === "rescheduled" &&
-                            `${rows.length} rescheduled records matched to originals`}
-                          {reviewTab === "skipped" &&
-                            `${rows.length} rows skipped`}
-                          {rows.length > maxRows && (
-                            <span className="ml-2 text-xs opacity-70">
-                              (showing first {maxRows})
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Scrollable data table */}
-                        <div className="overflow-auto max-h-100">
-                          <table className="w-full text-xs">
-                            <thead className="sticky top-0 z-10">
-                              <tr className="bg-muted/80 backdrop-blur-sm">
-                                <th className="px-2 py-1.5 text-left font-semibold text-muted-foreground whitespace-nowrap">
-                                  #
-                                </th>
-                                {reviewTab === "rescheduled" && (
-                                  <th className="px-2 py-1.5 text-left font-semibold text-muted-foreground whitespace-nowrap">
-                                    Original ID
-                                  </th>
-                                )}
-                                {reviewTab === "duplicate" && (
-                                  <th className="px-2 py-1.5 text-left font-semibold text-muted-foreground whitespace-nowrap">
-                                    DB ID
-                                  </th>
-                                )}
-                                {reviewTab === "skipped" && (
-                                  <th className="px-2 py-1.5 text-left font-semibold text-destructive whitespace-nowrap">
-                                    Reason
-                                  </th>
-                                )}
-                                {displayFields.map((f) => (
-                                  <th
-                                    key={f.key}
-                                    className="px-2 py-1.5 text-left font-semibold text-muted-foreground whitespace-nowrap"
-                                  >
-                                    {f.label
-                                      .replace(" *", "")
-                                      .replace(" (lookup)", "")}
-                                  </th>
-                                ))}
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y">
-                              {shown.map((row) => (
-                                <tr
-                                  key={row.rowIndex}
-                                  className="hover:bg-muted/30"
-                                >
-                                  <td className="px-2 py-1.5 text-muted-foreground tabular-nums">
-                                    {row.rowIndex + 2}
-                                  </td>
-                                  {reviewTab === "rescheduled" &&
-                                    "originalId" in row && (
-                                      <td className="px-2 py-1.5">
-                                        <span className="rounded bg-blue-100 px-1.5 py-0.5 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300">
-                                          #{row.originalId}
-                                        </span>
-                                      </td>
-                                    )}
-                                  {reviewTab === "duplicate" &&
-                                    "existingId" in row && (
-                                      <td className="px-2 py-1.5">
-                                        <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
-                                          #{row.existingId}
-                                        </span>
-                                      </td>
-                                    )}
-                                  {reviewTab === "skipped" &&
-                                    "reason" in row && (
-                                      <td className="px-2 py-1.5 text-destructive max-w-40 truncate">
-                                        {row.reason}
-                                      </td>
-                                    )}
-                                  {displayFields.map((f) => {
-                                    const val = row.data[f.key] || "";
-                                    // Color code rep lookups — show name
-                                    if (f.key === "representative") {
-                                      const repName =
-                                        row.data._assigned_rep_name;
-                                      const status =
-                                        row.data._assignment_status;
-                                      const unmatched = row.data._unmatched_rep;
-                                      if (repName)
-                                        return (
-                                          <td
-                                            key={f.key}
-                                            className="px-2 py-1.5 text-emerald-700 dark:text-emerald-400"
-                                            title={`ID: ${row.data._assigned_rep_id}`}
-                                          >
-                                            {repName}
-                                          </td>
-                                        );
-                                      if (status === "wd_never_assigned")
-                                        return (
-                                          <td
-                                            key={f.key}
-                                            className="px-2 py-1.5 text-amber-600"
-                                          >
-                                            📋 WD - Never Assigned
-                                          </td>
-                                        );
-                                      if (status === "withdrawal")
-                                        return (
-                                          <td
-                                            key={f.key}
-                                            className="px-2 py-1.5 text-red-600"
-                                          >
-                                            🚫 Withdrawal
-                                          </td>
-                                        );
-                                      if (unmatched)
-                                        return (
-                                          <td
-                                            key={f.key}
-                                            className="px-2 py-1.5 text-red-600"
-                                          >
-                                            {unmatched} ⚠️
-                                          </td>
-                                        );
-                                      if (!val)
-                                        return (
-                                          <td
-                                            key={f.key}
-                                            className="px-2 py-1.5 text-muted-foreground"
-                                          >
-                                            —
-                                          </td>
-                                        );
-                                      return (
-                                        <td
-                                          key={f.key}
-                                          className="px-2 py-1.5 text-muted-foreground"
-                                        >
-                                          {val} (null)
-                                        </td>
-                                      );
-                                    }
-                                    // Color code MR team lookups — show name
-                                    if (f.key === "mr_team_id") {
-                                      const teamName = row.data._mr_team_name;
-                                      const unmatched =
-                                        row.data._unmatched_team;
-                                      if (teamName)
-                                        return (
-                                          <td
-                                            key={f.key}
-                                            className="px-2 py-1.5 text-emerald-700 dark:text-emerald-400"
-                                            title={`ID: ${row.data.mr_team_id}`}
-                                          >
-                                            {teamName}
-                                          </td>
-                                        );
-                                      if (unmatched)
-                                        return (
-                                          <td
-                                            key={f.key}
-                                            className="px-2 py-1.5 text-red-600"
-                                          >
-                                            {unmatched} ⚠️
-                                          </td>
-                                        );
-                                      if (!val)
-                                        return (
-                                          <td
-                                            key={f.key}
-                                            className="px-2 py-1.5 text-muted-foreground"
-                                          >
-                                            —
-                                          </td>
-                                        );
-                                      return (
-                                        <td key={f.key} className="px-2 py-1.5">
-                                          {val}
-                                        </td>
-                                      );
-                                    }
-                                    return (
-                                      <td
-                                        key={f.key}
-                                        className="px-2 py-1.5 max-w-50 truncate"
-                                        title={val}
-                                      >
-                                        {val || "—"}
-                                      </td>
-                                    );
-                                  })}
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    );
-                  })()}
-
-                {reviewTab === "notInSheet" && (
-                  <div className="py-4 px-4">
-                    <div className="rounded-lg bg-purple-50 border border-purple-200 p-4 dark:bg-purple-950/20 dark:border-purple-800 flex items-start justify-between">
-                      <p className="text-sm font-medium text-purple-800 dark:text-purple-300">
-                        {analysis.notInSheet.length} DB records not matched by
-                        any row in the uploaded sheet
-                      </p>
-                      {analysis.notInSheet.length > 0 && (
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          className="shrink-0 gap-1.5"
-                          onClick={() =>
-                            handleDeleteNotInSheet(
-                              analysis.notInSheet.map((r) => r.id),
-                            )
-                          }
-                        >
-                          <Trash2 className="h-3.5 w-3.5" /> Delete All
-                        </Button>
-                      )}
-                    </div>
-                    {analysis.notInSheet.length > 0 && (
-                      <div className="mt-3 overflow-auto max-h-100">
-                        <table className="w-full text-xs">
-                          <thead className="sticky top-0 z-10">
-                            <tr className="bg-muted/80 backdrop-blur-sm">
-                              <th className="px-2 py-1.5 text-left font-semibold text-muted-foreground">
-                                ID
-                              </th>
-                              <th className="px-2 py-1.5 text-left font-semibold text-muted-foreground">
-                                Claimant
-                              </th>
-                              <th className="px-2 py-1.5 text-left font-semibold text-muted-foreground">
-                                SSN
-                              </th>
-                              <th className="px-2 py-1.5 text-left font-semibold text-muted-foreground">
-                                Hearing Date
-                              </th>
-                              <th className="px-2 py-1.5 text-left font-semibold text-muted-foreground">
-                                Time
-                              </th>
-                              <th className="px-2 py-1.5 text-left font-semibold text-muted-foreground">
-                                Assigned Rep
-                              </th>
-                              <th className="px-2 py-1.5 text-right font-semibold text-muted-foreground"></th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y">
-                            {analysis.notInSheet.map((r) => (
-                              <tr key={r.id} className="hover:bg-muted/30">
-                                <td className="px-2 py-1.5 text-muted-foreground tabular-nums">
-                                  {r.id}
-                                </td>
-                                <td className="px-2 py-1.5 font-medium">
-                                  {r.claimant}
-                                </td>
-                                <td className="px-2 py-1.5 text-muted-foreground tabular-nums">
-                                  {r.ssn_last_4 ? `···${r.ssn_last_4}` : "—"}
-                                </td>
-                                <td className="px-2 py-1.5 tabular-nums">
-                                  {r.hearing_date}
-                                </td>
-                                <td className="px-2 py-1.5 tabular-nums">
-                                  {r.hearing_time || "—"}
-                                </td>
-                                <td className="px-2 py-1.5">
-                                  {r.rep_name || (
-                                    <span className="text-muted-foreground">
-                                      Unassigned
-                                    </span>
-                                  )}
-                                </td>
-                                <td className="px-2 py-1.5 text-right">
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    className="h-6 w-6 p-0 text-red-500"
-                                    onClick={() =>
-                                      handleDeleteNotInSheet([r.id])
-                                    }
-                                  >
-                                    <Trash2 className="h-3 w-3" />
-                                  </Button>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="flex items-center justify-between py-3">
-                <div className="text-sm text-muted-foreground">
-                  Reps:{" "}
-                  <span className="text-emerald-600">
-                    {analysis.repsM} matched
-                  </span>
-                  {analysis.repsU > 0 && (
-                    <>
-                      ,{" "}
-                      <span className="text-amber-600">
-                        {analysis.repsU} unmatched
-                      </span>
-                    </>
-                  )}
-                  {" · "}Teams:{" "}
-                  <span className="text-emerald-600">
-                    {analysis.teamsM} matched
-                  </span>
-                  {analysis.teamsU > 0 && (
-                    <>
-                      ,{" "}
-                      <span className="text-amber-600">
-                        {analysis.teamsU} unmatched
-                      </span>
-                    </>
-                  )}
+              <div className="text-center">
+                <div className="text-3xl font-bold text-primary">
+                  {importProgress}%
                 </div>
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={handleReset}>
-                    Cancel
-                  </Button>
-                  <Button size="sm" className="gap-1.5" onClick={handleProcess}>
-                    Process All <ArrowRight className="h-3.5 w-3.5" />
-                  </Button>
+                <div className="text-sm text-muted-foreground mt-1">
+                  {importStatus}
                 </div>
-              </CardContent>
-            </Card>
+              </div>
+              {importing && (
+                <div className="flex items-center justify-center">
+                  <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                </div>
+              )}
+            </div>
           </div>
         )}
 
-        {/* ── Processing ── */}
-        {step === "processing" && (
-          <Card>
-            <CardContent className="flex flex-col items-center py-16">
-              <Loader2 className="h-10 w-10 animate-spin text-primary mb-4" />
-              <h2 className="text-lg font-semibold">Processing...</h2>
-              <div className="mt-4 w-full max-w-md space-y-1">
-                {processLog.map((m, i) => (
-                  <p
-                    key={i}
-                    className={cn(
-                      "text-sm",
-                      m.startsWith("✓")
-                        ? "text-emerald-600"
-                        : "text-muted-foreground",
-                    )}
-                  >
-                    {m}
-                  </p>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
+        {/* ════════════════ STEP 5: Results ════════════════ */}
+        {step === 5 && importResult && (
+          <div className={CARD}>
+            <h2 className="text-lg font-semibold mb-4">📊 Import Results</h2>
 
-        {/* ── Complete ── */}
-        {step === "complete" && result && (
-          <Card>
-            <CardContent className="flex flex-col items-center py-16">
-              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-900/40 mb-4">
-                <CheckCircle2 className="h-8 w-8 text-emerald-600" />
+            {/* Summary */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
+              <div className="rounded-lg bg-emerald-50 dark:bg-emerald-950/30 p-4 text-center">
+                <div className="text-3xl font-bold text-emerald-700 dark:text-emerald-400">
+                  {importResult.imported}
+                </div>
+                <div className="text-sm text-emerald-600 dark:text-emerald-500">
+                  Imported
+                </div>
               </div>
-              <h2 className="text-lg font-semibold">Import Complete</h2>
-              <p className="text-sm text-muted-foreground mt-1 mb-6">
-                {result.imported} imported · {result.updated.toLocaleString()}{" "}
-                updated · {result.rescheduled} rescheduled · {result.skipped}{" "}
-                skipped
-              </p>
-              <Button onClick={handleReset} className="gap-2">
-                <Upload className="h-4 w-4" /> Import Another
-              </Button>
-            </CardContent>
-          </Card>
+              <div className="rounded-lg bg-amber-50 dark:bg-amber-950/30 p-4 text-center">
+                <div className="text-3xl font-bold text-amber-700 dark:text-amber-400">
+                  {importResult.skipped}
+                </div>
+                <div className="text-sm text-amber-600 dark:text-amber-500">
+                  Skipped
+                </div>
+              </div>
+              <div className="rounded-lg bg-red-50 dark:bg-red-950/30 p-4 text-center">
+                <div className="text-3xl font-bold text-red-700 dark:text-red-400">
+                  {importResult.errors.length}
+                </div>
+                <div className="text-sm text-red-600 dark:text-red-500">
+                  Errors
+                </div>
+              </div>
+            </div>
+
+            {/* Errors */}
+            {importResult.errors.length > 0 && (
+              <div className="mb-4">
+                <h4 className="font-medium text-sm mb-2">⚠️ Issues Found:</h4>
+                <ul className="space-y-1 max-h-40 overflow-auto rounded-lg bg-red-50 dark:bg-red-950/20 p-3">
+                  {importResult.errors.map((e, i) => (
+                    <li
+                      key={i}
+                      className="text-xs text-red-700 dark:text-red-400"
+                    >
+                      • {e}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Download imported */}
+            {importResult.importedIds.length > 0 && (
+              <div className="mb-4 rounded-lg bg-muted/50 p-4">
+                <h4 className="font-medium text-sm mb-1">
+                  📥 Download Imported Records
+                </h4>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Download a spreadsheet of the newly imported hearings.
+                </p>
+                <button className={BTN_PRIMARY} onClick={downloadImported}>
+                  📄 Download XLSX
+                </button>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="mt-6 flex gap-3">
+              <Link href="/" className={BTN_PRIMARY}>
+                ← Back to Dashboard
+              </Link>
+              <button className={BTN_SECONDARY} onClick={resetImport}>
+                Import Another File
+              </button>
+            </div>
+          </div>
         )}
       </div>
     </>
