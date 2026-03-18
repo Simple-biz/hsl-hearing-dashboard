@@ -1086,12 +1086,17 @@ function parsePostHrgNotes(raw: unknown): PostHrgNote[] {
 }
 
 export async function getPostHrgNotes(hearingId: number): Promise<PostHrgNote[]> {
+  // post_hrg_notes is a Phase 4 table — return empty until migrated
   try {
-    const { rows } = await db.query(
-      `SELECT post_hrg_notes FROM hearings WHERE id = $1`,
+    const result = await db.query(
+      `SELECT n.*, u.full_name AS author_name
+       FROM post_hrg_notes n
+       JOIN users u ON n.user_id = u.id
+       WHERE n.hearing_id = $1
+       ORDER BY n.created_at DESC`,
       [hearingId],
     );
-    return parsePostHrgNotes(rows[0]?.post_hrg_notes);
+    return result.rows as PostHrgNote[];
   } catch {
     return [];
   }
