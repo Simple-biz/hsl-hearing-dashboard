@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useTransition, useCallback, useRef, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { AppHeader } from "@/components/layout/app-header";
@@ -956,10 +957,46 @@ export function MrPivotClient({ userRole, ...data }: Props) {
   const canViewAdminCards = (["system_admin", "admin", "mr_admin", "mr_lead"] as UserRole[]).includes(userRole);
   const [isPending, startTransition] = useTransition();
 
+  // ── Portal mount guard ────────────────────────────────────────────────────
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { requestAnimationFrame(() => setMounted(true)); }, []);
+
+  // ── Field update toast ────────────────────────────────────────────────────
+  const [updateToast, setUpdateToast] = useState<string | null>(null);
+  const updateToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const TOAST_LABELS: Record<string, string> = {
+    medical_record_status: "MR Status",
+    hearing_decision_status: "Decision",
+    mr_team: "MR Team",
+    task_assigned: "Task Assigned",
+    credited: "Credited",
+    manner_of_appearance: "MOA",
+    medical_record_link: "MR Worksheet",
+    five_day_notice: "5-Day Notice",
+    post_hrg_review: "Post HRG",
+  };
+
+  function showToast(field: string, value: unknown, claimant: string) {
+    const label = TOAST_LABELS[field] ?? field.replace(/_/g, " ");
+    let display = String(value ?? "cleared");
+
+    if (["task_assigned", "credited", "five_day_notice"].includes(field))
+      display = value ? "✓ checked" : "unchecked";
+    else if (!value) display = "cleared";
+
+    const msg = `${label} → ${display}${claimant ? ` • ${claimant}` : ""}`;
+
+    if (updateToastTimer.current) clearTimeout(updateToastTimer.current);
+    
+    setUpdateToast(msg);
+    updateToastTimer.current = setTimeout(() => setUpdateToast(null), 3000);
+  }
+
   // ── Hearings ─────────────────────────────────────────────────────────────
-  const [hearings,       setHearings]       = useState<Hearing[]>([]);
-  const [totalHearings,  setTotalHearings]  = useState(data.statCards.totalHearings);
-  const [totalPages,     setTotalPages]     = useState(1);
+  const [hearings, setHearings] = useState<Hearing[]>([]);
+  const [totalHearings, setTotalHearings] = useState(data.statCards.totalHearings);
+  const [totalPages, setTotalPages] = useState(1);
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
   const [expandedTeams,  setExpandedTeams]  = useState<Set<string>>(new Set());
 
@@ -1027,6 +1064,9 @@ export function MrPivotClient({ userRole, ...data }: Props) {
 
   // ── Row update handler ────────────────────────────────────────────────────
   async function handleUpdate(id: number, field: string, value: unknown) {
+    const hearing = hearings.find((h) => h.id === id);
+    const claimant = hearing?.claimant ?? "";
+
     const actions: Record<string, (v: unknown) => Promise<unknown>> = {
       medical_record_status: (v) => updateMrStatus(id, v as string),
       hearing_decision_status: (v) => updateHearingDecisionStatus(id, v as string),
@@ -1037,6 +1077,9 @@ export function MrPivotClient({ userRole, ...data }: Props) {
       medical_record_link: (v) => updateWorksheetLink(id, v as string),
     };
     await actions[field]?.(value);
+
+    // Show feedback toast
+    showToast(field, value, claimant);
 
     // mr_team needs to update mr_team_id + derive mr_team_name/color from teams list
     if (field === "mr_team") {
@@ -1695,6 +1738,17 @@ export function MrPivotClient({ userRole, ...data }: Props) {
         teams={data.medical_teams}
         onClose={() => setShowWithdrawn(false)}
       />
+
+      {/* ── Field update toast ── */}
+      {updateToast && mounted && createPortal(
+        <div className="fixed top-4 right-4 z-[200] flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 shadow-lg dark:border-emerald-800 dark:bg-emerald-950/80 animate-in fade-in slide-in-from-top-2 duration-200">
+          <span className="text-emerald-600 dark:text-emerald-400 text-sm">✓</span>
+          <span className="text-sm font-medium text-emerald-800 dark:text-emerald-200">
+            {updateToast}
+          </span>
+        </div>,
+        document.body,
+      )}
     </>
   );
 }

@@ -19,14 +19,14 @@ interface AppHeaderProps {
 // ─── Notification type badge ──────────────────────────────────────────────────
 
 const TYPE_LABEL: Record<string, { label: string; cls: string }> = {
-  withdrawal:    { label: "Withdrawal",    cls: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300" },
+  withdrawal: { label: "Withdrawal",    cls: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300" },
   status_change: { label: "Status Change", cls: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300" },
-  mr_update:     { label: "MR Update",     cls: "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300" },
+  mr_update: { label: "MR Update",     cls: "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300" },
 };
 
 function timeAgo(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
-  const mins  = Math.floor(diff / 60_000);
+  const mins = Math.floor(diff / 60_000);
   if (mins < 1)  return "just now";
   if (mins < 60) return `${mins}m ago`;
   const hrs = Math.floor(mins / 60);
@@ -37,8 +37,8 @@ function timeAgo(dateStr: string): string {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function AppHeader({ title, subtitle, actions }: AppHeaderProps) {
-  const [searchOpen,  setSearchOpen]  = useState(false);
-  const [panelOpen,   setPanelOpen]   = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
 
   const { notifications, unreadCount, isLoading, markAllRead, refresh } =
@@ -148,7 +148,7 @@ export function AppHeader({ title, subtitle, actions }: AppHeaderProps) {
               </div>
 
               {/* List — shows ~3 items then scrolls */}
-              <div className="max-h-[216px] overflow-y-auto divide-y divide-border">
+              <div className="max-h-54 overflow-y-auto divide-y divide-border">
                 {notifications.length === 0 ? (
                   <div className="px-4 py-8 text-center text-[11px] text-muted-foreground">
                     {isLoading ? "Loading…" : "No notifications"}
