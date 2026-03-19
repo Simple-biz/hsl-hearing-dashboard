@@ -331,17 +331,11 @@ export async function getMrPivotPageData(
     db.query(`
       SELECT id, team_name, team_color
       FROM mr_teams
-      WHERE team_color IN ('blue', 'orange', 'green', 'yellow', 'purple')
-        AND is_active = true
+      WHERE is_active = true
         AND is_assignable = true
-      ORDER BY
-        CASE team_color
-          WHEN 'blue' THEN 1
-          WHEN 'orange' THEN 2
-          WHEN 'green' THEN 3
-          WHEN 'yellow' THEN 4
-          WHEN 'purple' THEN 5
-        END ASC
+        AND team_color IS NOT NULL
+        AND team_color != ''
+      ORDER BY display_order ASC
     `),
 
     // ── Round-robin: last assigned team ──────────────────────────────────────
@@ -349,7 +343,9 @@ export async function getMrPivotPageData(
       SELECT t.id, t.team_name, t.team_color
       FROM hearings h
       JOIN mr_teams t ON h.mr_team_id = t.id
-      WHERE t.team_color IN ('blue', 'orange', 'green', 'yellow', 'purple')
+      WHERE t.is_active = true
+        AND t.is_assignable = true
+        AND t.team_color IS NOT NULL AND t.team_color != ''
         AND h.mr_team_assigned_at IS NOT NULL
         AND (h.medical_record_status != 'WITHDRAWAL' OR h.medical_record_status IS NULL)
       ORDER BY h.mr_team_assigned_at DESC
@@ -456,11 +452,12 @@ export async function getMrPivotPageData(
   // const monthly = Object.values(monthlyMap);
 
   // ── Shape: round-robin state ────────────────────────────────────────────────
-  const ROTATION_ORDER = ["blue", "orange", "green", "yellow", "purple"];
+  // Derive rotation order dynamically from DB — no hardcoded team list
   const colorToTeam: Record<string, { id: number; name: string; color: string }> = {};
   for (const rt of rotationTeamsRows.rows as Record<string, unknown>[]) {
     colorToTeam[rt.team_color as string] = { id: Number(rt.id), name: rt.team_name as string, color: rt.team_color as string };
   }
+  const ROTATION_ORDER = (rotationTeamsRows.rows as Record<string, unknown>[]).map(r => r.team_color as string);
 
   // Fallback: if mr_team_assigned_at was null on all rows, try last assigned by id
   let lastRow = lastAssignedRow.rows[0] as Record<string, unknown> | undefined;
@@ -469,14 +466,15 @@ export async function getMrPivotPageData(
       SELECT t.id, t.team_name, t.team_color
       FROM hearings h
       JOIN mr_teams t ON h.mr_team_id = t.id
-      WHERE t.team_color IN ('blue', 'orange', 'green', 'yellow', 'purple')
+      WHERE t.is_active = true AND t.is_assignable = true
+        AND t.team_color IS NOT NULL AND t.team_color != ''
       ORDER BY h.id DESC
       LIMIT 1
     `);
     lastRow = fallback.rows[0];
   }
 
-  const lastColor = (lastRow?.team_color as string | undefined) ?? "purple";
+  const lastColor = (lastRow?.team_color as string | undefined) ?? ROTATION_ORDER[ROTATION_ORDER.length - 1] ?? "blue";
   const lastTeamName = (lastRow?.team_name  as string | undefined) ?? "None";
   const lastIndex = ROTATION_ORDER.indexOf(lastColor);
   const nextIndex = (lastIndex + 1) % ROTATION_ORDER.length;
@@ -825,19 +823,19 @@ export async function assignJeromeUrgent(): Promise<{
 }
 
 export async function getRoundRobinState(): Promise<RoundRobinState> {
-  const ROTATION_ORDER = ["blue", "orange", "green", "yellow", "purple"];
-
   const [rotationRows, lastAssignedRows, nextHearingRows, urgentRows] = await Promise.all([
     db.query(`
       SELECT id, team_name, team_color FROM mr_teams
-      WHERE team_color IN ('blue','orange','green','yellow','purple')
-        AND is_active = true AND is_assignable = true
-      ORDER BY CASE team_color WHEN 'blue' THEN 1 WHEN 'orange' THEN 2 WHEN 'green' THEN 3 WHEN 'yellow' THEN 4 WHEN 'purple' THEN 5 END
+      WHERE is_active = true AND is_assignable = true
+        AND team_color IS NOT NULL
+        AND team_color NOT IN ('', 'pink')
+      ORDER BY display_order ASC
     `),
     db.query(`
       SELECT t.team_name, t.team_color FROM hearings h
       JOIN mr_teams t ON h.mr_team_id = t.id
-      WHERE t.team_color IN ('blue','orange','green','yellow','purple')
+      WHERE t.is_active = true AND t.is_assignable = true
+        AND t.team_color IS NOT NULL AND t.team_color != ''
         AND h.mr_team_assigned_at IS NOT NULL
         AND (h.medical_record_status != 'WITHDRAWAL' OR h.medical_record_status IS NULL)
       ORDER BY h.mr_team_assigned_at DESC LIMIT 1
@@ -857,13 +855,16 @@ export async function getRoundRobinState(): Promise<RoundRobinState> {
     `),
   ]);
 
+  // Derive rotation order from DB result — ordered by display_order, no hardcoded list
+  const ROTATION_ORDER = (rotationRows.rows as Record<string, unknown>[]).map(r => r.team_color as string);
   const colorToTeam: Record<string, string> = {};
   for (const r of rotationRows.rows as Record<string, unknown>[]) {
     colorToTeam[r.team_color as string] = r.team_name as string;
   }
 
   const lastRow = lastAssignedRows.rows[0] as Record<string, unknown> | undefined;
-  const lastColor = (lastRow?.team_color as string | undefined) ?? "purple";
+  // Fallback to first team in rotation if no last assigned found
+  const lastColor = (lastRow?.team_color as string | undefined) ?? ROTATION_ORDER[ROTATION_ORDER.length - 1] ?? "blue";
   const lastTeamName = (lastRow?.team_name  as string | undefined) ?? "None";
   const lastIndex = ROTATION_ORDER.indexOf(lastColor);
   const nextColor = ROTATION_ORDER[(lastIndex + 1) % ROTATION_ORDER.length];

@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/select";
 import {
   RefreshCw, Download, Loader2, X,
-  Bell, BarChart3, FileText, ClipboardList, AlertTriangle, Search,
+  BarChart3, FileText, ClipboardList, AlertTriangle, Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { UserRole } from "./types";
@@ -32,14 +32,12 @@ import {
   updateWorksheetLink,
   assignJeromeUrgent,
   getRoundRobinState,
-  getNotifications,
 } from "./action";
 import type {
   MrPivotPageData,
   Hearing,
   HearingFilters,
   RoundRobinState,
-  NotificationItem,
   MrStatusByTeam,
   AssignedByMonthRow,
 } from "./action";
@@ -292,84 +290,7 @@ function toggleSetKey(
   });
 }
 
-function NotificationBell({ notifications, onRefresh }: {
-  notifications: NotificationItem[];
-  onRefresh: () => void;
-}) {
-  const [open, setOpen]       = useState(false);
-  const [seenIds, setSeenIds] = useState<Set<number>>(new Set());
-  const unseen = notifications.filter((n) => !seenIds.has(n.id));
 
-  function markSeen(id: number) {
-    setSeenIds((p) => new Set([...p, id]));
-  }
-
-  return (
-    <div className="relative">
-      <button
-        onClick={() => { setOpen((v) => !v); onRefresh(); }}
-        className={cn(
-          "relative w-9 h-9 flex items-center justify-center rounded-full border border-border bg-card hover:bg-muted transition-colors",
-          unseen.length > 0 && "animate-[bell-shake_0.5s_ease-in-out]"
-        )}
-      >
-        <Bell size={16} className="text-muted-foreground" />
-        {unseen.length > 0 && (
-          <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 bg-red-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
-            {unseen.length > 99 ? "99+" : unseen.length}
-          </span>
-        )}
-      </button>
-
-      {open && (
-        <>
-          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-11 z-40 w-72 sm:w-80 bg-card border border-border rounded-xl shadow-xl overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-2.5 bg-muted/30 border-b border-border">
-              <span className="text-xs font-semibold text-foreground">Notifications</span>
-              {unseen.length > 0 && (
-                <button
-                  onClick={() => notifications.forEach((n) => markSeen(n.id))}
-                  className="text-[11px] text-primary hover:underline"
-                >
-                  Mark all seen
-                </button>
-              )}
-            </div>
-            <div className="max-h-80 overflow-y-auto">
-              {notifications.length === 0 ? (
-                <p className="text-xs text-muted-foreground text-center py-8">No new notifications</p>
-              ) : (
-                notifications.map((n) => (
-                  <div
-                    key={n.id}
-                    onClick={() => markSeen(n.id)}
-                    className={cn(
-                      "px-4 py-3 border-b border-border cursor-pointer hover:bg-muted/40 transition-colors",
-                      n.notification_type === "withdrawal"   ? "border-l-2 border-l-red-500"  :
-                      n.notification_type === "status_change"? "border-l-2 border-l-amber-400" : "border-l-2 border-l-blue-400"
-                    )}
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className={cn("text-[10px] font-bold uppercase",
-                        n.notification_type === "withdrawal" ? "text-red-600" : "text-amber-600")}>
-                        {n.notification_type === "withdrawal" ? "🚫 Withdrawal" : "📋 Status Update"}
-                      </span>
-                      <span className="text-[9px] text-muted-foreground">
-                        {new Date(n.created_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
-                      </span>
-                    </div>
-                    <p className="text-xs text-foreground">{n.message}</p>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
 
 // ─── MrStatusPivot ────────────────────────────────────────────────────────────
 
@@ -1050,9 +971,6 @@ export function MrPivotClient({ userRole, ...data }: Props) {
   // ── Round robin ───────────────────────────────────────────────────────────
   const [roundRobin,     setRoundRobin]     = useState<RoundRobinState>(data.roundRobin);
 
-  // ── Notifications ─────────────────────────────────────────────────────────
-  const [notifications,  setNotifications]  = useState<NotificationItem[]>([]);
-
   // ── View mode ─────────────────────────────────────────────────────────────
   const [viewMode, setViewMode] = useState<"date" | "team">("date");
 
@@ -1086,12 +1004,11 @@ export function MrPivotClient({ userRole, ...data }: Props) {
     if (matchedMonths.size > 0) setExpandedMonths(matchedMonths);
   }, [hearings, filters.search]);
 
-  // ── Refresh round robin + notifications every 30s ─────────────────────────
+  // ── Refresh round robin every 30s ─────────────────────────────────────────
   useEffect(() => {
     const id = setInterval(async () => {
-      const [rr, notifs] = await Promise.all([getRoundRobinState(), getNotifications()]);
+      const rr = await getRoundRobinState();
       setRoundRobin(rr);
-      setNotifications(notifs);
     }, 30_000);
     return () => clearInterval(id);
   }, []);
@@ -1233,20 +1150,6 @@ export function MrPivotClient({ userRole, ...data }: Props) {
       <DashboardNav userRole={userRole} />
 
       <div className="w-full max-w-450 mx-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-5">
-
-        {/* ── Icon buttons (bell + refresh) ────────────────────────────── */}
-        <div className="flex items-center justify-end gap-2">
-          <NotificationBell
-            notifications={notifications}
-            onRefresh={async () => setNotifications(await getNotifications())}
-          />
-          <button
-            onClick={() => loadHearings(filters)}
-            className="w-9 h-9 flex items-center justify-center rounded-full border border-border bg-card hover:bg-muted transition-colors"
-          >
-            <RefreshCw size={14} className={cn("text-muted-foreground", isPending && "animate-spin")} />
-          </button>
-        </div>
 
         {/* ── Summary Section ──────────────────────────────────────────────── */}
         {/* Admin view  → 4 columns:
