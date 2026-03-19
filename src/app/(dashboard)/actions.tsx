@@ -1405,8 +1405,8 @@ export async function bulkEmailSelected(hearingIds: number[]) {
 // ── CSV Compare: fetch all hearings for client-side comparison ──
 export async function fetchAllHearingsForCompare() {
   const { rows } = await db.query(
-    `SELECT id, LOWER(claimant) as claimant_lower, claimant, ssn_last_4, hearing_date::text, hearing_time, converted_time_est
-     FROM hearings ORDER BY hearing_date DESC`,
+    `SELECT id, LOWER(claimant) as claimant_lower, claimant, ssn_last_4, hearing_date::text, hearing_time, converted_time
+     FROM raw_hearings ORDER BY hearing_date DESC`,
   );
   return { hearings: rows, totalCount: rows.length };
 }
@@ -1440,10 +1440,10 @@ export async function importChronicleEntries(
     }
     try {
       await db.query(
-        `INSERT INTO hearings (claimant, ssn_last_4, claim_type, hearing_date, hearing_time, time_zone,
+        `INSERT INTO raw_hearings (claimant, ssn_last_4, claim_type, hearing_date, hearing_time, time_zone,
          claimant_location, representative_location, alj, medical_expert, vocational_expert,
-         status_date, entered_hearing_level_date)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+         status_date, entered_hearing_level_date, converted_time)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
         [
           e.claimant,
           e.ssn_last_4 || null,
@@ -1458,6 +1458,7 @@ export async function importChronicleEntries(
           e.vocational_expert || null,
           e.status_date || null,
           e.entered_hearing_level_date || null,
+          e.hearing_time || null,
         ],
       );
       imported++;
@@ -1468,8 +1469,8 @@ export async function importChronicleEntries(
 
   if (imported > 0)
     await logAction(
-      "hearing_imported",
-      `Imported ${imported} hearings from Chronicle CSV compare`,
+      "import_raw_hearings",
+      `Imported ${imported} entries from Chronicle CSV compare to RAW hearings`,
     );
   return { imported, skipped };
 }
