@@ -14,7 +14,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  RefreshCw, Download, Loader2,
+  RefreshCw, Download, Loader2, X,
   Bell, BarChart3, FileText, ClipboardList, AlertTriangle, Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -22,6 +22,7 @@ import type { UserRole } from "./types";
 
 import {
   getHearingsPaginated,
+  getWithdrawnHearings,
   updateMrStatus,
   updateHearingDecisionStatus,
   updateMrTeam,
@@ -151,21 +152,23 @@ function exportPivotToCsv(rows: MrStatusByTeam[]) {
 
 // ─── SummaryCard ──────────────────────────────────────────────────────────────
 
-function SummaryCard({ label, value, bg, onClick }: {
-  label: string; value: number | string; bg: string; onClick?: () => void;
+function SummaryCard({ label, value, bg, onClick, compact, className }: {
+  label: string; value: number | string; bg: string; onClick?: () => void; compact?: boolean; className?: string;
 }) {
   return (
     <div
       onClick={onClick}
       className={cn(
-        "relative overflow-hidden rounded-xl p-4 sm:p-5 text-white flex flex-col gap-1",
-        bg, onClick && "cursor-pointer hover:opacity-90 transition-opacity"
+        "relative overflow-hidden rounded-xl text-white flex flex-col gap-1",
+        compact ? "p-2.5" : "p-4 sm:p-5",
+        bg, onClick && "cursor-pointer hover:opacity-90 transition-opacity",
+        className
       )}
     >
-      <div className="absolute -right-4 -top-4 h-24 w-24 rounded-full bg-white/10" />
+      <div className={cn("absolute -right-4 -top-4 rounded-full bg-white/10", compact ? "h-16 w-16" : "h-24 w-24")} />
       <div className="relative z-10">
-        <p className="text-[10px] font-semibold tracking-widest uppercase opacity-80 mb-1">{label}</p>
-        <p className="text-2xl sm:text-3xl font-bold tabular-nums leading-none">{value}</p>
+        <p className={cn("font-semibold tracking-widest uppercase opacity-80 mb-0.5", compact ? "text-[9px]" : "text-[10px]")}>{label}</p>
+        <p className={cn("font-bold tabular-nums leading-none", compact ? "text-2xl sm:text-3xl" : "text-2xl sm:text-3xl")}>{value}</p>
       </div>
     </div>
   );
@@ -190,17 +193,17 @@ function AssignmentCard({ title, count, nextHearing, nextIcon, gradientFrom, gra
     : null;
 
   return (
-    <div className="rounded-xl border border-border overflow-hidden w-fit min-w-45">
+    <div className="rounded-xl border border-border overflow-hidden w-full flex flex-col flex-1">
       {/* Colored header: title left, count right */}
       <div
-        className="flex items-center justify-between px-3 py-2"
+        className="flex items-center justify-between px-3 py-2 shrink-0"
         style={{ background: `linear-gradient(135deg, ${gradientFrom}, ${gradientTo})` }}
       >
         <span className="text-[11px] font-semibold uppercase tracking-wide text-white">{title}</span>
         <span className="text-2xl font-bold text-white tabular-nums leading-none">{count}</span>
       </div>
-      {/* White/card body: year+month selects + next indicator */}
-      <div className="px-3 py-2 bg-card">
+      {/* Card body: year+month selects + next indicator */}
+      <div className="px-3 py-2 bg-card flex-1 flex flex-col justify-between">
         <div className="flex gap-1.5 mb-2">
           <select
             value={yearFilter}
@@ -591,6 +594,224 @@ function WorksheetLinkModal({
   );
 }
 
+// ─── WithdrawnModal ────────────────────────────────────────────────────────────
+
+function WithdrawnModal({
+  open,
+  count,
+  // teams,
+  onClose,
+}: {
+  open: boolean;
+  count: number;
+  teams: MrPivotPageData["medical_teams"];
+  onClose: () => void;
+}) {
+  const [entries,    setEntries]    = useState<Hearing[]>([]);
+  const [total,      setTotal]      = useState(count);
+  const [page,       setPage]       = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [search,     setSearch]     = useState("");
+  const [loading,    startTransition] = useTransition();
+  const searchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const load = useCallback((p: number, q: string) => {
+    startTransition(async () => {
+      const r = await getWithdrawnHearings({ page: p, search: q, per_page: 50 });
+      setEntries(r.hearings);
+      setTotal(r.total);
+      setTotalPages(r.total_pages);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (open) load(1, "");
+  }, [open, load]);
+
+  function handleSearch(v: string) {
+    setSearch(v);
+    if (searchRef.current) clearTimeout(searchRef.current);
+    searchRef.current = setTimeout(() => { setPage(1); load(1, v); }, 300);
+  }
+
+  function exportCsv() {
+    const headers = ["Month","Hearing Date","Time","Claimant","Rep","MR Team","MR Status","Status","Post HRG","Link"];
+    const rows = entries.map((h) => {
+      const d = new Date(h.hearing_date + "T00:00:00");
+      return [
+        d.toLocaleDateString("en-US", { month: "short", year: "numeric" }),
+        d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+        h.converted_time_est ?? "",
+        h.claimant,
+        h.rep_name ?? "",
+        h.mr_team_name ?? "Unassigned",
+        h.medical_record_status ?? "",
+        h.hearing_decision_status ?? "",
+        h.post_hrg_review ? "Yes" : "",
+        h.medical_record_link ?? "",
+      ];
+    });
+    const csv = [headers, ...rows]
+      .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url; a.download = "withdrawn-hearings.csv"; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  if (!open) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-5xl max-h-[88vh] flex flex-col rounded-xl border bg-card shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between border-b bg-muted/50 px-5 py-3.5 shrink-0">
+          <span className="text-sm font-bold text-foreground">
+            🔴 Withdrawn Hearings ({total})
+          </span>
+          <div className="flex items-center gap-2">
+            <p className="text-[10px] text-muted-foreground italic hidden sm:block">
+              Excluded from statistics and main view
+            </p>
+            <button
+              onClick={exportCsv}
+              className="flex items-center gap-1 text-[11px] px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold transition-colors"
+            >
+              <Download size={11} /> CSV
+            </button>
+            <button onClick={onClose} className="ml-1 text-muted-foreground hover:text-foreground">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Search */}
+        <div className="flex items-center gap-2 border-b px-4 py-2 shrink-0">
+          <Search size={13} className="text-muted-foreground shrink-0" />
+          <input
+            type="text"
+            placeholder="Search claimant\u2026"
+            value={search}
+            onChange={(e) => handleSearch(e.target.value)}
+            className="flex-1 text-xs bg-transparent outline-none text-foreground placeholder:text-muted-foreground"
+          />
+          {search && (
+            <button onClick={() => { setSearch(""); setPage(1); load(1, ""); }}>
+              <X size={12} className="text-muted-foreground hover:text-foreground" />
+            </button>
+          )}
+        </div>
+
+        {/* Table */}
+        <div className="flex-1 overflow-auto min-h-0">
+          <table className="w-full text-[11px]" style={{ minWidth: "860px" }}>
+            <thead>
+              <tr className="bg-muted/50 border-b sticky top-0">
+                {["Month","Hearing Date","Time","Claimant","Rep","MR Team","MR Status","Status","Post HRG","Link"].map((h) => (
+                  <th key={h} className="px-3 py-2 text-left font-semibold text-muted-foreground text-[10px] uppercase tracking-wide whitespace-nowrap">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr><td colSpan={10} className="py-12 text-center"><Loader2 size={20} className="animate-spin mx-auto text-muted-foreground" /></td></tr>
+              ) : entries.length === 0 ? (
+                <tr><td colSpan={10} className="py-12 text-center text-sm text-muted-foreground">No withdrawn hearings found.</td></tr>
+              ) : entries.map((h) => {
+                const d = new Date(h.hearing_date + "T00:00:00");
+                const teamColor = h.mr_team_id ? teamHex(h.mr_team_color) : "#e5e7eb";
+                const teamText  = h.mr_team_id ? "#fff" : "#374151";
+                return (
+                  <tr key={h.id} className="border-b border-border/40 hover:bg-muted/30 transition-colors">
+                    <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap">
+                      {d.toLocaleDateString("en-US", { month: "short", year: "numeric" })}
+                    </td>
+                    <td className="px-3 py-1.5 font-medium text-foreground whitespace-nowrap">
+                      {d.toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                    </td>
+                    <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap">
+                      {h.converted_time_est ?? "\u2014"}
+                    </td>
+                    <td className="px-3 py-1.5">
+                      <div className="font-semibold text-foreground">{h.claimant}</div>
+                      {h.rep_name && <div className="text-[9px] text-muted-foreground">{h.rep_name}</div>}
+                    </td>
+                    <td className="px-3 py-1.5 text-[10px] text-muted-foreground max-w-20 truncate">
+                      {h.rep_name ?? "\u2014"}
+                    </td>
+                    <td className="px-3 py-1.5">
+                      {h.mr_team_name
+                        ? <span className="inline-block text-[9px] px-1.5 py-0.5 rounded font-medium whitespace-nowrap"
+                            style={{ backgroundColor: teamColor, color: teamText }}>
+                            {h.mr_team_name}
+                          </span>
+                        : <span className="text-muted-foreground/50">\u2014</span>}
+                    </td>
+                    <td className="px-3 py-1.5">
+                      {h.medical_record_status
+                        ? <span className={cn("inline-block text-[9px] px-1.5 py-0.5 rounded",
+                            MR_STATUS_CLS[h.medical_record_status] ?? "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300")}>
+                            {h.medical_record_status}
+                          </span>
+                        : <span className="text-muted-foreground/50">\u2014</span>}
+                    </td>
+                    <td className="px-3 py-1.5 text-[10px] text-muted-foreground">
+                      {h.hearing_decision_status ?? "\u2014"}
+                    </td>
+                    <td className="px-3 py-1.5 text-center">
+                      {h.post_hrg_review
+                        ? <span className="text-[9px] bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300 px-1.5 py-0.5 rounded font-medium">\ud83d\udcdd Notes</span>
+                        : <span className="text-muted-foreground/30">\u2014</span>}
+                    </td>
+                    <td className="px-3 py-1.5 text-center">
+                      {h.medical_record_link
+                        ? <a href={h.medical_record_link} target="_blank" rel="noreferrer"
+                            className="text-[9px] bg-blue-600 text-white px-1.5 py-0.5 rounded hover:bg-blue-700">
+                            \ud83d\udccb
+                          </a>
+                        : <span className="text-muted-foreground/30">\u2014</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Pagination */}
+        <div className="flex items-center justify-between gap-3 border-t px-5 py-2.5 shrink-0 bg-muted/20">
+          <span className="text-[11px] text-muted-foreground">
+            {total > 0
+              ? `Showing ${(page - 1) * 50 + 1}\u2013${Math.min(page * 50, total)} of ${total}`
+              : "No results"}
+          </span>
+          <div className="flex items-center gap-2">
+            <button disabled={page <= 1 || loading}
+              onClick={() => { const p = page - 1; setPage(p); load(p, search); }}
+              className="text-[11px] px-3 py-1.5 rounded-lg border border-border bg-card disabled:opacity-40 hover:bg-muted">
+              ← Prev
+            </button>
+            <span className="text-[11px] text-muted-foreground">Page {page} of {totalPages}</span>
+            <button disabled={page >= totalPages || loading}
+              onClick={() => { const p = page + 1; setPage(p); load(p, search); }}
+              className="text-[11px] px-3 py-1.5 rounded-lg border border-border bg-card disabled:opacity-40 hover:bg-muted">
+              Next →
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── HearingRow ───────────────────────────────────────────────────────────────
 // Inline selects/checkboxes inside the fixed-column data grid stay as native
 // HTML elements intentionally — shadcn Select would break the compact layout.
@@ -809,6 +1030,9 @@ type Props = MrPivotPageData & { userRole: UserRole };
 
 export function MrPivotClient({ userRole, ...data }: Props) {
   const router = useRouter();
+
+  // Only sys admin, mr_admin, and mr_lead may see No Specialist / No Task Assigned cards
+  const canViewAdminCards = (["system_admin", "admin", "mr_admin", "mr_lead"] as UserRole[]).includes(userRole);
   const [isPending, startTransition] = useTransition();
 
   // ── Hearings ─────────────────────────────────────────────────────────────
@@ -837,6 +1061,7 @@ export function MrPivotClient({ userRole, ...data }: Props) {
   const [showPostHrg,     setShowPostHrg]     = useState(false);
   const [showTeamStats,   setShowTeamStats]   = useState(false);
   const [showActivityLog, setShowActivityLog] = useState(false);
+  const [showWithdrawn,   setShowWithdrawn]   = useState(false);
 
   // ── Per-row modal state ───────────────────────────────────────────────────
   const [postHrgHearing, setPostHrgHearing] = useState<Hearing | null>(null);
@@ -886,13 +1111,13 @@ export function MrPivotClient({ userRole, ...data }: Props) {
   // ── Row update handler ────────────────────────────────────────────────────
   async function handleUpdate(id: number, field: string, value: unknown) {
     const actions: Record<string, (v: unknown) => Promise<unknown>> = {
-      medical_record_status:   (v) => updateMrStatus(id, v as string),
+      medical_record_status: (v) => updateMrStatus(id, v as string),
       hearing_decision_status: (v) => updateHearingDecisionStatus(id, v as string),
-      mr_team:                 (v) => updateMrTeam(id, v as number | null),
-      task_assigned:           (v) => toggleTaskAssigned(id, v as boolean),
-      credited:                (v) => toggleCredited(id, v as boolean),
-      manner_of_appearance:    (v) => updateMoa(id, v as string),
-      medical_record_link:     (v) => updateWorksheetLink(id, v as string),
+      mr_team: (v) => updateMrTeam(id, v as number | null),
+      task_assigned: (v) => toggleTaskAssigned(id, v as boolean),
+      credited: (v) => toggleCredited(id, v as boolean),
+      manner_of_appearance: (v) => updateMoa(id, v as string),
+      medical_record_link: (v) => updateWorksheetLink(id, v as string),
     };
     await actions[field]?.(value);
 
@@ -931,10 +1156,10 @@ export function MrPivotClient({ userRole, ...data }: Props) {
   }, {});
 
   // ── Virtualizer — flatten visible items into a single array ───────────────
-  const scrollRef    = useRef<HTMLDivElement>(null);
-  const scrollTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isScrolling, setIsScrolling] = useState(false);
-  const ROW_H  = 44;
+  const ROW_H = 44;
   const GROUP_H = 33;
 
   type FlatItem =
@@ -945,16 +1170,16 @@ export function MrPivotClient({ userRole, ...data }: Props) {
   const flatItems = useMemo<FlatItem[]>(() => {
     if (viewMode === "date") {
       return Object.entries(groupedByMonth).flatMap(([key, rows]) => {
-        const completeCount    = rows.filter((h) => h.medical_record_status === "Complete").length;
-        const inProgressCount  = rows.filter((h) => h.medical_record_status === "In Progress").length;
+        const completeCount = rows.filter((h) => h.medical_record_status === "Complete").length;
+        const inProgressCount = rows.filter((h) => h.medical_record_status === "In Progress").length;
         const header: FlatItem = { kind: "group-date", key, count: rows.length, completeCount, inProgressCount };
         if (!expandedMonths.has(key)) return [header];
         return [header, ...rows.map((h): FlatItem => ({ kind: "row", hearing: h }))];
       });
     }
     return Object.entries(groupedByTeam).flatMap(([key, rows]) => {
-      const color       = rows[0]?.mr_team_color ?? null;
-      const completeCount    = rows.filter((h) => h.medical_record_status === "Complete").length;
+      const color = rows[0]?.mr_team_color ?? null;
+      const completeCount = rows.filter((h) => h.medical_record_status === "Complete").length;
       const inProgressCount  = rows.filter((h) => h.medical_record_status === "In Progress").length;
       const header: FlatItem = { kind: "group-team", key, color, count: rows.length, completeCount, inProgressCount };
       if (!expandedTeams.has(key)) return [header];
@@ -983,21 +1208,21 @@ export function MrPivotClient({ userRole, ...data }: Props) {
   // ── Column headers (shared between both views) ────────────────────────────
   const columnHeaders = (
     <div
-      className="grid gap-x-2 px-4 py-2.5 bg-muted text-muted-foreground text-[9px] font-semibold uppercase tracking-wide shrink-0 border-b border-border items-center"
+      className="grid gap-x-2 px-4 py-2.5 bg-muted text-foreground text-[9px] font-semibold uppercase tracking-wide shrink-0 border-b border-border items-center"
       style={{ gridTemplateColumns: GRID_COLS, minWidth: MIN_W }}
     >
-      <div className="text-left">{viewMode === "date" ? "Month" : "Team"}</div>
-      <div className="text-center">MR Specialist</div>
-      <div className="text-center">Task Assigned</div>
-      <div className="text-center">Hearing Date</div>
-      <div className="text-left">Claimant</div>
-      <div className="text-center">MR Status</div>
-      <div className="text-center">Credited</div>
-      <div className="text-center">Status</div>
-      <div className="text-center">MOA</div>
-      <div className="text-center">5Day</div>
-      <div className="text-center">Post HRG</div>
-      <div className="text-center">MR Worksheet</div>
+      <div className="text-left font-bold">{viewMode === "date" ? "Month" : "Team"}</div>
+      <div className="text-center font-bold">MR Specialist</div>
+      <div className="text-center font-bold">Task Assigned</div>
+      <div className="text-center font-bold">Hearing Date</div>
+      <div className="text-left font-bold">Claimant</div>
+      <div className="text-center font-bold">MR Status</div>
+      <div className="text-center font-bold">Credited</div>
+      <div className="text-center font-bold">Status</div>
+      <div className="text-center font-bold">MOA</div>
+      <div className="text-center font-bold">5Day</div>
+      <div className="text-center font-bold">Post HRG</div>
+      <div className="text-center font-bold">MR Worksheet</div>
     </div>
   );
 
@@ -1023,24 +1248,37 @@ export function MrPivotClient({ userRole, ...data }: Props) {
           </button>
         </div>
 
-        {/* ── Summary Section: [1fr 300px] — matches PHP structure exactly ─ */}
-        {/* Left col: 6 status cards (3-col grid) + 2 assignment cards (flex) */}
-        {/* Right col: Team Assignments sidebar spanning full height           */}
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-5">
+        {/* ── Summary Section ──────────────────────────────────────────────── */}
+        {/* Admin view  → 4 columns:
+              Col 1: Total Hearings / In Progress / Ready   (compact)
+              Col 2: Complete / Not Started / Urgent        (compact)
+              Col 3: No Specialist / No Task Assigned       (admin only)
+              Col 4: Team Assignments
+            Non-admin → 3 columns (cols 1-2 normal size, col 3 = Team Assignments) */}
+        <div className={cn(
+          "grid gap-3 items-stretch",
+          canViewAdminCards
+            ? "grid-cols-1 lg:grid-cols-[1fr_1fr_220px_320px]"
+            : "grid-cols-1 lg:grid-cols-[1fr_1fr_280px]"
+        )}>
 
-          {/* Left column */}
-          <div>
-            {/* 6 status summary cards — repeat(3, 1fr) */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-3">
-              <SummaryCard label="Total Hearings" value={totalHearings}             bg="bg-gradient-to-br from-[#667eea] to-[#764ba2]" />
-              <SummaryCard label="Complete"        value={data.statCards.complete}   bg="bg-gradient-to-br from-[#11998e] to-[#38ef7d]" />
-              <SummaryCard label="In Progress"     value={data.statCards.inProgress} bg="bg-gradient-to-br from-[#4facfe] to-[#00f2fe]" />
-              <SummaryCard label="Ready"           value={data.statCards.ready}      bg="bg-gradient-to-br from-[#56ab2f] to-[#a8e063]" />
-              <SummaryCard label="Not Started"     value={data.statCards.notStarted} bg="bg-gradient-to-br from-[#f093fb] to-[#f5576c]" />
-              <SummaryCard label="Urgent"          value={data.statCards.urgent}     bg="bg-gradient-to-br from-[#ff416c] to-[#ff4b2b]" />
-            </div>
-            {/* 2 assignment cards — flex row, compact with header+body */}
-            <div className="flex gap-3">
+          {/* ── Col 1: Total Hearings / In Progress / Ready ── */}
+          <div className="flex flex-col gap-3 h-full">
+            <SummaryCard label="Total Hearings" value={totalHearings}             bg="bg-gradient-to-br from-[#667eea] to-[#764ba2]" compact={canViewAdminCards} className="flex-1" />
+            <SummaryCard label="In Progress"     value={data.statCards.inProgress} bg="bg-gradient-to-br from-[#4facfe] to-[#00f2fe]" compact={canViewAdminCards} className="flex-1" />
+            <SummaryCard label="Ready"           value={data.statCards.ready}      bg="bg-gradient-to-br from-[#56ab2f] to-[#a8e063]" compact={canViewAdminCards} className="flex-1" />
+          </div>
+
+          {/* ── Col 2: Complete / Not Started / Urgent ── */}
+          <div className="flex flex-col gap-3 h-full">
+            <SummaryCard label="Complete"    value={data.statCards.complete}   bg="bg-gradient-to-br from-[#11998e] to-[#38ef7d]" compact={canViewAdminCards} className="flex-1" />
+            <SummaryCard label="Not Started" value={data.statCards.notStarted} bg="bg-gradient-to-br from-[#f093fb] to-[#f5576c]" compact={canViewAdminCards} className="flex-1" />
+            <SummaryCard label="Urgent"      value={data.statCards.urgent}     bg="bg-gradient-to-br from-[#ff416c] to-[#ff4b2b]" compact={canViewAdminCards} className="flex-1" />
+          </div>
+
+          {/* ── Col 3: No Specialist / No Task Assigned (admin only) ── */}
+          {canViewAdminCards && (
+            <div className="flex flex-col gap-3 h-full">
               <AssignmentCard
                 title="No Specialist"
                 count={data.statCards.noSpecialistCount}
@@ -1060,14 +1298,14 @@ export function MrPivotClient({ userRole, ...data }: Props) {
                 availableYears={data.availableYears ?? []}
               />
             </div>
-          </div>
+          )}
 
-          {/* Right column: Team Assignments sidebar — spans full left height */}
+          {/* ── Col 4 (admin) / Col 3 (non-admin): Team Assignments ── */}
           <div className="bg-card border border-border rounded-xl overflow-hidden flex flex-col">
-            <div className="px-3 py-2 bg-muted/30 border-b border-border shrink-0 flex items-center justify-between">
+            <div className="px-3 py-2 bg-muted/30 border-b border-border shrink-0">
               <span className="text-[11px] font-semibold text-foreground">👥 Team Assignments</span>
             </div>
-            <div className="px-2 py-1.5 space-y-0.5 overflow-y-auto flex-1" style={{ maxHeight: "200px" }}>
+            <div className="px-2 py-1.5 space-y-0.5 overflow-y-auto flex-1" style={{ maxHeight: "220px" }}>
               {data.teamGrandTotals.map((t) => (
                 <div key={t.team_name} className="flex items-center justify-between px-1.5 py-1 rounded hover:bg-muted/40 transition-colors">
                   <div className="flex items-center gap-1.5">
@@ -1088,6 +1326,7 @@ export function MrPivotClient({ userRole, ...data }: Props) {
               </div>
             </div>
           </div>
+
         </div>
 
         {/* ── Filter Bar (with RoundRobin at right end, matching PHP) ──────── */}
@@ -1198,7 +1437,9 @@ export function MrPivotClient({ userRole, ...data }: Props) {
 
             {/* Round Robin — pushed to right end, matching PHP filter bar */}
             <div className="ml-auto">
-              <RoundRobinBanner rr={roundRobin} />
+              <div className="flex items-center px-3 py-1.5 rounded-lg bg-muted/70 dark:bg-zinc-800 border border-border shadow-sm">
+                <RoundRobinBanner rr={roundRobin} />
+              </div>
             </div>
           </div>
         </div>
@@ -1246,6 +1487,14 @@ export function MrPivotClient({ userRole, ...data }: Props) {
                 <button onClick={() => setShowPostHrg(true)}
                   className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-yellow-500 hover:bg-yellow-600 text-white font-semibold transition-colors">
                   <FileText size={12} /> Post HRG ({data.postHrgCount})
+                </button>
+              )}
+
+              {/* Withdrawn */}
+              {data.withdrawnCount > 0 && (
+                <button onClick={() => setShowWithdrawn(true)}
+                  className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-semibold transition-colors">
+                  🔴 Withdrawn ({data.withdrawnCount})
                 </button>
               )}
 
@@ -1537,6 +1786,12 @@ export function MrPivotClient({ userRole, ...data }: Props) {
       {showActivityLog && (
         <ActivityLogModal onClose={() => setShowActivityLog(false)} />
       )}
+      <WithdrawnModal
+        open={showWithdrawn}
+        count={data.withdrawnCount}
+        teams={data.medical_teams}
+        onClose={() => setShowWithdrawn(false)}
+      />
     </>
   );
 }
