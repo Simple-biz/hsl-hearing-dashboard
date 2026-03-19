@@ -142,6 +142,32 @@ const SEL_SM =
 const BTN_PRESS =
   "active:scale-95 active:brightness-90 transition-transform duration-75";
 
+const FIELD_LABELS: Record<string, string> = {
+  assigned_rep_id: "Representative",
+  mr_team_id: "Medical Team",
+  hearing_decision_status: "Decision",
+  medical_record_status: "MR Status",
+  brief_assigned_to: "Brief",
+  rep_docs_assigned_to: "Docs Assigned",
+  rfc_status: "RFC",
+  manner_of_appearance: "MOA",
+  assignment_status: "Status",
+  task_assigned: "Task Assigned",
+  rep_docs_complete: "Rep Docs",
+  fee_agreement_complete: "Fee Agreement",
+  five_day_notice: "5-Day Notice",
+  phi_sheet_complete: "PHI Sheet",
+  post_hrg_review: "Post HRG Review",
+  post_hrg_notes: "Post HRG Notes",
+  post_hrg_deadline: "Post HRG Deadline",
+  claimant: "Claimant",
+  hearing_date: "Hearing Date",
+  hearing_time: "Hearing Time",
+  alj: "ALJ",
+  city: "City",
+  state: "State",
+};
+
 // ── Safe date parsing (avoids UTC midnight → local timezone day shift) ──
 function parseDate(dateStr: string): Date {
   // "2026-05-01" → Date at noon UTC so it stays May 1 in any timezone
@@ -333,24 +359,21 @@ function InlineDropdown({
       value={value != null ? String(value) : ""}
       onChange={(e) => onSave(e.target.value || null)}
       className={cn(
-        "h-6 w-full rounded border px-1 text-[11px] font-semibold cursor-pointer transition-colors",
+        "h-6 w-full rounded border px-1 text-[11px] font-semibold cursor-pointer transition-colors bg-card",
         "focus:outline-none focus:ring-1 focus:ring-blue-400",
         currentColor
-          ? cn(currentColor, "border-transparent")
-          : "border-transparent bg-transparent hover:border-border text-foreground",
+          ? cn(currentColor, "border-current")
+          : "border-transparent hover:border-border text-foreground",
       )}
     >
-      <option
-        value=""
-        className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 font-normal"
-      >
+      <option value="" className="text-foreground bg-card font-normal">
         {placeholder}
       </option>
       {options.map((o) => (
         <option
           key={o.value}
           value={o.value}
-          className="bg-white text-zinc-900 dark:bg-zinc-900 dark:text-zinc-100 font-normal"
+          className="text-foreground bg-card font-normal"
         >
           {o.label}
         </option>
@@ -1666,10 +1689,21 @@ const HearingTable = memo(function HearingTable({
     value: d.name,
     label: d.name,
   }));
-  const teamOptions = mrTeams.map((t) => ({
-    value: String(t.id),
-    label: t.team_name,
-  }));
+  const teamOptions = mrTeams
+    .filter((t) => t.is_active)
+    .map((t) => ({
+      value: String(t.id),
+      label: t.team_name,
+    }));
+  // All teams including inactive — for displaying existing assignments
+
+  const teamColorMap: Record<string, string> = {};
+  for (const t of mrTeams) {
+    if (t.team_color) {
+      teamColorMap[t.team_name] =
+        `bg-[${t.team_color}]/20 text-[${t.team_color}] border-[${t.team_color}]/30`;
+    }
+  }
 
   // If no config options loaded for a field, provide sensible defaults
   const moaFallback =
@@ -1778,18 +1812,110 @@ const HearingTable = memo(function HearingTable({
             editable={editable}
           />
         );
-      case "mr_team_id":
+      case "mr_team_id": {
+        // Show team name with color badge for display, active-only dropdown for editing
+        const teamName = hearing.mr_team_name;
+        const teamColor = hearing.mr_team_color;
+        const isInactiveTeam = hearing.mr_team_id
+          ? !mrTeams.find((t) => t.id === hearing.mr_team_id && t.is_active)
+          : false;
+
+        // Badge colors (read-only): light pastel bg + dark text — matches PHP .team-badge
+        const TEAM_BADGE: Record<string, { bg: string; fg: string }> = {
+          blue: { bg: "#dbeafe", fg: "#1e40af" },
+          orange: { bg: "#ffedd5", fg: "#c2410c" },
+          green: { bg: "#d1fae5", fg: "#065f46" },
+          yellow: { bg: "#fef3c7", fg: "#92400e" },
+          purple: { bg: "#ede9fe", fg: "#5b21b6" },
+          red: { bg: "#fee2e2", fg: "#991b1b" },
+          pink: { bg: "#fce7f3", fg: "#9d174d" },
+          teal: { bg: "#ccfbf1", fg: "#0f766e" },
+          indigo: { bg: "#e0e7ff", fg: "#3730a3" },
+          cyan: { bg: "#cffafe", fg: "#0e7490" },
+        };
+        // Select colors (editable): solid bg + white text — matches PHP .team-select
+        const TEAM_SELECT: Record<string, { bg: string; fg: string }> = {
+          blue: { bg: "#3b82f6", fg: "#fff" },
+          orange: { bg: "#f97316", fg: "#fff" },
+          green: { bg: "#22c55e", fg: "#fff" },
+          yellow: { bg: "#eab308", fg: "#1f2937" },
+          purple: { bg: "#a855f7", fg: "#fff" },
+          red: { bg: "#ef4444", fg: "#fff" },
+          pink: { bg: "#ec4899", fg: "#fff" },
+          teal: { bg: "#14b8a6", fg: "#fff" },
+          indigo: { bg: "#6366f1", fg: "#fff" },
+          cyan: { bg: "#06b6d4", fg: "#fff" },
+        };
+
+        const badge = teamColor ? TEAM_BADGE[teamColor] : null;
+        const sel = teamColor ? TEAM_SELECT[teamColor] : null;
+
+        if (!editable) {
+          if (!teamName)
+            return <span className="text-xs text-muted-foreground">-</span>;
+          return (
+            <span
+              className={cn(
+                "inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] font-semibold",
+                isInactiveTeam && "opacity-60",
+              )}
+              style={
+                badge
+                  ? { backgroundColor: badge.bg, color: badge.fg }
+                  : { backgroundColor: "#f1f5f9", color: "#64748b" }
+              }
+            >
+              {teamName}
+              {isInactiveTeam && " ⏸"}
+            </span>
+          );
+        }
         return (
-          <InlineDropdown
-            value={hearing.mr_team_id}
-            options={teamOptions}
-            onSave={(v) =>
-              onUpdate(hearing.id, "mr_team_id", v ? Number(v) : null)
+          <select
+            value={hearing.mr_team_id != null ? String(hearing.mr_team_id) : ""}
+            onChange={(e) =>
+              onUpdate(
+                hearing.id,
+                "mr_team_id",
+                e.target.value ? Number(e.target.value) : null,
+              )
             }
-            editable={editable}
-            placeholder="-"
-          />
+            className="h-6 w-full rounded border border-transparent px-1 text-[11px] font-semibold cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-400"
+            style={
+              sel
+                ? { backgroundColor: sel.bg, color: sel.fg }
+                : isInactiveTeam
+                  ? { backgroundColor: "#f1f5f9", color: "#64748b" }
+                  : undefined
+            }
+          >
+            <option value="" className="text-foreground bg-card font-normal">
+              -
+            </option>
+            {teamOptions.map((o) => (
+              <option
+                key={o.value}
+                value={o.value}
+                className="text-foreground bg-card font-normal"
+              >
+                {o.label}
+              </option>
+            ))}
+            {hearing.mr_team_id &&
+              !teamOptions.find(
+                (o) => o.value === String(hearing.mr_team_id),
+              ) && (
+                <option
+                  value={String(hearing.mr_team_id)}
+                  disabled
+                  className="text-muted-foreground bg-card font-normal"
+                >
+                  {teamName} (inactive)
+                </option>
+              )}
+          </select>
         );
+      }
       case "medical_record_status":
         return (
           <InlineDropdown
@@ -2203,8 +2329,48 @@ export function DashboardClient({
 
   const totalPages = Math.max(1, Math.ceil(totalFiltered / pageSize));
 
+  // Field update notification toast
+  const [updateToast, setUpdateToast] = useState<string | null>(null);
+  const updateToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const handleUpdate = useCallback(
     async (hearingId: number, field: string, value: UpdateValue) => {
+      // Find claimant name for toast
+      const hearing = hearings.find((h) => h.id === hearingId);
+      const claimantName = hearing?.claimant || "";
+
+      // Resolve display value for toast
+      let displayValue = String(value ?? "");
+      if (field === "assigned_rep_id" && value) {
+        displayValue =
+          representatives.find((r) => r.id === Number(value))?.name ||
+          displayValue;
+      } else if (field === "mr_team_id" && value) {
+        displayValue =
+          mrTeams.find((t) => t.id === Number(value))?.team_name ||
+          displayValue;
+      } else if (
+        [
+          "task_assigned",
+          "rep_docs_complete",
+          "fee_agreement_complete",
+          "five_day_notice",
+          "phi_sheet_complete",
+        ].includes(field)
+      ) {
+        displayValue = value ? "✓ checked" : "unchecked";
+      } else if (!value) {
+        displayValue = "cleared";
+      }
+
+      const label = FIELD_LABELS[field] || field.replace(/_/g, " ");
+      const toastMsg = `${label} → ${displayValue}${claimantName ? ` • ${claimantName}` : ""}`;
+
+      // Show toast
+      if (updateToastTimer.current) clearTimeout(updateToastTimer.current);
+      setUpdateToast(toastMsg);
+      updateToastTimer.current = setTimeout(() => setUpdateToast(null), 3000);
+
       // Optimistic update — immediately reflect in UI
       setHearings((prev) =>
         prev.map((h) => {
@@ -2236,7 +2402,7 @@ export function DashboardClient({
         console.error("Update failed:", e),
       );
     },
-    [representatives, mrTeams, postHrgHearing],
+    [representatives, mrTeams, postHrgHearing, hearings],
   );
 
   const handleDelete = useCallback(async (hearingId: number) => {
@@ -3316,6 +3482,21 @@ export function DashboardClient({
             >
               ✕ Clear
             </Button>
+          </div>,
+          document.body,
+        )}
+
+      {/* Field update toast notification */}
+      {updateToast &&
+        mounted &&
+        createPortal(
+          <div className="fixed top-4 right-4 z-200 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 shadow-lg dark:border-emerald-800 dark:bg-emerald-950/80 animate-in fade-in slide-in-from-top-2 duration-200">
+            <span className="text-emerald-600 dark:text-emerald-400 text-sm">
+              ✓
+            </span>
+            <span className="text-sm font-medium text-emerald-800 dark:text-emerald-200">
+              {updateToast}
+            </span>
           </div>,
           document.body,
         )}
