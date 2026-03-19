@@ -59,6 +59,7 @@ export interface MrTeamRow {
   id: number;
   team_name: string;
   team_color: string | null;
+  is_active: boolean;
 }
 
 export interface ConfigOptionRow {
@@ -140,7 +141,7 @@ export async function fetchDashboardData(
       "SELECT id, name, email, rep_type, is_active FROM representatives ORDER BY name",
     ),
     db.query(
-      "SELECT id, team_name, team_color FROM mr_teams WHERE is_active = true ORDER BY display_order",
+      "SELECT id, team_name, team_color, is_active FROM mr_teams ORDER BY display_order",
     ),
     db.query(
       "SELECT id, option_type, option_value, option_color FROM config_options WHERE is_active = true ORDER BY option_type, display_order",
@@ -429,8 +430,7 @@ export async function updateHearing(
   field: string,
   value: string | number | boolean | null,
 ) {
-  const { logAction, getClaimantName } = await import("@/lib/activity-log");
-  // Whitelist allowed fields to prevent SQL injection
+  const { logAction } = await import("@/lib/activity-log");
   const ALLOWED_FIELDS = [
     "assigned_rep_id",
     "mr_team_id",
@@ -473,72 +473,123 @@ export async function updateHearing(
     throw new Error(`Field "${field}" is not allowed for inline update`);
   }
 
+  // Human-readable field labels matching PHP dashboard
+  const FIELD_LABELS: Record<string, string> = {
+    assigned_rep_id: "Representative",
+    mr_team_id: "Medical Team",
+    hearing_decision_status: "Decision",
+    medical_record_status: "MR Status",
+    brief_assigned_to: "Brief",
+    rep_docs_assigned_to: "Docs Assigned",
+    rfc_status: "RFC",
+    manner_of_appearance: "MOA",
+    assignment_status: "Assignment Status",
+    task_assigned: "Task Assigned",
+    rep_docs_complete: "Rep Docs",
+    fee_agreement_complete: "Fee Agreement",
+    five_day_notice: "5-Day Notice",
+    phi_sheet_complete: "PHI Sheet",
+    post_hrg_review: "Post HRG Review",
+    post_hrg_notes: "Post HRG Notes",
+    post_hrg_deadline: "Post HRG Deadline",
+    claimant: "Claimant",
+    ssn_last_4: "SSN",
+    claim_type: "Claim Type",
+    hearing_date: "Hearing Date",
+    hearing_time: "Hearing Time",
+    time_zone: "Time Zone",
+    converted_time_est: "Converted Time EST",
+    alj: "ALJ",
+    city: "City",
+    state: "State",
+    claimant_location: "Claimant Location",
+    representative_location: "Rep Location",
+    medical_expert: "Medical Expert",
+    vocational_expert: "Vocational Expert",
+    status_date: "Status Date",
+    entered_hearing_level_date: "Entered Hearing Level",
+    download_type: "Download Type",
+    medical_record_link: "MR Worksheet",
+  };
+
+  // Get old value before updating
+  const { rows: oldRows } = await db.query(
+    `SELECT ${field}, claimant FROM hearings WHERE id = $1`,
+    [hearingId],
+  );
+  const oldValue = oldRows[0]?.[field];
+  const claimant = oldRows[0]?.claimant || `Hearing #${hearingId}`;
+
+  // Perform the update
   await db.query(`UPDATE hearings SET ${field} = $1 WHERE id = $2`, [
     value,
     hearingId,
   ]);
 
-  // If a withdrawal-type decision was just set, push a sync_notification
-  // so the Medical Records page bell picks it up within 30 seconds
-  if (field === "hearing_decision_status") {
-    const isWithdrawal =
-      typeof value === "string" &&
-      (value.startsWith("Withdrawal") ||
-        value === "WD CLMT DECEASED" ||
-        value === "Dismissal");
-    if (isWithdrawal) {
-      try {
-        const { rows: hRows } = await db.query(
-          "SELECT claimant FROM hearings WHERE id = $1",
-          [hearingId],
-        );
-        const claimantName = (hRows[0]?.claimant as string | undefined) ?? `Hearing #${hearingId}`;
-        const { getSession } = await import("@/lib/session");
-        const session = await getSession();
-        const createdBy = session?.user?.id ?? null;
-        await db.query(
-          `INSERT INTO sync_notifications
-             (notification_type, hearing_id, claimant_name, message, created_by, expires_at)
-           VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '24 hours')`,
-          [
-            "withdrawal",
-            hearingId,
-            claimantName,
-            `Withdrawal decision recorded for ${claimantName}`,
-            createdBy,
-          ],
-        );
-      } catch {
-        // Never let notification creation break the field update
-      }
-    }
-  }
+  // Resolve display values for ID fields
+  const fieldLabel =
+    FIELD_LABELS[field] ||
+    field.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
 
-  // Log the update — action names match PHP dashboard
-  const claimant = await getClaimantName(hearingId);
+  const resolveValue = async (f: string, v: unknown): Promise<string> => {
+    if (v === null || v === undefined || v === "") return "(empty)";
+    if (f === "assigned_rep_id") {
+      const { rows } = await db.query(
+        "SELECT name FROM representatives WHERE id = $1",
+        [v],
+      );
+      return rows[0]?.name || String(v);
+    }
+    if (f === "mr_team_id") {
+      const { rows } = await db.query(
+        "SELECT team_name FROM mr_teams WHERE id = $1",
+        [v],
+      );
+      return rows[0]?.team_name || String(v);
+    }
+    if (f === "rep_docs_assigned_to") {
+      return String(v);
+    }
+    // Boolean fields
+    if (
+      [
+        "task_assigned",
+        "rep_docs_complete",
+        "fee_agreement_complete",
+        "five_day_notice",
+        "phi_sheet_complete",
+      ].includes(f)
+    ) {
+      return v ? "checked" : "unchecked";
+    }
+    return String(v);
+  };
+
+  // Log with specific action name and detailed description
   if (field === "assigned_rep_id" && value) {
-    const { rows } = await db.query(
-      "SELECT name FROM representatives WHERE id = $1",
-      [value],
-    );
+    const newName = await resolveValue(field, value);
+    const oldName = oldValue ? await resolveValue(field, oldValue) : "(empty)";
     await logAction(
       "rep_assigned",
-      `Assigned ${rows[0]?.name || "unknown"} to: ${claimant}`,
+      `Assigned ${newName} to: ${claimant}${oldValue ? ` (was: ${oldName})` : ""}`,
     );
   } else if (field === "assigned_rep_id" && !value) {
-    await logAction("rep_unassigned", `Unassigned from: ${claimant}`);
+    const oldName = oldValue ? await resolveValue(field, oldValue) : "unknown";
+    await logAction(
+      "rep_unassigned",
+      `Unassigned ${oldName} from: ${claimant}`,
+    );
   } else if (field === "assignment_status") {
     await logAction(
       "status_assigned",
-      `Set ${value || "cleared"} for: ${claimant}`,
+      `Set ${fieldLabel} to '${value || "cleared"}' for: ${claimant}`,
     );
   } else {
-    const fieldLabel = field
-      .replace(/_/g, " ")
-      .replace(/\b\w/g, (l) => l.toUpperCase());
+    const oldDisplay = await resolveValue(field, oldValue);
+    const newDisplay = await resolveValue(field, value);
     await logAction(
       "field_updated",
-      `Set ${fieldLabel} to '${value ?? "cleared"}' for: ${claimant}`,
+      `${fieldLabel}: '${oldDisplay}' → '${newDisplay}' for: ${claimant}`,
     );
   }
 }
@@ -1134,7 +1185,9 @@ export async function fetchActivityLog(params: {
 
   // Optionally hide system_admin (user id=1) activities — matches PHP dashboard
   if (params.excludeSystemAdmin) {
-    conditions.push(`(a.user_id IS NULL OR a.user_id != 1)`);
+    conditions.push(
+      `(a.user_id IS NULL OR a.user_id NOT IN (SELECT id FROM users WHERE role = 'system_admin' OR email = 'admin@hogansmith.com'))`,
+    );
   }
 
   const where =
