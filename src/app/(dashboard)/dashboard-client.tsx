@@ -3591,6 +3591,7 @@ function CsvCompareModal({ onClose }: { onClose: () => void }) {
     rescheduled: (ChronicleEntry & {
       _cat: "rescheduled";
       prevDate: string;
+      prevTime: string;
       prevClaimant: string;
     })[];
     duplicates: (ChronicleEntry & { _cat: "duplicate" })[];
@@ -3654,21 +3655,24 @@ function CsvCompareModal({ onClose }: { onClose: () => void }) {
 
       // Build lookup maps from DB
       const exactMap = new Map<string, boolean>();
-      const personMap = new Map<string, { date: string; claimant: string }[]>();
+      const dateMap = new Map<string, boolean>(); // name+ssn+date (ignoring time)
+      const personMap = new Map<
+        string,
+        { date: string; time: string; claimant: string }[]
+      >();
 
       for (const h of dbHearings) {
         const base = stripSuffix(h.claimant || "").toLowerCase();
         const ssn = (h.ssn_last_4 || "").trim();
         const date = h.hearing_date || "";
-        const time = normalizeTime(
-          h.hearing_time || h.converted_time_est || "",
-        );
+        const time = normalizeTime(h.hearing_time || h.converted_time || "");
 
         if (base && ssn) {
           exactMap.set(`${base}|${ssn}|${date}|${time}`, true);
+          dateMap.set(`${base}|${ssn}|${date}`, true); // date-only key
           const pk = `${base}|${ssn}`;
           if (!personMap.has(pk)) personMap.set(pk, []);
-          personMap.get(pk)!.push({ date, claimant: h.claimant });
+          personMap.get(pk)!.push({ date, time, claimant: h.claimant });
         }
       }
 
@@ -3681,6 +3685,27 @@ function CsvCompareModal({ onClose }: { onClose: () => void }) {
         .split(",")
         .map((h) => h.trim().replace(/^"|"$/g, ""));
 
+      // Proper CSV row parser that handles quoted fields with commas
+      const parseCsvRow = (line: string): string[] => {
+        const result: string[] = [];
+        let current = "";
+        let inQuotes = false;
+        for (const ch of line) {
+          if (ch === '"') {
+            inQuotes = !inQuotes;
+            continue;
+          }
+          if (ch === "," && !inQuotes) {
+            result.push(current.trim());
+            current = "";
+            continue;
+          }
+          current += ch;
+        }
+        result.push(current.trim());
+        return result;
+      };
+
       const col = (row: string[], name: string) => {
         const idx = headers.findIndex((h) =>
           h.toLowerCase().includes(name.toLowerCase()),
@@ -3692,17 +3717,14 @@ function CsvCompareModal({ onClose }: { onClose: () => void }) {
       const rescheduled: (ChronicleEntry & {
         _cat: "rescheduled";
         prevDate: string;
+        prevTime: string;
         prevClaimant: string;
       })[] = [];
       const duplicates: (ChronicleEntry & { _cat: "duplicate" })[] = [];
 
       for (let i = 1; i < lines.length; i++) {
         if (!lines[i].trim()) continue;
-        // Simple CSV parse (handles basic quoting)
-        const row =
-          lines[i]
-            .match(/(".*?"|[^,]*)/g)
-            ?.map((c) => c.trim().replace(/^"|"$/g, "")) || [];
+        const row = parseCsvRow(lines[i]);
 
         const firstName = col(row, "client_firstName");
         const lastName = col(row, "client_lastName");
@@ -3739,13 +3761,19 @@ function CsvCompareModal({ onClose }: { onClose: () => void }) {
         const normTime = normalizeTime(hTime);
         const normDate = normalizeDate(hDate);
 
-        // Exact duplicate?
+        // Exact duplicate? (name + ssn + date + time all match)
         if (exactMap.has(`${nameLower}|${ssn}|${normDate}|${normTime}`)) {
           duplicates.push({ ...entry, _cat: "duplicate" });
           continue;
         }
 
-        // Rescheduled? (same person, different date)
+        // Same date, different time? Still a duplicate (time mismatch in DB, e.g. 11:30 vs 23:30)
+        if (dateMap.has(`${nameLower}|${ssn}|${normDate}`)) {
+          duplicates.push({ ...entry, _cat: "duplicate" });
+          continue;
+        }
+
+        // Rescheduled? (same person + SSN, completely different date)
         const pk = `${nameLower}|${ssn}`;
         if (personMap.has(pk)) {
           const prev = personMap
@@ -3755,6 +3783,7 @@ function CsvCompareModal({ onClose }: { onClose: () => void }) {
             ...entry,
             _cat: "rescheduled",
             prevDate: prev.date,
+            prevTime: prev.time,
             prevClaimant: prev.claimant,
           });
           continue;
@@ -3908,157 +3937,279 @@ function CsvCompareModal({ onClose }: { onClose: () => void }) {
           {/* Results */}
           {results && (
             <>
-              {/* Summary stats */}
+              {/* Summary stats — clickable to jump to section */}
               <div className="grid grid-cols-3 gap-3">
-                <div className="rounded-lg border bg-emerald-50/50 p-3 text-center dark:bg-emerald-950/20">
+                <button
+                  onClick={() => setActiveTab("new")}
+                  className={cn(
+                    "rounded-lg border p-3 text-center transition-all",
+                    activeTab === "new"
+                      ? "border-emerald-400 ring-1 ring-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/20"
+                      : "hover:bg-muted/40",
+                  )}
+                >
                   <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-400 tabular-nums">
                     {results.newEntries.length}
                   </p>
-                  <p className="text-xs text-muted-foreground">New</p>
-                </div>
-                <div className="rounded-lg border bg-blue-50/50 p-3 text-center dark:bg-blue-950/20">
+                  <p className="text-xs text-muted-foreground font-medium">
+                    New Entries
+                  </p>
+                </button>
+                <button
+                  onClick={() => setActiveTab("rescheduled")}
+                  className={cn(
+                    "rounded-lg border p-3 text-center transition-all",
+                    activeTab === "rescheduled"
+                      ? "border-blue-400 ring-1 ring-blue-400 bg-blue-50/50 dark:bg-blue-950/20"
+                      : "hover:bg-muted/40",
+                  )}
+                >
                   <p className="text-2xl font-bold text-blue-700 dark:text-blue-400 tabular-nums">
                     {results.rescheduled.length}
                   </p>
-                  <p className="text-xs text-muted-foreground">Rescheduled</p>
-                </div>
-                <div className="rounded-lg border bg-amber-50/50 p-3 text-center dark:bg-amber-950/20">
+                  <p className="text-xs text-muted-foreground font-medium">
+                    Rescheduled
+                  </p>
+                </button>
+                <button
+                  onClick={() => setActiveTab("duplicate")}
+                  className={cn(
+                    "rounded-lg border p-3 text-center transition-all",
+                    activeTab === "duplicate"
+                      ? "border-amber-400 ring-1 ring-amber-400 bg-amber-50/50 dark:bg-amber-950/20"
+                      : "hover:bg-muted/40",
+                  )}
+                >
                   <p className="text-2xl font-bold text-amber-700 dark:text-amber-400 tabular-nums">
                     {results.duplicates.length}
                   </p>
-                  <p className="text-xs text-muted-foreground">Duplicates</p>
-                </div>
+                  <p className="text-xs text-muted-foreground font-medium">
+                    Duplicates
+                  </p>
+                </button>
               </div>
 
-              {/* Tabs */}
-              <div className="flex items-center gap-1.5 border-b">
-                {[
-                  {
-                    key: "new" as const,
-                    label: "New",
-                    count: results.newEntries.length,
-                    color: "text-emerald-600",
-                  },
-                  {
-                    key: "rescheduled" as const,
-                    label: "Rescheduled",
-                    count: results.rescheduled.length,
-                    color: "text-blue-600",
-                  },
-                  {
-                    key: "duplicate" as const,
-                    label: "Duplicates",
-                    count: results.duplicates.length,
-                    color: "text-amber-600",
-                  },
-                ].map((t) => (
-                  <button
-                    key={t.key}
-                    onClick={() => setActiveTab(t.key)}
-                    className={cn(
-                      "flex items-center gap-1.5 pb-2 px-3 text-xs font-medium border-b-2 transition-colors",
-                      activeTab === t.key
-                        ? "border-primary text-primary"
-                        : "border-transparent text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    {t.label}{" "}
-                    <span
-                      className={cn(
-                        "tabular-nums",
-                        activeTab !== t.key && t.color,
-                      )}
-                    >
-                      ({t.count})
-                    </span>
-                  </button>
-                ))}
-              </div>
+              {/* New Entries */}
+              {(activeTab === "new" || activeTab === null) &&
+                results.newEntries.length > 0 && (
+                  <div className="rounded-lg border overflow-hidden">
+                    <div className="flex items-center gap-2 px-3 py-2 bg-emerald-50 dark:bg-emerald-950/20 border-b">
+                      <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                      <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-300">
+                        New Entries ({results.newEntries.length})
+                      </p>
+                      <p className="text-[10px] text-emerald-600 dark:text-emerald-400">
+                        — Not found in RAW hearings database
+                      </p>
+                    </div>
+                    <div className="overflow-auto max-h-50">
+                      <table className="w-full text-xs">
+                        <thead className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10">
+                          <tr>
+                            <th className="px-2 py-1.5 text-left font-semibold">
+                              Claimant
+                            </th>
+                            <th className="px-2 py-1.5 text-left font-semibold">
+                              SSN
+                            </th>
+                            <th className="px-2 py-1.5 text-left font-semibold">
+                              Claim Type
+                            </th>
+                            <th className="px-2 py-1.5 text-left font-semibold">
+                              Hearing Date
+                            </th>
+                            <th className="px-2 py-1.5 text-left font-semibold">
+                              Time
+                            </th>
+                            <th className="px-2 py-1.5 text-left font-semibold">
+                              ALJ
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {results.newEntries.map((e, i) => (
+                            <tr key={i} className="hover:bg-muted/30">
+                              <td className="px-2 py-1.5 font-medium">
+                                {e.claimant}
+                              </td>
+                              <td className="px-2 py-1.5 text-muted-foreground tabular-nums">
+                                {e.ssn || "—"}
+                              </td>
+                              <td className="px-2 py-1.5">
+                                {e.claimType || "—"}
+                              </td>
+                              <td className="px-2 py-1.5 tabular-nums">
+                                {e.hearingDate}
+                              </td>
+                              <td className="px-2 py-1.5 tabular-nums">
+                                {e.time || "—"}
+                              </td>
+                              <td className="px-2 py-1.5">{e.alj || "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
 
-              {/* Table */}
-              <div className="overflow-auto max-h-75 rounded-lg border">
-                <table className="w-full text-xs">
-                  <thead className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10">
-                    <tr>
-                      <th className="px-2 py-1.5 text-left font-semibold">
-                        Claimant
-                      </th>
-                      <th className="px-2 py-1.5 text-left font-semibold">
-                        SSN
-                      </th>
-                      <th className="px-2 py-1.5 text-left font-semibold">
-                        Type
-                      </th>
-                      <th className="px-2 py-1.5 text-left font-semibold">
-                        Date
-                      </th>
-                      <th className="px-2 py-1.5 text-left font-semibold">
-                        Time
-                      </th>
-                      <th className="px-2 py-1.5 text-left font-semibold">
-                        ALJ
-                      </th>
-                      {activeTab === "rescheduled" && (
-                        <th className="px-2 py-1.5 text-left font-semibold">
-                          Previous Date
-                        </th>
-                      )}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {(activeTab === "new"
-                      ? results.newEntries
-                      : activeTab === "rescheduled"
-                        ? results.rescheduled
-                        : results.duplicates
-                    ).map((entry, i) => (
-                      <tr key={i} className="hover:bg-muted/30">
-                        <td className="px-2 py-1.5 font-medium">
-                          {entry.claimant}
-                        </td>
-                        <td className="px-2 py-1.5 text-muted-foreground tabular-nums">
-                          {entry.ssn || "—"}
-                        </td>
-                        <td className="px-2 py-1.5">
-                          {entry.claimType || "—"}
-                        </td>
-                        <td className="px-2 py-1.5 tabular-nums">
-                          {entry.hearingDate}
-                        </td>
-                        <td className="px-2 py-1.5 tabular-nums">
-                          {entry.time || "—"}
-                        </td>
-                        <td className="px-2 py-1.5">{entry.alj || "—"}</td>
-                        {activeTab === "rescheduled" && "prevDate" in entry && (
-                          <td className="px-2 py-1.5 text-muted-foreground tabular-nums">
-                            {entry.prevDate}
-                          </td>
-                        )}
-                      </tr>
-                    ))}
-                    {(activeTab === "new"
-                      ? results.newEntries
-                      : activeTab === "rescheduled"
-                        ? results.rescheduled
-                        : results.duplicates
-                    ).length === 0 && (
-                      <tr>
-                        <td
-                          colSpan={7}
-                          className="py-6 text-center text-muted-foreground"
-                        >
-                          No entries in this category
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+              {/* Rescheduled */}
+              {(activeTab === "rescheduled" || activeTab === null) &&
+                results.rescheduled.length > 0 && (
+                  <div className="rounded-lg border overflow-hidden">
+                    <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-950/20 border-b">
+                      <span className="h-2 w-2 rounded-full bg-blue-500" />
+                      <p className="text-xs font-semibold text-blue-800 dark:text-blue-300">
+                        Rescheduled ({results.rescheduled.length})
+                      </p>
+                      <p className="text-[10px] text-blue-600 dark:text-blue-400">
+                        — Same person + SSN, different hearing date
+                      </p>
+                    </div>
+                    <div className="overflow-auto max-h-50">
+                      <table className="w-full text-xs">
+                        <thead className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10">
+                          <tr>
+                            <th className="px-2 py-1.5 text-left font-semibold">
+                              Claimant
+                            </th>
+                            <th className="px-2 py-1.5 text-left font-semibold">
+                              SSN
+                            </th>
+                            <th className="px-2 py-1.5 text-left font-semibold">
+                              Claim Type
+                            </th>
+                            <th className="px-2 py-1.5 text-left font-semibold">
+                              New Date
+                            </th>
+                            <th className="px-2 py-1.5 text-left font-semibold">
+                              Time
+                            </th>
+                            <th className="px-2 py-1.5 text-left font-semibold">
+                              Previous Date
+                            </th>
+                            <th className="px-2 py-1.5 text-left font-semibold">
+                              Previous Time
+                            </th>
+                            <th className="px-2 py-1.5 text-left font-semibold">
+                              ALJ
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {results.rescheduled.map((e, i) => (
+                            <tr key={i} className="hover:bg-muted/30">
+                              <td className="px-2 py-1.5 font-medium">
+                                {e.claimant}
+                              </td>
+                              <td className="px-2 py-1.5 text-muted-foreground tabular-nums">
+                                {e.ssn || "—"}
+                              </td>
+                              <td className="px-2 py-1.5">
+                                {e.claimType || "—"}
+                              </td>
+                              <td className="px-2 py-1.5 tabular-nums font-medium text-blue-700 dark:text-blue-400">
+                                {e.hearingDate}
+                              </td>
+                              <td className="px-2 py-1.5 tabular-nums">
+                                {e.time || "—"}
+                              </td>
+                              <td className="px-2 py-1.5 tabular-nums text-muted-foreground line-through">
+                                {e.prevDate}
+                              </td>
+                              <td className="px-2 py-1.5 tabular-nums text-muted-foreground line-through">
+                                {e.prevTime || "—"}
+                              </td>
+                              <td className="px-2 py-1.5">{e.alj || "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+              {/* Duplicates */}
+              {(activeTab === "duplicate" || activeTab === null) &&
+                results.duplicates.length > 0 && (
+                  <div className="rounded-lg border overflow-hidden">
+                    <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/20 border-b">
+                      <span className="h-2 w-2 rounded-full bg-amber-500" />
+                      <p className="text-xs font-semibold text-amber-800 dark:text-amber-300">
+                        Duplicates ({results.duplicates.length})
+                      </p>
+                      <p className="text-[10px] text-amber-600 dark:text-amber-400">
+                        — Already in RAW hearings (name + SSN + date + time
+                        match)
+                      </p>
+                    </div>
+                    <div className="overflow-auto max-h-50">
+                      <table className="w-full text-xs">
+                        <thead className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10">
+                          <tr>
+                            <th className="px-2 py-1.5 text-left font-semibold">
+                              Claimant
+                            </th>
+                            <th className="px-2 py-1.5 text-left font-semibold">
+                              SSN
+                            </th>
+                            <th className="px-2 py-1.5 text-left font-semibold">
+                              Claim Type
+                            </th>
+                            <th className="px-2 py-1.5 text-left font-semibold">
+                              Hearing Date
+                            </th>
+                            <th className="px-2 py-1.5 text-left font-semibold">
+                              Time
+                            </th>
+                            <th className="px-2 py-1.5 text-left font-semibold">
+                              ALJ
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {results.duplicates.map((e, i) => (
+                            <tr
+                              key={i}
+                              className="hover:bg-muted/30 opacity-50"
+                            >
+                              <td className="px-2 py-1.5 font-medium">
+                                {e.claimant}
+                              </td>
+                              <td className="px-2 py-1.5 text-muted-foreground tabular-nums">
+                                {e.ssn || "—"}
+                              </td>
+                              <td className="px-2 py-1.5">
+                                {e.claimType || "—"}
+                              </td>
+                              <td className="px-2 py-1.5 tabular-nums">
+                                {e.hearingDate}
+                              </td>
+                              <td className="px-2 py-1.5 tabular-nums">
+                                {e.time || "—"}
+                              </td>
+                              <td className="px-2 py-1.5">{e.alj || "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+              {/* All empty */}
+              {results.newEntries.length === 0 &&
+                results.rescheduled.length === 0 &&
+                results.duplicates.length === 0 && (
+                  <div className="rounded-lg border p-8 text-center text-muted-foreground">
+                    No entries found in the Chronicles CSV.
+                  </div>
+                )}
 
               {/* Import result */}
               {importResult && (
                 <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800">
-                  ✅ Imported {importResult.imported} hearings
+                  ✅ Imported {importResult.imported} hearings to RAW
                   {importResult.skipped > 0 &&
                     ` (${importResult.skipped} skipped)`}
                 </div>
@@ -4084,7 +4235,7 @@ function CsvCompareModal({ onClose }: { onClose: () => void }) {
               ) : (
                 "🚀"
               )}
-              Migrate {migrateCount} to Hearings
+              Import {migrateCount} to RAW Hearings
             </Button>
           )}
         </div>

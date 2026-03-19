@@ -19,6 +19,9 @@ const CATEGORIES = [
 ];
 
 const ACTION_COLORS: Record<string, string> = {
+  // Auth
+  user_login: "bg-green-100 text-green-700 dark:bg-green-900/30",
+  user_logout: "bg-zinc-100 text-zinc-700 dark:bg-zinc-900/30",
   // Assignments
   rep_assigned: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30",
   rep_unassigned: "bg-amber-100 text-amber-700 dark:bg-amber-900/30",
