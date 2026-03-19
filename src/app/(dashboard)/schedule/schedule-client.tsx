@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback, useRef, useEffect } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { AppHeader } from "@/components/layout/app-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,11 +21,9 @@ import {
   Plus,
   Trash2,
   Search,
-  ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { UserRole } from "@/lib/roles";
-import { DashboardNav } from "@/components/layout/dashboard-nav";
 import {
   getAvailability,
   getHearingsForMonth,
@@ -48,6 +46,7 @@ type AvailType =
 interface DayState {
   type: AvailType;
   timeSlots: { start: string; end: string }[];
+  tzOverride?: string;
 }
 
 const TZ_OPTIONS = [
@@ -58,6 +57,7 @@ const TZ_OPTIONS = [
   { value: "America/Anchorage", label: "Alaska (AKT)" },
   { value: "Pacific/Honolulu", label: "Hawaii (HT)" },
 ];
+
 const PRESETS: { label: string; slots: { start: string; end: string }[] }[] = [
   { label: "8am-10am", slots: [{ start: "08:00", end: "10:00" }] },
   { label: "8am-12pm", slots: [{ start: "08:00", end: "12:00" }] },
@@ -85,23 +85,16 @@ const PRESETS: { label: string; slots: { start: string; end: string }[] }[] = [
     ],
   },
 ];
+
 const TYPE_LABELS: Record<string, string> = {
-  internal_advocates: "Internal Advocates",
-  external_advocates: "External Advocates",
-  "in-house": "In-House",
-};
-const TYPE_SHORT: Record<string, string> = {
   internal_advocates: "Internal",
   external_advocates: "External",
   "in-house": "In-House",
 };
 const TYPE_COLORS: Record<string, string> = {
-  internal_advocates:
-    "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
-  external_advocates:
-    "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
-  "in-house":
-    "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300",
+  internal_advocates: "bg-emerald-100 text-emerald-700",
+  external_advocates: "bg-amber-100 text-amber-700",
+  "in-house": "bg-blue-100 text-blue-700",
 };
 
 function buildEdits(avail: AvailabilityDay[]) {
@@ -144,18 +137,11 @@ export function ScheduleClient({
   const [hearings, setHearings] = useState(initialHearings);
   const [holidays, setHolidays] = useState(initialHolidays);
   const [saving, setSaving] = useState(false);
+  const [repSearch, setRepSearch] = useState("");
   const [repLoaded, setRepLoaded] = useState(initialRepId > 0);
   const [edits, setEdits] = useState<Record<string, DayState>>(() =>
     buildEdits(initialAvailability),
   );
-
-  // Admin rep search state
-  const [repSearch, setRepSearch] = useState("");
-  const [repTypeFilter, setRepTypeFilter] = useState("__all__");
-  const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [selectedDropdownRep, setSelectedDropdownRep] =
-    useState<RepOption | null>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Modal state
   const [modalDate, setModalDate] = useState<string | null>(null);
@@ -169,10 +155,7 @@ export function ScheduleClient({
   const isAdmin = !["rep", "staff"].includes(userRole);
   const isLocked = availability.some((a) => a.schedule_locked);
   const selectedRep = reps.find((r) => r.id === selectedRepId);
-  const [localTz, setLocalTz] = useState(
-    selectedRep?.timezone || "America/New_York",
-  );
-  const repTz = localTz && localTz !== "" ? localTz : "America/New_York";
+  const repTz = selectedRep?.timezone || "America/New_York";
 
   const [year, month] = selectedMonth.split("-").map(Number);
   const daysInMonth = new Date(year, month, 0).getDate();
@@ -185,7 +168,9 @@ export function ScheduleClient({
       (1000 * 60 * 60 * 24),
   );
   const isPastDeadline = daysUntilDeadline < 0;
-  const canEdit = isAdmin || (!isLocked && !isPastDeadline);
+  // If deadline passed but schedule is NOT locked (admin explicitly unlocked), rep can edit
+  // If deadline passed AND schedule IS locked, only admin can edit
+  const canEditSchedule = isAdmin || !isLocked;
   const monthName = new Date(year, month - 1, 1).toLocaleDateString("en-US", {
     month: "long",
     year: "numeric",
@@ -207,50 +192,6 @@ export function ScheduleClient({
     (e) => e.type === "unavailable",
   ).length;
 
-  // Close dropdown on outside click
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (
-        dropdownRef.current &&
-        !dropdownRef.current.contains(e.target as Node)
-      )
-        setDropdownOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
-  // Filtered reps for search + type filter
-  const filteredReps = useMemo(
-    () =>
-      reps.filter((r) => {
-        if (
-          repSearch &&
-          !r.name.toLowerCase().includes(repSearch.toLowerCase()) &&
-          !r.email?.toLowerCase().includes(repSearch.toLowerCase())
-        )
-          return false;
-        if (repTypeFilter !== "__all__" && r.rep_type !== repTypeFilter)
-          return false;
-        return true;
-      }),
-    [reps, repSearch, repTypeFilter],
-  );
-
-  // Also filter dropdown options by search
-  const dropdownReps = useMemo(
-    () =>
-      reps.filter((r) => {
-        if (
-          repSearch &&
-          !r.name.toLowerCase().includes(repSearch.toLowerCase())
-        )
-          return false;
-        return true;
-      }),
-    [reps, repSearch],
-  );
-
   const loadData = useCallback(async (repId: number, ym: string) => {
     const [avail, hrgs, hols] = await Promise.all([
       getAvailability(repId, ym),
@@ -266,14 +207,7 @@ export function ScheduleClient({
   const handleSelectRep = async (repId: number) => {
     setSelectedRepId(repId);
     setRepLoaded(true);
-    const r = reps.find((x) => x.id === repId);
-    setLocalTz(r?.timezone || "America/New_York");
     await loadData(repId, selectedMonth);
-  };
-  const handleGoClick = async () => {
-    if (selectedDropdownRep) {
-      await handleSelectRep(selectedDropdownRep.id);
-    }
   };
   const handleMonthNav = async (dir: number) => {
     const d = new Date(year, month - 1 + dir, 1);
@@ -286,7 +220,6 @@ export function ScheduleClient({
     await loadData(selectedRepId, ym);
   };
   const handleTimezoneChange = async (tz: string) => {
-    setLocalTz(tz);
     await updateRepTimezone(selectedRepId, tz);
     setTzSaved(true);
     setTimeout(() => setTzSaved(false), 2000);
@@ -301,7 +234,7 @@ export function ScheduleClient({
         ? [...e.timeSlots]
         : [{ start: "08:00", end: "17:00" }],
     );
-    setModalTzOverride("");
+    setModalTzOverride(e?.tzOverride || "");
   };
   const closeModal = () => setModalDate(null);
   const applyModal = () => {
@@ -311,6 +244,7 @@ export function ScheduleClient({
       [modalDate]: {
         type: modalType,
         timeSlots: modalType === "custom_time" ? modalSlots : [],
+        tzOverride: modalTzOverride || undefined,
       },
     }));
     closeModal();
@@ -349,9 +283,14 @@ export function ScheduleClient({
     await loadData(selectedRepId, selectedMonth);
   };
 
-  // ═════════════════════════════════════════════════════
-  // ADMIN REP SELECTION LANDING — matches old dashboard
-  // ═════════════════════════════════════════════════════
+  const filteredReps = reps.filter(
+    (r) =>
+      !repSearch ||
+      r.name.toLowerCase().includes(repSearch.toLowerCase()) ||
+      r.email?.toLowerCase().includes(repSearch.toLowerCase()),
+  );
+
+  // ═════════ ADMIN REP SELECTION LANDING ═════════
   if (showRepSelector && !repLoaded) {
     return (
       <>
@@ -359,197 +298,64 @@ export function ScheduleClient({
           title="Rep Schedule"
           subtitle="Select a representative to manage their schedule"
         />
-        <div className="p-4 lg:p-6 space-y-5 max-w-4xl mx-auto">
-          <DashboardNav userRole={userRole} />
-          <div className="rounded-xl border bg-card p-6 space-y-5">
-            {/* Search + Dropdown row — side by side like old dashboard */}
-            <div className="flex flex-col sm:flex-row gap-4">
-              {/* Search field */}
-              <div className="flex-1 min-w-50">
-                <label className="mb-1.5 block text-sm font-semibold">
-                  🔍 Search by Name
-                </label>
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-                  <Input
-                    placeholder="Type to filter representatives..."
-                    value={repSearch}
-                    onChange={(e) => setRepSearch(e.target.value)}
-                    className="h-10 pl-9 pr-8 text-sm"
-                  />
-                  {repSearch && (
-                    <button
-                      onClick={() => setRepSearch("")}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 flex h-5 w-5 items-center justify-center rounded-full bg-muted text-muted-foreground hover:bg-muted-foreground/20 text-xs"
-                    >
-                      x
-                    </button>
-                  )}
-                </div>
+        <div className="p-4 lg:p-6 space-y-5 max-w-3xl mx-auto">
+          <div className="rounded-xl border bg-card p-6 space-y-4">
+            <div>
+              <label className="mb-2 block text-sm font-semibold">
+                🔍 Search by Name
+              </label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Type to filter representatives..."
+                  value={repSearch}
+                  onChange={(e) => setRepSearch(e.target.value)}
+                  className="h-10 pl-9 text-sm"
+                />
               </div>
-
-              {/* Custom dropdown + Go button */}
-              <div className="flex-1 min-w-62.5">
-                <label className="mb-1.5 block text-sm font-semibold">
-                  Select Representative
-                </label>
-                <div className="flex gap-2">
-                  <div className="relative flex-1" ref={dropdownRef}>
-                    <button
-                      onClick={() => setDropdownOpen(!dropdownOpen)}
-                      className="flex h-10 w-full items-center justify-between rounded-md border bg-card px-3 text-sm hover:bg-muted/50 transition-colors"
-                    >
-                      {selectedDropdownRep ? (
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="font-medium truncate">
-                            {selectedDropdownRep.name}
-                          </span>
-                          <span
-                            className={cn(
-                              "shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold",
-                              TYPE_COLORS[selectedDropdownRep.rep_type],
-                            )}
-                          >
-                            {TYPE_SHORT[selectedDropdownRep.rep_type]}
-                          </span>
-                        </div>
-                      ) : (
-                        <span className="text-muted-foreground">
-                          -- Select a Representative --
-                        </span>
+            </div>
+            <div>
+              <label className="mb-2 block text-sm font-semibold">
+                Select Representative
+              </label>
+              <div className="max-h-100 overflow-y-auto rounded-lg border">
+                {filteredReps.map((rep) => (
+                  <button
+                    key={rep.id}
+                    onClick={() => handleSelectRep(rep.id)}
+                    className="flex w-full items-center justify-between px-4 py-3 text-left border-b border-border/50 last:border-0 hover:bg-muted/50 transition-colors"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold truncate">
+                        {rep.name}
+                      </p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {rep.email}
+                      </p>
+                    </div>
+                    <span
+                      className={cn(
+                        "shrink-0 rounded-md px-2 py-0.5 text-[10px] font-semibold",
+                        TYPE_COLORS[rep.rep_type] ||
+                          "bg-muted text-muted-foreground",
                       )}
-                      <ChevronDown
-                        className={cn(
-                          "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
-                          dropdownOpen && "rotate-180",
-                        )}
-                      />
-                    </button>
-
-                    {/* Dropdown menu */}
-                    {dropdownOpen && (
-                      <div className="absolute z-50 mt-1 w-full rounded-lg border bg-card shadow-lg max-h-87.5 overflow-y-auto">
-                        {dropdownReps.length === 0 ? (
-                          <div className="p-4 text-center text-sm text-muted-foreground">
-                            No representatives found
-                          </div>
-                        ) : (
-                          dropdownReps.map((rep) => (
-                            <button
-                              key={rep.id}
-                              onClick={() => {
-                                setSelectedDropdownRep(rep);
-                                setDropdownOpen(false);
-                              }}
-                              className={cn(
-                                "flex w-full items-center gap-3 px-3 py-2.5 text-left border-b border-border/30 last:border-0 hover:bg-muted/50 transition-colors",
-                                selectedDropdownRep?.id === rep.id &&
-                                  "bg-blue-50 dark:bg-blue-950/30",
-                              )}
-                            >
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm font-semibold truncate">
-                                  {rep.name}
-                                </p>
-                                <p className="text-[11px] text-muted-foreground truncate">
-                                  {rep.email}
-                                </p>
-                              </div>
-                              <span
-                                className={cn(
-                                  "shrink-0 rounded px-2 py-0.5 text-[10px] font-semibold",
-                                  TYPE_COLORS[rep.rep_type],
-                                )}
-                              >
-                                {TYPE_LABELS[rep.rep_type] || rep.rep_type}
-                              </span>
-                            </button>
-                          ))
-                        )}
-                      </div>
-                    )}
+                    >
+                      {TYPE_LABELS[rep.rep_type] || rep.rep_type}
+                    </span>
+                  </button>
+                ))}
+                {filteredReps.length === 0 && (
+                  <div className="py-8 text-center text-sm text-muted-foreground">
+                    No representatives found.
                   </div>
-
-                  <Button
-                    className="h-10 px-5 font-semibold"
-                    onClick={handleGoClick}
-                    disabled={!selectedDropdownRep}
-                  >
-                    Go →
-                  </Button>
-                </div>
+                )}
               </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Showing {filteredReps.length} of {reps.length} active
+                representatives
+              </p>
             </div>
-
-            {/* Type filter tabs */}
-            <div className="flex flex-wrap items-center gap-1.5">
-              {[
-                { value: "__all__", label: "All Types" },
-                { value: "internal_advocates", label: "Internal Advocates" },
-                { value: "external_advocates", label: "External Advocates" },
-                { value: "in-house", label: "In-House" },
-              ].map((opt) => (
-                <button
-                  key={opt.value}
-                  onClick={() => setRepTypeFilter(opt.value)}
-                  className={cn(
-                    "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                    repTypeFilter === opt.value
-                      ? "bg-blue-600 text-white"
-                      : "bg-muted text-muted-foreground hover:bg-muted/80",
-                  )}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Rep list — clickable cards */}
-            <div className="max-h-100 overflow-y-auto rounded-lg border">
-              {filteredReps.map((rep) => (
-                <button
-                  key={rep.id}
-                  onClick={() => handleSelectRep(rep.id)}
-                  className="flex w-full items-center justify-between px-4 py-3 text-left border-b border-border/50 last:border-0 hover:bg-muted/50 transition-colors"
-                >
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold truncate">{rep.name}</p>
-                    <p className="text-xs text-muted-foreground truncate">
-                      {rep.email}
-                    </p>
-                  </div>
-                  <span
-                    className={cn(
-                      "shrink-0 rounded-md px-2 py-0.5 text-[10px] font-semibold",
-                      TYPE_COLORS[rep.rep_type],
-                    )}
-                  >
-                    {TYPE_LABELS[rep.rep_type] || rep.rep_type}
-                  </span>
-                </button>
-              ))}
-              {filteredReps.length === 0 && (
-                <div className="py-8 text-center text-sm text-muted-foreground">
-                  ⚠️ No representatives found matching your search. Try a
-                  different name.
-                </div>
-              )}
-            </div>
-
-            <p className="text-xs text-muted-foreground">
-              Showing{" "}
-              <span className="font-semibold text-foreground">
-                {filteredReps.length}
-              </span>{" "}
-              of{" "}
-              <span className="font-semibold text-foreground">
-                {reps.length}
-              </span>{" "}
-              active representatives
-            </p>
           </div>
-
-          {/* Instructions */}
           <div className="rounded-xl border bg-card p-6">
             <h3 className="text-sm font-semibold mb-3">📋 Instructions</h3>
             <ul className="space-y-1.5 text-sm text-muted-foreground">
@@ -581,11 +387,10 @@ export function ScheduleClient({
               </li>
             </ul>
           </div>
-
           <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-900 dark:bg-blue-950/30">
             <p className="text-sm text-blue-700 dark:text-blue-400">
-              ℹ️ Search by name, use the dropdown, or click directly on a
-              representative to view and manage their schedule.
+              ℹ️ Search by name or click a representative to view and manage
+              their schedule.
             </p>
           </div>
         </div>
@@ -593,9 +398,7 @@ export function ScheduleClient({
     );
   }
 
-  // ═════════════════════════════════════════════════════
-  // CALENDAR VIEW (admin after selection + rep direct)
-  // ═════════════════════════════════════════════════════
+  // ═════════ CALENDAR VIEW ═════════
   return (
     <>
       <AppHeader
@@ -605,10 +408,9 @@ export function ScheduleClient({
         }
       />
       <div className="p-4 lg:p-6 space-y-4">
-        <DashboardNav userRole={userRole} />
-        {/* Admin top bar: back + rep info + timezone + quick switch */}
+        {/* Admin: back + rep info + timezone */}
         {isAdmin && repLoaded && (
-          <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/30 p-3">
+          <div className="flex flex-wrap items-center gap-3">
             <Button
               variant="outline"
               size="sm"
@@ -616,37 +418,35 @@ export function ScheduleClient({
               onClick={() => {
                 setRepLoaded(false);
                 setSelectedRepId(0);
-                setSelectedDropdownRep(null);
               }}
             >
               ← Back to Rep Selection
             </Button>
             {selectedRep && (
               <>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold">
-                    {selectedRep.name}
-                  </span>
-                  <span
-                    className={cn(
-                      "rounded-md px-2 py-0.5 text-[10px] font-semibold",
-                      TYPE_COLORS[selectedRep.rep_type],
-                    )}
-                  >
-                    {TYPE_SHORT[selectedRep.rep_type]}
-                  </span>
-                </div>
+                <span className="text-sm font-semibold">
+                  {selectedRep.name}
+                </span>
+                <span
+                  className={cn(
+                    "rounded-md px-2 py-0.5 text-[10px] font-semibold",
+                    TYPE_COLORS[selectedRep.rep_type] || "bg-muted",
+                  )}
+                >
+                  {TYPE_LABELS[selectedRep.rep_type]}
+                </span>
                 <span className="text-xs text-muted-foreground">
                   {selectedRep.email}
                 </span>
               </>
             )}
             <div className="ml-auto flex items-center gap-2">
+              {/* Timezone selector */}
               <label className="text-xs font-medium text-muted-foreground">
                 Timezone:
               </label>
               <Select value={repTz} onValueChange={handleTimezoneChange}>
-                <SelectTrigger className="h-8 w-auto min-w-37.5 text-xs">
+                <SelectTrigger className="h-8 w-auto min-w-40 text-xs">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -658,14 +458,14 @@ export function ScheduleClient({
                 </SelectContent>
               </Select>
               {tzSaved && (
-                <span className="text-[11px] text-green-600">✓ Saved</span>
+                <span className="text-xs text-green-600">✓ Saved</span>
               )}
-              <span className="text-border">|</span>
+              {/* Quick rep switch */}
               <Select
                 value={String(selectedRepId)}
                 onValueChange={(v) => handleSelectRep(parseInt(v))}
               >
-                <SelectTrigger className="h-8 w-auto min-w-37.5 text-xs">
+                <SelectTrigger className="h-8 w-auto min-w-40 text-xs">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -680,14 +480,14 @@ export function ScheduleClient({
           </div>
         )}
 
-        {/* Rep view: timezone only */}
+        {/* Rep view: timezone */}
         {!isAdmin && selectedRep && (
           <div className="flex items-center gap-2">
             <label className="text-xs font-medium text-muted-foreground">
               Timezone:
             </label>
             <Select value={repTz} onValueChange={handleTimezoneChange}>
-              <SelectTrigger className="h-8 w-auto min-w-37.5 text-xs">
+              <SelectTrigger className="h-8 w-auto min-w-40 text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -698,13 +498,11 @@ export function ScheduleClient({
                 ))}
               </SelectContent>
             </Select>
-            {tzSaved && (
-              <span className="text-[11px] text-green-600">✓ Saved</span>
-            )}
+            {tzSaved && <span className="text-xs text-green-600">✓ Saved</span>}
           </div>
         )}
 
-        {/* Instructions (collapsible) */}
+        {/* Collapsible instructions */}
         <details className="rounded-xl border bg-card">
           <summary className="px-4 py-3 text-sm font-semibold cursor-pointer hover:bg-muted/50">
             📋 Instructions
@@ -720,7 +518,8 @@ export function ScheduleClient({
             </li>
             <li>
               <strong className="text-foreground">White (Unset)</strong> dates
-              become unavailable when locked
+              become <strong className="text-foreground">unavailable</strong>{" "}
+              when locked
             </li>
             <li>
               <span className="text-emerald-600 font-semibold">Green</span> =
@@ -749,7 +548,7 @@ export function ScheduleClient({
                 <p className="text-xs text-amber-600 dark:text-amber-400">
                   {!isAdmin
                     ? "Contact haya@hogansmith.com for changes."
-                    : "You can unlock as admin."}
+                    : "You can unlock as admin to allow the rep to edit."}
                 </p>
               </div>
             </div>
@@ -766,27 +565,28 @@ export function ScheduleClient({
           </div>
         )}
         {isPastDeadline && !isLocked && (
-          <div className="rounded-lg border border-red-300 bg-red-50 dark:bg-red-950/30 p-3">
-            <p className="text-sm font-semibold text-red-800 dark:text-red-300">
-              ⏰ Submission Deadline Passed
-            </p>
-            <p className="text-xs text-red-600 dark:text-red-400">
-              The 45-day deadline for {monthName} was{" "}
-              <strong>
+          <div className="rounded-lg border border-blue-300 bg-blue-50 dark:bg-blue-950/30 p-3 flex items-center gap-3">
+            <span className="text-lg">⏰</span>
+            <div>
+              <p className="text-sm font-semibold text-blue-800 dark:text-blue-300">
+                Submission Deadline Passed
+              </p>
+              <p className="text-xs text-blue-600 dark:text-blue-400">
+                The 45-day deadline for {monthName} was{" "}
                 {deadlineDate.toLocaleDateString("en-US", {
                   month: "long",
                   day: "numeric",
                   year: "numeric",
                 })}
-              </strong>
-              .
-              {isAdmin
-                ? " You can still edit as admin."
-                : " This schedule can no longer be modified. Contact haya@hogansmith.com for changes."}
-            </p>
+                .
+                {isAdmin
+                  ? " You can still edit as admin."
+                  : " Schedule has been unlocked by admin — you can make changes."}
+              </p>
+            </div>
           </div>
         )}
-        {!isPastDeadline && !isLocked && daysUntilDeadline >= 0 && (
+        {daysUntilDeadline >= 0 && daysUntilDeadline <= 15 && !isLocked && (
           <div
             className={cn(
               "rounded-lg border p-3 flex items-center gap-3",
@@ -794,9 +594,7 @@ export function ScheduleClient({
                 ? "bg-red-50 border-red-300 dark:bg-red-950/30"
                 : daysUntilDeadline <= 5
                   ? "bg-amber-50 border-amber-300 dark:bg-amber-950/30"
-                  : daysUntilDeadline <= 15
-                    ? "bg-blue-50 border-blue-300 dark:bg-blue-950/30"
-                    : "bg-muted/30 border-border",
+                  : "bg-blue-50 border-blue-300 dark:bg-blue-950/30",
             )}
           >
             <span className="text-lg">
@@ -817,17 +615,13 @@ export function ScheduleClient({
               </p>
               <p className="text-xs text-muted-foreground">
                 {daysUntilDeadline} day{daysUntilDeadline !== 1 ? "s" : ""}{" "}
-                remaining — Schedule must be locked 45 days before{" "}
-                {new Date(year, month - 1, 1).toLocaleDateString("en-US", {
-                  month: "long",
-                })}{" "}
-                1
+                remaining
               </p>
             </div>
           </div>
         )}
 
-        {/* Month nav + picker */}
+        {/* Month nav — picker + arrows */}
         <div className="flex items-center justify-between">
           <Button
             variant="outline"
@@ -925,7 +719,8 @@ export function ScheduleClient({
               const edit = edits[dateStr];
               const type: AvailType = edit?.type || "unset";
               const dayHearings = hearingsByDate[dateStr] || [];
-              const canClick = canEdit && !isPast && !isHoliday && !isWeekend;
+              const canClick =
+                !isPast && !isHoliday && !isWeekend && canEditSchedule;
               const bg = isHoliday
                 ? "bg-zinc-200 dark:bg-zinc-700"
                 : isWeekend
@@ -1014,7 +809,7 @@ export function ScheduleClient({
         </div>
 
         {/* Actions */}
-        {canEdit && (
+        {canEditSchedule && (
           <div className="flex items-center gap-3">
             <Button
               size="sm"
@@ -1074,6 +869,7 @@ export function ScheduleClient({
               </button>
             </div>
             <div className="p-5 space-y-4">
+              {/* Quick options */}
               <div className="grid grid-cols-2 gap-2">
                 {(
                   [
@@ -1081,25 +877,25 @@ export function ScheduleClient({
                       type: "full_day" as const,
                       label: "✓ Available",
                       sub: "Full Day",
-                      cls: "border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-700",
+                      cls: "border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-800",
                     },
                     {
                       type: "morning_only" as const,
                       label: "🌅 Morning",
                       sub: "AM Only",
-                      cls: "border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-700",
+                      cls: "border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800",
                     },
                     {
                       type: "afternoon_only" as const,
                       label: "🌇 Afternoon",
                       sub: "PM Only",
-                      cls: "border-orange-300 bg-orange-50 hover:bg-orange-100 text-orange-800 dark:bg-orange-950/30 dark:text-orange-300 dark:border-orange-700",
+                      cls: "border-orange-300 bg-orange-50 hover:bg-orange-100 text-orange-800",
                     },
                     {
                       type: "unavailable" as const,
                       label: "✕ Unavailable",
                       sub: "All Day",
-                      cls: "border-red-300 bg-red-50 hover:bg-red-100 text-red-800 dark:bg-red-950/30 dark:text-red-300 dark:border-red-700",
+                      cls: "border-red-300 bg-red-50 hover:bg-red-100 text-red-800",
                     },
                   ] as const
                 ).map((opt) => (
@@ -1118,7 +914,7 @@ export function ScheduleClient({
                 ))}
                 <button
                   className={cn(
-                    "col-span-2 rounded-lg border-2 p-3 text-center transition-all border-purple-300 bg-purple-50 hover:bg-purple-100 text-purple-800 dark:bg-purple-950/30 dark:text-purple-300 dark:border-purple-700",
+                    "col-span-2 rounded-lg border-2 p-3 text-center transition-all border-purple-300 bg-purple-50 hover:bg-purple-100 text-purple-800",
                     modalType === "custom_time" && "ring-2 ring-blue-500",
                   )}
                   onClick={() => setModalType("custom_time")}
@@ -1130,6 +926,7 @@ export function ScheduleClient({
                 </button>
               </div>
 
+              {/* Custom time slots editor + presets */}
               {modalType === "custom_time" && (
                 <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
                   <p className="text-xs font-semibold">
@@ -1181,6 +978,8 @@ export function ScheduleClient({
                   >
                     <Plus className="h-3 w-3" /> Add Another Slot
                   </button>
+
+                  {/* Quick presets */}
                   <div>
                     <p className="text-[10px] font-semibold text-muted-foreground mb-1.5">
                       Quick Presets:
@@ -1189,7 +988,10 @@ export function ScheduleClient({
                       {PRESETS.map((p) => (
                         <button
                           key={p.label}
-                          onClick={() => setModalSlots([...p.slots])}
+                          onClick={() => {
+                            setModalSlots([...p.slots]);
+                            setModalType("custom_time");
+                          }}
                           className="rounded border bg-card px-2 py-1 text-[10px] font-medium hover:bg-muted/50 transition-colors"
                         >
                           {p.label}
@@ -1231,10 +1033,12 @@ export function ScheduleClient({
                   </Select>
                 </div>
                 <p className="mt-1 text-[10px] text-muted-foreground">
-                  Override your default timezone if traveling.
+                  Override your default timezone if traveling. Leave as default
+                  for normal days.
                 </p>
               </div>
 
+              {/* Clear day */}
               <button
                 onClick={clearDay}
                 className="w-full rounded-lg border border-border bg-card p-2.5 text-sm text-muted-foreground hover:bg-muted/50 transition-colors"
