@@ -1,4 +1,4 @@
-import type { NextAuthOptions, User } from "next-auth";
+import type { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { compare } from "bcryptjs";
 import { db } from "@/lib/db";
@@ -64,6 +64,12 @@ export const authOptions: NextAuthOptions = {
         await db.query("UPDATE users SET last_login = NOW() WHERE id = $1", [
           user.id,
         ]);
+
+        // Log login activity
+        await db.query(
+          "INSERT INTO activity_log (user_id, action, description, created_at) VALUES ($1, $2, $3, NOW())",
+          [user.id, "user_login", `${user.full_name} logged in`],
+        );
 
         return {
           id: String(user.id),
