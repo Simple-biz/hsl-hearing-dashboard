@@ -10,6 +10,7 @@ import { Separator } from "@/components/ui/separator";
 import {
   Plus,
   Trash2,
+  Pencil,
   ChevronDown,
   Stethoscope,
   Settings,
@@ -80,6 +81,45 @@ const TEAM_COLORS = [
   "teal",
   "indigo",
   "cyan",
+];
+
+// Hex color palette for config options (MR Status, RFC types, etc.)
+const COLOR_PALETTE = [
+  "#ef4444",
+  "#f97316",
+  "#eab308",
+  "#22c55e",
+  "#14b8a6",
+  "#06b6d4",
+  "#3b82f6",
+  "#6366f1",
+  "#a855f7",
+  "#ec4899",
+  "#991b1b",
+  "#c2410c",
+  "#92400e",
+  "#065f46",
+  "#0f766e",
+  "#0e7490",
+  "#1e40af",
+  "#3730a3",
+  "#5b21b6",
+  "#9d174d",
+  "#fca5a5",
+  "#fdba74",
+  "#fde047",
+  "#86efac",
+  "#5eead4",
+  "#67e8f9",
+  "#93c5fd",
+  "#a5b4fc",
+  "#c4b5fd",
+  "#f9a8d4",
+  "#e5e7eb",
+  "#d1d5db",
+  "#9ca3af",
+  "#6b7280",
+  "#374151",
 ];
 
 const TEAM_TYPE_COLORS: Record<string, string> = {
@@ -688,7 +728,7 @@ function TeamsTab({
           items={configOptions.filter(
             (o) => o.option_type === "medical_record_status",
           )}
-          hasColor={false}
+          hasColor={true}
           onAdd={(v, c) => {
             startTransition(async () => {
               const id = await saveConfigOption({
@@ -707,6 +747,23 @@ function TeamsTab({
                   display_order: 999,
                 },
               ]);
+            });
+          }}
+          onEdit={(id, v, c) => {
+            startTransition(async () => {
+              await saveConfigOption({
+                id,
+                option_type: "medical_record_status",
+                option_value: v,
+                option_color: c,
+              });
+              setConfigOptions(
+                configOptions.map((o) =>
+                  o.id === id
+                    ? { ...o, option_value: v, option_color: c || null }
+                    : o,
+                ),
+              );
             });
           }}
           onToggle={(id, a) => {
@@ -753,6 +810,16 @@ function TeamsTab({
                   display_order: 999,
                 },
               ]);
+            });
+          }}
+          onEdit={(id, v, c) => {
+            startTransition(async () => {
+              await saveMrSpecialist({ id, name: v, bg_color: c });
+              setSpecialists(
+                specialists.map((s) =>
+                  s.id === id ? { ...s, name: v, bg_color: c || null } : s,
+                ),
+              );
             });
           }}
           onToggle={(id, a) => {
@@ -802,6 +869,23 @@ function TeamsTab({
               ]);
             });
           }}
+          onEdit={(id, v, c) => {
+            startTransition(async () => {
+              await saveConfigOption({
+                id,
+                option_type: "rfc_document_type",
+                option_value: v,
+                option_color: c,
+              });
+              setConfigOptions(
+                configOptions.map((o) =>
+                  o.id === id
+                    ? { ...o, option_value: v, option_color: c || null }
+                    : o,
+                ),
+              );
+            });
+          }}
           onToggle={(id, a) => {
             startTransition(async () => {
               await toggleConfigOption(id, a);
@@ -847,6 +931,23 @@ function TeamsTab({
                   display_order: 999,
                 },
               ]);
+            });
+          }}
+          onEdit={(id, v, c) => {
+            startTransition(async () => {
+              await saveConfigOption({
+                id,
+                option_type: "rfc_method_received",
+                option_value: v,
+                option_color: c,
+              });
+              setConfigOptions(
+                configOptions.map((o) =>
+                  o.id === id
+                    ? { ...o, option_value: v, option_color: c || null }
+                    : o,
+                ),
+              );
             });
           }}
           onToggle={(id, a) => {
@@ -1040,12 +1141,56 @@ function TeamsTab({
 }
 
 // ═══════════ REUSABLE OPTION CARD ═══════════
+function ColorPicker({
+  value,
+  onChange,
+  useTeamColors,
+}: {
+  value: string;
+  onChange: (c: string) => void;
+  useTeamColors?: boolean;
+}) {
+  const palette = useTeamColors ? TEAM_COLORS : COLOR_PALETTE;
+  return (
+    <div>
+      <label className="mb-1.5 block text-xs font-medium">Color</label>
+      <div className="flex flex-wrap gap-1.5 pt-1">
+        <button
+          onClick={() => onChange("")}
+          className={cn(
+            "h-7 w-7 rounded-full border-2 transition-all ring-1 ring-black/10 bg-white dark:bg-zinc-800 flex items-center justify-center text-[10px] text-muted-foreground",
+            !value
+              ? "border-foreground scale-110"
+              : "border-transparent hover:border-muted-foreground/50",
+          )}
+        >
+          ✕
+        </button>
+        {palette.map((c) => (
+          <button
+            key={c}
+            onClick={() => onChange(c)}
+            className={cn(
+              "h-7 w-7 rounded-full border-2 transition-all ring-1 ring-black/10",
+              value === c
+                ? "border-foreground scale-110"
+                : "border-transparent hover:border-muted-foreground/50",
+            )}
+            style={{ backgroundColor: c }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function OptionCard({
   title,
   items,
   hasColor,
   useColorSwatches,
   onAdd,
+  onEdit,
   onToggle,
   onDelete,
 }: {
@@ -1059,10 +1204,16 @@ function OptionCard({
   hasColor: boolean;
   useColorSwatches?: boolean;
   onAdd: (value: string, color?: string) => void;
+  onEdit: (id: number, value: string, color?: string) => void;
   onToggle: (id: number, active: boolean) => void;
   onDelete: (id: number) => void;
 }) {
   const [showModal, setShowModal] = useState(false);
+  const [editItem, setEditItem] = useState<{
+    id: number;
+    option_value: string;
+    option_color: string | null;
+  } | null>(null);
   const [newValue, setNewValue] = useState("");
   const [newColor, setNewColor] = useState("");
 
@@ -1072,6 +1223,15 @@ function OptionCard({
     setNewValue("");
     setNewColor("");
     setShowModal(false);
+  };
+  const handleEditSave = () => {
+    if (!editItem) return;
+    onEdit(
+      editItem.id,
+      editItem.option_value,
+      editItem.option_color || undefined,
+    );
+    setEditItem(null);
   };
 
   return (
@@ -1130,6 +1290,20 @@ function OptionCard({
                 <Button
                   variant="outline"
                   size="sm"
+                  className="h-7 text-xs px-2.5"
+                  onClick={() =>
+                    setEditItem({
+                      id: item.id,
+                      option_value: item.option_value,
+                      option_color: item.option_color,
+                    })
+                  }
+                >
+                  <Pencil className="h-3 w-3" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
                   className={cn(
                     "h-7 text-xs px-2.5",
                     item.is_active
@@ -1173,40 +1347,16 @@ function OptionCard({
                 className="h-9 text-sm"
                 autoFocus
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") handleAdd();
+                  if (e.key === "Enter" && !hasColor) handleAdd();
                 }}
               />
             </div>
             {hasColor && (
-              <div>
-                <label className="mb-1.5 block text-xs font-medium">
-                  Color
-                </label>
-                {useColorSwatches ? (
-                  <div className="flex flex-wrap gap-1.5 pt-1">
-                    {TEAM_COLORS.map((c) => (
-                      <button
-                        key={c}
-                        onClick={() => setNewColor(c)}
-                        className={cn(
-                          "h-7 w-7 rounded-full border-2 transition-all ring-1 ring-black/10",
-                          newColor === c
-                            ? "border-foreground scale-110"
-                            : "border-transparent hover:border-muted-foreground/50",
-                        )}
-                        style={{ backgroundColor: c }}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <Input
-                    value={newColor}
-                    onChange={(e) => setNewColor(e.target.value)}
-                    placeholder="#hex or color name"
-                    className="h-9 text-sm"
-                  />
-                )}
-              </div>
+              <ColorPicker
+                value={newColor}
+                onChange={setNewColor}
+                useTeamColors={useColorSwatches}
+              />
             )}
           </div>
           <Separator />
@@ -1220,6 +1370,58 @@ function OptionCard({
             </Button>
             <Button size="sm" onClick={handleAdd}>
               Add
+            </Button>
+          </div>
+        </Modal>
+      )}
+
+      {editItem && (
+        <Modal
+          title={`Edit ${title.replace(/^[^\s]+\s/, "")}`}
+          onClose={() => setEditItem(null)}
+        >
+          <div className="px-5 py-4 space-y-4">
+            <div>
+              <label className="mb-1.5 block text-xs font-medium">
+                Value *
+              </label>
+              <Input
+                value={editItem.option_value}
+                onChange={(e) =>
+                  setEditItem({ ...editItem, option_value: e.target.value })
+                }
+                className="h-9 text-sm"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !hasColor) handleEditSave();
+                }}
+              />
+            </div>
+            {hasColor && (
+              <ColorPicker
+                value={editItem.option_color || ""}
+                onChange={(c) =>
+                  setEditItem({ ...editItem, option_color: c || null })
+                }
+                useTeamColors={useColorSwatches}
+              />
+            )}
+          </div>
+          <Separator />
+          <div className="flex justify-end gap-2 px-5 py-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setEditItem(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="bg-amber-600 hover:bg-amber-700"
+              onClick={handleEditSave}
+            >
+              Update
             </Button>
           </div>
         </Modal>
@@ -1240,6 +1442,7 @@ function ConfigTab({
 }) {
   const [activeType, setActiveType] = useState(CONFIG_TYPES[0].key);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [editItem, setEditItem] = useState<ConfigOption | null>(null);
   const [newValue, setNewValue] = useState("");
   const [newColor, setNewColor] = useState("");
   const typeConfig = CONFIG_TYPES.find((t) => t.key === activeType)!;
@@ -1267,6 +1470,20 @@ function ConfigTab({
       setNewValue("");
       setNewColor("");
       setShowAddModal(false);
+    });
+  };
+
+  const handleEditSave = () => {
+    if (!editItem) return;
+    startTransition(async () => {
+      await saveConfigOption({
+        id: editItem.id,
+        option_type: editItem.option_type,
+        option_value: editItem.option_value,
+        option_color: editItem.option_color || undefined,
+      });
+      setOptions(options.map((o) => (o.id === editItem.id ? editItem : o)));
+      setEditItem(null);
     });
   };
 
@@ -1350,6 +1567,14 @@ function ConfigTab({
                   <Button
                     variant="outline"
                     size="sm"
+                    className="h-7 text-xs px-2.5"
+                    onClick={() => setEditItem(item)}
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
                     className={cn(
                       "h-7 text-xs px-2.5",
                       item.is_active
@@ -1415,14 +1640,34 @@ function ConfigTab({
             {typeConfig.hasColor && (
               <div>
                 <label className="mb-1.5 block text-xs font-medium">
-                  Color (hex)
+                  Color
                 </label>
-                <Input
-                  value={newColor}
-                  onChange={(e) => setNewColor(e.target.value)}
-                  placeholder="#22c55e"
-                  className="h-9 text-sm"
-                />
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  <button
+                    onClick={() => setNewColor("")}
+                    className={cn(
+                      "h-7 w-7 rounded-full border-2 transition-all ring-1 ring-black/10 bg-white dark:bg-zinc-800 flex items-center justify-center text-[10px] text-muted-foreground",
+                      !newColor
+                        ? "border-foreground scale-110"
+                        : "border-transparent hover:border-muted-foreground/50",
+                    )}
+                  >
+                    ✕
+                  </button>
+                  {COLOR_PALETTE.map((c) => (
+                    <button
+                      key={c}
+                      onClick={() => setNewColor(c)}
+                      className={cn(
+                        "h-7 w-7 rounded-full border-2 transition-all ring-1 ring-black/10",
+                        newColor === c
+                          ? "border-foreground scale-110"
+                          : "border-transparent hover:border-muted-foreground/50",
+                      )}
+                      style={{ backgroundColor: c }}
+                    />
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -1437,6 +1682,86 @@ function ConfigTab({
             </Button>
             <Button size="sm" onClick={handleAdd}>
               Add
+            </Button>
+          </div>
+        </Modal>
+      )}
+
+      {editItem && (
+        <Modal
+          title={`Edit ${typeConfig.label}`}
+          onClose={() => setEditItem(null)}
+        >
+          <div className="px-5 py-4 space-y-4">
+            <div>
+              <label className="mb-1.5 block text-xs font-medium">
+                Value *
+              </label>
+              <Input
+                value={editItem.option_value}
+                onChange={(e) =>
+                  setEditItem({ ...editItem, option_value: e.target.value })
+                }
+                className="h-9 text-sm"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleEditSave();
+                }}
+              />
+            </div>
+            {typeConfig.hasColor && (
+              <div>
+                <label className="mb-1.5 block text-xs font-medium">
+                  Color
+                </label>
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  <button
+                    onClick={() =>
+                      setEditItem({ ...editItem, option_color: "" })
+                    }
+                    className={cn(
+                      "h-7 w-7 rounded-full border-2 transition-all ring-1 ring-black/10 bg-white dark:bg-zinc-800 flex items-center justify-center text-[10px] text-muted-foreground",
+                      !editItem.option_color
+                        ? "border-foreground scale-110"
+                        : "border-transparent hover:border-muted-foreground/50",
+                    )}
+                  >
+                    ✕
+                  </button>
+                  {COLOR_PALETTE.map((c) => (
+                    <button
+                      key={c}
+                      onClick={() =>
+                        setEditItem({ ...editItem, option_color: c })
+                      }
+                      className={cn(
+                        "h-7 w-7 rounded-full border-2 transition-all ring-1 ring-black/10",
+                        editItem.option_color === c
+                          ? "border-foreground scale-110"
+                          : "border-transparent hover:border-muted-foreground/50",
+                      )}
+                      style={{ backgroundColor: c }}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          <Separator />
+          <div className="flex justify-end gap-2 px-5 py-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setEditItem(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="bg-amber-600 hover:bg-amber-700"
+              onClick={handleEditSave}
+            >
+              Update
             </Button>
           </div>
         </Modal>
@@ -1456,6 +1781,7 @@ function HolidaysTab({
   startTransition: (fn: () => void) => void;
 }) {
   const [showAddModal, setShowAddModal] = useState(false);
+  const [editItem, setEditItem] = useState<FederalHoliday | null>(null);
   const [newName, setNewName] = useState("");
   const [newDate, setNewDate] = useState("");
   const [yearFilter, setYearFilter] = useState(
@@ -1486,6 +1812,28 @@ function HolidaysTab({
       setNewName("");
       setNewDate("");
       setShowAddModal(false);
+    });
+  };
+
+  const handleEditSave = () => {
+    if (!editItem) return;
+    startTransition(async () => {
+      await saveFederalHoliday({
+        id: editItem.id,
+        holiday_name: editItem.holiday_name,
+        holiday_date: editItem.holiday_date,
+      });
+      setHolidays(
+        holidays.map((h) =>
+          h.id === editItem.id
+            ? {
+                ...editItem,
+                year: parseInt(editItem.holiday_date.split("-")[0]),
+              }
+            : h,
+        ),
+      );
+      setEditItem(null);
     });
   };
 
@@ -1546,6 +1894,14 @@ function HolidaysTab({
                 <span className="flex-1 text-sm font-medium">
                   {h.holiday_name}
                 </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs px-2.5"
+                  onClick={() => setEditItem(h)}
+                >
+                  <Pencil className="h-3 w-3" />
+                </Button>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -1609,6 +1965,54 @@ function HolidaysTab({
           </div>
         </Modal>
       )}
+
+      {editItem && (
+        <Modal title="Edit Holiday" onClose={() => setEditItem(null)}>
+          <div className="px-5 py-4 space-y-4">
+            <div>
+              <label className="mb-1.5 block text-xs font-medium">
+                Holiday Name *
+              </label>
+              <Input
+                value={editItem.holiday_name}
+                onChange={(e) =>
+                  setEditItem({ ...editItem, holiday_name: e.target.value })
+                }
+                className="h-9 text-sm"
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-xs font-medium">Date *</label>
+              <Input
+                type="date"
+                value={editItem.holiday_date}
+                onChange={(e) =>
+                  setEditItem({ ...editItem, holiday_date: e.target.value })
+                }
+                className="h-9 text-sm"
+              />
+            </div>
+          </div>
+          <Separator />
+          <div className="flex justify-end gap-2 px-5 py-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setEditItem(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="bg-amber-600 hover:bg-amber-700"
+              onClick={handleEditSave}
+            >
+              Update
+            </Button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -1624,6 +2028,7 @@ function AssigneesTab({
   startTransition: (fn: () => void) => void;
 }) {
   const [showAddModal, setShowAddModal] = useState(false);
+  const [editItem, setEditItem] = useState<RepDocsAssignee | null>(null);
   const [newName, setNewName] = useState("");
 
   const handleAdd = () => {
@@ -1641,6 +2046,15 @@ function AssigneesTab({
       ]);
       setNewName("");
       setShowAddModal(false);
+    });
+  };
+
+  const handleEditSave = () => {
+    if (!editItem) return;
+    startTransition(async () => {
+      await saveRepDocsAssignee({ id: editItem.id, name: editItem.name });
+      setAssignees(assignees.map((a) => (a.id === editItem.id ? editItem : a)));
+      setEditItem(null);
     });
   };
 
@@ -1694,6 +2108,14 @@ function AssigneesTab({
                     {a.name}
                   </span>
                   <StatusDot active={a.is_active} />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs px-2.5"
+                    onClick={() => setEditItem(a)}
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </Button>
                   <Button
                     variant="outline"
                     size="sm"
@@ -1767,6 +2189,42 @@ function AssigneesTab({
             </Button>
             <Button size="sm" onClick={handleAdd}>
               Add
+            </Button>
+          </div>
+        </Modal>
+      )}
+
+      {editItem && (
+        <Modal title="Edit Assignee" onClose={() => setEditItem(null)}>
+          <div className="px-5 py-4">
+            <label className="mb-1.5 block text-xs font-medium">Name *</label>
+            <Input
+              value={editItem.name}
+              onChange={(e) =>
+                setEditItem({ ...editItem, name: e.target.value })
+              }
+              className="h-9 text-sm"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleEditSave();
+              }}
+            />
+          </div>
+          <Separator />
+          <div className="flex justify-end gap-2 px-5 py-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setEditItem(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="bg-amber-600 hover:bg-amber-700"
+              onClick={handleEditSave}
+            >
+              Update
             </Button>
           </div>
         </Modal>
