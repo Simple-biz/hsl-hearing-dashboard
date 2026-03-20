@@ -29,6 +29,7 @@ export async function saveUser(data: {
   role: string;
   password?: string;
   rep_type?: string;
+  force_password_change?: boolean;
 }) {
   if (data.id) {
     const { rows: oldRows } = await db.query(
@@ -91,8 +92,14 @@ export async function saveUser(data: {
     const bcrypt = await import("bcryptjs");
     const hash = await bcrypt.hash(data.password || "changeme123", 10);
     const { rows } = await db.query(
-      "INSERT INTO users (full_name, email, password_hash, role, is_active, force_password_change) VALUES ($1,$2,$3,$4,true,true) RETURNING id",
-      [data.full_name, data.email, hash, data.role],
+      "INSERT INTO users (full_name, email, password_hash, role, is_active, force_password_change) VALUES ($1,$2,$3,$4,true,$5) RETURNING id",
+      [
+        data.full_name,
+        data.email,
+        hash,
+        data.role,
+        data.force_password_change !== false,
+      ],
     );
     await logAction("user_created", `${data.full_name} created (${data.role})`);
 
@@ -475,8 +482,6 @@ export async function sendWelcomeEmail(userId: number, password: string) {
   );
   if (!rows[0]) throw new Error("User not found");
   const { full_name, email, role } = rows[0];
-  const appUrl =
-    process.env.NEXT_PUBLIC_APP_URL || "https://hearings.hogansmith.com";
   const webhookUrl = process.env.N8N_WEBHOOK_URL;
   const webhookSecret = process.env.N8N_WEBHOOK_SECRET;
   if (!webhookUrl || !webhookSecret)
@@ -490,9 +495,12 @@ export async function sendWelcomeEmail(userId: number, password: string) {
     },
     body: JSON.stringify({
       email_type: "new_user_welcome",
-      to: email,
-      subject: "Welcome to HSL Hearing Dashboard",
-      body: `Hello ${full_name},\n\nYour account has been created for the HSL Hearing Management System.\n\nLogin URL: ${appUrl}\nEmail: ${email}\nPassword: ${password}\nRole: ${role.replace(/_/g, " ")}\n\nPlease log in and change your password immediately.\n\nHogan Smith Law`,
+      to_email: email,
+      to_name: full_name,
+      password,
+      role: role.replace(/_/g, " "),
+      login_url:
+        process.env.NEXT_PUBLIC_APP_URL || "https://hearings.hogansmith.com",
     }),
   });
   await logAction(

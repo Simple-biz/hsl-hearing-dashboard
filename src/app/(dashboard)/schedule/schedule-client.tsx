@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import { useState, useMemo, useCallback } from "react";
 import { AppHeader } from "@/components/layout/app-header";
 import { Button } from "@/components/ui/button";
@@ -92,9 +94,12 @@ const TYPE_LABELS: Record<string, string> = {
   "in-house": "In-House",
 };
 const TYPE_COLORS: Record<string, string> = {
-  internal_advocates: "bg-emerald-100 text-emerald-700",
-  external_advocates: "bg-amber-100 text-amber-700",
-  "in-house": "bg-blue-100 text-blue-700",
+  internal_advocates:
+    "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300",
+  external_advocates:
+    "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300",
+  "in-house":
+    "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300",
 };
 
 function buildEdits(avail: AvailabilityDay[]) {
@@ -299,6 +304,17 @@ export function ScheduleClient({
           subtitle="Select a representative to manage their schedule"
         />
         <div className="p-4 lg:p-6 space-y-5 max-w-3xl mx-auto">
+          <div className="flex items-center gap-2">
+            <Link href="/">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs gap-1.5"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" /> Back to Dashboard
+              </Button>
+            </Link>
+          </div>
           <div className="rounded-xl border bg-card p-6 space-y-4">
             <div>
               <label className="mb-2 block text-sm font-semibold">
@@ -373,12 +389,18 @@ export function ScheduleClient({
                 when locked
               </li>
               <li>
-                <span className="text-emerald-600 font-semibold">Green</span> =
-                Available,{" "}
-                <span className="text-red-600 font-semibold">Red</span> =
-                Unavailable,{" "}
-                <span className="text-purple-600 font-semibold">Purple</span> =
-                Custom time slots
+                <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
+                  Green
+                </span>{" "}
+                = Available,{" "}
+                <span className="text-red-600 dark:text-red-400 font-semibold">
+                  Red
+                </span>{" "}
+                = Unavailable,{" "}
+                <span className="text-purple-600 dark:text-purple-400 font-semibold">
+                  Purple
+                </span>{" "}
+                = Custom time slots
               </li>
               <li>Federal holidays and past dates cannot be changed</li>
               <li>
@@ -387,7 +409,7 @@ export function ScheduleClient({
               </li>
             </ul>
           </div>
-          <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-900 dark:bg-blue-950/30">
+          <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-900 dark:bg-blue-900/40">
             <p className="text-sm text-blue-700 dark:text-blue-400">
               ℹ️ Search by name or click a representative to view and manage
               their schedule.
@@ -522,11 +544,18 @@ export function ScheduleClient({
               when locked
             </li>
             <li>
-              <span className="text-emerald-600 font-semibold">Green</span> =
-              Available, <span className="text-red-600 font-semibold">Red</span>{" "}
+              <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
+                Green
+              </span>{" "}
+              = Available,{" "}
+              <span className="text-red-600 dark:text-red-400 font-semibold">
+                Red
+              </span>{" "}
               = Unavailable,{" "}
-              <span className="text-purple-600 font-semibold">Purple</span> =
-              Custom
+              <span className="text-purple-600 dark:text-purple-400 font-semibold">
+                Purple
+              </span>{" "}
+              = Custom
             </li>
             <li>Federal holidays and past dates cannot be changed</li>
             <li>
@@ -538,7 +567,7 @@ export function ScheduleClient({
 
         {/* Banners */}
         {isLocked && (
-          <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 p-3 flex items-center justify-between">
+          <div className="rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/40 p-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span>🔒</span>
               <div>
@@ -565,7 +594,7 @@ export function ScheduleClient({
           </div>
         )}
         {isPastDeadline && !isLocked && (
-          <div className="rounded-lg border border-blue-300 bg-blue-50 dark:bg-blue-950/30 p-3 flex items-center gap-3">
+          <div className="rounded-lg border border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-900/40 p-3 flex items-center gap-3">
             <span className="text-lg">⏰</span>
             <div>
               <p className="text-sm font-semibold text-blue-800 dark:text-blue-300">
@@ -591,10 +620,10 @@ export function ScheduleClient({
             className={cn(
               "rounded-lg border p-3 flex items-center gap-3",
               daysUntilDeadline === 0
-                ? "bg-red-50 border-red-300 dark:bg-red-950/30"
+                ? "bg-red-50 border-red-300 dark:bg-red-900/40 dark:border-red-800"
                 : daysUntilDeadline <= 5
-                  ? "bg-amber-50 border-amber-300 dark:bg-amber-950/30"
-                  : "bg-blue-50 border-blue-300 dark:bg-blue-950/30",
+                  ? "bg-amber-50 border-amber-300 dark:bg-amber-900/40 dark:border-amber-800"
+                  : "bg-blue-50 border-blue-300 dark:bg-blue-900/40 dark:border-blue-800",
             )}
           >
             <span className="text-lg">
@@ -654,19 +683,19 @@ export function ScheduleClient({
 
         {/* Stats */}
         <div className="grid grid-cols-3 gap-3">
-          <div className="rounded-lg bg-blue-50 dark:bg-blue-950/30 p-3 text-center">
+          <div className="rounded-lg bg-blue-50 dark:bg-blue-900/40 p-3 text-center">
             <p className="text-2xl font-bold text-blue-700 dark:text-blue-400 tabular-nums">
               {hearings.length}
             </p>
             <p className="text-xs text-muted-foreground">Hearings</p>
           </div>
-          <div className="rounded-lg bg-emerald-50 dark:bg-emerald-950/30 p-3 text-center">
+          <div className="rounded-lg bg-emerald-50 dark:bg-emerald-900/40 p-3 text-center">
             <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-400 tabular-nums">
               {availableDays}
             </p>
             <p className="text-xs text-muted-foreground">Available</p>
           </div>
-          <div className="rounded-lg bg-red-50 dark:bg-red-950/30 p-3 text-center">
+          <div className="rounded-lg bg-red-50 dark:bg-red-900/40 p-3 text-center">
             <p className="text-2xl font-bold text-red-700 dark:text-red-400 tabular-nums">
               {unavailableDays}
             </p>
@@ -677,13 +706,31 @@ export function ScheduleClient({
         {/* Legend */}
         <div className="flex flex-wrap items-center gap-3 text-xs">
           {[
-            { cls: "bg-white dark:bg-zinc-900 border-border", l: "Unset" },
-            { cls: "bg-emerald-100 border-emerald-300", l: "Available" },
-            { cls: "bg-red-100 border-red-300", l: "Unavailable" },
-            { cls: "bg-amber-100 border-amber-300", l: "Morning" },
-            { cls: "bg-orange-100 border-orange-300", l: "Afternoon" },
-            { cls: "bg-purple-100 border-purple-300", l: "Custom" },
-            { cls: "bg-zinc-200 border-zinc-300", l: "Holiday" },
+            { cls: "bg-white dark:bg-zinc-800 border-border", l: "Unset" },
+            {
+              cls: "bg-emerald-100 dark:bg-emerald-800/60 border-emerald-300 dark:border-emerald-600",
+              l: "Available",
+            },
+            {
+              cls: "bg-red-100 dark:bg-red-800/60 border-red-300 dark:border-red-600",
+              l: "Unavailable",
+            },
+            {
+              cls: "bg-amber-100 dark:bg-amber-800/60 border-amber-300 dark:border-amber-600",
+              l: "Morning",
+            },
+            {
+              cls: "bg-orange-100 dark:bg-orange-800/60 border-orange-300 dark:border-orange-600",
+              l: "Afternoon",
+            },
+            {
+              cls: "bg-purple-100 dark:bg-purple-800/60 border-purple-300 dark:border-purple-600",
+              l: "Custom",
+            },
+            {
+              cls: "bg-zinc-200 dark:bg-zinc-600 border-zinc-300 dark:border-zinc-500",
+              l: "Holiday",
+            },
           ].map((x) => (
             <div key={x.l} className="flex items-center gap-1.5">
               <div className={cn("w-4 h-4 rounded border", x.cls)} />
@@ -724,19 +771,19 @@ export function ScheduleClient({
               const bg = isHoliday
                 ? "bg-zinc-200 dark:bg-zinc-700"
                 : isWeekend
-                  ? "bg-zinc-100 dark:bg-zinc-800"
+                  ? "bg-zinc-100 dark:bg-zinc-800/60"
                   : isPast
                     ? "bg-zinc-50 dark:bg-zinc-900 opacity-50"
                     : type === "full_day"
-                      ? "bg-emerald-50 dark:bg-emerald-950/30"
+                      ? "bg-emerald-50 dark:bg-emerald-900/50"
                       : type === "morning_only"
-                        ? "bg-amber-50 dark:bg-amber-950/30"
+                        ? "bg-amber-50 dark:bg-amber-900/50"
                         : type === "afternoon_only"
-                          ? "bg-orange-50 dark:bg-orange-950/30"
+                          ? "bg-orange-50 dark:bg-orange-900/50"
                           : type === "unavailable"
-                            ? "bg-red-50 dark:bg-red-950/30"
+                            ? "bg-red-50 dark:bg-red-900/50"
                             : type === "custom_time"
-                              ? "bg-purple-50 dark:bg-purple-950/30"
+                              ? "bg-purple-50 dark:bg-purple-900/50"
                               : "bg-card";
               const lbl: Record<string, string> = {
                 full_day: "Available",
@@ -798,7 +845,7 @@ export function ScheduleClient({
                     </div>
                   ))}
                   {dayHearings.length > 2 && (
-                    <p className="text-[8px] text-blue-500">
+                    <p className="text-[8px] text-blue-500 dark:text-blue-400">
                       +{dayHearings.length - 2} more
                     </p>
                   )}
@@ -877,25 +924,25 @@ export function ScheduleClient({
                       type: "full_day" as const,
                       label: "✓ Available",
                       sub: "Full Day",
-                      cls: "border-emerald-300 bg-emerald-50 hover:bg-emerald-100 text-emerald-800",
+                      cls: "border-emerald-300 dark:border-emerald-600 bg-emerald-50 dark:bg-emerald-900/50 hover:bg-emerald-100 dark:hover:bg-emerald-800/50 text-emerald-800 dark:text-emerald-200",
                     },
                     {
                       type: "morning_only" as const,
                       label: "🌅 Morning",
                       sub: "AM Only",
-                      cls: "border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800",
+                      cls: "border-amber-300 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/50 hover:bg-amber-100 dark:hover:bg-amber-800/50 text-amber-800 dark:text-amber-200",
                     },
                     {
                       type: "afternoon_only" as const,
                       label: "🌇 Afternoon",
                       sub: "PM Only",
-                      cls: "border-orange-300 bg-orange-50 hover:bg-orange-100 text-orange-800",
+                      cls: "border-orange-300 dark:border-orange-600 bg-orange-50 dark:bg-orange-900/50 hover:bg-orange-100 dark:hover:bg-orange-800/50 text-orange-800 dark:text-orange-200",
                     },
                     {
                       type: "unavailable" as const,
                       label: "✕ Unavailable",
                       sub: "All Day",
-                      cls: "border-red-300 bg-red-50 hover:bg-red-100 text-red-800",
+                      cls: "border-red-300 dark:border-red-600 bg-red-50 dark:bg-red-900/50 hover:bg-red-100 dark:hover:bg-red-800/50 text-red-800 dark:text-red-200",
                     },
                   ] as const
                 ).map((opt) => (
@@ -914,7 +961,7 @@ export function ScheduleClient({
                 ))}
                 <button
                   className={cn(
-                    "col-span-2 rounded-lg border-2 p-3 text-center transition-all border-purple-300 bg-purple-50 hover:bg-purple-100 text-purple-800",
+                    "col-span-2 rounded-lg border-2 p-3 text-center transition-all border-purple-300 dark:border-purple-600 bg-purple-50 dark:bg-purple-900/50 hover:bg-purple-100 dark:hover:bg-purple-800/50 text-purple-800 dark:text-purple-200",
                     modalType === "custom_time" && "ring-2 ring-blue-500",
                   )}
                   onClick={() => setModalType("custom_time")}
@@ -974,7 +1021,7 @@ export function ScheduleClient({
                         { start: "08:00", end: "17:00" },
                       ])
                     }
-                    className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
+                    className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300"
                   >
                     <Plus className="h-3 w-3" /> Add Another Slot
                   </button>

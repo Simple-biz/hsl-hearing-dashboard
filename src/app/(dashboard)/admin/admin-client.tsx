@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition, useEffect } from "react";
+import { useState, useTransition, useEffect, useRef } from "react";
 import { AppHeader } from "@/components/layout/app-header";
 import { DashboardNav } from "@/components/layout/dashboard-nav";
 import { Button } from "@/components/ui/button";
@@ -96,6 +96,14 @@ export function AdminClient({
   const [tab, setTab] = useState<"users" | "activity">("users");
   const [users, setUsers] = useState(initUsers);
   const [, startTransition] = useTransition();
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = (msg: string) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast(msg);
+    toastTimer.current = setTimeout(() => setToast(null), 4000);
+  };
 
   return (
     <>
@@ -134,10 +142,20 @@ export function AdminClient({
             users={users}
             setUsers={setUsers}
             startTransition={startTransition}
+            showToast={showToast}
           />
         )}
         {tab === "activity" && <ActivityTab />}
       </div>
+
+      {/* Toast notification */}
+      {toast && (
+        <div className="fixed top-4 right-4 z-[200] flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 shadow-lg dark:border-emerald-800 dark:bg-emerald-950/80 animate-in fade-in slide-in-from-top-2 duration-200">
+          <span className="text-sm font-medium text-emerald-800 dark:text-emerald-200">
+            {toast}
+          </span>
+        </div>
+      )}
     </>
   );
 }
@@ -147,10 +165,12 @@ function UsersTab({
   users,
   setUsers,
   startTransition,
+  showToast,
 }: {
   users: AdminUser[];
   setUsers: (u: AdminUser[]) => void;
   startTransition: (fn: () => void) => void;
+  showToast: (msg: string) => void;
 }) {
   const [search, setSearch] = useState("");
   const [showAddModal, setShowAddModal] = useState(false);
@@ -230,6 +250,7 @@ function UsersTab({
                     ),
                   );
                   setEditing(null);
+                  showToast(`✓ ${data.full_name} updated`);
                 });
               }}
               className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end"
@@ -413,6 +434,9 @@ function UsersTab({
                                   : u,
                               ),
                             );
+                            showToast(
+                              `✓ ${user.full_name} ${!user.is_active ? "activated" : "deactivated"}`,
+                            );
                           });
                         }}
                       >
@@ -431,6 +455,7 @@ function UsersTab({
                             startTransition(async () => {
                               await deleteUser(user.id);
                               setUsers(users.filter((u) => u.id !== user.id));
+                              showToast(`✓ ${user.full_name} deleted`);
                             });
                         }}
                       >
@@ -461,6 +486,9 @@ function UsersTab({
           onSaved={(u) => {
             setUsers([...users, u]);
             setShowAddModal(false);
+            showToast(
+              `✓ ${u.full_name} created as ${u.role === "rep" ? "Representative" : u.role}`,
+            );
           }}
           startTransition={startTransition}
         />
@@ -632,6 +660,7 @@ function AddUserModal({
           role,
           password,
           rep_type: isRepRole && createRepProfile ? repType : undefined,
+          force_password_change: forceChange,
         });
         if (sendVideo) {
           try {
