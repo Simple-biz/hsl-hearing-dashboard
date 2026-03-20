@@ -50,18 +50,6 @@ const ALL_ROLES = [
   { value: "post_hearing_admin", label: "Post Hearing Admin", group: "Staff" },
   { value: "post_hearing_staff", label: "Post Hearing Staff", group: "Staff" },
   { value: "staff", label: "Staff", group: "Staff" },
-  {
-    value: "internal_advocates",
-    label: "Internal Advocates",
-    group: "Representatives",
-  },
-  {
-    value: "external_advocates",
-    label: "External Advocates",
-    group: "Representatives",
-  },
-  { value: "in-house", label: "In-House Rep", group: "Representatives" },
-  { value: "contract", label: "Contract Rep", group: "Representatives" },
   { value: "rep", label: "Representative", group: "Representatives" },
 ];
 
@@ -612,11 +600,29 @@ function AddUserModal({
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // Rep profile step
+  const [showRepStep, setShowRepStep] = useState(false);
+  const [createRepProfile, setCreateRepProfile] = useState(true);
+  const [repType, setRepType] = useState("in-house");
+
+  // Any role in the "Representatives" group triggers the rep profile step
+  const REP_GROUP_ROLES = ALL_ROLES.filter(
+    (r) => r.group === "Representatives",
+  ).map((r) => r.value);
+  const isRepRole = REP_GROUP_ROLES.includes(role);
+
   const handleSubmit = () => {
     if (!name.trim() || !email.trim() || !password) {
       setError("All fields are required");
       return;
     }
+
+    // If rep role and haven't shown the rep step yet, show it
+    if (isRepRole && !showRepStep) {
+      setShowRepStep(true);
+      return;
+    }
+
     setSaving(true);
     startTransition(async () => {
       try {
@@ -625,6 +631,7 @@ function AddUserModal({
           email: email.trim(),
           role,
           password,
+          rep_type: isRepRole && createRepProfile ? repType : undefined,
         });
         if (sendVideo) {
           try {
@@ -652,104 +659,213 @@ function AddUserModal({
   };
 
   return (
-    <Modal title="Add User" onClose={onClose}>
+    <Modal
+      title={showRepStep ? "Create Rep Profile" : "Add User"}
+      onClose={onClose}
+    >
       <div className="px-5 py-4 space-y-4">
         {error && (
           <div className="rounded-lg bg-destructive/10 border border-destructive/20 px-3 py-2.5 text-xs text-destructive">
             {error}
           </div>
         )}
-        <div>
-          <label className="mb-1.5 block text-xs font-medium">
-            Full Name *
-          </label>
-          <Input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="John Smith"
-            className="h-9 text-sm"
-            autoFocus
-          />
-        </div>
-        <div>
-          <label className="mb-1.5 block text-xs font-medium">Email *</label>
-          <Input
-            type="email"
-            value={email}
-            onChange={(e) => {
-              setEmail(e.target.value);
-              setError("");
-            }}
-            placeholder="john@hogansmith.com"
-            className="h-9 text-sm"
-          />
-        </div>
-        <PasswordField value={password} onChange={setPassword} />
-        <div>
-          <label className="mb-1.5 block text-xs font-medium">Role *</label>
-          <select
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
-            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-          >
-            {ALL_ROLES.map((r) => (
-              <option key={r.value} value={r.value}>
-                {r.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="space-y-2.5 pt-1">
-          <label className="flex items-center gap-2.5 cursor-pointer group">
-            <input
-              type="checkbox"
-              checked={forceChange}
-              onChange={(e) => setForceChange(e.target.checked)}
-              className="h-4 w-4 rounded border-input accent-primary"
-            />
-            <span className="text-sm">
-              Require password change on first login
-            </span>
-          </label>
-          <label className="flex items-center gap-2.5 cursor-pointer group">
-            <input
-              type="checkbox"
-              checked={sendWelcome && !sendVideo}
-              onChange={(e) => {
-                setSendWelcome(e.target.checked);
-                if (e.target.checked) setSendVideo(false);
-              }}
-              className="h-4 w-4 rounded border-input accent-primary"
-            />
-            <span className="text-sm">Send welcome email with credentials</span>
-          </label>
-          <label className="flex items-center gap-2.5 cursor-pointer group">
-            <input
-              type="checkbox"
-              checked={sendVideo}
-              onChange={(e) => {
-                setSendVideo(e.target.checked);
-                if (e.target.checked) setSendWelcome(false);
-              }}
-              className="h-4 w-4 rounded border-input accent-primary"
-            />
+
+        {!showRepStep ? (
+          <>
             <div>
-              <span className="text-sm">Send scheduling video tutorial</span>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Includes login credentials + scheduling system video tutorial
+              <label className="mb-1.5 block text-xs font-medium">
+                Full Name *
+              </label>
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="John Smith"
+                className="h-9 text-sm"
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-xs font-medium">
+                Email *
+              </label>
+              <Input
+                type="email"
+                value={email}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  setError("");
+                }}
+                placeholder="john@hogansmith.com"
+                className="h-9 text-sm"
+              />
+            </div>
+            <PasswordField value={password} onChange={setPassword} />
+            <div>
+              <label className="mb-1.5 block text-xs font-medium">Role *</label>
+              <select
+                value={role}
+                onChange={(e) => {
+                  setRole(e.target.value);
+                  setShowRepStep(false);
+                }}
+                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                {ALL_ROLES.map((r) => (
+                  <option key={r.value} value={r.value}>
+                    {r.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2.5 pt-1">
+              <label className="flex items-center gap-2.5 cursor-pointer group">
+                <input
+                  type="checkbox"
+                  checked={forceChange}
+                  onChange={(e) => setForceChange(e.target.checked)}
+                  className="h-4 w-4 rounded border-input accent-primary"
+                />
+                <span className="text-sm">
+                  Require password change on first login
+                </span>
+              </label>
+              <label className="flex items-center gap-2.5 cursor-pointer group">
+                <input
+                  type="checkbox"
+                  checked={sendWelcome && !sendVideo}
+                  onChange={(e) => {
+                    setSendWelcome(e.target.checked);
+                    if (e.target.checked) setSendVideo(false);
+                  }}
+                  className="h-4 w-4 rounded border-input accent-primary"
+                />
+                <span className="text-sm">
+                  Send welcome email with credentials
+                </span>
+              </label>
+              <label className="flex items-center gap-2.5 cursor-pointer group">
+                <input
+                  type="checkbox"
+                  checked={sendVideo}
+                  onChange={(e) => {
+                    setSendVideo(e.target.checked);
+                    if (e.target.checked) setSendWelcome(false);
+                  }}
+                  className="h-4 w-4 rounded border-input accent-primary"
+                />
+                <div>
+                  <span className="text-sm">
+                    Send scheduling video tutorial
+                  </span>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Includes login credentials + scheduling system video
+                    tutorial
+                  </p>
+                </div>
+              </label>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="rounded-lg border border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-800 p-3">
+              <p className="text-sm font-medium text-blue-800 dark:text-blue-300">
+                This user has a representative role
+              </p>
+              <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+                A representative profile allows them to be assigned to hearings
+                and manage their schedule.
               </p>
             </div>
-          </label>
-        </div>
+
+            <div className="rounded-lg border bg-card p-4 space-y-3">
+              <p className="text-sm font-semibold">{name}</p>
+              <p className="text-xs text-muted-foreground">{email}</p>
+            </div>
+
+            <label className="flex items-center gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={createRepProfile}
+                onChange={(e) => setCreateRepProfile(e.target.checked)}
+                className="h-4 w-4 rounded border-input accent-primary"
+              />
+              <span className="text-sm font-medium">
+                Create representative profile
+              </span>
+            </label>
+
+            {createRepProfile && (
+              <div>
+                <label className="mb-1.5 block text-xs font-medium">
+                  Representative Type *
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {(
+                    [
+                      {
+                        key: "in-house",
+                        label: "In-House",
+                        desc: "Employed directly by the firm",
+                      },
+                      {
+                        key: "internal_advocates",
+                        label: "Internal Advocates",
+                        desc: "Internal advocate representative",
+                      },
+                      {
+                        key: "external_advocates",
+                        label: "External Advocates",
+                        desc: "External contracted representative",
+                      },
+                    ] as const
+                  ).map((t) => (
+                    <button
+                      key={t.key}
+                      onClick={() => setRepType(t.key)}
+                      className={cn(
+                        "rounded-lg border p-3 text-left transition-all",
+                        repType === t.key
+                          ? "border-primary bg-primary/5 ring-1 ring-primary"
+                          : "hover:bg-muted/40",
+                      )}
+                    >
+                      <p className="text-sm font-medium">{t.label}</p>
+                      <p className="text-xs text-muted-foreground">{t.desc}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        )}
       </div>
       <Separator />
-      <div className="flex justify-end gap-2 px-5 py-3">
-        <Button variant="outline" size="sm" onClick={onClose}>
-          Cancel
-        </Button>
-        <Button size="sm" disabled={saving} onClick={handleSubmit}>
-          {saving ? "Creating..." : "Create User"}
-        </Button>
+      <div className="flex justify-between px-5 py-3">
+        <div>
+          {showRepStep && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowRepStep(false)}
+            >
+              ← Back
+            </Button>
+          )}
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button size="sm" disabled={saving} onClick={handleSubmit}>
+            {saving
+              ? "Creating..."
+              : showRepStep
+                ? "Create User & Rep Profile"
+                : isRepRole
+                  ? "Next →"
+                  : "Create User"}
+          </Button>
+        </div>
       </div>
     </Modal>
   );
