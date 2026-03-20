@@ -28,8 +28,17 @@ export async function saveUser(data: {
   email: string;
   role: string;
   password?: string;
+  rep_type?: string;
+  force_password_change?: boolean;
 }) {
   if (data.id) {
+    const { rows: oldRows } = await db.query(
+      "SELECT role, email FROM users WHERE id=$1",
+      [data.id],
+    );
+    const oldRole = oldRows[0]?.role;
+    const oldEmail = oldRows[0]?.email;
+
     await db.query(
       "UPDATE users SET full_name=$1, email=$2, role=$3 WHERE id=$4",
       [data.full_name, data.email, data.role, data.id],
@@ -42,25 +51,97 @@ export async function saveUser(data: {
         [hash, data.id],
       );
     }
+
+    // If role changed TO rep, create rep profile if not exists
+    if (data.role === "rep" && oldRole !== "rep") {
+      const { rows: existing } = await db.query(
+        "SELECT id FROM representatives WHERE email=$1",
+        [data.email],
+      );
+      if (existing.length === 0 && data.rep_type) {
+        await db.query(
+          "INSERT INTO representatives (name, email, rep_type, is_active) VALUES ($1,$2,$3,true)",
+          [data.full_name, data.email, data.rep_type],
+        );
+        await logAction(
+          "rep_created",
+          `Auto-created rep profile for ${data.full_name}`,
+        );
+      }
+    }
+
+    // If role changed FROM rep, deactivate rep profile
+    if (oldRole === "rep" && data.role !== "rep") {
+      await db.query(
+        "UPDATE representatives SET is_active=false WHERE email=$1",
+        [oldEmail],
+      );
+    }
+
+    // Sync name/email to rep profile
+    if (data.role === "rep") {
+      await db.query(
+        "UPDATE representatives SET name=$1, email=$2 WHERE email=$3",
+        [data.full_name, data.email, oldEmail || data.email],
+      );
+    }
+
     await logAction("user_updated", `${data.full_name} updated (${data.role})`);
     return data.id;
   } else {
     const bcrypt = await import("bcryptjs");
     const hash = await bcrypt.hash(data.password || "changeme123", 10);
     const { rows } = await db.query(
-      "INSERT INTO users (full_name, email, password_hash, role, is_active, force_password_change) VALUES ($1,$2,$3,$4,true,true) RETURNING id",
-      [data.full_name, data.email, hash, data.role],
+      "INSERT INTO users (full_name, email, password_hash, role, is_active, force_password_change) VALUES ($1,$2,$3,$4,true,$5) RETURNING id",
+      [
+        data.full_name,
+        data.email,
+        hash,
+        data.role,
+        data.force_password_change !== false,
+      ],
     );
     await logAction("user_created", `${data.full_name} created (${data.role})`);
+
+    // Auto-create rep profile if role is rep and rep_type provided
+    if (data.role === "rep" && data.rep_type) {
+      const { rows: existing } = await db.query(
+        "SELECT id FROM representatives WHERE email=$1",
+        [data.email],
+      );
+      if (existing.length === 0) {
+        await db.query(
+          "INSERT INTO representatives (name, email, rep_type, is_active) VALUES ($1,$2,$3,true)",
+          [data.full_name, data.email, data.rep_type],
+        );
+        await logAction(
+          "rep_created",
+          `Auto-created rep profile for ${data.full_name} (${data.rep_type})`,
+        );
+      } else {
+        await db.query(
+          "UPDATE representatives SET is_active=true, name=$1 WHERE email=$2",
+          [data.full_name, data.email],
+        );
+      }
+    }
+
     return rows[0].id as number;
   }
 }
 
 export async function toggleUserActive(userId: number, active: boolean) {
   await db.query("UPDATE users SET is_active=$1 WHERE id=$2", [active, userId]);
-  const { rows } = await db.query("SELECT full_name FROM users WHERE id=$1", [
-    userId,
-  ]);
+  const { rows } = await db.query(
+    "SELECT full_name, email, role FROM users WHERE id=$1",
+    [userId],
+  );
+  if (rows[0]?.role === "rep") {
+    await db.query("UPDATE representatives SET is_active=$1 WHERE email=$2", [
+      active,
+      rows[0].email,
+    ]);
+  }
   await logAction(
     "user_updated",
     `${rows[0]?.full_name} ${active ? "activated" : "deactivated"}`,
@@ -401,8 +482,6 @@ export async function sendWelcomeEmail(userId: number, password: string) {
   );
   if (!rows[0]) throw new Error("User not found");
   const { full_name, email, role } = rows[0];
-  const appUrl =
-    process.env.NEXT_PUBLIC_APP_URL || "https://hearings.hogansmith.com";
   const webhookUrl = process.env.N8N_WEBHOOK_URL;
   const webhookSecret = process.env.N8N_WEBHOOK_SECRET;
   if (!webhookUrl || !webhookSecret)
@@ -415,10 +494,13 @@ export async function sendWelcomeEmail(userId: number, password: string) {
       "X-Webhook-Secret": webhookSecret,
     },
     body: JSON.stringify({
-      type: "welcome",
-      to: email,
-      subject: "Welcome to HSL Hearing Dashboard",
-      body: `Hello ${full_name},\n\nYour account has been created for the HSL Hearing Management System.\n\nLogin URL: ${appUrl}\nEmail: ${email}\nPassword: ${password}\nRole: ${role.replace(/_/g, " ")}\n\nPlease log in and change your password immediately.\n\nHogan Smith Law`,
+      email_type: "new_user_welcome",
+      to_email: email,
+      to_name: full_name,
+      password,
+      role: role.replace(/_/g, " "),
+      login_url:
+        process.env.NEXT_PUBLIC_APP_URL || "https://hearings.hogansmith.com",
     }),
   });
   await logAction(
@@ -448,7 +530,7 @@ export async function sendPasswordResetEmail(userId: number, password: string) {
       "X-Webhook-Secret": webhookSecret,
     },
     body: JSON.stringify({
-      type: "password_reset",
+      email_type: "password_reset",
       to: email,
       subject: "Your HSL Password Has Been Reset",
       body: `Hello ${full_name},\n\nYour password has been reset.\n\nLogin URL: ${appUrl}\nEmail: ${email}\nNew Password: ${password}\n\nPlease log in and change your password.\n\nHogan Smith Law`,
