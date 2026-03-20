@@ -286,7 +286,7 @@ export async function updatePortalField(
   // Server-side permission guard for specialist assignment
   if (field === "mr_specialist_id") {
     const role = session.user.role ?? "";
-    if (!["admin", "mr_admin"].includes(role))
+    if (!["system_admin", "admin", "manager", "mr_admin", "mr_lead"].includes(role))
       return { success: false, message: "Only Admin or MR Admin can assign specialists" };
   }
 
@@ -408,18 +408,29 @@ export async function getPortalActivityLog(filters: {
   page?: number;
   date_range?: "all" | "today" | "week" | "month";
   user_id?: string;
+  entry_id?: number; // scopes log to a specific portal entry via client_name lookup
 }): Promise<{ entries: PortalActivityEntry[]; total: number; total_pages: number }> {
   const perPage = 50;
   const page = Math.max(1, filters.page ?? 1);
   const offset = (page - 1) * perPage;
 
-  // Filter to portal actions only — do NOT filter by user_id here so entries
-  // logged as system admin (id=1) or NULL are still visible.
-  const conditions: string[] = [
-    "a.action = ANY($1::text[])",
-  ];
+  const conditions: string[] = ["a.action = ANY($1::text[])"];
   const params: unknown[] = [PORTAL_ACTIONS];
   let p = 1;
+
+  // Scope to a specific entry by matching client_name in the description
+  if (filters.entry_id) {
+    const { rows } = await db.query(
+      "SELECT client_name FROM mr_patient_portal WHERE id = $1",
+      [filters.entry_id],
+    );
+    const clientName = rows[0]?.client_name as string | undefined;
+    if (clientName) {
+      p++;
+      conditions.push(`a.description LIKE $${p}`);
+      params.push(`%for: ${clientName}%`);
+    }
+  }
 
   if (filters.date_range === "today") {
     conditions.push("DATE(a.created_at) = CURRENT_DATE");

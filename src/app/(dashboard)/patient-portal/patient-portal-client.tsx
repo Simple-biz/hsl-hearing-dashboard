@@ -692,7 +692,7 @@ function ViewDetailsModal({
   useEffect(() => {
     if (!entry || tab !== "activity") return;
     startActTransition(async () => {
-      const r = await getPortalActivityLog({ page: 1 });
+      const r = await getPortalActivityLog({ page: 1, entry_id: entry.id });
       setActivities(r.entries);
     });
   }, [entry, tab]);
@@ -1060,12 +1060,14 @@ function PortalRow({
 
       {/* Specialist */}
       <div className="px-1">
-        {canAssignSpecialist
+        {canEdit
           ? <select
               value={entry.mr_specialist_id ?? ""}
               className="w-full text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer font-medium"
               style={specColor ? specStyle(specColor) : { backgroundColor: "#f3f4f6", color: "#374151" }}
               onChange={(e) => onUpdate(entry.id, "mr_specialist_id", e.target.value ? Number(e.target.value) : null)}
+              disabled={!canAssignSpecialist}
+              title={!canAssignSpecialist ? "Only Admin, Manager, MR Admin, or MR Lead can assign specialists" : undefined}
             >
               <option value="">— Select —</option>
               {specialists.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -1323,6 +1325,14 @@ export function PatientPortalClient(data: PortalPageData) {
 
       <div className="max-w-475 mx-auto px-3 sm:px-6 py-6 space-y-5">
 
+        {/* ── Back navigation ──────────────────────────────────────────────── */}
+        <button
+          onClick={() => router.push("/medical-records")}
+          className="flex items-center gap-1 text-[12px] font-semibold text-muted-foreground hover:text-foreground transition-colors"
+        >
+          ← Back to MR Pivot
+        </button>
+
         {/* ── Stat Cards ──────────────────────────────────────────────────── */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <StatCard label="Total Entries"    value={stats.total}       bg="bg-blue-600" />
@@ -1425,18 +1435,12 @@ export function PatientPortalClient(data: PortalPageData) {
               {data.permissions.canEdit && (
                 <button
                   onClick={() => setShowAdd(true)}
-                  className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-primary hover:bg-primary/90 text-white transition-colors"
+                  className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground font-semibold transition-colors"
                 >
                   <Plus size={12} />
                   <span className="hidden sm:inline">Add Entry</span>
                 </button>
               )}
-              <button
-                onClick={() => router.push("/medical-records")}
-                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-muted-foreground transition-colors"
-              >
-                ← <span className="hidden sm:inline">MR Pivot</span>
-              </button>
             </div>
           </div>
 
@@ -1474,7 +1478,7 @@ export function PatientPortalClient(data: PortalPageData) {
           {/* Column headers */}
           <div className="overflow-x-auto shrink-0">
             <div
-              className="grid px-2 py-2.5 bg-muted text-muted-foreground text-[9px] font-semibold uppercase tracking-wide border-b border-border items-center"
+              className="grid px-2 py-2.5 bg-muted text-foreground text-[10px] font-extrabold uppercase tracking-wider border-b border-border items-center"
               style={{ gridTemplateColumns: PORTAL_GRID, minWidth: PORTAL_MIN_W }}
             >
               <div className="px-1 text-left">Date</div>
