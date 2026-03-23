@@ -526,6 +526,18 @@ export async function updateHearing(
     hearingId,
   ]);
 
+  // Fire withdrawal notification for global bell
+  const isWithdrawal =
+    (field === "medical_record_status" && value === "WITHDRAWAL") ||
+    (field === "hearing_decision_status" &&
+      typeof value === "string" &&
+      value.startsWith("Withdrawal"));
+
+  if (isWithdrawal) {
+    const { createWithdrawalNotification } = await import("@/lib/notifications");
+    await createWithdrawalNotification(hearingId, claimant);
+  }
+
   // Resolve display values for ID fields
   const fieldLabel =
     FIELD_LABELS[field] ||

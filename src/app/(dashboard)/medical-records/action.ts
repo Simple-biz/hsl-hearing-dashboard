@@ -62,10 +62,12 @@ async function logActivity(
 const WITHDRAWN_FILTER = `
   (h.medical_record_status != 'WITHDRAWAL' OR h.medical_record_status IS NULL)
   AND (
-    h.hearing_decision_status NOT LIKE 'Withdrawal%'
-    AND h.hearing_decision_status != 'WD CLMT DECEASED'
-    AND h.hearing_decision_status != 'Dismissal'
-    OR h.hearing_decision_status IS NULL
+    h.hearing_decision_status IS NULL
+    OR (
+      h.hearing_decision_status NOT LIKE 'Withdrawal%'
+      AND h.hearing_decision_status != 'WD CLMT DECEASED'
+      AND h.hearing_decision_status != 'Dismissal'
+    )
   )
 `.trim();
 
@@ -329,17 +331,11 @@ export async function getMrPivotPageData(
     db.query(`
       SELECT id, team_name, team_color
       FROM mr_teams
-      WHERE team_color IN ('blue', 'orange', 'green', 'yellow', 'purple', 'pink')
-        AND is_active = true
+      WHERE is_active = true
         AND is_assignable = true
-      ORDER BY
-        CASE team_color
-          WHEN 'blue' THEN 1
-          WHEN 'orange' THEN 2
-          WHEN 'green' THEN 3
-          WHEN 'yellow' THEN 4
-          WHEN 'purple' THEN 5
-        END ASC
+        AND team_color IS NOT NULL
+        AND team_color != ''
+      ORDER BY display_order ASC
     `),
 
     // ── Round-robin: last assigned team ──────────────────────────────────────
@@ -347,7 +343,9 @@ export async function getMrPivotPageData(
       SELECT t.id, t.team_name, t.team_color
       FROM hearings h
       JOIN mr_teams t ON h.mr_team_id = t.id
-      WHERE t.team_color IN ('blue', 'orange', 'green', 'yellow', 'purple', 'pink')
+      WHERE t.is_active = true
+        AND t.is_assignable = true
+        AND t.team_color IS NOT NULL AND t.team_color != ''
         AND h.mr_team_assigned_at IS NOT NULL
         AND (h.medical_record_status != 'WITHDRAWAL' OR h.medical_record_status IS NULL)
       ORDER BY h.mr_team_assigned_at DESC
@@ -454,11 +452,12 @@ export async function getMrPivotPageData(
   // const monthly = Object.values(monthlyMap);
 
   // ── Shape: round-robin state ────────────────────────────────────────────────
-  const ROTATION_ORDER = ["blue", "orange", "green", "yellow", "purple", "pink"];
+  // Derive rotation order dynamically from DB — no hardcoded team list
   const colorToTeam: Record<string, { id: number; name: string; color: string }> = {};
   for (const rt of rotationTeamsRows.rows as Record<string, unknown>[]) {
     colorToTeam[rt.team_color as string] = { id: Number(rt.id), name: rt.team_name as string, color: rt.team_color as string };
   }
+  const ROTATION_ORDER = (rotationTeamsRows.rows as Record<string, unknown>[]).map(r => r.team_color as string);
 
   // Fallback: if mr_team_assigned_at was null on all rows, try last assigned by id
   let lastRow = lastAssignedRow.rows[0] as Record<string, unknown> | undefined;
@@ -467,14 +466,15 @@ export async function getMrPivotPageData(
       SELECT t.id, t.team_name, t.team_color
       FROM hearings h
       JOIN mr_teams t ON h.mr_team_id = t.id
-      WHERE t.team_color IN ('blue', 'orange', 'green', 'yellow', 'purple', 'pink')
+      WHERE t.is_active = true AND t.is_assignable = true
+        AND t.team_color IS NOT NULL AND t.team_color != ''
       ORDER BY h.id DESC
       LIMIT 1
     `);
     lastRow = fallback.rows[0];
   }
 
-  const lastColor = (lastRow?.team_color as string | undefined) ?? "purple";
+  const lastColor = (lastRow?.team_color as string | undefined) ?? ROTATION_ORDER[ROTATION_ORDER.length - 1] ?? "blue";
   const lastTeamName = (lastRow?.team_name  as string | undefined) ?? "None";
   const lastIndex = ROTATION_ORDER.indexOf(lastColor);
   const nextIndex = (lastIndex + 1) % ROTATION_ORDER.length;
@@ -823,19 +823,19 @@ export async function assignJeromeUrgent(): Promise<{
 }
 
 export async function getRoundRobinState(): Promise<RoundRobinState> {
-  const ROTATION_ORDER = ["blue", "orange", "green", "yellow", "purple", "pink"];
-
   const [rotationRows, lastAssignedRows, nextHearingRows, urgentRows] = await Promise.all([
     db.query(`
       SELECT id, team_name, team_color FROM mr_teams
-      WHERE team_color IN ('blue','orange','green','yellow','purple','pink')
-        AND is_active = true AND is_assignable = true
-      ORDER BY CASE team_color WHEN 'blue' THEN 1 WHEN 'orange' THEN 2 WHEN 'green' THEN 3 WHEN 'yellow' THEN 4 WHEN 'purple' THEN 5 WHEN 'pink' THEN 6 END
+      WHERE is_active = true AND is_assignable = true
+        AND team_color IS NOT NULL
+        AND team_color NOT IN ('', 'pink')
+      ORDER BY display_order ASC
     `),
     db.query(`
       SELECT t.team_name, t.team_color FROM hearings h
       JOIN mr_teams t ON h.mr_team_id = t.id
-      WHERE t.team_color IN ('blue','orange','green','yellow','purple','pink')
+      WHERE t.is_active = true AND t.is_assignable = true
+        AND t.team_color IS NOT NULL AND t.team_color != ''
         AND h.mr_team_assigned_at IS NOT NULL
         AND (h.medical_record_status != 'WITHDRAWAL' OR h.medical_record_status IS NULL)
       ORDER BY h.mr_team_assigned_at DESC LIMIT 1
@@ -855,13 +855,16 @@ export async function getRoundRobinState(): Promise<RoundRobinState> {
     `),
   ]);
 
+  // Derive rotation order from DB result — ordered by display_order, no hardcoded list
+  const ROTATION_ORDER = (rotationRows.rows as Record<string, unknown>[]).map(r => r.team_color as string);
   const colorToTeam: Record<string, string> = {};
   for (const r of rotationRows.rows as Record<string, unknown>[]) {
     colorToTeam[r.team_color as string] = r.team_name as string;
   }
 
   const lastRow = lastAssignedRows.rows[0] as Record<string, unknown> | undefined;
-  const lastColor = (lastRow?.team_color as string | undefined) ?? "purple";
+  // Fallback to first team in rotation if no last assigned found
+  const lastColor = (lastRow?.team_color as string | undefined) ?? ROTATION_ORDER[ROTATION_ORDER.length - 1] ?? "blue";
   const lastTeamName = (lastRow?.team_name  as string | undefined) ?? "None";
   const lastIndex = ROTATION_ORDER.indexOf(lastColor);
   const nextColor = ROTATION_ORDER[(lastIndex + 1) % ROTATION_ORDER.length];
@@ -1086,17 +1089,12 @@ function parsePostHrgNotes(raw: unknown): PostHrgNote[] {
 }
 
 export async function getPostHrgNotes(hearingId: number): Promise<PostHrgNote[]> {
-  // post_hrg_notes is a Phase 4 table — return empty until migrated
   try {
-    const result = await db.query(
-      `SELECT n.*, u.full_name AS author_name
-       FROM post_hrg_notes n
-       JOIN users u ON n.user_id = u.id
-       WHERE n.hearing_id = $1
-       ORDER BY n.created_at DESC`,
+    const { rows } = await db.query(
+      `SELECT post_hrg_notes FROM hearings WHERE id = $1`,
       [hearingId],
     );
-    return result.rows as PostHrgNote[];
+    return parsePostHrgNotes(rows[0]?.post_hrg_notes);
   } catch {
     return [];
   }
@@ -1149,6 +1147,67 @@ export async function getPostHrgHearings(
   filters: HearingFilters,
 ): Promise<PaginatedHearingsResult> {
   return getHearingsPaginated(filters);
+}
+
+// Inverts the WITHDRAWN_FILTER to fetch ONLY withdrawn/dismissed records.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function getWithdrawnHearings(filters: {
+  page?: number;
+  search?: string;
+  per_page?: number;
+}): Promise<{ hearings: Hearing[]; total: number; total_pages: number }> {
+  const page    = Math.max(1, filters.page ?? 1);
+  const perPage = filters.per_page ?? 50;
+  const offset  = (page - 1) * perPage;
+
+  const params: unknown[] = [];
+  const conds: string[] = [
+    `(
+      h.medical_record_status = 'WITHDRAWAL'
+      OR h.hearing_decision_status LIKE 'Withdrawal%'
+      OR h.hearing_decision_status = 'WD CLMT DECEASED'
+      OR h.hearing_decision_status = 'Dismissal'
+    )`,
+  ];
+
+  if (filters.search?.trim()) {
+    params.push(`%${filters.search.trim()}%`);
+    conds.push(`h.claimant ILIKE $${params.length}`);
+  }
+
+  const where = conds.join(" AND ");
+
+  const [countRes, dataRes] = await Promise.all([
+    db.query(
+      `SELECT COUNT(*)::int AS total FROM hearings h WHERE ${where}`,
+      params,
+    ),
+    db.query(
+      `SELECT
+         h.*,
+         r.name          AS rep_name,
+         t.team_name     AS mr_team_name,
+         t.team_color    AS mr_team_color,
+         t.id            AS mr_team_id,
+         h.hearing_date::text AS hearing_date
+       FROM hearings h
+       LEFT JOIN representatives r ON h.assigned_rep_id = r.id
+       LEFT JOIN mr_teams t        ON h.mr_team_id      = t.id
+       WHERE ${where}
+       ORDER BY h.hearing_date DESC, h.converted_time_est DESC
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, perPage, offset],
+    ),
+  ]);
+
+  const total = countRes.rows[0]?.total ?? 0;
+
+  return {
+    hearings:    dataRes.rows as Hearing[],
+    total,
+    total_pages: Math.max(1, Math.ceil(total / perPage)),
+  };
 }
 
 export async function getCardStats(
