@@ -1146,7 +1146,73 @@ export async function updatePostHrgDeadline(
 export async function getPostHrgHearings(
   filters: HearingFilters,
 ): Promise<PaginatedHearingsResult> {
-  return getHearingsPaginated(filters);
+  const page    = Math.max(1, filters.page ?? 1);
+  const perPage = Number(filters.per_page ?? 50);
+  const offset  = (page - 1) * perPage;
+
+  const params: unknown[] = [];
+  const where: string[] = [
+    "h.hearing_decision_status = 'Post HRG Review/ Dev'",
+    "(h.medical_record_status != 'WITHDRAWAL' OR h.medical_record_status IS NULL)",
+  ];
+
+  if (filters.search?.trim()) {
+    params.push(`%${filters.search.trim()}%`);
+    where.push(`h.claimant ILIKE $${params.length}`);
+  }
+
+  if (filters.team_filter && filters.team_filter !== "__all__") {
+    if (filters.team_filter === "unassigned") {
+      where.push("h.mr_team_id IS NULL");
+    } else {
+      params.push(Number(filters.team_filter));
+      where.push(`h.mr_team_id = $${params.length}`);
+    }
+  }
+
+  if (filters.status_filter && filters.status_filter !== "__all__") {
+    params.push(filters.status_filter);
+    where.push(`h.medical_record_status = $${params.length}`);
+  }
+
+  const whereClause = where.join(" AND ");
+  const order = filters.sort_order === "asc" ? "ASC" : "DESC";
+
+  const [countRes, dataRes] = await Promise.all([
+    db.query(
+      `SELECT COUNT(*)::int AS total FROM hearings h WHERE ${whereClause}`,
+      params,
+    ),
+    db.query(
+      `SELECT
+         h.id, h.claimant, h.hearing_date::text, h.converted_time_est,
+         h.medical_record_status, h.hearing_decision_status,
+         h.manner_of_appearance, h.five_day_notice, h.task_assigned,
+         h.credited, h.post_hrg_review, h.post_hrg_deadline, h.post_hrg_notes,
+         h.medical_record_link, h.mr_team_id,
+         r.name       AS rep_name,
+         t.team_name  AS mr_team_name,
+         t.team_color AS mr_team_color,
+         t.team_type  AS mr_team_type
+       FROM hearings h
+       LEFT JOIN representatives r ON h.assigned_rep_id = r.id
+       LEFT JOIN mr_teams t        ON h.mr_team_id = t.id
+       WHERE ${whereClause}
+       ORDER BY h.hearing_date ${order}, h.converted_time_est ${order}
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, perPage, offset],
+    ),
+  ]);
+
+  const total = countRes.rows[0]?.total ?? 0;
+  return {
+    hearings:    dataRes.rows as Hearing[],
+    total,
+    page,
+    per_page:    perPage,
+    total_pages: Math.max(1, Math.ceil(total / perPage)),
+    stats:       { total, complete: 0, in_progress: 0, ready: 0, not_started: 0, urgent: 0 },
+  };
 }
 
 // Inverts the WITHDRAWN_FILTER to fetch ONLY withdrawn/dismissed records.

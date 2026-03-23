@@ -776,12 +776,23 @@ function HearingRow({
       {permissions.canEditMrTeam ? (
         <select
           className="w-full text-[9px] px-1.5 py-1 rounded border-0 cursor-pointer font-medium"
-          style={{ backgroundColor: h.mr_team_id ? teamHex(h.mr_team_color) : "#e5e7eb", color: h.mr_team_id ? "#fff" : "#374151" }}
+          style={{
+            backgroundColor: !h.mr_team_id
+              ? "#9ca3af"
+              : h.mr_team_type === "leadership_lead" || h.mr_team_type === "leadership_asst"
+              ? "#ffffff"
+              : teamHex(h.mr_team_color),
+            color: !h.mr_team_id
+              ? "#fff"
+              : h.mr_team_type === "leadership_lead" || h.mr_team_type === "leadership_asst"
+              ? "#1f2937"
+              : "#fff",
+          }}
           value={h.mr_team_id ?? ""}
           onChange={(e) => onUpdate(h.id, "mr_team", e.target.value ? Number(e.target.value) : null)}
         >
           <option value="" className="text-muted-foreground bg-card">Unassigned</option>
-          {teams.map((t) => <option key={t.id} value={t.id} className="text-foreground bg-card">{t.team_name}</option>)}
+          {teams.filter((t) => (t.team_type as string) !== "shared").map((t) => <option key={t.id} value={t.id} className="text-foreground bg-card">{t.team_name}</option>)}
         </select>
       ) : (
         <span className="text-[9px] px-1.5 py-0.5 rounded font-medium"
@@ -1086,7 +1097,7 @@ export function MrPivotClient({ userRole, ...data }: Props) {
       const teamId = value as number | null;
       const team = teamId ? data.medical_teams.find((t) => t.id === teamId) : null;
       setHearings((prev) => prev.map((h) => h.id === id
-        ? { ...h, mr_team_id: teamId, mr_team_name: team?.team_name ?? null, mr_team_color: team?.team_color ?? null }
+        ? { ...h, mr_team_id: teamId, mr_team_name: team?.team_name ?? null, mr_team_color: team?.team_color ?? null, mr_team_type: team?.team_type ?? null }
         : h
       ));
       // Refresh round robin immediately so the indicator reflects the new assignment
@@ -1331,7 +1342,7 @@ export function MrPivotClient({ userRole, ...data }: Props) {
               <SelectContent>
                 <SelectItem value="__all__">All Teams</SelectItem>
                 <SelectItem value="unassigned">Unassigned</SelectItem>
-                {data.medical_teams.map((t) => (
+                {data.medical_teams.filter((t) => (t.team_type as string) !== "shared").map((t) => (
                   <SelectItem key={t.id} value={String(t.id)}>
                     {t.team_name}
                     {t.team_type === "leadership_lead" ? " 👑" : t.team_type === "leadership_asst" ? " ⭐" : ""}
