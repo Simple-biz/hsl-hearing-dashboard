@@ -8,7 +8,7 @@ export type {
 
 import { derivePortalPermissions } from "../patient-portal/types";
 import type {
-  PortalUserRole, MrSpecialist, PortalEntry, PortalNote, PortalStats, PortalFilters,
+  PortalUserRole, PortalEntry, PortalNote, PortalStats, PortalFilters,
   PortalPaginatedResult, PortalPageData, PortalAddEntryInput, PortalActivityEntry,
 } from "../patient-portal/types";
 
