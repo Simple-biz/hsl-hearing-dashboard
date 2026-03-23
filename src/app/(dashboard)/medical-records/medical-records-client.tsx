@@ -812,11 +812,11 @@ export function MrPivotClient({ userRole, ...data }: Props) {
   const [isPending, startTransition] = useTransition();
 
   // ── Hearings ─────────────────────────────────────────────────────────────
-  const [hearings,       setHearings]       = useState<Hearing[]>([]);
-  const [totalHearings,  setTotalHearings]  = useState(data.statCards.totalHearings);
-  const [totalPages,     setTotalPages]     = useState(1);
+  const [hearings, setHearings] = useState<Hearing[]>([]);
+  const [totalHearings, setTotalHearings] = useState(data.statCards.totalHearings);
+  const [totalPages, setTotalPages] = useState(1);
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
-  const [expandedTeams,  setExpandedTeams]  = useState<Set<string>>(new Set());
+  const [expandedTeams, setExpandedTeams] = useState<Set<string>>(new Set());
 
   const [filters, setFilters] = useState<HearingFilters>({
     search: "", month_filter: "", team_filter: "", status_filter: "",
@@ -824,18 +824,18 @@ export function MrPivotClient({ userRole, ...data }: Props) {
   });
 
   // ── Round robin ───────────────────────────────────────────────────────────
-  const [roundRobin,     setRoundRobin]     = useState<RoundRobinState>(data.roundRobin);
+  const [roundRobin, setRoundRobin] = useState<RoundRobinState>(data.roundRobin);
 
   // ── Notifications ─────────────────────────────────────────────────────────
-  const [notifications,  setNotifications]  = useState<NotificationItem[]>([]);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
 
   // ── View mode ─────────────────────────────────────────────────────────────
   const [viewMode, setViewMode] = useState<"date" | "team">("date");
 
   // ── Modal visibility ──────────────────────────────────────────────────────
-  const [showHearings,    setShowHearings]    = useState(false);
-  const [showPostHrg,     setShowPostHrg]     = useState(false);
-  const [showTeamStats,   setShowTeamStats]   = useState(false);
+  const [showHearings, setShowHearings] = useState(false);
+  const [showPostHrg, setShowPostHrg] = useState(false);
+  const [showTeamStats, setShowTeamStats] = useState(false);
   const [showActivityLog, setShowActivityLog] = useState(false);
 
   // ── Per-row modal state ───────────────────────────────────────────────────
@@ -886,13 +886,13 @@ export function MrPivotClient({ userRole, ...data }: Props) {
   // ── Row update handler ────────────────────────────────────────────────────
   async function handleUpdate(id: number, field: string, value: unknown) {
     const actions: Record<string, (v: unknown) => Promise<unknown>> = {
-      medical_record_status:   (v) => updateMrStatus(id, v as string),
+      medical_record_status: (v) => updateMrStatus(id, v as string),
       hearing_decision_status: (v) => updateHearingDecisionStatus(id, v as string),
-      mr_team:                 (v) => updateMrTeam(id, v as number | null),
-      task_assigned:           (v) => toggleTaskAssigned(id, v as boolean),
-      credited:                (v) => toggleCredited(id, v as boolean),
-      manner_of_appearance:    (v) => updateMoa(id, v as string),
-      medical_record_link:     (v) => updateWorksheetLink(id, v as string),
+      mr_team: (v) => updateMrTeam(id, v as number | null),
+      task_assigned: (v) => toggleTaskAssigned(id, v as boolean),
+      credited: (v) => toggleCredited(id, v as boolean),
+      manner_of_appearance: (v) => updateMoa(id, v as string),
+      medical_record_link: (v) => updateWorksheetLink(id, v as string),
     };
     await actions[field]?.(value);
 
@@ -931,10 +931,10 @@ export function MrPivotClient({ userRole, ...data }: Props) {
   }, {});
 
   // ── Virtualizer — flatten visible items into a single array ───────────────
-  const scrollRef    = useRef<HTMLDivElement>(null);
-  const scrollTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isScrolling, setIsScrolling] = useState(false);
-  const ROW_H  = 44;
+  const ROW_H = 44;
   const GROUP_H = 33;
 
   type FlatItem =
@@ -945,17 +945,17 @@ export function MrPivotClient({ userRole, ...data }: Props) {
   const flatItems = useMemo<FlatItem[]>(() => {
     if (viewMode === "date") {
       return Object.entries(groupedByMonth).flatMap(([key, rows]) => {
-        const completeCount    = rows.filter((h) => h.medical_record_status === "Complete").length;
-        const inProgressCount  = rows.filter((h) => h.medical_record_status === "In Progress").length;
+        const completeCount = rows.filter((h) => h.medical_record_status === "Complete").length;
+        const inProgressCount = rows.filter((h) => h.medical_record_status === "In Progress").length;
         const header: FlatItem = { kind: "group-date", key, count: rows.length, completeCount, inProgressCount };
         if (!expandedMonths.has(key)) return [header];
         return [header, ...rows.map((h): FlatItem => ({ kind: "row", hearing: h }))];
       });
     }
     return Object.entries(groupedByTeam).flatMap(([key, rows]) => {
-      const color       = rows[0]?.mr_team_color ?? null;
-      const completeCount    = rows.filter((h) => h.medical_record_status === "Complete").length;
-      const inProgressCount  = rows.filter((h) => h.medical_record_status === "In Progress").length;
+      const color = rows[0]?.mr_team_color ?? null;
+      const completeCount = rows.filter((h) => h.medical_record_status === "Complete").length;
+      const inProgressCount = rows.filter((h) => h.medical_record_status === "In Progress").length;
       const header: FlatItem = { kind: "group-team", key, color, count: rows.length, completeCount, inProgressCount };
       if (!expandedTeams.has(key)) return [header];
       return [header, ...rows.map((h): FlatItem => ({ kind: "row", hearing: h }))];
@@ -963,14 +963,14 @@ export function MrPivotClient({ userRole, ...data }: Props) {
   }, [viewMode, groupedByMonth, groupedByTeam, expandedMonths, expandedTeams]);
 
   const virtualizer = useVirtualizer({
-    count:            flatItems.length,
+    count: flatItems.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize:     (i) => flatItems[i]?.kind === "row" ? ROW_H : GROUP_H,
-    overscan:         15,
+    estimateSize: (i) => flatItems[i]?.kind === "row" ? ROW_H : GROUP_H,
+    overscan: 15,
   });
 
   function toggleMonth(key: string) { toggleSetKey(setExpandedMonths, key); }
-  function toggleTeam(key: string)  { toggleSetKey(setExpandedTeams,  key); }
+  function toggleTeam(key: string) { toggleSetKey(setExpandedTeams,  key); }
   function expandAll() {
     if (viewMode === "date") setExpandedMonths(new Set(Object.keys(groupedByMonth)));
     else setExpandedTeams(new Set(Object.keys(groupedByTeam)));
@@ -1032,12 +1032,12 @@ export function MrPivotClient({ userRole, ...data }: Props) {
           <div>
             {/* 6 status summary cards — repeat(3, 1fr) */}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-3">
-              <SummaryCard label="Total Hearings" value={totalHearings}             bg="bg-gradient-to-br from-[#667eea] to-[#764ba2]" />
-              <SummaryCard label="Complete"        value={data.statCards.complete}   bg="bg-gradient-to-br from-[#11998e] to-[#38ef7d]" />
-              <SummaryCard label="In Progress"     value={data.statCards.inProgress} bg="bg-gradient-to-br from-[#4facfe] to-[#00f2fe]" />
-              <SummaryCard label="Ready"           value={data.statCards.ready}      bg="bg-gradient-to-br from-[#56ab2f] to-[#a8e063]" />
-              <SummaryCard label="Not Started"     value={data.statCards.notStarted} bg="bg-gradient-to-br from-[#f093fb] to-[#f5576c]" />
-              <SummaryCard label="Urgent"          value={data.statCards.urgent}     bg="bg-gradient-to-br from-[#ff416c] to-[#ff4b2b]" />
+              <SummaryCard label="Total Hearings" value={totalHearings} bg="bg-gradient-to-br from-[#667eea] to-[#764ba2]" />
+              <SummaryCard label="Complete" value={data.statCards.complete} bg="bg-gradient-to-br from-[#11998e] to-[#38ef7d]" />
+              <SummaryCard label="In Progress"  value={data.statCards.inProgress} bg="bg-gradient-to-br from-[#4facfe] to-[#00f2fe]" />
+              <SummaryCard label="Ready" value={data.statCards.ready} bg="bg-gradient-to-br from-[#56ab2f] to-[#a8e063]" />
+              <SummaryCard label="Not Started" value={data.statCards.notStarted} bg="bg-gradient-to-br from-[#f093fb] to-[#f5576c]" />
+              <SummaryCard label="Urgent" value={data.statCards.urgent} bg="bg-gradient-to-br from-[#ff416c] to-[#ff4b2b]" />
             </div>
             {/* 2 assignment cards — flex row, compact with header+body */}
             <div className="flex gap-3">
@@ -1241,6 +1241,7 @@ export function MrPivotClient({ userRole, ...data }: Props) {
                 </button>
               )}
 
+
               {/* Post HRG */}
               {data.postHrgCount > 0 && (
                 <button onClick={() => setShowPostHrg(true)}
@@ -1248,6 +1249,12 @@ export function MrPivotClient({ userRole, ...data }: Props) {
                   <FileText size={12} /> Post HRG ({data.postHrgCount})
                 </button>
               )}
+
+              {/* Patient Portal */}
+              <a href="/patient-portal"
+                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-semibold transition-colors">
+                🏥 Patient Portal
+              </a>
 
               {/* RFC Documents */}
               <button onClick={() => router.push("/rfc")}
