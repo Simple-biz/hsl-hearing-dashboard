@@ -8,7 +8,7 @@ import { db } from "@/lib/db";
 function formatSSN(raw: string): string | null {
   if (!raw) return null;
   const digits = String(raw).replace(/\D/g, "").slice(-4);
-  return digits.length === 4 ? digits : null;
+  return digits.length > 0 ? digits : null;
 }
 
 function parseDate(raw: string): string | null {
@@ -38,7 +38,21 @@ export async function POST(req: NextRequest) {
     );
 
   const body = await req.json();
-  const { mapping, rows, crossSheetLookups = {}, rowOffset = 0 } = body;
+  const {
+    mapping,
+    rows,
+    crossSheetLookups = {},
+    rowOffset = 0,
+    compare_mode = false,
+  } = body;
+
+  // Compare mode: return minimal claimant+date+ssn for all hearings
+  if (compare_mode) {
+    const { rows: allH } = await db.query(
+      "SELECT claimant, hearing_date::text, ssn_last_4 FROM hearings",
+    );
+    return NextResponse.json({ success: true, all_hearings: allH });
+  }
 
   if (!mapping || !rows || rows.length === 0) {
     return NextResponse.json({ success: false, message: "No data to check" });
@@ -119,6 +133,7 @@ export async function POST(req: NextRequest) {
   const duplicateRecords: Record<string, unknown>[] = [];
   const skippedRecords: Record<string, unknown>[] = [];
   const rescheduledRecords: Record<string, unknown>[] = [];
+  const debugResched: Record<string, unknown>[] = [];
 
   for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
     const row = rows[rowIndex] as string[];
@@ -209,42 +224,67 @@ export async function POST(req: NextRequest) {
     const ssnFormatted = formatSSN(ssn);
 
     // ── Rescheduled detection ──
-    // If claimant has "(Rescheduled)" or "(Rescheduled N)", find the original
-    if (RESCHED_RE.test(claimant) && ssnFormatted) {
+    if (RESCHED_RE.test(claimant)) {
       const baseName = claimant.replace(RESCHED_RE, "").trim();
+      const debugEntry: Record<string, unknown> = {
+        claimant,
+        baseName,
+        ssn_raw: ssn,
+        ssnFormatted,
+        hearingDate,
+        hasLookup: !!crossSheetLookups[String(rowIndex)],
+        lookupSsn: crossSheetLookups[String(rowIndex)]?.ssn || null,
+      };
 
-      // Check if this EXACT rescheduled name + SSN + date already exists (true duplicate)
-      // If name+SSN match but date is different → it's a NEW reschedule, not already imported
-      const exactTier1Key = `${claimant}|${ssnFormatted}|${hearingDate}`;
-      const alreadyImported = tier1.has(exactTier1Key);
+      if (!ssnFormatted) {
+        debugEntry.reason = "No SSN formatted — skipping rescheduled check";
+        debugResched.push(debugEntry);
+        // Fall through to normal check
+      } else {
+        // Check if this EXACT rescheduled name + SSN + date already exists (true duplicate)
+        // If name+SSN match but date is different → it's a NEW reschedule, not already imported
+        const exactTier1Key = `${claimant}|${ssnFormatted}|${hearingDate}`;
+        const alreadyImported = tier1.has(exactTier1Key);
 
-      if (!alreadyImported) {
-        // Find the record to update: first try exact name+SSN (update existing rescheduled),
-        // then try base name+SSN (first-time reschedule of original)
-        const exactKey = `${claimant.toLowerCase()}|${ssnFormatted}`;
-        const origKey = `${baseName.toLowerCase()}|${ssnFormatted}`;
-        const existing =
-          byNameAndSsn.get(exactKey) || byNameAndSsn.get(origKey);
+        if (!alreadyImported) {
+          // Find the record to update: first try exact name+SSN (update existing rescheduled),
+          // then try base name+SSN (first-time reschedule of original)
+          const exactKey = `${claimant.toLowerCase()}|${ssnFormatted}`;
+          const origKey = `${baseName.toLowerCase()}|${ssnFormatted}`;
+          const existing =
+            byNameAndSsn.get(exactKey) || byNameAndSsn.get(origKey);
 
-        if (existing) {
-          rescheduledRecords.push({
-            row: rowOffset + rowIndex + 2,
-            rowIndex: rowOffset + rowIndex,
-            claimant,
-            hearing_date: hearingDate,
-            ssn: ssnFormatted,
-            claim_type: claimType,
-            claimantLocation,
-            repLocation,
-            downloadType,
-            statusDate,
-            is_rescheduled: true,
-            original_id: existing.id,
-            base_name: baseName,
-            original_claimant: existing.claimant,
-            original_date: existing.hearing_date,
-          });
-          continue;
+          if (existing) {
+            rescheduledRecords.push({
+              row: rowOffset + rowIndex + 2,
+              rowIndex: rowOffset + rowIndex,
+              claimant,
+              hearing_date: hearingDate,
+              ssn: ssnFormatted,
+              claim_type: claimType,
+              claimantLocation,
+              repLocation,
+              downloadType,
+              statusDate,
+              is_rescheduled: true,
+              original_id: existing.id,
+              base_name: baseName,
+              original_claimant: existing.claimant,
+              original_date: existing.hearing_date,
+            });
+            debugEntry.reason = "MATCHED as rescheduled";
+            debugEntry.originalId = existing.id;
+            debugResched.push(debugEntry);
+            continue;
+          } else {
+            debugEntry.reason = "No original found in DB";
+            debugEntry.exactKey = `${claimant.toLowerCase()}|${ssnFormatted}`;
+            debugEntry.origKey = `${baseName.toLowerCase()}|${ssnFormatted}`;
+            debugResched.push(debugEntry);
+          }
+        } else {
+          debugEntry.reason = "Already imported (exact match exists)";
+          debugResched.push(debugEntry);
         }
       }
       // If already imported or no original found, fall through to normal duplicate check
@@ -417,5 +457,6 @@ export async function POST(req: NextRequest) {
     duplicate_records: duplicateRecords,
     skipped_records: skippedRecords,
     rescheduled_records: rescheduledRecords,
+    debug_rescheduled: debugResched,
   });
 }

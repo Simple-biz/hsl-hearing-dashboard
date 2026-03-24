@@ -9,7 +9,7 @@ import { logAction } from "@/lib/activity-log";
 function formatSSN(raw: string): string | null {
   if (!raw) return null;
   const digits = String(raw).replace(/\D/g, "").slice(-4);
-  return digits.length === 4 ? digits : null;
+  return digits.length > 0 ? digits : null;
 }
 
 function parseDate(raw: string): string | null {
