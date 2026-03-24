@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useTransition } from "react";
+import { useState, useEffect, useTransition, Fragment } from "react";
 import { ChevronLeft, ChevronRight, Loader2, ClipboardList, ChevronDown, ChevronUp } from "lucide-react";
 import { ModalShell } from "@/components/modals/modal-shell";
 import {
@@ -332,9 +332,8 @@ export function PostHrgModal({ open, onClose, teams, mrStatusOptions, hearingId 
               {hearings.map((h) => {
                 const isExpanded = expandedId === h.id;
                 return (
-                  <>
+                  <Fragment key={h.id}>
                     <tr
-                      key={h.id}
                       className={cn(
                         "border-b border-border/40 transition-colors",
                         isExpanded ? "bg-primary/5" : "hover:bg-muted/30"
@@ -457,7 +456,7 @@ export function PostHrgModal({ open, onClose, teams, mrStatusOptions, hearingId 
                         onDeadlineChange={handleDeadlineChange}
                       />
                     )}
-                  </>
+                  </Fragment>
                 );
               })}
             </tbody>

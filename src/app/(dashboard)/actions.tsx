@@ -535,8 +535,8 @@ export async function updateHearing(
       value.startsWith("Withdrawal"));
 
   const isPostHrg =
-    field === "hearing_decision_status" &&
-    value === "Post HRG Review/ Dev";
+    (field === "hearing_decision_status" && value === "Post HRG Review/ Dev") ||
+    (field === "medical_record_status" && value === "Post Hearing Development");
 
   if (isWithdrawal) {
     await createWithdrawalNotification(hearingId, claimant);
