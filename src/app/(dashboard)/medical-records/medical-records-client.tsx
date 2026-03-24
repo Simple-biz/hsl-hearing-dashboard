@@ -33,6 +33,9 @@ import {
   updateWorksheetLink,
   assignJeromeUrgent,
   getRoundRobinState,
+  getPostHrgNotes,
+  addPostHrgNote,
+  updatePostHrgDeadline,
 } from "./action";
 import type {
   MrPivotPageData,
@@ -41,6 +44,7 @@ import type {
   RoundRobinState,
   MrStatusByTeam,
   AssignedByMonthRow,
+  PostHrgNote,
 } from "./action";
 
 import { HearingsModal }    from "@/components/modals/hearings-modal";
@@ -69,6 +73,17 @@ const TEAM_HEX: Record<string, string> = {
 function teamHex(color: string | null | undefined): string {
   if (!color) return "#9ca3af";
   return TEAM_HEX[color] ?? color;
+}
+
+function fmtTime(raw: string | null | undefined): string {
+  if (!raw) return "";
+  const [hStr, mStr] = raw.split(":");
+  const h = parseInt(hStr, 10);
+  const m = mStr ?? "00";
+  if (isNaN(h)) return raw;
+  const period = h >= 12 ? "PM" : "AM";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${m} ${period}`;
 }
 
 // Theme-safe status badge classes (no hardcoded light-only colours)
@@ -132,7 +147,7 @@ function exportHearingsToCsv(hearings: Hearing[]) {
   const headers = ["ID","Claimant","Rep","Hearing Date","Time","MR Team","MR Status",
     "HRG Decision","MOA","Task","Credited","5-Day","Post HRG","Worksheet"];
   const rows = hearings.map((h) => [
-    h.id, h.claimant, h.rep_name ?? "", h.hearing_date, h.converted_time_est ?? "",
+    h.id, h.claimant, h.rep_name ?? "", h.hearing_date, fmtTime(h.converted_time_est) ?? "",
     h.mr_team_name ?? "", h.medical_record_status ?? "", h.hearing_decision_status ?? "",
     h.manner_of_appearance ?? "", h.task_assigned ? "Yes" : "No", h.credited ? "Yes" : "No",
     h.five_day_notice ? "Yes" : "No", h.post_hrg_review ?? "", h.medical_record_link ?? "",
@@ -516,6 +531,149 @@ function WorksheetLinkModal({
   );
 }
 
+// ─── PostHrgReviewModal ───────────────────────────────────────────────────────
+
+function PostHrgReviewModal({ hearing, onClose, onUpdated }: {
+  hearing: Hearing;
+  onClose: () => void;
+  onUpdated: (id: number, patch: Partial<Hearing>) => void;
+}) {
+  const [notes, setNotes]       = useState<PostHrgNote[]>([]);
+  const [newNote, setNewNote]   = useState("");
+  const [deadline, setDeadline] = useState(hearing.post_hrg_deadline ?? "");
+  const [saving, setSaving]     = useState(false);
+  const [loading, setLoading]   = useState(true);
+
+  useEffect(() => {
+    getPostHrgNotes(hearing.id).then((n) => { setNotes(n); setLoading(false); });
+  }, [hearing.id]);
+
+  async function handleAddNote() {
+    if (!newNote.trim()) return;
+    setSaving(true);
+    const r = await addPostHrgNote(hearing.id, newNote.trim());
+    if (r.success) {
+      const updated = await getPostHrgNotes(hearing.id);
+      setNotes(updated);
+      onUpdated(hearing.id, { post_hrg_review: true });
+      setNewNote("");
+    }
+    setSaving(false);
+  }
+
+  async function handleUpdateDeadline() {
+    await updatePostHrgDeadline(hearing.id, deadline);
+    onUpdated(hearing.id, { post_hrg_deadline: deadline || null });
+  }
+
+  async function handleClearDeadline() {
+    setDeadline("");
+    await updatePostHrgDeadline(hearing.id, "");
+    onUpdated(hearing.id, { post_hrg_deadline: null });
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div className="w-full max-w-lg rounded-xl border bg-card shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex items-center justify-between border-b px-5 py-4">
+          <h2 className="text-sm font-semibold">Post HRG Review</h2>
+          <button onClick={onClose} className="rounded-md p-1 hover:bg-muted">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="max-h-[70vh] overflow-y-auto px-5 py-4 space-y-4">
+          {/* Hearing info */}
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            <span>Claimant: <span className="font-medium text-foreground">{hearing.claimant}</span></span>
+            <span>Hearing: <span className="font-medium text-foreground">
+              {new Date(hearing.hearing_date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+            </span></span>
+          </div>
+
+          {/* Deadline */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium">Deadline Date</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="date"
+                value={deadline}
+                onChange={(e) => setDeadline(e.target.value)}
+                className="h-8 w-auto text-xs rounded-md border bg-transparent px-2 py-1 text-foreground focus:outline-none focus:border-ring"
+              />
+              <button onClick={handleUpdateDeadline}
+                className="h-8 text-xs px-3 rounded-md border hover:bg-muted transition-colors">
+                Update
+              </button>
+              <button onClick={handleClearDeadline}
+                className="h-8 text-xs px-3 rounded-md hover:bg-muted transition-colors text-muted-foreground">
+                Clear
+              </button>
+            </div>
+          </div>
+
+          {/* Add note */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium">Add New Note</label>
+            <textarea
+              value={newNote}
+              onChange={(e) => setNewNote(e.target.value)}
+              rows={3}
+              placeholder="Enter your note..."
+              className="w-full rounded-md border bg-transparent px-3 py-2 text-xs placeholder:text-muted-foreground focus:border-ring focus:outline-none"
+            />
+            <button
+              onClick={handleAddNote}
+              disabled={saving || !newNote.trim()}
+              className="h-8 text-xs px-3 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1"
+            >
+              {saving && <Loader2 size={10} className="animate-spin" />}
+              Add Note
+            </button>
+          </div>
+
+          {/* Notes history */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium">
+              Notes History <span className="text-muted-foreground">({notes.length})</span>
+            </label>
+            {loading ? (
+              <div className="py-4 text-center"><Loader2 size={16} className="animate-spin mx-auto text-muted-foreground" /></div>
+            ) : notes.length === 0 ? (
+              <p className="py-4 text-center text-xs text-muted-foreground">No notes yet</p>
+            ) : (
+              <div className="space-y-2">
+                {notes.map((note, i) => (
+                  <div key={i} className="rounded-lg border bg-muted/30 p-3 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                        <span className="font-medium text-foreground">{note.author_name ?? "System"}</span>
+                        {note.created_at && (
+                          <span>{new Date(note.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+                        )}
+                      </div>
+                    </div>
+                    <p className="text-xs whitespace-pre-wrap">{note.content}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="border-t px-5 py-3 flex justify-end">
+          <button onClick={onClose}
+            className="h-8 text-xs px-4 rounded-md border hover:bg-muted transition-colors">
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── WithdrawnModal ────────────────────────────────────────────────────────────
 
 function WithdrawnModal({
@@ -535,6 +693,7 @@ function WithdrawnModal({
   const [totalPages, setTotalPages] = useState(1);
   const [search,     setSearch]     = useState("");
   const [loading,    startTransition] = useTransition();
+  const [postHrgHearing, setPostHrgHearing] = useState<Hearing | null>(null);
   const searchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback((p: number, q: string) => {
@@ -563,7 +722,7 @@ function WithdrawnModal({
       return [
         d.toLocaleDateString("en-US", { month: "short", year: "numeric" }),
         d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
-        h.converted_time_est ?? "",
+        fmtTime(h.converted_time_est) ?? "",
         h.claimant,
         h.rep_name ?? "",
         h.mr_team_name ?? "Unassigned",
@@ -636,7 +795,7 @@ function WithdrawnModal({
         <div className="flex-1 overflow-auto min-h-0">
           <table className="w-full text-[11px]" style={{ minWidth: "860px" }}>
             <thead>
-              <tr className="bg-muted/50 border-b sticky top-0">
+              <tr className="bg-muted border-b sticky top-0">
                 {["Month","Hearing Date","Time","Claimant","Rep","MR Team","MR Status","Status","Post HRG","Link"].map((h) => (
                   <th key={h} className="px-3 py-2 text-left font-semibold text-muted-foreground text-[10px] uppercase tracking-wide whitespace-nowrap">{h}</th>
                 ))}
@@ -660,14 +819,14 @@ function WithdrawnModal({
                       {d.toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                     </td>
                     <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap">
-                      {h.converted_time_est ?? "\u2014"}
+                      {fmtTime(h.converted_time_est) || "—"}
                     </td>
                     <td className="px-3 py-1.5">
                       <div className="font-semibold text-foreground">{h.claimant}</div>
                       {h.rep_name && <div className="text-[9px] text-muted-foreground">{h.rep_name}</div>}
                     </td>
                     <td className="px-3 py-1.5 text-[10px] text-muted-foreground max-w-20 truncate">
-                      {h.rep_name ?? "\u2014"}
+                      {h.rep_name ?? "—"}
                     </td>
                     <td className="px-3 py-1.5">
                       {h.mr_team_name
@@ -675,7 +834,7 @@ function WithdrawnModal({
                             style={{ backgroundColor: teamColor, color: teamText }}>
                             {h.mr_team_name}
                           </span>
-                        : <span className="text-muted-foreground/50">\u2014</span>}
+                        : <span className="text-muted-foreground/50">—</span>}
                     </td>
                     <td className="px-3 py-1.5">
                       {h.medical_record_status
@@ -683,23 +842,31 @@ function WithdrawnModal({
                             MR_STATUS_CLS[h.medical_record_status] ?? "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300")}>
                             {h.medical_record_status}
                           </span>
-                        : <span className="text-muted-foreground/50">\u2014</span>}
+                        : <span className="text-muted-foreground/50">—</span>}
                     </td>
                     <td className="px-3 py-1.5 text-[10px] text-muted-foreground">
-                      {h.hearing_decision_status ?? "\u2014"}
+                      {h.hearing_decision_status ?? "—"}
                     </td>
                     <td className="px-3 py-1.5 text-center">
-                      {h.post_hrg_review
-                        ? <span className="text-[9px] bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300 px-1.5 py-0.5 rounded font-medium">\ud83d\udcdd Notes</span>
-                        : <span className="text-muted-foreground/30">\u2014</span>}
+                      <button
+                        onClick={() => setPostHrgHearing(h)}
+                        className={cn(
+                          "inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded border transition-colors whitespace-nowrap",
+                          h.post_hrg_review
+                            ? "bg-yellow-50 border-yellow-300 text-yellow-800 hover:bg-yellow-100 dark:bg-yellow-900/30 dark:border-yellow-700 dark:text-yellow-300"
+                            : "border-border text-muted-foreground hover:bg-muted",
+                        )}
+                      >
+                        📝 {h.post_hrg_review ? <span className="font-semibold">Notes</span> : <span>+ Add</span>}
+                      </button>
                     </td>
                     <td className="px-3 py-1.5 text-center">
                       {h.medical_record_link
                         ? <a href={h.medical_record_link} target="_blank" rel="noreferrer"
                             className="text-[9px] bg-blue-600 text-white px-1.5 py-0.5 rounded hover:bg-blue-700">
-                            \ud83d\udccb
+                            📋
                           </a>
-                        : <span className="text-muted-foreground/30">\u2014</span>}
+                        : <span className="text-muted-foreground/30">—</span>}
                     </td>
                   </tr>
                 );
@@ -712,7 +879,7 @@ function WithdrawnModal({
         <div className="flex items-center justify-between gap-3 border-t px-5 py-2.5 shrink-0 bg-muted/20">
           <span className="text-[11px] text-muted-foreground">
             {total > 0
-              ? `Showing ${(page - 1) * 50 + 1}\u2013${Math.min(page * 50, total)} of ${total}`
+              ? `Showing ${(page - 1) * 50 + 1}–${Math.min(page * 50, total)} of ${total}`
               : "No results"}
           </span>
           <div className="flex items-center gap-2">
@@ -730,6 +897,16 @@ function WithdrawnModal({
           </div>
         </div>
       </div>
+      {postHrgHearing && (
+        <PostHrgReviewModal
+          hearing={postHrgHearing}
+          onClose={() => setPostHrgHearing(null)}
+          onUpdated={(id, patch) => {
+            setEntries((prev) => prev.map((h) => h.id === id ? { ...h, ...patch } as Hearing : h));
+            setPostHrgHearing((h) => h && h.id === id ? { ...h, ...patch } as Hearing : h);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -741,8 +918,8 @@ function WithdrawnModal({
 // Shared grid template — must match columnHeaders exactly.
 // Month(120) | MR Specialist(150) | Task(52) | Date(96) | Claimant(200) |
 // MR Status(160) | Credited(60) | Status(120) | MOA(110) | 5Day(48) | Post HRG(110) | MR Worksheet(130)
-const GRID_COLS = "120px 150px 52px 96px 200px 160px 60px 120px 110px 48px 110px 130px";
-const MIN_W     = "1356px";
+const GRID_COLS = "200px 1.2fr 52px 96px 1.5fr 1.2fr 60px 1fr 100px 48px 100px 120px";
+const MIN_W     = "1200px";
 
 function HearingRow({
   h, teams, mrStatusOptions, hearingDecisionOptions, mannerOptions, permissions,
@@ -816,7 +993,7 @@ function HearingRow({
       <div className="text-center">
         <div className="text-foreground font-medium">{dateStr}</div>
         {h.converted_time_est && (
-          <div className="text-[9px] text-muted-foreground">{h.converted_time_est}</div>
+          <div className="text-[9px] text-muted-foreground">{fmtTime(h.converted_time_est)}</div>
         )}
       </div>
 
@@ -1547,7 +1724,7 @@ export function MrPivotClient({ userRole, ...data }: Props) {
                           {expandedMonths.has(item.key) ? "−" : "+"}
                         </span>
                         <span className="text-xs font-bold text-foreground min-w-0">
-                          {new Date(item.key + "-01").toLocaleDateString("en-US", { month: "short", year: "numeric" })}
+                          {new Date(item.key + "-01T00:00:00").toLocaleDateString("en-US", { month: "short", year: "numeric" })}
                         </span>
                         <span className="text-[10px] text-muted-foreground font-medium whitespace-nowrap">
                           Total: {item.count}

@@ -8,6 +8,7 @@ import {
   getPostHrgNotes,
   updatePostHrgDeadline,
   addPostHrgNote,
+  toggleFiveDayNotice,
 } from "@/app/(dashboard)/medical-records/action";
 import type {
   Hearing,
@@ -47,6 +48,25 @@ const MR_STATUS_CLS: Record<string, string> = {
 function fmtDate(d: string | null) {
   if (!d) return "—";
   return new Date(d + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+// Parses "13:00:00", "13:00", "1:00 PM" etc → "01:00 PM"
+function fmtTime(t: string | null): string {
+  if (!t) return "—";
+  // Already has AM/PM
+  if (/[AaPp][Mm]/.test(t)) {
+    const clean = t.trim().toUpperCase().replace(/\s+/, "");
+    const [timePart, ampm] = [clean.slice(0, -2), clean.slice(-2)];
+    const [h, m] = timePart.split(":").map(Number);
+    return `${String(h).padStart(2, "0")}:${String(m ?? 0).padStart(2, "0")}${ampm}`;
+  }
+  // 24hr format: "13:00:00" or "13:00"
+  const parts = t.split(":");
+  const h24 = Number(parts[0]);
+  const min = parts[1] ?? "00";
+  const ampm = h24 >= 12 ? "PM" : "AM";
+  const h12  = h24 % 12 || 12;
+  return `${String(h12).padStart(2, "0")}:${min}${ampm}`;
 }
 
 // ─── NotesList ────────────────────────────────────────────────────────────────
@@ -315,9 +335,8 @@ export function PostHrgModal({ open, onClose, teams, mrStatusOptions, hearingId 
                   <>
                     <tr
                       key={h.id}
-                      onClick={() => setExpandedId(isExpanded ? null : h.id)}
                       className={cn(
-                        "border-b border-border/40 cursor-pointer transition-colors",
+                        "border-b border-border/40 transition-colors",
                         isExpanded ? "bg-primary/5" : "hover:bg-muted/30"
                       )}
                     >
@@ -327,7 +346,7 @@ export function PostHrgModal({ open, onClose, teams, mrStatusOptions, hearingId 
                       </td>
                       {/* Time */}
                       <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
-                        {h.converted_time_est ?? "—"}
+                        {fmtTime(h.converted_time_est)}
                       </td>
                       {/* Claimant */}
                       <td className="px-3 py-2">
@@ -373,13 +392,20 @@ export function PostHrgModal({ open, onClose, teams, mrStatusOptions, hearingId 
                         <input
                           type="checkbox"
                           checked={!!h.five_day_notice}
-                          readOnly
-                          className="w-3.5 h-3.5 accent-emerald-500 pointer-events-none"
+                          className="w-3.5 h-3.5 accent-emerald-500 cursor-pointer"
+                          onChange={async (e) => {
+                            const val = e.target.checked;
+                            setHearings((prev) => prev.map((r) => r.id === h.id ? { ...r, five_day_notice: val } : r));
+                            await toggleFiveDayNotice(h.id, val);
+                          }}
                         />
                       </td>
                       {/* Post HRG deadline + notes badge */}
                       <td className="px-3 py-2">
-                        <div className="flex items-center gap-1.5 flex-wrap">
+                        <div
+                          className="flex items-center gap-1.5 flex-wrap cursor-pointer"
+                          onClick={() => setExpandedId(isExpanded ? null : h.id)}
+                        >
                           {h.post_hrg_deadline && (
                             <span className={cn("text-[9px] px-1.5 py-0.5 rounded font-medium whitespace-nowrap",
                               new Date(h.post_hrg_deadline) < new Date()
@@ -407,16 +433,18 @@ export function PostHrgModal({ open, onClose, teams, mrStatusOptions, hearingId 
                               href={h.medical_record_link}
                               target="_blank"
                               rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
                               className="inline-flex items-center justify-center w-6 h-6 rounded bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold"
                             >
                               S
                             </a>
                           ) : <span className="text-muted-foreground/30">—</span>}
-                          {/* Expand toggle */}
-                          <span className="text-muted-foreground/50">
+                          {/* Expand toggle — only trigger */}
+                          <button
+                            onClick={() => setExpandedId(isExpanded ? null : h.id)}
+                            className="text-muted-foreground/50 hover:text-foreground transition-colors p-0.5"
+                          >
                             {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                          </span>
+                          </button>
                         </div>
                       </td>
                     </tr>

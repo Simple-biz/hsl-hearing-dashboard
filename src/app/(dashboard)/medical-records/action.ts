@@ -711,10 +711,13 @@ export async function updateHearingDecisionStatus(
 
   // If this is a withdrawal-type decision, push a notification for the MR bell
   const isWithdrawal = status.startsWith("Withdrawal") || status === "WD CLMT DECEASED" || status === "Dismissal";
-  if (isWithdrawal) {
+  const isPostHrg    = status === "Post HRG Review/ Dev";
+
+  if (isWithdrawal || isPostHrg) {
     const row = await db.query(`SELECT claimant FROM hearings WHERE id = $1`, [hearingId]);
     const claimant = (row.rows[0]?.claimant as string | undefined) ?? `Hearing #${hearingId}`;
-    await createWithdrawalNotification(hearingId, claimant);
+    if (isWithdrawal) await createWithdrawalNotification(hearingId, claimant);
+    if (isPostHrg)    await createPostHrgNotification(hearingId, claimant);
   }
 
   return { success: true };
@@ -755,6 +758,18 @@ export async function toggleCredited(
     [value, hearingId],
   );
   await logActivity("credited_updated", `Credited set to ${value} for hearing #${hearingId}`);
+  return { success: true };
+}
+
+export async function toggleFiveDayNotice(
+  hearingId: number,
+  value: boolean,
+): Promise<{ success: boolean }> {
+  await db.query(
+    `UPDATE hearings SET five_day_notice = $1 WHERE id = $2`,
+    [value, hearingId],
+  );
+  await logActivity("five_day_notice_updated", `5-Day Notice set to ${value} for hearing #${hearingId}`);
   return { success: true };
 }
 
@@ -1003,6 +1018,31 @@ export async function createWithdrawalNotification(
         hearingId,
         claimantName,
         `Withdrawal decision recorded for ${claimantName}`,
+        createdBy,
+      ],
+    );
+  } catch {
+    // Never let notification creation break the mutation that called it
+  }
+}
+
+// Called when hearing_decision_status is set to "Post HRG Review/ Dev"
+export async function createPostHrgNotification(
+  hearingId: number,
+  claimantName: string,
+): Promise<void> {
+  try {
+    const session = await getSession();
+    const createdBy = session?.user?.id ?? null;
+    await db.query(
+      `INSERT INTO sync_notifications
+         (notification_type, hearing_id, claimant_name, message, created_by, expires_at)
+       VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '24 hours')`,
+      [
+        "status_change",
+        hearingId,
+        claimantName,
+        `Post HRG Review/Dev set for ${claimantName}`,
         createdBy,
       ],
     );
