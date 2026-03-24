@@ -1186,7 +1186,7 @@ export function MrPivotClient({ userRole, ...data }: Props) {
   const [totalHearings, setTotalHearings] = useState(data.statCards.totalHearings);
   const [totalPages, setTotalPages] = useState(1);
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
-  const [expandedTeams,  setExpandedTeams]  = useState<Set<string>>(new Set());
+  const [expandedTeams, setExpandedTeams] = useState<Set<string>>(new Set());
 
   const [filters, setFilters] = useState<HearingFilters>({
     search: "", month_filter: "", team_filter: "", status_filter: "",
@@ -1194,15 +1194,15 @@ export function MrPivotClient({ userRole, ...data }: Props) {
   });
 
   // ── Round robin ───────────────────────────────────────────────────────────
-  const [roundRobin,     setRoundRobin]     = useState<RoundRobinState>(data.roundRobin);
+  const [roundRobin, setRoundRobin] = useState<RoundRobinState>(data.roundRobin);
 
   // ── View mode ─────────────────────────────────────────────────────────────
   const [viewMode, setViewMode] = useState<"date" | "team">("date");
 
   // ── Modal visibility ──────────────────────────────────────────────────────
-  const [showHearings,    setShowHearings]    = useState(false);
-  const [showPostHrg,     setShowPostHrg]     = useState(false);
-  const [showTeamStats,   setShowTeamStats]   = useState(false);
+  const [showHearings, setShowHearings] = useState(false);
+  const [showPostHrg, setShowPostHrg] = useState(false);
+  const [showTeamStats, setShowTeamStats] = useState(false);
   const [showActivityLog, setShowActivityLog] = useState(false);
   const [showWithdrawn,   setShowWithdrawn]   = useState(false);
 
@@ -1328,7 +1328,7 @@ export function MrPivotClient({ userRole, ...data }: Props) {
     return Object.entries(groupedByTeam).flatMap(([key, rows]) => {
       const color = rows[0]?.mr_team_color ?? null;
       const completeCount = rows.filter((h) => h.medical_record_status === "Complete").length;
-      const inProgressCount  = rows.filter((h) => h.medical_record_status === "In Progress").length;
+      const inProgressCount = rows.filter((h) => h.medical_record_status === "In Progress").length;
       const header: FlatItem = { kind: "group-team", key, color, count: rows.length, completeCount, inProgressCount };
       if (!expandedTeams.has(key)) return [header];
       return [header, ...rows.map((h): FlatItem => ({ kind: "row", hearing: h }))];
@@ -1336,14 +1336,14 @@ export function MrPivotClient({ userRole, ...data }: Props) {
   }, [viewMode, groupedByMonth, groupedByTeam, expandedMonths, expandedTeams]);
 
   const virtualizer = useVirtualizer({
-    count:            flatItems.length,
+    count: flatItems.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize:     (i) => flatItems[i]?.kind === "row" ? ROW_H : GROUP_H,
-    overscan:         15,
+    estimateSize: (i) => flatItems[i]?.kind === "row" ? ROW_H : GROUP_H,
+    overscan: 15,
   });
 
   function toggleMonth(key: string) { toggleSetKey(setExpandedMonths, key); }
-  function toggleTeam(key: string)  { toggleSetKey(setExpandedTeams,  key); }
+  function toggleTeam(key: string) { toggleSetKey(setExpandedTeams,  key); }
   function expandAll() {
     if (viewMode === "date") setExpandedMonths(new Set(Object.keys(groupedByMonth)));
     else setExpandedTeams(new Set(Object.keys(groupedByTeam)));
@@ -1616,6 +1616,7 @@ export function MrPivotClient({ userRole, ...data }: Props) {
                 </button>
               )}
 
+
               {/* Post HRG */}
               {data.postHrgCount > 0 && (
                 <button onClick={() => setShowPostHrg(true)}
@@ -1631,6 +1632,11 @@ export function MrPivotClient({ userRole, ...data }: Props) {
                   🔴 Withdrawn ({data.withdrawnCount})
                 </button>
               )}
+              {/* Patient Portal */}
+              <a href="/patient-portal"
+                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-semibold transition-colors">
+                🏥 Patient Portal
+              </a>
 
               {/* RFC Documents */}
               <button onClick={() => router.push("/rfc")}
