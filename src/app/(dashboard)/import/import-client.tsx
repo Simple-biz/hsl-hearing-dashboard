@@ -28,7 +28,8 @@ interface DuplicateResult {
   repLocation: string;
   downloadType: string;
   statusDate: string;
-  data: unknown[];
+  data?: unknown[];
+  field_diffs?: Record<string, { old: string; new: string }>;
   existing_id?: number;
   reason?: string;
   // Rescheduled fields
@@ -118,6 +119,13 @@ const SORTED_FIELDS = Object.entries(DB_FIELDS).sort(([, a], [, b]) => {
   return a.localeCompare(b);
 });
 
+const FIELD_LABELS: Record<string, string> = Object.fromEntries(
+  Object.entries(DB_FIELDS).map(([k, v]) => [
+    k,
+    v.replace(/\s*\*\s*$/, "").replace(/\s*\(.*\)\s*$/, ""),
+  ]),
+);
+
 const STEP_LABELS = [
   { num: 1, label: "Upload File" },
   { num: 2, label: "Map Columns" },
@@ -153,7 +161,7 @@ const AUTO_MAP: Record<string, string[]> = {
   claimant: ["claimant", "claimant name", "name", "client name", "client"],
   ssn_last_4: ["ssn", "ssn last 4", "ssn_last_4", "last 4 ssn", "social"],
   hearing_date: ["hearing date", "date", "hearing_date", "hrg date"],
-  hearing_time: ["hearing time", "hearing_time", "hrg time"],
+  hearing_time: ["hearing time", "hearing_time", "hrg time", "time"],
   converted_time_est: [
     "converted time in est",
     "converted time",
@@ -572,7 +580,10 @@ export function ImportClient({ userRole }: { userRole: string }) {
     setImportProgress(0);
     setImportStatus("Starting import...");
 
-    const records = checkResult.newRecords;
+    const records = checkResult.newRecords.map((r) => ({
+      ...r,
+      data: currentSheet!.rows[r.rowIndex],
+    }));
     const BATCH = 250;
     const PARALLEL = 3; // send 3 batches concurrently
     let imported = 0;
@@ -637,7 +648,9 @@ export function ImportClient({ userRole }: { userRole: string }) {
     setImportProgress(0);
     setImportStatus("Updating existing records...");
 
-    const records = checkResult.duplicateRecords.filter((r) => r.has_changes);
+    const records = checkResult.duplicateRecords
+      .filter((r) => r.has_changes)
+      .map((r) => ({ ...r, data: currentSheet!.rows[r.rowIndex] }));
     const BATCH = 250;
     let updated = 0;
     const errors: string[] = [];
@@ -691,7 +704,10 @@ export function ImportClient({ userRole }: { userRole: string }) {
     setImportProgress(0);
     setImportStatus("Processing rescheduled hearings...");
 
-    const records = checkResult.rescheduledRecords;
+    const records = checkResult.rescheduledRecords.map((r) => ({
+      ...r,
+      data: currentSheet!.rows[r.rowIndex],
+    }));
     const BATCH = 250;
     let updated = 0;
     const errors: string[] = [];
@@ -1638,7 +1654,9 @@ export function ImportClient({ userRole }: { userRole: string }) {
                         </thead>
                         <tbody>
                           {activeRecords.map((r, i) => {
-                            const row = r.data as string[];
+                            const row = (r.data ||
+                              currentSheet?.rows[r.rowIndex] ||
+                              []) as string[];
                             return (
                               <tr
                                 key={i}
@@ -1682,11 +1700,42 @@ export function ImportClient({ userRole }: { userRole: string }) {
                                 )}
                                 {(dupTab === "duplicate" ||
                                   dupTab === "update-preview") && (
-                                  <td className="px-3 py-1.5 text-xs whitespace-nowrap">
-                                    {r.has_changes ? (
-                                      <span className="text-amber-600 dark:text-amber-400 font-medium">
-                                        {r.changed_fields?.length} changed
-                                      </span>
+                                  <td className="px-3 py-1.5 text-xs">
+                                    {r.has_changes && r.field_diffs ? (
+                                      <div className="space-y-0.5 max-w-[300px]">
+                                        {r.changed_fields?.map((f) => {
+                                          const diff = r.field_diffs?.[f];
+                                          if (!diff) return null;
+                                          const label =
+                                            FIELD_LABELS[f] ||
+                                            f.replace(/_/g, " ");
+                                          return (
+                                            <div
+                                              key={f}
+                                              className="flex items-start gap-1 leading-tight"
+                                            >
+                                              <span className="font-semibold text-amber-700 dark:text-amber-400 shrink-0">
+                                                {label}:
+                                              </span>
+                                              <span
+                                                className="text-red-500 dark:text-red-400 line-through truncate max-w-[100px]"
+                                                title={diff.old}
+                                              >
+                                                {diff.old}
+                                              </span>
+                                              <span className="text-muted-foreground shrink-0">
+                                                →
+                                              </span>
+                                              <span
+                                                className="text-emerald-600 dark:text-emerald-400 truncate max-w-[100px]"
+                                                title={diff.new}
+                                              >
+                                                {diff.new}
+                                              </span>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
                                     ) : (
                                       <span className="text-muted-foreground">
                                         No changes

@@ -47,6 +47,7 @@ export async function POST(req: NextRequest) {
   // ── Pre-fetch all existing hearings into lookup maps (single query) ──
   const { rows: existing } = await db.query(
     `SELECT id, claimant, ssn_last_4, hearing_date::text, hearing_time, time_zone,
+            claim_type, converted_time_est,
             city, state, claimant_location, representative_location, alj,
             medical_expert, vocational_expert, status_date::text,
             entered_hearing_level_date::text, download_type, manner_of_appearance,
@@ -183,7 +184,6 @@ export async function POST(req: NextRequest) {
         repLocation,
         downloadType,
         statusDate,
-        data: row,
         reason: "Empty or invalid claimant",
       });
       continue;
@@ -201,7 +201,6 @@ export async function POST(req: NextRequest) {
         repLocation,
         downloadType,
         statusDate,
-        data: row,
         reason: "Missing hearing date",
       });
       continue;
@@ -239,7 +238,6 @@ export async function POST(req: NextRequest) {
             repLocation,
             downloadType,
             statusDate,
-            data: row,
             is_rescheduled: true,
             original_id: existing.id,
             base_name: baseName,
@@ -277,7 +275,6 @@ export async function POST(req: NextRequest) {
       repLocation,
       downloadType,
       statusDate,
-      data: row,
       existing_id: existingId,
     };
 
@@ -287,6 +284,7 @@ export async function POST(req: NextRequest) {
       // then compare against what the DB actually has.
       const dbRec = byId.get(existingId);
       const changedFields: string[] = [];
+      const fieldDiffs: Record<string, { old: string; new: string }> = {};
       if (dbRec) {
         const DATE_FIELDS = new Set([
           "hearing_date",
@@ -351,8 +349,7 @@ export async function POST(req: NextRequest) {
             String(dbRaw).trim() === "";
 
           if (dbIsEmpty) {
-            // DB is empty but import has value — this is a genuine change
-            changedFields.push(field);
+            // DB is empty, import has value — skip (not a real "change")
             continue;
           }
 
@@ -373,17 +370,23 @@ export async function POST(req: NextRequest) {
             normImport = normalizeBool(importVal);
             normDb = normalizeBool(dbRaw);
           } else {
-            // Plain string comparison (case-insensitive, trimmed)
-            normImport = importVal;
-            normDb = String(dbRaw).trim();
+            // Plain string — normalize hidden XLSX chars (non-breaking spaces, zero-width, \r)
+            normImport = importVal
+              .replace(/[\s\u00A0\u200B\u200C\u200D\uFEFF\r]+/g, " ")
+              .trim();
+            normDb = String(dbRaw)
+              .replace(/[\s\u00A0\u200B\u200C\u200D\uFEFF\r]+/g, " ")
+              .trim();
           }
 
           if (normImport.toLowerCase() !== normDb.toLowerCase()) {
             changedFields.push(field);
+            fieldDiffs[field] = { old: String(dbRaw).trim(), new: importVal };
           }
         }
       }
       record.changed_fields = changedFields;
+      record.field_diffs = fieldDiffs;
       record.has_changes = changedFields.length > 0;
       duplicateRecords.push(record);
     } else {
