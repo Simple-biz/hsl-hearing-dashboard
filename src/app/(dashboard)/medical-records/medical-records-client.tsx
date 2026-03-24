@@ -555,7 +555,7 @@ function PostHrgReviewModal({ hearing, onClose, onUpdated }: {
     if (r.success) {
       const updated = await getPostHrgNotes(hearing.id);
       setNotes(updated);
-      onUpdated(hearing.id, { post_hrg_review: true });
+      onUpdated(hearing.id, { post_hrg_review: "true" });
       setNewNote("");
     }
     setSaving(false);
@@ -779,7 +779,7 @@ function WithdrawnModal({
           <Search size={13} className="text-muted-foreground shrink-0" />
           <input
             type="text"
-            placeholder="Search claimant\u2026"
+            placeholder="Search claimant…"
             value={search}
             onChange={(e) => handleSearch(e.target.value)}
             className="flex-1 text-xs bg-transparent outline-none text-foreground placeholder:text-muted-foreground"
@@ -797,7 +797,7 @@ function WithdrawnModal({
             <thead>
               <tr className="bg-muted border-b sticky top-0">
                 {["Month","Hearing Date","Time","Claimant","Rep","MR Team","MR Status","Status","Post HRG","Link"].map((h) => (
-                  <th key={h} className="px-3 py-2 text-left font-semibold text-muted-foreground text-[10px] uppercase tracking-wide whitespace-nowrap">{h}</th>
+                  <th key={h} className={`px-3 py-2 font-semibold text-muted-foreground text-[10px] uppercase tracking-wide whitespace-nowrap ${h === "Hearing Date" || h === "Time" ? "text-center" : "text-left"}`}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -815,10 +815,10 @@ function WithdrawnModal({
                     <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap">
                       {d.toLocaleDateString("en-US", { month: "short", year: "numeric" })}
                     </td>
-                    <td className="px-3 py-1.5 font-medium text-foreground whitespace-nowrap">
+                    <td className="px-3 py-1.5 font-medium text-foreground whitespace-nowrap text-center">
                       {d.toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                     </td>
-                    <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap">
+                    <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap text-center">
                       {fmtTime(h.converted_time_est) || "—"}
                     </td>
                     <td className="px-3 py-1.5">
