@@ -7,7 +7,7 @@ import { getSession } from "@/lib/session";
 
 export interface NotificationItem {
   id: number;
-  notification_type: "withdrawal" | "status_change" | "mr_update";
+  notification_type: "withdrawal" | "status_change" | "mr_update" | "post_hrg";
   hearing_id: number | null;
   claimant_name: string | null;
   message: string;
@@ -60,6 +60,33 @@ export async function createWithdrawalNotification(
       ],
     );
   } catch {
+    // Never let notification creation break the mutation that called it
+  }
+}
+
+// Called when a hearing's decision status is set to 'Post HRG Review/ Dev'.
+// Writes a notification so the global bell picks it up within 30s.
+export async function createPostHrgNotification(
+  hearingId: number | null,
+  claimantName: string,
+): Promise<void> {
+  try {
+    const session = await getSession();
+    const createdBy = session?.user?.id ?? null;
+    await db.query(
+      `INSERT INTO sync_notifications
+         (notification_type, hearing_id, claimant_name, message, created_by, expires_at)
+       VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '24 hours')`,
+      [
+        "post_hrg",
+        hearingId,
+        claimantName,
+        `Post HRG Review set for ${claimantName}`,
+        createdBy,
+      ],
+    );
+  } catch (err) {
+    console.error("[createPostHrgNotification] failed:", err);
     // Never let notification creation break the mutation that called it
   }
 }
