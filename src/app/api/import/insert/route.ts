@@ -9,7 +9,7 @@ import { logAction } from "@/lib/activity-log";
 function formatSSN(raw: string): string | null {
   if (!raw) return null;
   const digits = String(raw).replace(/\D/g, "").slice(-4);
-  return digits.length === 4 ? digits : null;
+  return digits.length > 0 ? digits.padStart(4, "0") : null;
 }
 
 function parseDate(raw: string): string | null {
@@ -209,6 +209,13 @@ export async function POST(req: NextRequest) {
         }
 
         if (!IMPORTABLE.has(dbField)) continue;
+
+        // Extract hyperlink from claimant cell → claimant_link
+        if (dbField === "claimant") {
+          const colLetter = String.fromCharCode(65 + colIdx);
+          const cellRef = `${colLetter}${record.rowIndex + 2}`;
+          if (hyperlinks[cellRef]) fields.claimant_link = hyperlinks[cellRef];
+        }
 
         if (
           dbField === "hearing_date" ||

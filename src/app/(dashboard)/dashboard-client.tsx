@@ -830,6 +830,7 @@ function PostHrgModal({
   userRole: string;
 }) {
   const [notes, setNotes] = useState<PostHrgNote[]>(() => parseNotes(hearing.post_hrg_notes));
+  const visibleNotes = notes.filter((n) => noteAuthor(n) !== "System Administrator");
   const [newNote, setNewNote] = useState("");
   const [deadline, setDeadline] = useState(hearing.post_hrg_deadline || "");
   const [saving, setSaving] = useState(false);
@@ -871,12 +872,16 @@ function PostHrgModal({
     await onSave(hearing.id, "post_hrg_deadline", null);
   };
 
-  const handleDeleteNote = async (index: number) => {
+  const handleDeleteNote = async (visibleIndex: number) => {
     if (!canEditNotes) return;
+    // Map visible index back to the full notes array index
+    const noteToDelete = visibleNotes[visibleIndex];
+    const fullIndex = notes.findIndex((n) => n === noteToDelete);
+    if (fullIndex === -1) return;
     const { deleteDashboardPostHrgNote } = await import("@/app/(dashboard)/actions");
-    const r = await deleteDashboardPostHrgNote(hearing.id, index);
+    const r = await deleteDashboardPostHrgNote(hearing.id, fullIndex);
     if (r.success) {
-      setNotes((prev) => prev.filter((_, i) => i !== index));
+      setNotes((prev) => prev.filter((_, i) => i !== fullIndex));
       if (r.updatedNotes === null) {
         onSave(hearing.id, "post_hrg_review", false);
       }
@@ -978,15 +983,15 @@ function PostHrgModal({
           <div className="space-y-1.5">
             <label className="text-xs font-medium">
               Notes History{" "}
-              <span className="text-muted-foreground">({notes.length})</span>
+              <span className="text-muted-foreground">({visibleNotes.length})</span>
             </label>
-            {notes.length === 0 ? (
+            {visibleNotes.length === 0 ? (
               <p className="py-4 text-center text-xs text-muted-foreground">
                 No notes yet
               </p>
             ) : (
               <div className="space-y-2">
-                {notes.map((note, i) => (
+                {visibleNotes.map((note, i) => (
                   <div
                     key={i}
                     className="rounded-lg border bg-muted/30 p-3 space-y-1"
@@ -2402,6 +2407,17 @@ export function DashboardClient({
         ].includes(field)
       ) {
         displayValue = value ? "✓ checked" : "unchecked";
+      } else if (field === "post_hrg_notes") {
+        try {
+          const parsed = JSON.parse(String(value));
+          displayValue = Array.isArray(parsed)
+            ? `${parsed.length} note${parsed.length !== 1 ? "s" : ""}`
+            : "updated";
+        } catch {
+          displayValue = value ? "updated" : "cleared";
+        }
+      } else if (field === "post_hrg_deadline") {
+        displayValue = value ? String(value) : "cleared";
       } else if (!value) {
         displayValue = "cleared";
       }
