@@ -210,6 +210,13 @@ export async function POST(req: NextRequest) {
 
         if (!IMPORTABLE.has(dbField)) continue;
 
+        // Extract hyperlink from claimant cell → claimant_link
+        if (dbField === "claimant") {
+          const colLetter = String.fromCharCode(65 + colIdx);
+          const cellRef = `${colLetter}${record.rowIndex + 2}`;
+          if (hyperlinks[cellRef]) fields.claimant_link = hyperlinks[cellRef];
+        }
+
         if (
           dbField === "hearing_date" ||
           dbField === "status_date" ||
