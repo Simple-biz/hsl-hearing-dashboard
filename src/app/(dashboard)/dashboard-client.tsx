@@ -124,9 +124,20 @@ interface PostHrgNote {
 
 function parseNotes(raw: string | null): PostHrgNote[] {
   if (!raw) return [];
+
   try {
-    const p = JSON.parse(raw);
-    return Array.isArray(p) ? p : [{ note: raw }];
+    const parsed = JSON.parse(raw);
+
+    if (!Array.isArray(parsed)) {
+      return raw ? [{ note: raw }] : [];
+    }
+
+    // Handle both formats: { user, date, note } and { author, date, content }
+    return parsed.map((item) => ({
+      user: item.user ?? item.author ?? undefined,
+      date: item.date ?? item.created_at ?? undefined,
+      note: item.note ?? item.content ?? "",
+    }));
   } catch {
     return raw ? [{ note: raw }] : [];
   }
@@ -809,6 +820,7 @@ function PostHrgModal({
   userName: string;
 }) {
   const notes = parseNotes(hearing.post_hrg_notes);
+  const visibleNotes = notes.filter((n) => n.user !== "System Administrator");
   const [newNote, setNewNote] = useState("");
   const [deadline, setDeadline] = useState(hearing.post_hrg_deadline || "");
   const [saving, setSaving] = useState(false);
@@ -837,8 +849,11 @@ function PostHrgModal({
     await onSave(hearing.id, "post_hrg_deadline", null);
   };
 
-  const handleDeleteNote = async (index: number) => {
-    const updated = notes.filter((_, i) => i !== index);
+  const handleDeleteNote = async (visibleIndex: number) => {
+    const noteToDelete = visibleNotes[visibleIndex];
+    const fullIndex = notes.findIndex((n) => n === noteToDelete);
+    if (fullIndex === -1) return;
+    const updated = notes.filter((_, i) => i !== fullIndex);
     await onSave(
       hearing.id,
       "post_hrg_notes",
@@ -937,15 +952,17 @@ function PostHrgModal({
           <div className="space-y-1.5">
             <label className="text-xs font-medium">
               Notes History{" "}
-              <span className="text-muted-foreground">({notes.length})</span>
+              <span className="text-muted-foreground">
+                ({visibleNotes.length})
+              </span>
             </label>
-            {notes.length === 0 ? (
+            {visibleNotes.length === 0 ? (
               <p className="py-4 text-center text-xs text-muted-foreground">
                 No notes yet
               </p>
             ) : (
               <div className="space-y-2">
-                {notes.map((note, i) => (
+                {visibleNotes.map((note, i) => (
                   <div
                     key={i}
                     className="rounded-lg border bg-muted/30 p-3 space-y-1"
@@ -1696,7 +1713,10 @@ const HearingTable = memo(function HearingTable({
       label: t.team_name,
     }));
   // All teams including inactive — for displaying existing assignments
-
+  // const allTeamOptions = mrTeams.map((t) => ({
+  //   value: String(t.id),
+  //   label: t.team_name,
+  // }));
   const teamColorMap: Record<string, string> = {};
   for (const t of mrTeams) {
     if (t.team_color) {
@@ -2359,6 +2379,17 @@ export function DashboardClient({
         ].includes(field)
       ) {
         displayValue = value ? "✓ checked" : "unchecked";
+      } else if (field === "post_hrg_notes") {
+        try {
+          const parsed = JSON.parse(String(value));
+          displayValue = Array.isArray(parsed)
+            ? `${parsed.length} note${parsed.length !== 1 ? "s" : ""}`
+            : "updated";
+        } catch {
+          displayValue = value ? "updated" : "cleared";
+        }
+      } else if (field === "post_hrg_deadline") {
+        displayValue = value ? String(value) : "cleared";
       } else if (!value) {
         displayValue = "cleared";
       }

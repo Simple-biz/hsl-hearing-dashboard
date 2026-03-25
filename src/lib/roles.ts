@@ -77,7 +77,11 @@ export const PAGE_ACCESS: Record<string, UserRole[]> = {
 };
 
 // Hearing fields each role can edit (inline editing)
+
+// ── Hearing fields each role can edit (inline editing) ──
+// Source: dashboard.php lines 72-128
 export const EDITABLE_FIELDS: Record<string, UserRole[]> = {
+  // Representative assignment — hearings team
   assigned_rep_id: [
     "system_admin",
     "admin",
@@ -92,61 +96,9 @@ export const EDITABLE_FIELDS: Record<string, UserRole[]> = {
     "hearings_admin",
     "hearings_agent",
   ],
-  task_assigned: [
-    "system_admin",
-    "admin",
-    "manager",
-    "hearings_admin",
-    "hearings_agent",
-    "pre_hearing_staff",
-  ],
-  rep_docs_complete: [
-    "system_admin",
-    "admin",
-    "manager",
-    "hearings_admin",
-    "hearings_agent",
-    "pre_hearing_staff",
-  ],
-  rep_docs_assigned_to: [
-    "system_admin",
-    "admin",
-    "manager",
-    "hearings_admin",
-    "hearings_agent",
-    "pre_hearing_staff",
-  ],
-  fee_agreement_complete: [
-    "system_admin",
-    "admin",
-    "manager",
-    "hearings_admin",
-    "hearings_agent",
-    "pre_hearing_staff",
-  ],
-  phi_sheet_complete: [
-    "system_admin",
-    "admin",
-    "manager",
-    "hearings_admin",
-    "hearings_agent",
-    "pre_hearing_staff",
-  ],
-  five_day_notice: [
-    "system_admin",
-    "admin",
-    "manager",
-    "hearings_admin",
-    "hearings_agent",
-    "pre_hearing_staff",
-  ],
-  brief_assigned_to: [
-    "system_admin",
-    "admin",
-    "manager",
-    "hearings_admin",
-    "brief_agent",
-  ],
+
+  // PHI Sheet, MOA, Decision Status — core hearings admin fields
+  phi_sheet_complete: ["system_admin", "admin", "manager", "hearings_admin"],
   manner_of_appearance: ["system_admin", "admin", "manager", "hearings_admin"],
   hearing_decision_status: [
     "system_admin",
@@ -155,43 +107,114 @@ export const EDITABLE_FIELDS: Record<string, UserRole[]> = {
     "hearings_admin",
     "post_hearing_admin",
   ],
+
+  // Rep Docs & Fee Agreement — pre-hearing staff + brief agent
+  rep_docs_complete: [
+    "system_admin",
+    "admin",
+    "manager",
+    "hearings_admin",
+    "pre_hearing_staff",
+    "brief_agent",
+  ],
+  rep_docs_assigned_to: [
+    "system_admin",
+    "admin",
+    "manager",
+    "hearings_admin",
+    "pre_hearing_staff",
+  ],
+  fee_agreement_complete: [
+    "system_admin",
+    "admin",
+    "manager",
+    "hearings_admin",
+    "pre_hearing_staff",
+    "brief_agent",
+  ],
+
+  // Brief — brief agent
+  brief_assigned_to: [
+    "system_admin",
+    "admin",
+    "manager",
+    "hearings_admin",
+    "brief_agent",
+  ],
+
+  // Medical Team, MR Status, MR Link, RFC — MR team
+  mr_team_id: [
+    "system_admin",
+    "admin",
+    "manager",
+    "mr_admin",
+    "mr_lead",
+    "mr_agent",
+  ],
   medical_record_status: [
     "system_admin",
     "admin",
     "manager",
     "mr_admin",
-    "mr_agent",
     "mr_lead",
-  ],
-  mr_hearing_status: [
-    "system_admin",
-    "admin",
-    "manager",
-    "mr_admin",
     "mr_agent",
-    "mr_lead",
   ],
-  mr_team_id: ["system_admin", "admin", "manager", "mr_admin", "mr_lead"],
   medical_record_link: [
     "system_admin",
     "admin",
     "manager",
     "mr_admin",
-    "mr_agent",
     "mr_lead",
+    "mr_agent",
   ],
   rfc_status: [
     "system_admin",
     "admin",
     "manager",
     "mr_admin",
-    "mr_agent",
     "mr_lead",
+    "mr_agent",
+  ],
+
+  // 5-Day Notice & Task Assigned — MR team
+  five_day_notice: [
+    "system_admin",
+    "admin",
+    "manager",
+    "mr_admin",
+    "mr_lead",
+    "mr_agent",
+  ],
+  task_assigned: [
+    "system_admin",
+    "admin",
+    "manager",
+    "mr_admin",
+    "mr_lead",
+    "mr_agent",
+  ],
+
+  // Claimant Link — hearings admin
+  claimant_link: ["system_admin", "admin", "manager", "hearings_admin"],
+
+  // Post HRG — MR team + post hearing team
+  post_hrg_review: [
+    "system_admin",
+    "admin",
+    "manager",
+    "mr_admin",
+    "mr_lead",
+    "mr_agent",
+    "post_hearing_admin",
+    "post_hearing_staff",
   ],
   post_hrg_deadline: [
     "system_admin",
     "admin",
     "manager",
+    "mr_admin",
+    "mr_lead",
+    "mr_agent",
     "post_hearing_admin",
     "post_hearing_staff",
   ],
@@ -199,33 +222,13 @@ export const EDITABLE_FIELDS: Record<string, UserRole[]> = {
     "system_admin",
     "admin",
     "manager",
+    "mr_admin",
+    "mr_lead",
+    "mr_agent",
     "post_hearing_admin",
     "post_hearing_staff",
   ],
-  post_hrg_review: [
-    "system_admin",
-    "admin",
-    "manager",
-    "post_hearing_admin",
-    "post_hearing_staff",
-  ],
-  moa: [
-    "system_admin",
-    "admin",
-    "manager",
-    "post_hearing_admin",
-    "post_hearing_staff",
-  ],
-  five_day: [
-    "system_admin",
-    "admin",
-    "manager",
-    "post_hearing_admin",
-    "post_hearing_staff",
-  ],
-  credited: ["system_admin", "admin", "manager", "post_hearing_admin"],
 };
-
 // Columns visible per role on the main dashboard
 // PHP: $canViewAllColumns = !$isRep — everyone except rep sees ALL columns
 // Only rep gets a restricted view. Edit permissions are separate (EDITABLE_FIELDS).
