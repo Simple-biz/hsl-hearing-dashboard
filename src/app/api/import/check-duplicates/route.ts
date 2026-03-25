@@ -8,7 +8,7 @@ import { db } from "@/lib/db";
 function formatSSN(raw: string): string | null {
   if (!raw) return null;
   const digits = String(raw).replace(/\D/g, "").slice(-4);
-  return digits.length > 0 ? digits : null;
+  return digits.length > 0 ? digits.padStart(4, "0") : null;
 }
 
 function parseDate(raw: string): string | null {
@@ -84,7 +84,7 @@ export async function POST(req: NextRequest) {
 
   for (const row of existing) {
     const c = (row.claimant || "").trim();
-    const s = row.ssn_last_4 || "";
+    const s = (row.ssn_last_4 || "").padStart(4, "0");
     const d = row.hearing_date || "";
     const id = row.id as number;
 
@@ -104,7 +104,7 @@ export async function POST(req: NextRequest) {
   >();
   for (const row of existing) {
     const c = (row.claimant || "").trim();
-    const s = row.ssn_last_4 || "";
+    const s = (row.ssn_last_4 || "").padStart(4, "0");
     if (c && s) {
       const id = row.id as number;
       const entry = { id, claimant: c, hearing_date: row.hearing_date || "" };
