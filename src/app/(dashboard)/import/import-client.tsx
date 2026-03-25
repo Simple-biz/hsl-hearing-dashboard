@@ -28,7 +28,8 @@ interface DuplicateResult {
   repLocation: string;
   downloadType: string;
   statusDate: string;
-  data: unknown[];
+  data?: unknown[];
+  field_diffs?: Record<string, { old: string; new: string }>;
   existing_id?: number;
   reason?: string;
   // Rescheduled fields
@@ -118,6 +119,13 @@ const SORTED_FIELDS = Object.entries(DB_FIELDS).sort(([, a], [, b]) => {
   return a.localeCompare(b);
 });
 
+const FIELD_LABELS: Record<string, string> = Object.fromEntries(
+  Object.entries(DB_FIELDS).map(([k, v]) => [
+    k,
+    v.replace(/\s*\*\s*$/, "").replace(/\s*\(.*\)\s*$/, ""),
+  ]),
+);
+
 const STEP_LABELS = [
   { num: 1, label: "Upload File" },
   { num: 2, label: "Map Columns" },
@@ -153,7 +161,7 @@ const AUTO_MAP: Record<string, string[]> = {
   claimant: ["claimant", "claimant name", "name", "client name", "client"],
   ssn_last_4: ["ssn", "ssn last 4", "ssn_last_4", "last 4 ssn", "social"],
   hearing_date: ["hearing date", "date", "hearing_date", "hrg date"],
-  hearing_time: ["hearing time", "hearing_time", "hrg time"],
+  hearing_time: ["hearing time", "hearing_time", "hrg time", "time"],
   converted_time_est: [
     "converted time in est",
     "converted time",
@@ -204,6 +212,14 @@ function autoMap(headers: string[]): Record<string, number> {
 
 export function ImportClient({ userRole }: { userRole: string }) {
   const [step, setStep] = useState(1);
+
+  // DB Compare
+  const [showCompare, setShowCompare] = useState(false);
+  const [comparing, setComparing] = useState(false);
+  const [compareResult, setCompareResult] = useState<{
+    inSheetNotDb: { claimant: string; date: string; ssn: string }[];
+    inDbNotSheet: { claimant: string; date: string; ssn: string }[];
+  } | null>(null);
 
   // Step 1: Upload
   const [file, setFile] = useState<File | null>(null);
@@ -466,6 +482,7 @@ export function ImportClient({ userRole }: { userRole: string }) {
     try {
       const sheet = currentSheet!;
       // Build cross-sheet lookups
+      const RESCHED_MAIN = /\s*\(Rescheduled(?:\s+\d+)?\)\s*$/i;
       const crossSheetLookups: Record<number, Record<string, string>> = {};
       if (lookup.enabled && lookupBuilt && lookupTable.size > 0) {
         const ci = mapping.claimant;
@@ -487,7 +504,24 @@ export function ImportClient({ userRole }: { userRole: string }) {
           const key = lookup.useClaimTypeMatch
             ? `${claimant}|${date}|${claimType}`
             : `${claimant}|${date}`;
-          const data = lookupTable.get(key);
+          let data = lookupTable.get(key);
+          // If no match and name has (Rescheduled), try base name
+          if (!data && RESCHED_MAIN.test(claimant)) {
+            const baseName = claimant.replace(RESCHED_MAIN, "").trim();
+            const baseKey = lookup.useClaimTypeMatch
+              ? `${baseName}|${date}|${claimType}`
+              : `${baseName}|${date}`;
+            data = lookupTable.get(baseKey);
+            // Also try base name with any date (rescheduled has new date, lookup has old)
+            if (!data) {
+              for (const [k, v] of lookupTable) {
+                if (k.startsWith(baseName + "|") && v.ssn) {
+                  data = v;
+                  break;
+                }
+              }
+            }
+          }
           if (data && Object.keys(data).length > 0) crossSheetLookups[j] = data;
         });
       }
@@ -528,6 +562,9 @@ export function ImportClient({ userRole }: { userRole: string }) {
           allSkip.push(...result.skipped_records);
           if (result.rescheduled_records)
             allResched.push(...result.rescheduled_records);
+          if (result.debug_rescheduled?.length > 0) {
+            console.log("🔍 Rescheduled debug:", result.debug_rescheduled);
+          }
           if (result.field_change_summary) {
             for (const [f, c] of Object.entries(
               result.field_change_summary as Record<string, number>,
@@ -565,6 +602,210 @@ export function ImportClient({ userRole }: { userRole: string }) {
 
   // ── Step 4: Import ──
 
+  // ── DB Compare: find mismatches between sheet and DB ──
+  const compareWithDb = useCallback(async () => {
+    if (!currentSheet || Object.keys(mapping).length === 0) {
+      toast("Please map columns first (at least Claimant and Hearing Date)");
+      return;
+    }
+    if (mapping.claimant === undefined || mapping.hearing_date === undefined) {
+      toast("Map at least Claimant and Hearing Date columns first");
+      return;
+    }
+    setComparing(true);
+    setCompareResult(null);
+    try {
+      // Build cross-sheet lookups if enabled
+      const RESCHED_RE = /\s*\(Rescheduled(?:\s+\d+)?\)\s*$/i;
+      const stripResched = (name: string) =>
+        name.replace(RESCHED_RE, "").trim();
+      const csLookups: Record<number, Record<string, string>> = {};
+      if (lookup.enabled && lookupBuilt && lookupTable.size > 0) {
+        currentSheet.rows.forEach((row, j) => {
+          const claimant = String(row[mapping.claimant] || "").trim();
+          if (!claimant) return;
+          const claimType =
+            mapping.claim_type !== undefined
+              ? String(row[mapping.claim_type] || "").trim()
+              : "";
+          const date =
+            mapping.hearing_date !== undefined
+              ? String(row[mapping.hearing_date] || "").trim()
+              : "";
+          const key = lookup.useClaimTypeMatch
+            ? `${claimant}|${date}|${claimType}`
+            : `${claimant}|${date}`;
+          let data = lookupTable.get(key);
+          // If no match and name has (Rescheduled), try base name
+          if (!data && RESCHED_RE.test(claimant)) {
+            const baseName = stripResched(claimant);
+            const baseKey = lookup.useClaimTypeMatch
+              ? `${baseName}|${date}|${claimType}`
+              : `${baseName}|${date}`;
+            data = lookupTable.get(baseKey);
+            // Also try base name with any date in the lookup (rescheduled has new date)
+            if (!data) {
+              for (const [k, v] of lookupTable) {
+                if (k.startsWith(baseName.toLowerCase() + "|") && v.ssn) {
+                  data = v;
+                  break;
+                }
+              }
+            }
+          }
+          if (data && Object.keys(data).length > 0) csLookups[j] = data;
+        });
+      }
+
+      // Parse date helper
+      const parseD = (raw: string): string => {
+        if (!raw) return "";
+        const s = String(raw).trim();
+        const slash = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+        if (slash) {
+          const y = slash[3].length === 2 ? `20${slash[3]}` : slash[3];
+          return `${y}-${slash[1].padStart(2, "0")}-${slash[2].padStart(2, "0")}`;
+        }
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+        const n = Number(s);
+        if (!isNaN(n) && n > 40000 && n < 60000) {
+          return new Date((n - 25569) * 86400000).toISOString().split("T")[0];
+        }
+        return s;
+      };
+
+      // Build sheet keys: claimant|ssn|date (primary) and claimant|date (fallback)
+      const sheetByFull = new Map<
+        string,
+        { claimant: string; date: string; ssn: string }
+      >();
+      const sheetByNameDate = new Map<
+        string,
+        { claimant: string; date: string; ssn: string }
+      >();
+      for (let i = 0; i < currentSheet.rows.length; i++) {
+        const row = currentSheet.rows[i];
+        const claimant = String(row[mapping.claimant] || "").trim();
+        if (!claimant) continue;
+        const date = parseD(String(row[mapping.hearing_date] || ""));
+        if (!date) continue;
+
+        // SSN from sheet or cross-sheet lookup
+        let ssn =
+          mapping.ssn_last_4 !== undefined
+            ? String(row[mapping.ssn_last_4] || "")
+                .replace(/\D/g, "")
+                .slice(-4)
+            : "";
+        if (!ssn && csLookups[i]?.ssn)
+          ssn = csLookups[i].ssn.replace(/\D/g, "").slice(-4);
+
+        const entry = { claimant, date, ssn };
+        const nameDate = `${claimant.toLowerCase()}|${date}`;
+        if (!sheetByNameDate.has(nameDate))
+          sheetByNameDate.set(nameDate, entry);
+        if (ssn) {
+          const full = `${claimant.toLowerCase()}|${ssn}|${date}`;
+          if (!sheetByFull.has(full)) sheetByFull.set(full, entry);
+        }
+      }
+
+      // Fetch DB keys
+      const res = await fetch("/api/import/check-duplicates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mapping, rows: [], compare_mode: true }),
+      });
+      const data = await res.json();
+
+      const dbByFull = new Map<
+        string,
+        { claimant: string; date: string; ssn: string }
+      >();
+      const dbByNameDate = new Map<
+        string,
+        { claimant: string; date: string; ssn: string }
+      >();
+      if (data.all_hearings) {
+        for (const h of data.all_hearings) {
+          const c = (h.claimant || "").trim();
+          const d = h.hearing_date || "";
+          const s = h.ssn_last_4 || "";
+          const entry = { claimant: c, date: d, ssn: s };
+          const nameDate = `${c.toLowerCase()}|${d}`;
+          if (!dbByNameDate.has(nameDate)) dbByNameDate.set(nameDate, entry);
+          if (s) {
+            const full = `${c.toLowerCase()}|${s}|${d}`;
+            if (!dbByFull.has(full)) dbByFull.set(full, entry);
+          }
+        }
+      }
+
+      // Find mismatches — match by name+ssn+date first, then name+date fallback
+      // Also handle rescheduled: "John Smith (Rescheduled)" matches "John Smith" by person
+
+      // Build person-level sets (base name + ssn) for rescheduled matching
+      const sheetPersons = new Set<string>();
+      for (const [, val] of sheetByNameDate) {
+        const base = stripResched(val.claimant).toLowerCase();
+        if (val.ssn) sheetPersons.add(`${base}|${val.ssn}`);
+        sheetPersons.add(base); // fallback without SSN
+      }
+      const dbPersons = new Set<string>();
+      for (const [, val] of dbByNameDate) {
+        const base = stripResched(val.claimant).toLowerCase();
+        if (val.ssn) dbPersons.add(`${base}|${val.ssn}`);
+        dbPersons.add(base);
+      }
+
+      const inSheetNotDb: { claimant: string; date: string; ssn: string }[] =
+        [];
+      const inDbNotSheet: { claimant: string; date: string; ssn: string }[] =
+        [];
+
+      for (const [, val] of sheetByNameDate) {
+        const nameDate = `${val.claimant.toLowerCase()}|${val.date}`;
+        const full = val.ssn
+          ? `${val.claimant.toLowerCase()}|${val.ssn}|${val.date}`
+          : "";
+        const matchFull = full && dbByFull.has(full);
+        const matchNameDate = dbByNameDate.has(nameDate);
+        if (matchFull || matchNameDate) continue;
+        // Check rescheduled: does the base person exist in DB?
+        const base = stripResched(val.claimant).toLowerCase();
+        const matchPerson =
+          (val.ssn && dbPersons.has(`${base}|${val.ssn}`)) ||
+          dbPersons.has(base);
+        if (RESCHED_RE.test(val.claimant) && matchPerson) continue; // rescheduled person exists in DB — not truly "new"
+        inSheetNotDb.push(val);
+      }
+      for (const [, val] of dbByNameDate) {
+        const nameDate = `${val.claimant.toLowerCase()}|${val.date}`;
+        const full = val.ssn
+          ? `${val.claimant.toLowerCase()}|${val.ssn}|${val.date}`
+          : "";
+        const matchFull = full && sheetByFull.has(full);
+        const matchNameDate = sheetByNameDate.has(nameDate);
+        if (matchFull || matchNameDate) continue;
+        // Check rescheduled: does the base person exist in sheet (possibly with Rescheduled suffix)?
+        const base = stripResched(val.claimant).toLowerCase();
+        const matchPerson =
+          (val.ssn && sheetPersons.has(`${base}|${val.ssn}`)) ||
+          sheetPersons.has(base);
+        if (matchPerson) continue; // person exists in sheet (rescheduled) — not truly "missing"
+        inDbNotSheet.push(val);
+      }
+
+      setCompareResult({ inSheetNotDb, inDbNotSheet });
+      setShowCompare(true);
+    } catch (e) {
+      toast(
+        "Compare failed: " + (e instanceof Error ? e.message : "Unknown error"),
+      );
+    }
+    setComparing(false);
+  }, [currentSheet, mapping, lookup, lookupBuilt, lookupTable, toast]);
+
   const importRecords = useCallback(async () => {
     if (!checkResult) return;
     setStep(4);
@@ -572,7 +813,10 @@ export function ImportClient({ userRole }: { userRole: string }) {
     setImportProgress(0);
     setImportStatus("Starting import...");
 
-    const records = checkResult.newRecords;
+    const records = checkResult.newRecords.map((r) => ({
+      ...r,
+      data: currentSheet!.rows[r.rowIndex],
+    }));
     const BATCH = 250;
     const PARALLEL = 3; // send 3 batches concurrently
     let imported = 0;
@@ -637,7 +881,9 @@ export function ImportClient({ userRole }: { userRole: string }) {
     setImportProgress(0);
     setImportStatus("Updating existing records...");
 
-    const records = checkResult.duplicateRecords.filter((r) => r.has_changes);
+    const records = checkResult.duplicateRecords
+      .filter((r) => r.has_changes)
+      .map((r) => ({ ...r, data: currentSheet!.rows[r.rowIndex] }));
     const BATCH = 250;
     let updated = 0;
     const errors: string[] = [];
@@ -691,7 +937,10 @@ export function ImportClient({ userRole }: { userRole: string }) {
     setImportProgress(0);
     setImportStatus("Processing rescheduled hearings...");
 
-    const records = checkResult.rescheduledRecords;
+    const records = checkResult.rescheduledRecords.map((r) => ({
+      ...r,
+      data: currentSheet!.rows[r.rowIndex],
+    }));
     const BATCH = 250;
     let updated = 0;
     const errors: string[] = [];
@@ -1215,6 +1464,25 @@ export function ImportClient({ userRole }: { userRole: string }) {
                 📥 Download Template
               </button>
               <button
+                className={BTN_OUTLINE}
+                disabled={
+                  comparing ||
+                  !currentSheet ||
+                  mapping.claimant === undefined ||
+                  mapping.hearing_date === undefined
+                }
+                onClick={compareWithDb}
+              >
+                {comparing ? (
+                  <>
+                    <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent inline-block mr-1" />{" "}
+                    Comparing...
+                  </>
+                ) : (
+                  "🔍 Compare with DB"
+                )}
+              </button>
+              <button
                 className={BTN_PRIMARY}
                 disabled={!canProceedToMap}
                 onClick={() => setStep(2)}
@@ -1638,7 +1906,9 @@ export function ImportClient({ userRole }: { userRole: string }) {
                         </thead>
                         <tbody>
                           {activeRecords.map((r, i) => {
-                            const row = r.data as string[];
+                            const row = (r.data ||
+                              currentSheet?.rows[r.rowIndex] ||
+                              []) as string[];
                             return (
                               <tr
                                 key={i}
@@ -1682,11 +1952,42 @@ export function ImportClient({ userRole }: { userRole: string }) {
                                 )}
                                 {(dupTab === "duplicate" ||
                                   dupTab === "update-preview") && (
-                                  <td className="px-3 py-1.5 text-xs whitespace-nowrap">
-                                    {r.has_changes ? (
-                                      <span className="text-amber-600 dark:text-amber-400 font-medium">
-                                        {r.changed_fields?.length} changed
-                                      </span>
+                                  <td className="px-3 py-1.5 text-xs">
+                                    {r.has_changes && r.field_diffs ? (
+                                      <div className="space-y-0.5 max-w-75">
+                                        {r.changed_fields?.map((f) => {
+                                          const diff = r.field_diffs?.[f];
+                                          if (!diff) return null;
+                                          const label =
+                                            FIELD_LABELS[f] ||
+                                            f.replace(/_/g, " ");
+                                          return (
+                                            <div
+                                              key={f}
+                                              className="flex items-start gap-1 leading-tight"
+                                            >
+                                              <span className="font-semibold text-amber-700 dark:text-amber-400 shrink-0">
+                                                {label}:
+                                              </span>
+                                              <span
+                                                className="text-red-500 dark:text-red-400 line-through truncate max-w-25"
+                                                title={diff.old}
+                                              >
+                                                {diff.old}
+                                              </span>
+                                              <span className="text-muted-foreground shrink-0">
+                                                →
+                                              </span>
+                                              <span
+                                                className="text-emerald-600 dark:text-emerald-400 truncate max-w-25"
+                                                title={diff.new}
+                                              >
+                                                {diff.new}
+                                              </span>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
                                     ) : (
                                       <span className="text-muted-foreground">
                                         No changes
@@ -1868,6 +2169,183 @@ export function ImportClient({ userRole }: { userRole: string }) {
           </div>
         )}
       </div>
+
+      {/* ════════════════ DB COMPARE MODAL ════════════════ */}
+      {showCompare && compareResult && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setShowCompare(false)}
+        >
+          <div
+            className="w-full max-w-4xl max-h-[85vh] flex flex-col rounded-xl border bg-card shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b bg-muted/50 px-5 py-4 shrink-0">
+              <div>
+                <h2 className="text-sm font-semibold">
+                  🔍 Sheet vs Database Comparison
+                </h2>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Sheet: {currentSheet?.rows.length.toLocaleString()} rows • DB:
+                  comparing by Claimant + Hearing Date
+                </p>
+              </div>
+              <button
+                onClick={() => setShowCompare(false)}
+                className="text-muted-foreground hover:text-foreground text-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
+              {/* Summary */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-lg border bg-emerald-50 dark:bg-emerald-900/30 p-3 text-center">
+                  <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-400">
+                    {compareResult.inSheetNotDb.length}
+                  </p>
+                  <p className="text-xs text-muted-foreground font-medium">
+                    In Sheet, Not in DB
+                  </p>
+                </div>
+                <div className="rounded-lg border bg-red-50 dark:bg-red-900/30 p-3 text-center">
+                  <p className="text-2xl font-bold text-red-700 dark:text-red-400">
+                    {compareResult.inDbNotSheet.length}
+                  </p>
+                  <p className="text-xs text-muted-foreground font-medium">
+                    In DB, Not in Sheet
+                  </p>
+                </div>
+              </div>
+
+              {/* In Sheet, Not in DB */}
+              {compareResult.inSheetNotDb.length > 0 && (
+                <div className="rounded-lg border overflow-hidden">
+                  <div className="flex items-center gap-2 px-3 py-2 bg-emerald-50 dark:bg-emerald-900/30 border-b">
+                    <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                    <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-300">
+                      In Sheet, Not in DB ({compareResult.inSheetNotDb.length})
+                    </p>
+                    <p className="text-[10px] text-emerald-600 dark:text-emerald-400">
+                      — These will be imported as new records
+                    </p>
+                  </div>
+                  <div className="overflow-auto max-h-62.5">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10">
+                        <tr>
+                          <th className="px-3 py-1.5 text-left font-semibold">
+                            #
+                          </th>
+                          <th className="px-3 py-1.5 text-left font-semibold">
+                            Claimant
+                          </th>
+                          <th className="px-3 py-1.5 text-left font-semibold">
+                            Hearing Date
+                          </th>
+                          <th className="px-3 py-1.5 text-left font-semibold">
+                            SSN
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {compareResult.inSheetNotDb.map((r, i) => (
+                          <tr key={i} className="hover:bg-muted/30">
+                            <td className="px-3 py-1.5 text-muted-foreground">
+                              {i + 1}
+                            </td>
+                            <td className="px-3 py-1.5 font-medium">
+                              {r.claimant}
+                            </td>
+                            <td className="px-3 py-1.5 tabular-nums">
+                              {r.date}
+                            </td>
+                            <td className="px-3 py-1.5 text-muted-foreground tabular-nums">
+                              {r.ssn || "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* In DB, Not in Sheet */}
+              {compareResult.inDbNotSheet.length > 0 && (
+                <div className="rounded-lg border overflow-hidden">
+                  <div className="flex items-center gap-2 px-3 py-2 bg-red-50 dark:bg-red-900/30 border-b">
+                    <span className="h-2 w-2 rounded-full bg-red-500" />
+                    <p className="text-xs font-semibold text-red-800 dark:text-red-300">
+                      In DB, Not in Sheet ({compareResult.inDbNotSheet.length})
+                    </p>
+                    <p className="text-[10px] text-red-600 dark:text-red-400">
+                      — These exist in the database but are missing from the
+                      spreadsheet
+                    </p>
+                  </div>
+                  <div className="overflow-auto max-h-62.5">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10">
+                        <tr>
+                          <th className="px-3 py-1.5 text-left font-semibold">
+                            #
+                          </th>
+                          <th className="px-3 py-1.5 text-left font-semibold">
+                            Claimant
+                          </th>
+                          <th className="px-3 py-1.5 text-left font-semibold">
+                            Hearing Date
+                          </th>
+                          <th className="px-3 py-1.5 text-left font-semibold">
+                            SSN
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {compareResult.inDbNotSheet.map((r, i) => (
+                          <tr key={i} className="hover:bg-muted/30">
+                            <td className="px-3 py-1.5 text-muted-foreground">
+                              {i + 1}
+                            </td>
+                            <td className="px-3 py-1.5 font-medium">
+                              {r.claimant}
+                            </td>
+                            <td className="px-3 py-1.5 tabular-nums">
+                              {r.date}
+                            </td>
+                            <td className="px-3 py-1.5 text-muted-foreground tabular-nums">
+                              {r.ssn || "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {compareResult.inSheetNotDb.length === 0 &&
+                compareResult.inDbNotSheet.length === 0 && (
+                  <div className="rounded-lg border p-8 text-center text-muted-foreground">
+                    ✅ Sheet and database are perfectly in sync — no differences
+                    found.
+                  </div>
+                )}
+            </div>
+
+            <div className="flex items-center justify-end border-t px-5 py-3 shrink-0">
+              <button
+                className={BTN_SECONDARY}
+                onClick={() => setShowCompare(false)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
