@@ -24,6 +24,7 @@ interface Props {
   teams: MrTeam[];
   mrStatusOptions: string[];
   hearingId?: number;
+  canEditNotes?: boolean;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -71,7 +72,7 @@ function fmtTime(t: string | null): string {
 
 // ─── NotesList ────────────────────────────────────────────────────────────────
 
-function NotesList({ hearingId }: { hearingId: number }) {
+function NotesList({ hearingId, canEditNotes = true }: { hearingId: number; canEditNotes?: boolean }) {
   const [notes, setNotes]   = useState<PostHrgNote[]>([]);
   const [newNote, setNewNote] = useState("");
   const [saving, setSaving]  = useState(false);
@@ -102,6 +103,7 @@ function NotesList({ hearingId }: { hearingId: number }) {
 
   return (
     <div className="space-y-2">
+      {canEditNotes ? (
       <div className="flex gap-2">
         <textarea
           rows={2}
@@ -119,6 +121,9 @@ function NotesList({ hearingId }: { hearingId: number }) {
           Add
         </button>
       </div>
+      ) : (
+      <p className="text-xs text-muted-foreground italic">View only — you do not have permission to add notes.</p>
+      )}
       {notes.length > 0 && (
         <div className="border border-border rounded overflow-hidden max-h-40 overflow-y-auto">
           {notes.map((n, i) => (
@@ -144,9 +149,11 @@ function NotesList({ hearingId }: { hearingId: number }) {
 function ExpandedRow({
   h,
   onDeadlineChange,
+  canEditNotes = true,
 }: {
   h: Hearing;
   onDeadlineChange: (id: number, d: string) => void;
+  canEditNotes?: boolean;
 }) {
   const [editing, setEditing]       = useState(false);
   const [deadlineVal, setDeadlineVal] = useState(h.post_hrg_deadline ?? "");
@@ -208,7 +215,7 @@ function ExpandedRow({
           {/* Notes */}
           <div className="flex-1 min-w-64">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">📝 Post HRG Notes</p>
-            <NotesList hearingId={h.id} />
+            <NotesList hearingId={h.id} canEditNotes={canEditNotes} />
           </div>
         </div>
       </td>
@@ -218,7 +225,7 @@ function ExpandedRow({
 
 // ─── Main Modal ───────────────────────────────────────────────────────────────
 
-export function PostHrgModal({ open, onClose, teams, mrStatusOptions, hearingId }: Props) {
+export function PostHrgModal({ open, onClose, teams, mrStatusOptions, hearingId, canEditNotes = true }: Props) {
   const [isPending, startTransition] = useTransition();
   const [hearings, setHearings]       = useState<Hearing[]>([]);
   const [total, setTotal]             = useState(0);
@@ -312,7 +319,7 @@ export function PostHrgModal({ open, onClose, teams, mrStatusOptions, hearingId 
         ) : hearings.length === 0 ? (
           <p className="text-sm text-muted-foreground text-center py-16">No Post HRG hearings found.</p>
         ) : (
-          <table className="w-full text-[11px] border-collapse min-w-[1100px]">
+          <table className="w-full text-[11px] border-collapse min-w-275">
             <thead className="sticky top-0 z-10">
               <tr className="bg-muted text-foreground text-[10px] font-extrabold uppercase tracking-wider border-b border-border">
                 <th className="px-3 py-2.5 text-left whitespace-nowrap">Hearing Date</th>
@@ -432,9 +439,9 @@ export function PostHrgModal({ open, onClose, teams, mrStatusOptions, hearingId 
                               href={h.medical_record_link}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="inline-flex items-center justify-center w-6 h-6 rounded bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold"
+                              className="text-[9px] bg-blue-600 text-white px-1.5 py-0.5 rounded hover:bg-blue-700"
                             >
-                              S
+                              📋
                             </a>
                           ) : <span className="text-muted-foreground/30">—</span>}
                           {/* Expand toggle — only trigger */}
@@ -454,6 +461,7 @@ export function PostHrgModal({ open, onClose, teams, mrStatusOptions, hearingId 
                         key={`exp-${h.id}`}
                         h={h}
                         onDeadlineChange={handleDeadlineChange}
+                        canEditNotes={canEditNotes}
                       />
                     )}
                   </Fragment>

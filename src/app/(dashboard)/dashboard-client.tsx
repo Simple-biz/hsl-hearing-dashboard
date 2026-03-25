@@ -118,8 +118,12 @@ type HearingBoolField =
 type UpdateValue = string | number | boolean | null;
 interface PostHrgNote {
   user?: string;
+  author?: string;
+  author_name?: string;
   date?: string;
-  note: string;
+  created_at?: string;
+  note?: string;
+  content?: string;
 }
 
 function parseNotes(raw: string | null): PostHrgNote[] {
@@ -130,6 +134,21 @@ function parseNotes(raw: string | null): PostHrgNote[] {
   } catch {
     return raw ? [{ note: raw }] : [];
   }
+}
+
+/** Resolve display name from a note that could be in either JSON shape */
+function noteAuthor(n: PostHrgNote): string {
+  return n.author ?? n.author_name ?? n.user ?? "Unknown";
+}
+
+/** Resolve content from a note that could be in either JSON shape */
+function noteContent(n: PostHrgNote): string {
+  return n.content ?? n.note ?? "";
+}
+
+/** Resolve date from a note that could be in either JSON shape */
+function noteDate(n: PostHrgNote): string {
+  return n.date ?? n.created_at ?? "";
 }
 
 // ── Color maps ──
@@ -802,25 +821,40 @@ function PostHrgModal({
   onClose,
   onSave,
   userName,
+  userRole,
 }: {
   hearing: HearingRow;
   onClose: () => void;
   onSave: (id: number, field: string, value: UpdateValue) => void;
   userName: string;
+  userRole: string;
 }) {
-  const notes = parseNotes(hearing.post_hrg_notes);
+  const [notes, setNotes] = useState<PostHrgNote[]>(() => parseNotes(hearing.post_hrg_notes));
   const [newNote, setNewNote] = useState("");
   const [deadline, setDeadline] = useState(hearing.post_hrg_deadline || "");
   const [saving, setSaving] = useState(false);
 
+  // Permission: who can add/edit notes (per PDF matrix)
+  // Post HRG Notes: Edit = admin, manager, mr_admin, mr_lead, mr_agent, post_admin, post_staff
+  // sys_admin can do anything
+  const canEditNotes = [
+    "system_admin", "admin", "manager",
+    "mr_admin", "mr_lead", "mr_agent",
+    "post_hearing_admin", "post_hearing_staff",
+  ].includes(userRole);
+
   const handleAddNote = async () => {
-    if (!newNote.trim()) return;
+    if (!newNote.trim() || !canEditNotes) return;
     setSaving(true);
-    const updated: PostHrgNote[] = [
-      { user: userName, date: new Date().toISOString(), note: newNote.trim() },
-      ...notes,
-    ];
-    await onSave(hearing.id, "post_hrg_notes", JSON.stringify(updated));
+    const { addDashboardPostHrgNote } = await import("@/app/(dashboard)/actions");
+    const r = await addDashboardPostHrgNote(hearing.id, newNote.trim(), userName);
+    if (r.success) {
+      // Optimistic: prepend to local state so UI updates instantly
+      const added: PostHrgNote = { author: userName, date: new Date().toISOString(), content: newNote.trim() };
+      setNotes((prev) => [added, ...prev]);
+      // Also update the parent's hearing state so the badge refreshes
+      onSave(hearing.id, "post_hrg_review", true);
+    }
     if (deadline && deadline !== hearing.post_hrg_deadline) {
       await onSave(hearing.id, "post_hrg_deadline", deadline);
     }
@@ -838,12 +872,15 @@ function PostHrgModal({
   };
 
   const handleDeleteNote = async (index: number) => {
-    const updated = notes.filter((_, i) => i !== index);
-    await onSave(
-      hearing.id,
-      "post_hrg_notes",
-      updated.length > 0 ? JSON.stringify(updated) : null,
-    );
+    if (!canEditNotes) return;
+    const { deleteDashboardPostHrgNote } = await import("@/app/(dashboard)/actions");
+    const r = await deleteDashboardPostHrgNote(hearing.id, index);
+    if (r.success) {
+      setNotes((prev) => prev.filter((_, i) => i !== index));
+      if (r.updatedNotes === null) {
+        onSave(hearing.id, "post_hrg_review", false);
+      }
+    }
   };
 
   return (
@@ -914,6 +951,7 @@ function PostHrgModal({
           </div>
 
           {/* Add note */}
+          {canEditNotes ? (
           <div className="space-y-1.5">
             <label className="text-xs font-medium">Add New Note</label>
             <textarea
@@ -932,6 +970,9 @@ function PostHrgModal({
               {saving ? "Saving..." : "Add Note"}
             </Button>
           </div>
+          ) : (
+          <p className="text-xs text-muted-foreground italic py-2">You do not have permission to add notes.</p>
+          )}
 
           {/* Notes history */}
           <div className="space-y-1.5">
@@ -953,11 +994,11 @@ function PostHrgModal({
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
                         <span className="font-medium text-foreground">
-                          {note.user || "System"}
+                          {noteAuthor(note) || "System"}
                         </span>
-                        {note.date && (
+                        {noteDate(note) && (
                           <span>
-                            {new Date(note.date).toLocaleDateString("en-US", {
+                            {new Date(noteDate(note)).toLocaleDateString("en-US", {
                               month: "short",
                               day: "numeric",
                               hour: "numeric",
@@ -966,14 +1007,16 @@ function PostHrgModal({
                           </span>
                         )}
                       </div>
+                      {canEditNotes && (
                       <button
                         onClick={() => handleDeleteNote(i)}
                         className="rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                       >
                         <Trash className="h-3 w-3" />
                       </button>
+                      )}
                     </div>
-                    <p className="text-xs whitespace-pre-wrap">{note.note}</p>
+                    <p className="text-xs whitespace-pre-wrap">{noteContent(note)}</p>
                   </div>
                 ))}
               </div>
@@ -2912,6 +2955,7 @@ export function DashboardClient({
           onClose={() => setPostHrgHearing(null)}
           onSave={handleUpdate}
           userName={userName}
+          userRole={userRole}
         />
       )}
 

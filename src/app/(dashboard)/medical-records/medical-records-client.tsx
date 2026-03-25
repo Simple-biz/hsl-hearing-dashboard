@@ -19,7 +19,7 @@ import {
   BarChart3, FileText, ClipboardList, AlertTriangle, Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { UserRole } from "./types";
+import type { UserRole, Permissions } from "./types";
 
 import {
   getHearingsPaginated,
@@ -533,11 +533,18 @@ function WorksheetLinkModal({
 
 // ─── PostHrgReviewModal ───────────────────────────────────────────────────────
 
-function PostHrgReviewModal({ hearing, onClose, onUpdated }: {
+function PostHrgReviewModal({ hearing, onClose, onUpdated, permissions }: {
   hearing: Hearing;
   onClose: () => void;
   onUpdated: (id: number, patch: Partial<Hearing>) => void;
+  permissions?: Permissions;
 }) {
+  // Per HSL Permissions matrix: Post HRG Notes Edit = admin, manager, mr_admin, mr_lead, mr_agent, post_admin, post_staff, sys_admin
+  // canManage covers sys_admin | admin | manager | mr_admin | mr_lead
+  // When permissions not passed (e.g. from WithdrawnModal), default to true for safety — 
+  // the page-level access control already limits who can reach this modal
+  const canEditNotes = permissions ? permissions.canManage : true;
+
   const [notes, setNotes]       = useState<PostHrgNote[]>([]);
   const [newNote, setNewNote]   = useState("");
   const [deadline, setDeadline] = useState(hearing.post_hrg_deadline ?? "");
@@ -573,7 +580,7 @@ function PostHrgReviewModal({ hearing, onClose, onUpdated }: {
   }
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
       <div className="w-full max-w-lg rounded-xl border bg-card shadow-2xl" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between border-b px-5 py-4">
@@ -614,6 +621,7 @@ function PostHrgReviewModal({ hearing, onClose, onUpdated }: {
           </div>
 
           {/* Add note */}
+          {canEditNotes ? (
           <div className="space-y-1.5">
             <label className="text-xs font-medium">Add New Note</label>
             <textarea
@@ -632,6 +640,9 @@ function PostHrgReviewModal({ hearing, onClose, onUpdated }: {
               Add Note
             </button>
           </div>
+          ) : (
+          <p className="text-xs text-muted-foreground italic py-2">You do not have permission to add notes.</p>
+          )}
 
           {/* Notes history */}
           <div className="space-y-1.5">
@@ -1886,12 +1897,17 @@ export function MrPivotClient({ userRole, ...data }: Props) {
 
       {/* Per-row Post HRG modal — opened from the 📝 button in each row */}
       {postHrgHearing && (
-        <PostHrgModal
-          open={true}
-          hearingId={postHrgHearing.id}
+        <PostHrgReviewModal
+          hearing={postHrgHearing}
           onClose={() => setPostHrgHearing(null)}
-          teams={data.medical_teams}
-          mrStatusOptions={data.medical_record_status_options}
+          onUpdated={(id, patch) => {
+            setHearings((prev) => 
+              prev.map((h) => 
+                h.id === id ? { ...h, ...patch } as Hearing : h));
+            setPostHrgHearing((h) => 
+              h && h.id === id ? { ...h, ...patch } as Hearing : h);
+          }}
+          permissions={data.permissions}
         />
       )}
 
@@ -1902,6 +1918,7 @@ export function MrPivotClient({ userRole, ...data }: Props) {
           onClose={() => setShowPostHrg(false)}
           teams={data.medical_teams}
           mrStatusOptions={data.medical_record_status_options}
+          canEditNotes={data.permissions.canManage}
         />
       )}
 
@@ -1935,7 +1952,7 @@ export function MrPivotClient({ userRole, ...data }: Props) {
 
       {/* ── Field update toast ── */}
       {updateToast && mounted && createPortal(
-        <div className="fixed top-4 right-4 z-[200] flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 shadow-lg dark:border-emerald-800 dark:bg-emerald-950/80 animate-in fade-in slide-in-from-top-2 duration-200">
+        <div className="fixed top-4 right-4 z-200 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 shadow-lg dark:border-emerald-800 dark:bg-emerald-950/80 animate-in fade-in slide-in-from-top-2 duration-200">
           <span className="text-emerald-600 dark:text-emerald-400 text-sm">✓</span>
           <span className="text-sm font-medium text-emerald-800 dark:text-emerald-200">
             {updateToast}

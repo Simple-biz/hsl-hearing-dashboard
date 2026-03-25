@@ -87,18 +87,20 @@ export const authOptions: NextAuthOptions = {
       // On sign-in, add custom fields to JWT
       if (user) {
         token.id = Number(user.id);
+        token.name = user.name;
         token.role = user.role;
         token.forcePasswordChange = user.forcePasswordChange;
       }
-      // Always refresh role and forcePasswordChange from DB (can change mid-session)
+      // Always refresh role, name, and forcePasswordChange from DB (can change mid-session)
       if (token.id) {
         try {
           const { rows } = await db.query(
-            "SELECT role, force_password_change FROM users WHERE id=$1",
+            "SELECT role, full_name, force_password_change FROM users WHERE id=$1",
             [token.id],
           );
           if (rows[0]) {
             token.role = rows[0].role;
+            token.name = rows[0].full_name;
             token.forcePasswordChange = rows[0].force_password_change;
           }
         } catch {}
@@ -108,6 +110,7 @@ export const authOptions: NextAuthOptions = {
     async session({ session, token }) {
       // Pass custom fields from JWT to session
       session.user.id = token.id;
+      session.user.name = token.name as string;
       session.user.role = token.role;
       session.user.forcePasswordChange = token.forcePasswordChange;
       return session;
