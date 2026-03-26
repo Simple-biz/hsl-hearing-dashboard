@@ -19,6 +19,17 @@ import type {
 
 // ─── Colour helpers ───────────────────────────────────────────────────────────
 
+function fmtTime(raw: string | null | undefined): string {
+  if (!raw) return "";
+  const [hStr, mStr] = raw.split(":");
+  const h = parseInt(hStr, 10);
+  const m = mStr ?? "00";
+  if (isNaN(h)) return raw;
+  const period = h >= 12 ? "PM" : "AM";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${m} ${period}`;
+}
+
 const TEAM_COLOUR_MAP: Record<string, string> = {
   blue: "#3b82f6", orange: "#f97316", green: "#22c55e",
   yellow: "#eab308", purple: "#a855f7", red: "#ef4444",
@@ -145,7 +156,7 @@ function HearingRow({
       {/* Date */}
       <div className="text-foreground font-medium">
         {dateStr}
-        {h.converted_time_est && <div className="text-[10px] text-muted-foreground">{h.converted_time_est}</div>}
+        {h.converted_time_est && <div className="text-[10px] text-muted-foreground">{fmtTime(h.converted_time_est)}</div>}
       </div>
 
       {/* MR Status */}
