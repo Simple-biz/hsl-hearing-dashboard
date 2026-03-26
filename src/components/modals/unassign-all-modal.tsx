@@ -7,6 +7,17 @@ import { X, Trash2, Loader2, AlertTriangle } from "lucide-react";
 import { unassignAll, getUnassignPreview } from "@/app/(dashboard)/actions";
 import type { UnassignPreviewRow } from "@/app/(dashboard)/actions";
 
+function fmtTime(raw: string | null | undefined): string {
+  if (!raw) return "";
+  const [hStr, mStr] = raw.split(":");
+  const h = parseInt(hStr, 10);
+  const m = mStr ?? "00";
+  if (isNaN(h)) return raw;
+  const period = h >= 12 ? "PM" : "AM";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${m} ${period}`;
+}
+
 const SEL =
   "h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring";
 function getMonthOptions() {
@@ -304,7 +315,7 @@ export function UnassignAllModal({
                         year: "numeric",
                       });
                       const timeStr =
-                        h.converted_time_est?.substring(0, 5) || "";
+                        fmtTime(h.converted_time_est) || "";
                       const repIcon =
                         h.rep_type === "internal_advocates" ||
                         h.rep_type === "in-house"

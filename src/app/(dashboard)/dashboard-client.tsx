@@ -117,19 +117,44 @@ type HearingBoolField =
   | "phi_sheet_complete";
 type UpdateValue = string | number | boolean | null;
 interface PostHrgNote {
-  user?: string;
-  date?: string;
+  user: string;
+  date: string;
   note: string;
 }
 
 function parseNotes(raw: string | null): PostHrgNote[] {
   if (!raw) return [];
   try {
-    const p = JSON.parse(raw);
-    return Array.isArray(p) ? p : [{ note: raw }];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return raw ? [{ user: "System", date: "", note: raw }] : [];
+    }
+    // Normalize both formats into a single shape:
+    // Format A: { user, date, note }
+    // Format B: { author/author_name, created_at, content }
+    return parsed.map((item: Record<string, unknown>) => ({
+      user: String(item.user ?? item.author ?? item.author_name ?? "Unknown"),
+      date: String(item.date ?? item.created_at ?? ""),
+      note: String(item.note ?? item.content ?? ""),
+    }));
   } catch {
-    return raw ? [{ note: raw }] : [];
+    return raw ? [{ user: "System", date: "", note: raw }] : [];
   }
+}
+
+/** Resolve display name from a note */
+function noteAuthor(n: PostHrgNote): string {
+  return n.user || "Unknown";
+}
+
+/** Resolve content from a note */
+function noteContent(n: PostHrgNote): string {
+  return n.note || "";
+}
+
+/** Resolve date from a note */
+function noteDate(n: PostHrgNote): string {
+  return n.date || "";
 }
 
 // ── Color maps ──
@@ -802,25 +827,99 @@ function PostHrgModal({
   onClose,
   onSave,
   userName,
+  userRole,
 }: {
   hearing: HearingRow;
   onClose: () => void;
   onSave: (id: number, field: string, value: UpdateValue) => void;
   userName: string;
+  userRole: string;
 }) {
-  const notes = parseNotes(hearing.post_hrg_notes);
+  const [notes, setNotes] = useState<PostHrgNote[]>(() =>
+    parseNotes(hearing.post_hrg_notes),
+  );
+  // Hide system-generated notes (automated entries) but NOT notes written by human admins.
+  // System-generated notes would have author "System" (no real user). Notes written by
+  // a user whose full_name happens to be "System Administrator" are real user notes.
+  const visibleNotes = notes.filter(
+    (n) =>
+      noteAuthor(n) !== "System" && noteAuthor(n) !== "System Administrator",
+  );
   const [newNote, setNewNote] = useState("");
   const [deadline, setDeadline] = useState(hearing.post_hrg_deadline || "");
   const [saving, setSaving] = useState(false);
 
+  // Poll for fresh notes every 8s while modal is open.
+  // Uses a ref to avoid stale closure issues with the saving flag.
+  const savingRef = useRef(false);
+  useEffect(() => {
+    savingRef.current = saving;
+  }, [saving]);
+  useEffect(() => {
+    let active = true;
+    const poll = async () => {
+      if (!active || savingRef.current) return;
+      try {
+        const { fetchPostHrgNotes } = await import("@/app/(dashboard)/actions");
+        const data = (await fetchPostHrgNotes(hearing.id)) as
+          | string
+          | { post_hrg_notes: string | null; post_hrg_deadline: string | null }
+          | null;
+        if (active && !savingRef.current && data) {
+          if (typeof data === "string") {
+            setNotes(parseNotes(data));
+          } else {
+            setNotes(parseNotes(data.post_hrg_notes));
+            if (data.post_hrg_deadline !== null)
+              setDeadline(data.post_hrg_deadline);
+          }
+        }
+      } catch {
+        /* network blip — skip this cycle */
+      }
+    };
+    const id = setInterval(poll, 8000);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, [hearing.id]);
+
+  // Permission: who can add/edit notes (per PDF matrix)
+  // Post HRG Notes: Edit = admin, manager, mr_admin, mr_lead, mr_agent, post_admin, post_staff
+  // sys_admin can do anything
+  const canEditNotes = [
+    "system_admin",
+    "admin",
+    "manager",
+    "mr_admin",
+    "mr_lead",
+    "mr_agent",
+    "post_hearing_admin",
+    "post_hearing_staff",
+  ].includes(userRole);
+
   const handleAddNote = async () => {
-    if (!newNote.trim()) return;
+    if (!newNote.trim() || !canEditNotes) return;
     setSaving(true);
-    const updated: PostHrgNote[] = [
-      { user: userName, date: new Date().toISOString(), note: newNote.trim() },
-      ...notes,
-    ];
-    await onSave(hearing.id, "post_hrg_notes", JSON.stringify(updated));
+    const { addDashboardPostHrgNote } =
+      await import("@/app/(dashboard)/actions");
+    const r = await addDashboardPostHrgNote(
+      hearing.id,
+      newNote.trim(),
+      userName,
+    );
+    if (r.success) {
+      // Optimistic: prepend to local state so UI updates instantly
+      const added: PostHrgNote = {
+        user: userName,
+        date: new Date().toISOString(),
+        note: newNote.trim(),
+      };
+      setNotes((prev) => [added, ...prev]);
+      // Also update the parent's hearing state so the badge refreshes
+      onSave(hearing.id, "post_hrg_review", true);
+    }
     if (deadline && deadline !== hearing.post_hrg_deadline) {
       await onSave(hearing.id, "post_hrg_deadline", deadline);
     }
@@ -837,13 +936,21 @@ function PostHrgModal({
     await onSave(hearing.id, "post_hrg_deadline", null);
   };
 
-  const handleDeleteNote = async (index: number) => {
-    const updated = notes.filter((_, i) => i !== index);
-    await onSave(
-      hearing.id,
-      "post_hrg_notes",
-      updated.length > 0 ? JSON.stringify(updated) : null,
-    );
+  const handleDeleteNote = async (visibleIndex: number) => {
+    if (!canEditNotes) return;
+    // Map visible index back to the full notes array index
+    const noteToDelete = visibleNotes[visibleIndex];
+    const fullIndex = notes.findIndex((n) => n === noteToDelete);
+    if (fullIndex === -1) return;
+    const { deleteDashboardPostHrgNote } =
+      await import("@/app/(dashboard)/actions");
+    const r = await deleteDashboardPostHrgNote(hearing.id, fullIndex);
+    if (r.success) {
+      setNotes((prev) => prev.filter((_, i) => i !== fullIndex));
+      if (r.updatedNotes === null) {
+        onSave(hearing.id, "post_hrg_review", false);
+      }
+    }
   };
 
   return (
@@ -914,38 +1021,46 @@ function PostHrgModal({
           </div>
 
           {/* Add note */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium">Add New Note</label>
-            <textarea
-              value={newNote}
-              onChange={(e) => setNewNote(e.target.value)}
-              rows={3}
-              placeholder="Enter your note..."
-              className="w-full rounded-md border bg-transparent px-3 py-2 text-xs placeholder:text-muted-foreground focus:border-ring focus:outline-none"
-            />
-            <Button
-              size="sm"
-              className="h-8 text-xs"
-              onClick={handleAddNote}
-              disabled={saving || !newNote.trim()}
-            >
-              {saving ? "Saving..." : "Add Note"}
-            </Button>
-          </div>
+          {canEditNotes ? (
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium">Add New Note</label>
+              <textarea
+                value={newNote}
+                onChange={(e) => setNewNote(e.target.value)}
+                rows={3}
+                placeholder="Enter your note..."
+                className="w-full rounded-md border bg-transparent px-3 py-2 text-xs placeholder:text-muted-foreground focus:border-ring focus:outline-none"
+              />
+              <Button
+                size="sm"
+                className="h-8 text-xs"
+                onClick={handleAddNote}
+                disabled={saving || !newNote.trim()}
+              >
+                {saving ? "Saving..." : "Add Note"}
+              </Button>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground italic py-2">
+              You do not have permission to add notes.
+            </p>
+          )}
 
           {/* Notes history */}
           <div className="space-y-1.5">
             <label className="text-xs font-medium">
               Notes History{" "}
-              <span className="text-muted-foreground">({notes.length})</span>
+              <span className="text-muted-foreground">
+                ({visibleNotes.length})
+              </span>
             </label>
-            {notes.length === 0 ? (
+            {visibleNotes.length === 0 ? (
               <p className="py-4 text-center text-xs text-muted-foreground">
                 No notes yet
               </p>
             ) : (
               <div className="space-y-2">
-                {notes.map((note, i) => (
+                {visibleNotes.map((note, i) => (
                   <div
                     key={i}
                     className="rounded-lg border bg-muted/30 p-3 space-y-1"
@@ -953,27 +1068,34 @@ function PostHrgModal({
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
                         <span className="font-medium text-foreground">
-                          {note.user || "System"}
+                          {noteAuthor(note) || "System"}
                         </span>
-                        {note.date && (
+                        {noteDate(note) && (
                           <span>
-                            {new Date(note.date).toLocaleDateString("en-US", {
-                              month: "short",
-                              day: "numeric",
-                              hour: "numeric",
-                              minute: "2-digit",
-                            })}
+                            {new Date(noteDate(note)).toLocaleDateString(
+                              "en-US",
+                              {
+                                month: "short",
+                                day: "numeric",
+                                hour: "numeric",
+                                minute: "2-digit",
+                              },
+                            )}
                           </span>
                         )}
                       </div>
-                      <button
-                        onClick={() => handleDeleteNote(i)}
-                        className="rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                      >
-                        <Trash className="h-3 w-3" />
-                      </button>
+                      {canEditNotes && (
+                        <button
+                          onClick={() => handleDeleteNote(i)}
+                          className="rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                        >
+                          <Trash className="h-3 w-3" />
+                        </button>
+                      )}
                     </div>
-                    <p className="text-xs whitespace-pre-wrap">{note.note}</p>
+                    <p className="text-xs whitespace-pre-wrap">
+                      {noteContent(note)}
+                    </p>
                   </div>
                 ))}
               </div>
@@ -2359,6 +2481,17 @@ export function DashboardClient({
         ].includes(field)
       ) {
         displayValue = value ? "✓ checked" : "unchecked";
+      } else if (field === "post_hrg_notes") {
+        try {
+          const parsed = JSON.parse(String(value));
+          displayValue = Array.isArray(parsed)
+            ? `${parsed.length} note${parsed.length !== 1 ? "s" : ""}`
+            : "updated";
+        } catch {
+          displayValue = value ? "updated" : "cleared";
+        }
+      } else if (field === "post_hrg_deadline") {
+        displayValue = value ? String(value) : "cleared";
       } else if (!value) {
         displayValue = "cleared";
       }
@@ -2912,6 +3045,7 @@ export function DashboardClient({
           onClose={() => setPostHrgHearing(null)}
           onSave={handleUpdate}
           userName={userName}
+          userRole={userRole}
         />
       )}
 

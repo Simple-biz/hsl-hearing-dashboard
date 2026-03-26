@@ -62,10 +62,12 @@ async function logActivity(
 const WITHDRAWN_FILTER = `
   (h.medical_record_status != 'WITHDRAWAL' OR h.medical_record_status IS NULL)
   AND (
-    h.hearing_decision_status NOT LIKE 'Withdrawal%'
-    AND h.hearing_decision_status != 'WD CLMT DECEASED'
-    AND h.hearing_decision_status != 'Dismissal'
-    OR h.hearing_decision_status IS NULL
+    h.hearing_decision_status IS NULL
+    OR (
+      h.hearing_decision_status NOT LIKE 'Withdrawal%'
+      AND h.hearing_decision_status != 'WD CLMT DECEASED'
+      AND h.hearing_decision_status != 'Dismissal'
+    )
   )
 `.trim();
 
@@ -128,7 +130,10 @@ export async function getMrPivotPageData(
     db.query(`
       SELECT COUNT(*) AS cnt
       FROM hearings
-      WHERE hearing_decision_status = 'Post HRG Review/ Dev'
+      WHERE (
+        hearing_decision_status = 'Post HRG Review/ Dev'
+        OR medical_record_status = 'Post Hearing Development'
+      )
         AND (medical_record_status != 'WITHDRAWAL' OR medical_record_status IS NULL)
         AND (hearing_decision_status NOT LIKE 'Withdrawal%' OR hearing_decision_status = 'Post HRG Review/ Dev')
     `),
@@ -329,17 +334,11 @@ export async function getMrPivotPageData(
     db.query(`
       SELECT id, team_name, team_color
       FROM mr_teams
-      WHERE team_color IN ('blue', 'orange', 'green', 'yellow', 'purple', 'pink')
-        AND is_active = true
+      WHERE is_active = true
         AND is_assignable = true
-      ORDER BY
-        CASE team_color
-          WHEN 'blue' THEN 1
-          WHEN 'orange' THEN 2
-          WHEN 'green' THEN 3
-          WHEN 'yellow' THEN 4
-          WHEN 'purple' THEN 5
-        END ASC
+        AND team_color IS NOT NULL
+        AND team_color != ''
+      ORDER BY display_order ASC
     `),
 
     // ── Round-robin: last assigned team ──────────────────────────────────────
@@ -347,7 +346,9 @@ export async function getMrPivotPageData(
       SELECT t.id, t.team_name, t.team_color
       FROM hearings h
       JOIN mr_teams t ON h.mr_team_id = t.id
-      WHERE t.team_color IN ('blue', 'orange', 'green', 'yellow', 'purple', 'pink')
+      WHERE t.is_active = true
+        AND t.is_assignable = true
+        AND t.team_color IS NOT NULL AND t.team_color != ''
         AND h.mr_team_assigned_at IS NOT NULL
         AND (h.medical_record_status != 'WITHDRAWAL' OR h.medical_record_status IS NULL)
       ORDER BY h.mr_team_assigned_at DESC
@@ -454,11 +455,12 @@ export async function getMrPivotPageData(
   // const monthly = Object.values(monthlyMap);
 
   // ── Shape: round-robin state ────────────────────────────────────────────────
-  const ROTATION_ORDER = ["blue", "orange", "green", "yellow", "purple", "pink"];
+  // Derive rotation order dynamically from DB — no hardcoded team list
   const colorToTeam: Record<string, { id: number; name: string; color: string }> = {};
   for (const rt of rotationTeamsRows.rows as Record<string, unknown>[]) {
     colorToTeam[rt.team_color as string] = { id: Number(rt.id), name: rt.team_name as string, color: rt.team_color as string };
   }
+  const ROTATION_ORDER = (rotationTeamsRows.rows as Record<string, unknown>[]).map(r => r.team_color as string);
 
   // Fallback: if mr_team_assigned_at was null on all rows, try last assigned by id
   let lastRow = lastAssignedRow.rows[0] as Record<string, unknown> | undefined;
@@ -467,14 +469,15 @@ export async function getMrPivotPageData(
       SELECT t.id, t.team_name, t.team_color
       FROM hearings h
       JOIN mr_teams t ON h.mr_team_id = t.id
-      WHERE t.team_color IN ('blue', 'orange', 'green', 'yellow', 'purple', 'pink')
+      WHERE t.is_active = true AND t.is_assignable = true
+        AND t.team_color IS NOT NULL AND t.team_color != ''
       ORDER BY h.id DESC
       LIMIT 1
     `);
     lastRow = fallback.rows[0];
   }
 
-  const lastColor = (lastRow?.team_color as string | undefined) ?? "purple";
+  const lastColor = (lastRow?.team_color as string | undefined) ?? ROTATION_ORDER[ROTATION_ORDER.length - 1] ?? "blue";
   const lastTeamName = (lastRow?.team_name  as string | undefined) ?? "None";
   const lastIndex = ROTATION_ORDER.indexOf(lastColor);
   const nextIndex = (lastIndex + 1) % ROTATION_ORDER.length;
@@ -711,10 +714,13 @@ export async function updateHearingDecisionStatus(
 
   // If this is a withdrawal-type decision, push a notification for the MR bell
   const isWithdrawal = status.startsWith("Withdrawal") || status === "WD CLMT DECEASED" || status === "Dismissal";
-  if (isWithdrawal) {
+  const isPostHrg    = status === "Post HRG Review/ Dev";
+
+  if (isWithdrawal || isPostHrg) {
     const row = await db.query(`SELECT claimant FROM hearings WHERE id = $1`, [hearingId]);
     const claimant = (row.rows[0]?.claimant as string | undefined) ?? `Hearing #${hearingId}`;
-    await createWithdrawalNotification(hearingId, claimant);
+    if (isWithdrawal) await createWithdrawalNotification(hearingId, claimant);
+    if (isPostHrg)    await createPostHrgNotification(hearingId, claimant);
   }
 
   return { success: true };
@@ -755,6 +761,18 @@ export async function toggleCredited(
     [value, hearingId],
   );
   await logActivity("credited_updated", `Credited set to ${value} for hearing #${hearingId}`);
+  return { success: true };
+}
+
+export async function toggleFiveDayNotice(
+  hearingId: number,
+  value: boolean,
+): Promise<{ success: boolean }> {
+  await db.query(
+    `UPDATE hearings SET five_day_notice = $1 WHERE id = $2`,
+    [value, hearingId],
+  );
+  await logActivity("five_day_notice_updated", `5-Day Notice set to ${value} for hearing #${hearingId}`);
   return { success: true };
 }
 
@@ -823,19 +841,19 @@ export async function assignJeromeUrgent(): Promise<{
 }
 
 export async function getRoundRobinState(): Promise<RoundRobinState> {
-  const ROTATION_ORDER = ["blue", "orange", "green", "yellow", "purple", "pink"];
-
   const [rotationRows, lastAssignedRows, nextHearingRows, urgentRows] = await Promise.all([
     db.query(`
       SELECT id, team_name, team_color FROM mr_teams
-      WHERE team_color IN ('blue','orange','green','yellow','purple','pink')
-        AND is_active = true AND is_assignable = true
-      ORDER BY CASE team_color WHEN 'blue' THEN 1 WHEN 'orange' THEN 2 WHEN 'green' THEN 3 WHEN 'yellow' THEN 4 WHEN 'purple' THEN 5 WHEN 'pink' THEN 6 END
+      WHERE is_active = true AND is_assignable = true
+        AND team_color IS NOT NULL
+        AND team_color NOT IN ('', 'pink')
+      ORDER BY display_order ASC
     `),
     db.query(`
       SELECT t.team_name, t.team_color FROM hearings h
       JOIN mr_teams t ON h.mr_team_id = t.id
-      WHERE t.team_color IN ('blue','orange','green','yellow','purple','pink')
+      WHERE t.is_active = true AND t.is_assignable = true
+        AND t.team_color IS NOT NULL AND t.team_color != ''
         AND h.mr_team_assigned_at IS NOT NULL
         AND (h.medical_record_status != 'WITHDRAWAL' OR h.medical_record_status IS NULL)
       ORDER BY h.mr_team_assigned_at DESC LIMIT 1
@@ -855,13 +873,16 @@ export async function getRoundRobinState(): Promise<RoundRobinState> {
     `),
   ]);
 
+  // Derive rotation order from DB result — ordered by display_order, no hardcoded list
+  const ROTATION_ORDER = (rotationRows.rows as Record<string, unknown>[]).map(r => r.team_color as string);
   const colorToTeam: Record<string, string> = {};
   for (const r of rotationRows.rows as Record<string, unknown>[]) {
     colorToTeam[r.team_color as string] = r.team_name as string;
   }
 
   const lastRow = lastAssignedRows.rows[0] as Record<string, unknown> | undefined;
-  const lastColor = (lastRow?.team_color as string | undefined) ?? "purple";
+  // Fallback to first team in rotation if no last assigned found
+  const lastColor = (lastRow?.team_color as string | undefined) ?? ROTATION_ORDER[ROTATION_ORDER.length - 1] ?? "blue";
   const lastTeamName = (lastRow?.team_name  as string | undefined) ?? "None";
   const lastIndex = ROTATION_ORDER.indexOf(lastColor);
   const nextColor = ROTATION_ORDER[(lastIndex + 1) % ROTATION_ORDER.length];
@@ -1008,6 +1029,31 @@ export async function createWithdrawalNotification(
   }
 }
 
+// Called when hearing_decision_status is set to "Post HRG Review/ Dev"
+export async function createPostHrgNotification(
+  hearingId: number,
+  claimantName: string,
+): Promise<void> {
+  try {
+    const session = await getSession();
+    const createdBy = session?.user?.id ?? null;
+    await db.query(
+      `INSERT INTO sync_notifications
+         (notification_type, hearing_id, claimant_name, message, created_by, expires_at)
+       VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '24 hours')`,
+      [
+        "status_change",
+        hearingId,
+        claimantName,
+        `Post HRG Review/Dev set for ${claimantName}`,
+        createdBy,
+      ],
+    );
+  } catch {
+    // Never let notification creation break the mutation that called it
+  }
+}
+
 export async function getActivityLog(params: {
   type?: string;
   date_from?: string;
@@ -1064,7 +1110,8 @@ export async function getActivityLog(params: {
 
 // ─── Post HRG Notes helpers ───────────────────────────────────────────────────
 // Notes are stored as a JSON array in hearings.post_hrg_notes (TEXT column).
-// Shape: [{ author: string; date: string; content: string }]
+// Canonical shape: [{ author: string; date: string; content: string }]
+// Legacy shape from dashboard: [{ user: string; date: string; note: string }]
 // post_hrg_review (BOOLEAN) is set to true whenever a note is added.
 
 function parsePostHrgNotes(raw: unknown): PostHrgNote[] {
@@ -1074,11 +1121,11 @@ function parsePostHrgNotes(raw: unknown): PostHrgNote[] {
     if (Array.isArray(parsed)) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return parsed.map((n: any, i: number) => ({
-        id:          i,
-        hearing_id:  0,
-        author_name: n.author ?? n.author_name ?? "Unknown",
-        content:     n.content ?? "",
-        created_at:  n.date   ?? n.created_at  ?? new Date().toISOString(),
+        id:i,
+        hearing_id: 0,
+        author_name: n.author ?? n.author_name ?? n.user ?? "Unknown",
+        content: n.content ?? n.note ?? "",
+        created_at: n.date ?? n.created_at ?? new Date().toISOString(),
       }));
     }
   } catch { /* fall through */ }
@@ -1086,17 +1133,12 @@ function parsePostHrgNotes(raw: unknown): PostHrgNote[] {
 }
 
 export async function getPostHrgNotes(hearingId: number): Promise<PostHrgNote[]> {
-  // post_hrg_notes is a Phase 4 table — return empty until migrated
   try {
-    const result = await db.query(
-      `SELECT n.*, u.full_name AS author_name
-       FROM post_hrg_notes n
-       JOIN users u ON n.user_id = u.id
-       WHERE n.hearing_id = $1
-       ORDER BY n.created_at DESC`,
+    const { rows } = await db.query(
+      `SELECT post_hrg_notes FROM hearings WHERE id = $1`,
       [hearingId],
     );
-    return result.rows as PostHrgNote[];
+    return parsePostHrgNotes(rows[0]?.post_hrg_notes);
   } catch {
     return [];
   }
@@ -1109,25 +1151,50 @@ export async function addPostHrgNote(
   if (!content.trim()) return { success: false, message: "Note cannot be empty" };
 
   const session = await getSession();
-  const authorName = session?.user?.name ?? "Unknown";
 
-  // Fetch existing notes
-  const { rows } = await db.query(
-    `SELECT post_hrg_notes FROM hearings WHERE id = $1`,
-    [hearingId],
-  );
-  if (!rows[0]) return { success: false, message: "Hearing not found" };
-
-  const existing = parsePostHrgNotes(rows[0].post_hrg_notes);
-  const updated = [
-    { author: authorName, date: new Date().toISOString(), content: content.trim() },
-    ...existing,
+  // Server-side permission check — per HSL Permissions matrix, Post HRG Notes Edit:
+  // system_admin, admin, manager, mr_admin, mr_lead, mr_agent, post_hearing_admin, post_hearing_staff
+  const allowedRoles = [
+    "system_admin", "admin", "manager",
+    "mr_admin", "mr_lead", "mr_agent",
+    "post_hearing_admin", "post_hearing_staff",
   ];
+  const userRole = session?.user?.role;
+  if (!userRole || !allowedRoles.includes(userRole)) {
+    return { success: false, message: "You do not have permission to add notes" };
+  }
 
-  // Write back + flip post_hrg_review flag to true
+  // Resolve author name: session.user.name (from auth.ts), fall back to DB lookup
+  let authorName = session?.user?.name;
+  if (!authorName && session?.user?.id) {
+    const { rows: userRows } = await db.query(
+      `SELECT full_name FROM users WHERE id = $1`,
+      [session.user.id],
+    );
+    authorName = userRows[0]?.full_name ?? "Unknown";
+  }
+  if (!authorName) authorName = "Unknown";
+
+  const newNote = JSON.stringify({ author: authorName, date: new Date().toISOString(), content: content.trim() });
+
+  // Atomic prepend — avoids read-modify-write race condition.
+  // The CASE handles all possible states of post_hrg_notes:
+  //   NULL / empty / '[]' → initialize as new single-element array
+  //   Valid JSON array (starts with '[') → prepend by splicing off the leading '[' and inserting new note + comma
+  //   Anything else (legacy plain text, "true", malformed) → start fresh array with new note
   await db.query(
-    `UPDATE hearings SET post_hrg_notes = $1, post_hrg_review = true, updated_at = NOW() WHERE id = $2`,
-    [JSON.stringify(updated), hearingId],
+    `UPDATE hearings
+        SET post_hrg_notes = CASE
+              WHEN post_hrg_notes IS NULL OR post_hrg_notes = '' OR post_hrg_notes = '[]'
+              THEN ('[' || $1 || ']')
+              WHEN post_hrg_notes LIKE '[{%'
+              THEN ('[' || $1 || ',' || substring(post_hrg_notes from 2))
+              ELSE ('[' || $1 || ']')
+            END,
+            post_hrg_review = true,
+            updated_at = NOW()
+      WHERE id = $2`,
+    [newNote, hearingId],
   );
 
   await logActivity("post_hrg_note_added", `Post HRG note added for hearing #${hearingId}`);
@@ -1148,7 +1215,134 @@ export async function updatePostHrgDeadline(
 export async function getPostHrgHearings(
   filters: HearingFilters,
 ): Promise<PaginatedHearingsResult> {
-  return getHearingsPaginated(filters);
+  const page    = Math.max(1, filters.page ?? 1);
+  const perPage = Number(filters.per_page ?? 50);
+  const offset  = (page - 1) * perPage;
+
+  const params: unknown[] = [];
+  const where: string[] = [
+    "(h.hearing_decision_status = 'Post HRG Review/ Dev' OR h.medical_record_status = 'Post Hearing Development')",
+    "(h.medical_record_status != 'WITHDRAWAL' OR h.medical_record_status IS NULL)",
+  ];
+
+  if (filters.search?.trim()) {
+    params.push(`%${filters.search.trim()}%`);
+    where.push(`h.claimant ILIKE $${params.length}`);
+  }
+
+  if (filters.team_filter && filters.team_filter !== "__all__") {
+    if (filters.team_filter === "unassigned") {
+      where.push("h.mr_team_id IS NULL");
+    } else {
+      params.push(Number(filters.team_filter));
+      where.push(`h.mr_team_id = $${params.length}`);
+    }
+  }
+
+  if (filters.status_filter && filters.status_filter !== "__all__") {
+    params.push(filters.status_filter);
+    where.push(`h.medical_record_status = $${params.length}`);
+  }
+
+  const whereClause = where.join(" AND ");
+  const order = filters.sort_order === "asc" ? "ASC" : "DESC";
+
+  const [countRes, dataRes] = await Promise.all([
+    db.query(
+      `SELECT COUNT(*)::int AS total FROM hearings h WHERE ${whereClause}`,
+      params,
+    ),
+    db.query(
+      `SELECT
+         h.id, h.claimant, h.hearing_date::text, h.converted_time_est,
+         h.medical_record_status, h.hearing_decision_status,
+         h.manner_of_appearance, h.five_day_notice, h.task_assigned,
+         h.credited, h.post_hrg_review, h.post_hrg_deadline, h.post_hrg_notes,
+         h.medical_record_link, h.mr_team_id,
+         r.name       AS rep_name,
+         t.team_name  AS mr_team_name,
+         t.team_color AS mr_team_color,
+         t.team_type  AS mr_team_type
+       FROM hearings h
+       LEFT JOIN representatives r ON h.assigned_rep_id = r.id
+       LEFT JOIN mr_teams t        ON h.mr_team_id = t.id
+       WHERE ${whereClause}
+       ORDER BY h.hearing_date ${order}, h.converted_time_est ${order}
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, perPage, offset],
+    ),
+  ]);
+
+  const total = countRes.rows[0]?.total ?? 0;
+  return {
+    hearings:    dataRes.rows as Hearing[],
+    total,
+    page,
+    per_page:    perPage,
+    total_pages: Math.max(1, Math.ceil(total / perPage)),
+    stats:       { total, complete: 0, in_progress: 0, ready: 0, not_started: 0, urgent: 0 },
+  };
+}
+
+// Inverts the WITHDRAWN_FILTER to fetch ONLY withdrawn/dismissed records.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function getWithdrawnHearings(filters: {
+  page?: number;
+  search?: string;
+  per_page?: number;
+}): Promise<{ hearings: Hearing[]; total: number; total_pages: number }> {
+  const page    = Math.max(1, filters.page ?? 1);
+  const perPage = filters.per_page ?? 50;
+  const offset  = (page - 1) * perPage;
+
+  const params: unknown[] = [];
+  const conds: string[] = [
+    `(
+      h.medical_record_status = 'WITHDRAWAL'
+      OR h.hearing_decision_status LIKE 'Withdrawal%'
+      OR h.hearing_decision_status = 'WD CLMT DECEASED'
+      OR h.hearing_decision_status = 'Dismissal'
+    )`,
+  ];
+
+  if (filters.search?.trim()) {
+    params.push(`%${filters.search.trim()}%`);
+    conds.push(`h.claimant ILIKE $${params.length}`);
+  }
+
+  const where = conds.join(" AND ");
+
+  const [countRes, dataRes] = await Promise.all([
+    db.query(
+      `SELECT COUNT(*)::int AS total FROM hearings h WHERE ${where}`,
+      params,
+    ),
+    db.query(
+      `SELECT
+         h.*,
+         r.name          AS rep_name,
+         t.team_name     AS mr_team_name,
+         t.team_color    AS mr_team_color,
+         t.id            AS mr_team_id,
+         h.hearing_date::text AS hearing_date
+       FROM hearings h
+       LEFT JOIN representatives r ON h.assigned_rep_id = r.id
+       LEFT JOIN mr_teams t        ON h.mr_team_id      = t.id
+       WHERE ${where}
+       ORDER BY h.hearing_date DESC, h.converted_time_est DESC
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, perPage, offset],
+    ),
+  ]);
+
+  const total = countRes.rows[0]?.total ?? 0;
+
+  return {
+    hearings:    dataRes.rows as Hearing[],
+    total,
+    total_pages: Math.max(1, Math.ceil(total / perPage)),
+  };
 }
 
 export async function getCardStats(
