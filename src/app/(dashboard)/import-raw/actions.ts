@@ -51,7 +51,9 @@ export async function importRawHearings(
         continue;
       }
 
-      const ssn = rec.ssn_last_4?.trim() || null;
+      const ssn = rec.ssn_last_4?.trim()
+        ? rec.ssn_last_4.trim().replace(/\D/g, "").slice(-4).padStart(4, "0")
+        : null;
       const hearingDate = rec.hearing_date || null;
 
       if (mode !== "replace") {
@@ -63,7 +65,7 @@ export async function importRawHearings(
         const { rows: existing } = await db.query(
           `SELECT id FROM raw_hearings
            WHERE (LOWER(TRIM(claimant)) = $1 OR LOWER(TRIM(regexp_replace(claimant, '\\s*\\([^)]+\\)\\s*$', '', 'g'))) = $1)
-           AND COALESCE(ssn_last_4, '') = COALESCE($2, '')
+           AND COALESCE(LPAD(ssn_last_4, 4, '0'), '') = COALESCE($2, '')
            AND COALESCE(hearing_date::text, '') = COALESCE($3, '')
            LIMIT 1`,
           [baseName, ssn || "", hearingDate || ""],
@@ -180,7 +182,9 @@ export async function importChronicleToRaw(
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
         [
           e.claimant,
-          e.ssn_last_4 || null,
+          e.ssn_last_4
+            ? e.ssn_last_4.replace(/\D/g, "").slice(-4).padStart(4, "0")
+            : null,
           e.claim_type || null,
           e.hearing_date || null,
           e.hearing_time || null,

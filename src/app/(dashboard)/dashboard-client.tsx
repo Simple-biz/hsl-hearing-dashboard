@@ -3797,7 +3797,7 @@ function CsvCompareModal({ onClose }: { onClose: () => void }) {
 
       for (const h of dbHearings) {
         const base = stripSuffix(h.claimant || "").toLowerCase();
-        const ssn = (h.ssn_last_4 || "").trim();
+        const ssn = (h.ssn_last_4 || "").trim().padStart(4, "0");
         const date = h.hearing_date || "";
         const time = normalizeTime(h.hearing_time || h.converted_time || "");
 
@@ -3864,7 +3864,10 @@ function CsvCompareModal({ onClose }: { onClose: () => void }) {
         const lastName = col(row, "client_lastName");
         const fullName = `${firstName} ${lastName}`.trim();
         if (!fullName || fullName === " ") continue;
-        const ssn = col(row, "client_last4Ssn");
+        const ssn = col(row, "client_last4Ssn")
+          .replace(/\D/g, "")
+          .slice(-4)
+          .padStart(4, "0");
         const { date: hDate, time: hTime } = parseChronicleDateTime(
           col(row, "hearingScheduledDatetime"),
         );
