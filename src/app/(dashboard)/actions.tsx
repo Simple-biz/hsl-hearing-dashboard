@@ -1,7 +1,6 @@
 "use server";
 
 import { db } from "@/lib/db";
-import { createWithdrawalNotification, createPostHrgNotification } from "@/lib/notifications";
 
 export interface HearingRow {
   id: number;
@@ -426,6 +425,26 @@ export async function fetchHearingsPage(
   };
 }
 
+export async function fetchPostHrgNotes(
+  hearingId: number,
+): Promise<{
+  post_hrg_notes: string | null;
+  post_hrg_deadline: string | null;
+  post_hrg_review: boolean;
+}> {
+  const { rows } = await db.query(
+    "SELECT post_hrg_notes, post_hrg_deadline::text, post_hrg_review FROM hearings WHERE id = $1",
+    [hearingId],
+  );
+  return (
+    rows[0] || {
+      post_hrg_notes: null,
+      post_hrg_deadline: null,
+      post_hrg_review: false,
+    }
+  );
+}
+
 export async function updateHearing(
   hearingId: number,
   field: string,
@@ -468,6 +487,9 @@ export async function updateHearing(
     "status_date",
     "entered_hearing_level_date",
     "download_type",
+    // Link fields
+    "claimant_link",
+    "medical_record_link",
   ];
 
   if (!ALLOWED_FIELDS.includes(field)) {
@@ -527,25 +549,6 @@ export async function updateHearing(
     hearingId,
   ]);
 
-  // Fire notifications for withdrawal and post HRG status changes
-  const isWithdrawal =
-    (field === "medical_record_status" && value === "WITHDRAWAL") ||
-    (field === "hearing_decision_status" &&
-      typeof value === "string" &&
-      value.startsWith("Withdrawal"));
-
-  const isPostHrg =
-    (field === "hearing_decision_status" && value === "Post HRG Review/ Dev") ||
-    (field === "medical_record_status" && value === "Post Hearing Development");
-
-  if (isWithdrawal) {
-    await createWithdrawalNotification(hearingId, claimant);
-  }
-
-  if (isPostHrg) {
-    await createPostHrgNotification(hearingId, claimant);
-  }
-
   // Resolve display values for ID fields
   const fieldLabel =
     FIELD_LABELS[field] ||
@@ -569,6 +572,17 @@ export async function updateHearing(
     }
     if (f === "rep_docs_assigned_to") {
       return String(v);
+    }
+    // Post HRG notes — show count instead of raw JSON
+    if (f === "post_hrg_notes") {
+      try {
+        const parsed = JSON.parse(String(v));
+        return Array.isArray(parsed)
+          ? `${parsed.length} note${parsed.length !== 1 ? "s" : ""}`
+          : String(v);
+      } catch {
+        return String(v);
+      }
     }
     // Boolean fields
     if (
@@ -612,6 +626,104 @@ export async function updateHearing(
       `${fieldLabel}: '${oldDisplay}' → '${newDisplay}' for: ${claimant}`,
     );
   }
+}
+
+// ── Add a post HRG note (server-side read-modify-write to avoid race conditions) ──
+export async function addDashboardPostHrgNote(
+  hearingId: number,
+  noteText: string,
+  userName: string,
+) {
+  const { rows } = await db.query(
+    "SELECT post_hrg_notes, claimant FROM hearings WHERE id = $1",
+    [hearingId],
+  );
+  if (!rows[0]) return { success: false, error: "Hearing not found" };
+
+  let notes: { user: string; date: string; note: string }[] = [];
+  try {
+    const parsed = JSON.parse(rows[0].post_hrg_notes || "[]");
+    if (Array.isArray(parsed)) {
+      notes = parsed.map((item: Record<string, unknown>) => ({
+        user: String(item.user ?? item.author ?? item.author_name ?? "Unknown"),
+        date: String(item.date ?? item.created_at ?? ""),
+        note: String(item.note ?? item.content ?? ""),
+      }));
+    }
+  } catch {
+    /* empty */
+  }
+
+  const newNote = {
+    user: userName,
+    date: new Date().toISOString(),
+    note: noteText,
+  };
+  notes.unshift(newNote);
+
+  await db.query("UPDATE hearings SET post_hrg_notes = $1 WHERE id = $2", [
+    JSON.stringify(notes),
+    hearingId,
+  ]);
+
+  const { logAction } = await import("@/lib/activity-log");
+  await logAction(
+    "post_hrg_note_added",
+    `Added Post HRG note for: ${rows[0].claimant}`,
+  );
+
+  return { success: true };
+}
+
+// ── Delete a post HRG note by index (server-side read-modify-write) ──
+export async function deleteDashboardPostHrgNote(
+  hearingId: number,
+  noteIndex: number,
+) {
+  const { rows } = await db.query(
+    "SELECT post_hrg_notes, claimant FROM hearings WHERE id = $1",
+    [hearingId],
+  );
+  if (!rows[0])
+    return { success: false, error: "Hearing not found", updatedNotes: null };
+
+  let notes: { user: string; date: string; note: string }[] = [];
+  try {
+    const parsed = JSON.parse(rows[0].post_hrg_notes || "[]");
+    if (Array.isArray(parsed)) {
+      notes = parsed.map((item: Record<string, unknown>) => ({
+        user: String(item.user ?? item.author ?? item.author_name ?? "Unknown"),
+        date: String(item.date ?? item.created_at ?? ""),
+        note: String(item.note ?? item.content ?? ""),
+      }));
+    }
+  } catch {
+    /* empty */
+  }
+
+  if (noteIndex < 0 || noteIndex >= notes.length) {
+    return {
+      success: false,
+      error: "Invalid note index",
+      updatedNotes: JSON.stringify(notes),
+    };
+  }
+
+  notes.splice(noteIndex, 1);
+  const updatedNotes = notes.length > 0 ? JSON.stringify(notes) : null;
+
+  await db.query("UPDATE hearings SET post_hrg_notes = $1 WHERE id = $2", [
+    updatedNotes,
+    hearingId,
+  ]);
+
+  const { logAction } = await import("@/lib/activity-log");
+  await logAction(
+    "post_hrg_note_deleted",
+    `Deleted Post HRG note for: ${rows[0].claimant}`,
+  );
+
+  return { success: true, updatedNotes };
 }
 
 export async function deleteHearing(hearingId: number) {
@@ -1425,8 +1537,8 @@ export async function bulkEmailSelected(hearingIds: number[]) {
 // ── CSV Compare: fetch all hearings for client-side comparison ──
 export async function fetchAllHearingsForCompare() {
   const { rows } = await db.query(
-    `SELECT id, LOWER(claimant) as claimant_lower, claimant, ssn_last_4, hearing_date::text, hearing_time, converted_time_est
-     FROM hearings ORDER BY hearing_date DESC`,
+    `SELECT id, LOWER(claimant) as claimant_lower, claimant, ssn_last_4, hearing_date::text, hearing_time, converted_time
+     FROM raw_hearings ORDER BY hearing_date DESC`,
   );
   return { hearings: rows, totalCount: rows.length };
 }
@@ -1460,10 +1572,10 @@ export async function importChronicleEntries(
     }
     try {
       await db.query(
-        `INSERT INTO hearings (claimant, ssn_last_4, claim_type, hearing_date, hearing_time, time_zone,
+        `INSERT INTO raw_hearings (claimant, ssn_last_4, claim_type, hearing_date, hearing_time, time_zone,
          claimant_location, representative_location, alj, medical_expert, vocational_expert,
-         status_date, entered_hearing_level_date)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+         status_date, entered_hearing_level_date, converted_time)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
         [
           e.claimant,
           e.ssn_last_4 || null,
@@ -1478,6 +1590,7 @@ export async function importChronicleEntries(
           e.vocational_expert || null,
           e.status_date || null,
           e.entered_hearing_level_date || null,
+          e.hearing_time || null,
         ],
       );
       imported++;
@@ -1488,8 +1601,8 @@ export async function importChronicleEntries(
 
   if (imported > 0)
     await logAction(
-      "hearing_imported",
-      `Imported ${imported} hearings from Chronicle CSV compare`,
+      "import_raw_hearings",
+      `Imported ${imported} entries from Chronicle CSV compare to RAW hearings`,
     );
   return { imported, skipped };
 }
@@ -1531,86 +1644,4 @@ export async function exportHearingsCsv(params: FetchPageParams) {
   }));
 
   return csvRows;
-}
-
-// ─── Atomic Post HRG Note Operations ──────────────────────────────────────────
-// These avoid the read-modify-write race condition that occurs when two users
-// add/delete notes simultaneously via the generic updateHearing path.
-
-export async function addDashboardPostHrgNote(
-  hearingId: number,
-  content: string,
-  authorName: string,
-): Promise<{ success: boolean }> {
-  if (!content.trim()) return { success: false };
-
-  const newNote = JSON.stringify({ author: authorName, date: new Date().toISOString(), content: content.trim() });
-
-  // Atomic prepend — no SELECT needed, Postgres handles the concatenation
-  await db.query(
-    `UPDATE hearings
-        SET post_hrg_notes = CASE
-              WHEN post_hrg_notes IS NULL OR post_hrg_notes = '' OR post_hrg_notes = '[]'
-              THEN ('[' || $1 || ']')
-              WHEN post_hrg_notes LIKE '[{%'
-              THEN ('[' || $1 || ',' || substring(post_hrg_notes from 2))
-              ELSE ('[' || $1 || ']')
-            END,
-            post_hrg_review = true,
-            updated_at = NOW()
-      WHERE id = $2`,
-    [newNote, hearingId],
-  );
-
-  const { logAction } = await import("@/lib/activity-log");
-  const { rows } = await db.query(`SELECT claimant FROM hearings WHERE id = $1`, [hearingId]);
-  const claimant = rows[0]?.claimant || `Hearing #${hearingId}`;
-  await logAction("post_hrg_note_added", `Post HRG note added for: ${claimant}`);
-
-  return { success: true };
-}
-
-export async function deleteDashboardPostHrgNote(
-  hearingId: number,
-  noteIndex: number,
-): Promise<{ success: boolean; updatedNotes: string | null }> {
-  // For delete, we must read-modify-write, but we do it server-side in one round-trip
-  // to minimize the race window (vs the old client-side read-modify-write)
-  const { rows } = await db.query(
-    `SELECT post_hrg_notes, claimant FROM hearings WHERE id = $1`,
-    [hearingId],
-  );
-  if (!rows[0]) return { success: false, updatedNotes: null };
-
-  let notes: unknown[] = [];
-  try {
-    const parsed = JSON.parse(rows[0].post_hrg_notes || "[]");
-    if (Array.isArray(parsed)) notes = parsed;
-  } catch { /* empty */ }
-
-  if (noteIndex < 0 || noteIndex >= notes.length) return { success: false, updatedNotes: null };
-  notes.splice(noteIndex, 1);
-
-  const updatedJson = notes.length > 0 ? JSON.stringify(notes) : null;
-  await db.query(
-    `UPDATE hearings SET post_hrg_notes = $1, updated_at = NOW() WHERE id = $2`,
-    [updatedJson, hearingId],
-  );
-
-  const { logAction } = await import("@/lib/activity-log");
-  const claimant = rows[0]?.claimant || `Hearing #${hearingId}`;
-  await logAction("post_hrg_note_deleted", `Post HRG note deleted for: ${claimant}`);
-
-  return { success: true, updatedNotes: updatedJson };
-}
-
-/** Lightweight fetch for polling — returns raw post_hrg_notes string only */
-export async function fetchPostHrgNotes(
-  hearingId: number,
-): Promise<string | null> {
-  const { rows } = await db.query(
-    `SELECT post_hrg_notes FROM hearings WHERE id = $1`,
-    [hearingId],
-  );
-  return rows[0]?.post_hrg_notes ?? null;
 }

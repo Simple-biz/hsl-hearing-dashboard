@@ -30,6 +30,7 @@ import {
   Trash,
   ClipboardList,
   BarChart3,
+  Link2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatCard, StatCardGrid } from "@/components/stat-card";
@@ -155,6 +156,114 @@ function noteContent(n: PostHrgNote): string {
 /** Resolve date from a note */
 function noteDate(n: PostHrgNote): string {
   return n.date || "";
+}
+
+// ── MR Worksheet Link cell — link + edit button ──
+function MrLinkCell({
+  hearing,
+  editable,
+  onSave,
+}: {
+  hearing: HearingRow;
+  editable?: boolean;
+  onSave?: (id: number, field: string, value: UpdateValue) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [url, setUrl] = useState(hearing.medical_record_link || "");
+  const handleSave = () => {
+    if (onSave) onSave(hearing.id, "medical_record_link", url.trim() || null);
+    setEditing(false);
+  };
+  return (
+    <>
+      <div className="flex items-center gap-1">
+        {hearing.medical_record_link ? (
+          <a
+            href={hearing.medical_record_link}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center text-blue-600 hover:text-blue-800 dark:text-blue-400"
+          >
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        ) : (
+          <span className="text-xs text-muted-foreground">-</span>
+        )}
+        {editable && (
+          <button
+            onClick={() => {
+              setUrl(hearing.medical_record_link || "");
+              setEditing(true);
+            }}
+            className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-blue-600 hover:bg-muted"
+            title="Edit MR Worksheet link"
+          >
+            {hearing.medical_record_link ? (
+              <Pencil className="h-2.5 w-2.5" />
+            ) : (
+              <Link2 className="h-2.5 w-2.5" />
+            )}
+          </button>
+        )}
+      </div>
+      {editing &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+            onClick={() => setEditing(false)}
+          >
+            <div
+              className="w-full max-w-md rounded-lg border bg-card p-4 shadow-lg space-y-3"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-sm font-semibold">
+                MR Worksheet Link — {hearing.claimant}
+              </h3>
+              <input
+                type="url"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://..."
+                className="w-full rounded-md border bg-transparent px-3 py-2 text-xs focus:border-ring focus:outline-none"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleSave();
+                  if (e.key === "Escape") setEditing(false);
+                }}
+              />
+              <div className="flex justify-end gap-2">
+                {hearing.medical_record_link && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-xs text-destructive"
+                    onClick={() => {
+                      if (onSave)
+                        onSave(hearing.id, "medical_record_link", null);
+                      setEditing(false);
+                    }}
+                  >
+                    Remove Link
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-xs"
+                  onClick={() => setEditing(false)}
+                >
+                  Cancel
+                </Button>
+                <Button size="sm" className="text-xs" onClick={handleSave}>
+                  Save
+                </Button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+    </>
+  );
 }
 
 // ── Color maps ──
@@ -796,25 +905,112 @@ function ActionMenu({
   );
 }
 
-// ── Claimant cell — link if claimant_link exists ──
-function ClaimantCell({ hearing }: { hearing: HearingRow }) {
+// ── Claimant cell — link if claimant_link exists + edit button ──
+function ClaimantCell({
+  hearing,
+  editable,
+  onSave,
+}: {
+  hearing: HearingRow;
+  editable?: boolean;
+  onSave?: (id: number, field: string, value: UpdateValue) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [url, setUrl] = useState(hearing.claimant_link || "");
+  const handleSave = () => {
+    if (onSave) onSave(hearing.id, "claimant_link", url.trim() || null);
+    setEditing(false);
+  };
   return (
     <div className="min-w-0 pr-1">
-      {hearing.claimant_link ? (
-        <a
-          href={hearing.claimant_link}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="truncate text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
-        >
-          {hearing.claimant}
-        </a>
-      ) : (
-        <p className="truncate text-xs font-medium">{hearing.claimant}</p>
-      )}
+      <div className="flex items-center gap-1 min-w-0">
+        {hearing.claimant_link ? (
+          <a
+            href={hearing.claimant_link}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="truncate text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+          >
+            {hearing.claimant}
+          </a>
+        ) : (
+          <p className="truncate text-xs font-medium">{hearing.claimant}</p>
+        )}
+        {editable && (
+          <button
+            onClick={() => {
+              setUrl(hearing.claimant_link || "");
+              setEditing(true);
+            }}
+            className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-blue-600 hover:bg-muted"
+            title="Edit claimant link"
+          >
+            {hearing.claimant_link ? (
+              <Pencil className="h-2.5 w-2.5" />
+            ) : (
+              <Link2 className="h-2.5 w-2.5" />
+            )}
+          </button>
+        )}
+      </div>
       <p className="truncate text-[10px] text-muted-foreground">
         {hearing.claim_type}
       </p>
+      {editing &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+            onClick={() => setEditing(false)}
+          >
+            <div
+              className="w-full max-w-md rounded-lg border bg-card p-4 shadow-lg space-y-3"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-sm font-semibold">
+                Claimant Link — {hearing.claimant}
+              </h3>
+              <input
+                type="url"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://..."
+                className="w-full rounded-md border bg-transparent px-3 py-2 text-xs focus:border-ring focus:outline-none"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleSave();
+                  if (e.key === "Escape") setEditing(false);
+                }}
+              />
+              <div className="flex justify-end gap-2">
+                {hearing.claimant_link && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-xs text-destructive"
+                    onClick={() => {
+                      if (onSave) onSave(hearing.id, "claimant_link", null);
+                      setEditing(false);
+                    }}
+                  >
+                    Remove Link
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-xs"
+                  onClick={() => setEditing(false)}
+                >
+                  Cancel
+                </Button>
+                <Button size="sm" className="text-xs" onClick={handleSave}>
+                  Save
+                </Button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
@@ -1882,7 +2078,13 @@ const HearingTable = memo(function HearingTable({
           </span>
         );
       case "claimant":
-        return <ClaimantCell hearing={hearing} />;
+        return (
+          <ClaimantCell
+            hearing={hearing}
+            editable={canEditField(userRole, "claimant_link")}
+            onSave={onUpdate}
+          />
+        );
       case "ssn_last_4":
         return (
           <span className="text-xs font-mono text-muted-foreground">
@@ -2085,17 +2287,8 @@ const HearingTable = memo(function HearingTable({
           />
         );
       case "medical_record_link":
-        return hearing.medical_record_link ? (
-          <a
-            href={hearing.medical_record_link}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center text-blue-600 hover:text-blue-800 dark:text-blue-400"
-          >
-            <ExternalLink className="h-3 w-3" />
-          </a>
-        ) : (
-          <span className="text-xs text-muted-foreground">-</span>
+        return (
+          <MrLinkCell hearing={hearing} editable={editable} onSave={onUpdate} />
         );
       case "task_assigned":
       case "rep_docs_complete":
