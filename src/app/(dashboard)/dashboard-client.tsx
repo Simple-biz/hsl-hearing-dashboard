@@ -830,10 +830,33 @@ function PostHrgModal({
   userRole: string;
 }) {
   const [notes, setNotes] = useState<PostHrgNote[]>(() => parseNotes(hearing.post_hrg_notes));
-  const visibleNotes = notes.filter((n) => noteAuthor(n) !== "System Administrator");
+  // Hide system-generated notes (automated entries) but NOT notes written by human admins.
+  // System-generated notes would have author "System" (no real user). Notes written by
+  // a user whose full_name happens to be "System Administrator" are real user notes.
+  const visibleNotes = notes.filter((n) => noteAuthor(n) !== "System");
   const [newNote, setNewNote] = useState("");
   const [deadline, setDeadline] = useState(hearing.post_hrg_deadline || "");
   const [saving, setSaving] = useState(false);
+
+  // Poll for fresh notes every 8s while modal is open.
+  // Uses a ref to avoid stale closure issues with the saving flag.
+  const savingRef = useRef(false);
+  useEffect(() => { savingRef.current = saving; }, [saving]);
+  useEffect(() => {
+    let active = true;
+    const poll = async () => {
+      if (!active || savingRef.current) return;
+      try {
+        const { fetchPostHrgNotes } = await import("@/app/(dashboard)/actions");
+        const raw = await fetchPostHrgNotes(hearing.id);
+        if (active && !savingRef.current) {
+          setNotes(parseNotes(raw));
+        }
+      } catch { /* network blip — skip this cycle */ }
+    };
+    const id = setInterval(poll, 8000);
+    return () => { active = false; clearInterval(id); };
+  }, [hearing.id]);
 
   // Permission: who can add/edit notes (per PDF matrix)
   // Post HRG Notes: Edit = admin, manager, mr_admin, mr_lead, mr_agent, post_admin, post_staff

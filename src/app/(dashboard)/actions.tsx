@@ -1534,7 +1534,7 @@ export async function exportHearingsCsv(params: FetchPageParams) {
 }
 
 // ─── Atomic Post HRG Note Operations ──────────────────────────────────────────
-// These avoid the read-modify-write race condition that occurs when multiple users
+// These avoid the read-modify-write race condition that occurs when two users
 // add/delete notes simultaneously via the generic updateHearing path.
 
 export async function addDashboardPostHrgNote(
@@ -1602,4 +1602,15 @@ export async function deleteDashboardPostHrgNote(
   await logAction("post_hrg_note_deleted", `Post HRG note deleted for: ${claimant}`);
 
   return { success: true, updatedNotes: updatedJson };
+}
+
+/** Lightweight fetch for polling — returns raw post_hrg_notes string only */
+export async function fetchPostHrgNotes(
+  hearingId: number,
+): Promise<string | null> {
+  const { rows } = await db.query(
+    `SELECT post_hrg_notes FROM hearings WHERE id = $1`,
+    [hearingId],
+  );
+  return rows[0]?.post_hrg_notes ?? null;
 }

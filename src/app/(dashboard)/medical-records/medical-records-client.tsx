@@ -551,8 +551,26 @@ function PostHrgReviewModal({ hearing, onClose, onUpdated, permissions }: {
   const [saving, setSaving]     = useState(false);
   const [loading, setLoading]   = useState(true);
 
+  // Initial fetch
   useEffect(() => {
     getPostHrgNotes(hearing.id).then((n) => { setNotes(n); setLoading(false); });
+  }, [hearing.id]);
+
+  // Poll for fresh notes every 8s while modal is open.
+  // Skips while saving to avoid overwriting optimistic state mid-write.
+  const savingRef = useRef(false);
+  useEffect(() => { savingRef.current = saving; }, [saving]);
+  useEffect(() => {
+    let active = true;
+    const poll = async () => {
+      if (!active || savingRef.current) return;
+      try {
+        const fresh = await getPostHrgNotes(hearing.id);
+        if (active && !savingRef.current) setNotes(fresh);
+      } catch { /* skip this cycle */ }
+    };
+    const id = setInterval(poll, 8000);
+    return () => { active = false; clearInterval(id); };
   }, [hearing.id]);
 
   async function handleAddNote() {
@@ -1901,11 +1919,8 @@ export function MrPivotClient({ userRole, ...data }: Props) {
           hearing={postHrgHearing}
           onClose={() => setPostHrgHearing(null)}
           onUpdated={(id, patch) => {
-            setHearings((prev) => 
-              prev.map((h) => 
-                h.id === id ? { ...h, ...patch } as Hearing : h));
-            setPostHrgHearing((h) => 
-              h && h.id === id ? { ...h, ...patch } as Hearing : h);
+            setHearings((prev) => prev.map((h) => h.id === id ? { ...h, ...patch } as Hearing : h));
+            setPostHrgHearing((h) => h && h.id === id ? { ...h, ...patch } as Hearing : h);
           }}
           permissions={data.permissions}
         />

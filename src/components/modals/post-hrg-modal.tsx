@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useTransition, Fragment } from "react";
+import { useState, useEffect, useTransition, useRef, Fragment } from "react";
 import { ChevronLeft, ChevronRight, Loader2, ClipboardList, ChevronDown, ChevronUp } from "lucide-react";
 import { ModalShell } from "@/components/modals/modal-shell";
 import {
@@ -78,11 +78,28 @@ function NotesList({ hearingId, canEditNotes = true }: { hearingId: number; canE
   const [saving, setSaving]  = useState(false);
   const [loading, startTransition] = useTransition();
 
+  // Initial fetch
   useEffect(() => {
     startTransition(async () => {
       const n = await getPostHrgNotes(hearingId);
       setNotes(n);
     });
+  }, [hearingId]);
+
+  // Poll for fresh notes every 8s while expanded row is visible.
+  const savingRef = useRef(false);
+  useEffect(() => { savingRef.current = saving; }, [saving]);
+  useEffect(() => {
+    let active = true;
+    const poll = async () => {
+      if (!active || savingRef.current) return;
+      try {
+        const fresh = await getPostHrgNotes(hearingId);
+        if (active && !savingRef.current) setNotes(fresh);
+      } catch { /* skip */ }
+    };
+    const id = setInterval(poll, 8000);
+    return () => { active = false; clearInterval(id); };
   }, [hearingId]);
 
   async function handleAddNote() {
