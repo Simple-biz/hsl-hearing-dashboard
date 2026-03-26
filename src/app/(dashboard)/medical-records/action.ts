@@ -130,7 +130,10 @@ export async function getMrPivotPageData(
     db.query(`
       SELECT COUNT(*) AS cnt
       FROM hearings
-      WHERE hearing_decision_status = 'Post HRG Review/ Dev'
+      WHERE (
+        hearing_decision_status = 'Post HRG Review/ Dev'
+        OR medical_record_status = 'Post Hearing Development'
+      )
         AND (medical_record_status != 'WITHDRAWAL' OR medical_record_status IS NULL)
         AND (hearing_decision_status NOT LIKE 'Withdrawal%' OR hearing_decision_status = 'Post HRG Review/ Dev')
     `),
@@ -1107,7 +1110,8 @@ export async function getActivityLog(params: {
 
 // ─── Post HRG Notes helpers ───────────────────────────────────────────────────
 // Notes are stored as a JSON array in hearings.post_hrg_notes (TEXT column).
-// Shape: [{ author: string; date: string; content: string }]
+// Canonical shape: [{ author: string; date: string; content: string }]
+// Legacy shape from dashboard: [{ user: string; date: string; note: string }]
 // post_hrg_review (BOOLEAN) is set to true whenever a note is added.
 
 function parsePostHrgNotes(raw: unknown): PostHrgNote[] {
@@ -1117,11 +1121,11 @@ function parsePostHrgNotes(raw: unknown): PostHrgNote[] {
     if (Array.isArray(parsed)) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return parsed.map((n: any, i: number) => ({
-        id:          i,
-        hearing_id:  0,
-        author_name: n.author ?? n.author_name ?? "Unknown",
-        content:     n.content ?? "",
-        created_at:  n.date   ?? n.created_at  ?? new Date().toISOString(),
+        id:i,
+        hearing_id: 0,
+        author_name: n.author ?? n.author_name ?? n.user ?? "Unknown",
+        content: n.content ?? n.note ?? "",
+        created_at: n.date ?? n.created_at ?? new Date().toISOString(),
       }));
     }
   } catch { /* fall through */ }
@@ -1147,25 +1151,50 @@ export async function addPostHrgNote(
   if (!content.trim()) return { success: false, message: "Note cannot be empty" };
 
   const session = await getSession();
-  const authorName = session?.user?.name ?? "Unknown";
 
-  // Fetch existing notes
-  const { rows } = await db.query(
-    `SELECT post_hrg_notes FROM hearings WHERE id = $1`,
-    [hearingId],
-  );
-  if (!rows[0]) return { success: false, message: "Hearing not found" };
-
-  const existing = parsePostHrgNotes(rows[0].post_hrg_notes);
-  const updated = [
-    { author: authorName, date: new Date().toISOString(), content: content.trim() },
-    ...existing,
+  // Server-side permission check — per HSL Permissions matrix, Post HRG Notes Edit:
+  // system_admin, admin, manager, mr_admin, mr_lead, mr_agent, post_hearing_admin, post_hearing_staff
+  const allowedRoles = [
+    "system_admin", "admin", "manager",
+    "mr_admin", "mr_lead", "mr_agent",
+    "post_hearing_admin", "post_hearing_staff",
   ];
+  const userRole = session?.user?.role;
+  if (!userRole || !allowedRoles.includes(userRole)) {
+    return { success: false, message: "You do not have permission to add notes" };
+  }
 
-  // Write back + flip post_hrg_review flag to true
+  // Resolve author name: session.user.name (from auth.ts), fall back to DB lookup
+  let authorName = session?.user?.name;
+  if (!authorName && session?.user?.id) {
+    const { rows: userRows } = await db.query(
+      `SELECT full_name FROM users WHERE id = $1`,
+      [session.user.id],
+    );
+    authorName = userRows[0]?.full_name ?? "Unknown";
+  }
+  if (!authorName) authorName = "Unknown";
+
+  const newNote = JSON.stringify({ author: authorName, date: new Date().toISOString(), content: content.trim() });
+
+  // Atomic prepend — avoids read-modify-write race condition.
+  // The CASE handles all possible states of post_hrg_notes:
+  //   NULL / empty / '[]' → initialize as new single-element array
+  //   Valid JSON array (starts with '[') → prepend by splicing off the leading '[' and inserting new note + comma
+  //   Anything else (legacy plain text, "true", malformed) → start fresh array with new note
   await db.query(
-    `UPDATE hearings SET post_hrg_notes = $1, post_hrg_review = true, updated_at = NOW() WHERE id = $2`,
-    [JSON.stringify(updated), hearingId],
+    `UPDATE hearings
+        SET post_hrg_notes = CASE
+              WHEN post_hrg_notes IS NULL OR post_hrg_notes = '' OR post_hrg_notes = '[]'
+              THEN ('[' || $1 || ']')
+              WHEN post_hrg_notes LIKE '[{%'
+              THEN ('[' || $1 || ',' || substring(post_hrg_notes from 2))
+              ELSE ('[' || $1 || ']')
+            END,
+            post_hrg_review = true,
+            updated_at = NOW()
+      WHERE id = $2`,
+    [newNote, hearingId],
   );
 
   await logActivity("post_hrg_note_added", `Post HRG note added for hearing #${hearingId}`);
@@ -1192,7 +1221,7 @@ export async function getPostHrgHearings(
 
   const params: unknown[] = [];
   const where: string[] = [
-    "h.hearing_decision_status = 'Post HRG Review/ Dev'",
+    "(h.hearing_decision_status = 'Post HRG Review/ Dev' OR h.medical_record_status = 'Post Hearing Development')",
     "(h.medical_record_status != 'WITHDRAWAL' OR h.medical_record_status IS NULL)",
   ];
 

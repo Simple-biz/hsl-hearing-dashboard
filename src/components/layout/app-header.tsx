@@ -149,7 +149,7 @@ export function AppHeader({ title, subtitle, actions }: AppHeaderProps) {
               </div>
 
               {/* List — shows ~3 items then scrolls */}
-              <div className="max-h-[216px] overflow-y-auto divide-y divide-border">
+              <div className="max-h-54 overflow-y-auto divide-y divide-border">
                 {notifications.length === 0 ? (
                   <div className="px-4 py-8 text-center text-[11px] text-muted-foreground">
                     {isLoading ? "Loading…" : "No notifications"}
