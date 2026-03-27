@@ -23,6 +23,7 @@ import {
   clearRawHearings,
   getRawHearingsStats,
   fetchRawHearingsForCompare,
+  fetchHearingsForCompare,
 } from "./actions";
 
 // ── Column mapping: CSV header → raw_hearings field ──
@@ -211,6 +212,9 @@ export function ImportRawClient({
   const [error, setError] = useState<string | null>(null);
   const [showCheck, setShowCheck] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [compareTarget, setCompareTarget] = useState<
+    "raw_hearings" | "hearings"
+  >("raw_hearings");
   const [checkResult, setCheckResult] = useState<{
     newRecords: { claimant: string; date: string; ssn: string }[];
     duplicateRecords: { claimant: string; date: string; ssn: string }[];
@@ -250,8 +254,11 @@ export function ImportRawClient({
     setChecking(true);
     setCheckResult(null);
     try {
-      // Fetch all raw_hearings
-      const { hearings } = await fetchRawHearingsForCompare();
+      // Fetch from selected table
+      const { hearings } =
+        compareTarget === "hearings"
+          ? await fetchHearingsForCompare()
+          : await fetchRawHearingsForCompare();
 
       // Build DB lookup
       const stripSuffix = (n: string) =>
@@ -349,7 +356,7 @@ export function ImportRawClient({
       );
     }
     setChecking(false);
-  }, [csvData, mapping]);
+  }, [csvData, mapping, compareTarget]);
 
   const handleImport = useCallback(async () => {
     if (!csvData) return;
@@ -724,36 +731,65 @@ export function ImportRawClient({
                   {csvData.rows.length.toLocaleString()} records to import (
                   {mappedCount} fields mapped)
                 </p>
-                <div className="flex gap-2">
+                <div className="flex gap-2 items-center">
                   <Button variant="outline" size="sm" onClick={handleReset}>
                     Cancel
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-1.5"
-                    onClick={handleCheckDuplicates}
-                    disabled={!mapping.claimant || checking}
-                  >
-                    {checking ? (
-                      <>
-                        <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />{" "}
-                        Checking...
-                      </>
-                    ) : (
-                      <>
-                        <Database className="h-3.5 w-3.5" /> Check Duplicates
-                      </>
-                    )}
-                  </Button>
+                  <div className="flex items-center gap-1">
+                    <select
+                      className="h-8 rounded-md border bg-background px-2 text-xs"
+                      value={compareTarget}
+                      onChange={(e) => {
+                        setCompareTarget(
+                          e.target.value as "raw_hearings" | "hearings",
+                        );
+                        setCheckResult(null);
+                      }}
+                    >
+                      <option value="raw_hearings">vs Raw Hearings</option>
+                      <option value="hearings">vs Hearings (main)</option>
+                    </select>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5"
+                      onClick={handleCheckDuplicates}
+                      disabled={!mapping.claimant || checking}
+                    >
+                      {checking ? (
+                        <>
+                          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />{" "}
+                          Checking...
+                        </>
+                      ) : (
+                        <>
+                          <Database className="h-3.5 w-3.5" /> Check Duplicates
+                        </>
+                      )}
+                    </Button>
+                  </div>
                   <Button
                     size="sm"
                     className="gap-1.5"
                     onClick={handleImport}
-                    disabled={!mapping.claimant}
+                    disabled={
+                      !mapping.claimant ||
+                      !checkResult ||
+                      (checkResult &&
+                        mode === "skip" &&
+                        checkResult.newRecords.length === 0)
+                    }
                   >
-                    <Download className="h-3.5 w-3.5" /> Import{" "}
-                    {csvData.rows.length.toLocaleString()} Records
+                    <Download className="h-3.5 w-3.5" />
+                    {checkResult
+                      ? mode === "replace"
+                        ? `Replace All (${csvData.rows.length.toLocaleString()} Records)`
+                        : mode === "update"
+                          ? `Import ${checkResult.newRecords.length.toLocaleString()} New + Update ${checkResult.duplicateRecords.length.toLocaleString()}`
+                          : checkResult.newRecords.length > 0
+                            ? `Import ${checkResult.newRecords.length.toLocaleString()} New Records`
+                            : "All Duplicates — Nothing to Import"
+                      : "Run Check First"}
                   </Button>
                 </div>
               </div>
@@ -840,7 +876,11 @@ export function ImportRawClient({
             <div className="flex items-center justify-between border-b bg-muted/50 px-5 py-4 shrink-0">
               <div>
                 <h2 className="text-sm font-semibold">
-                  🔍 CSV vs Raw Hearings DB — Duplicate Check
+                  🔍 CSV vs{" "}
+                  {compareTarget === "hearings"
+                    ? "Hearings (main)"
+                    : "Raw Hearings"}{" "}
+                  — Duplicate Check
                 </h2>
                 <p className="text-xs text-muted-foreground mt-0.5">
                   CSV: {csvData?.rows.length.toLocaleString()} rows • Matching

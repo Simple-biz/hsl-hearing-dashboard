@@ -1556,7 +1556,7 @@ const FilterBar = memo(function FilterBar({
         <div className="relative w-full sm:w-auto sm:min-w-0 sm:flex-1 sm:max-w-55">
           <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Search Claimant, ALJ, City..."
+            placeholder="Search Claimant, SSN, ALJ, City, Rep..."
             value={filters.search}
             onChange={(e) => update("search", e.target.value)}
             className="h-8 pl-8 text-xs"
@@ -3908,6 +3908,9 @@ type CompareCategory = "new" | "rescheduled" | "duplicate";
 
 function CsvCompareModal({ onClose }: { onClose: () => void }) {
   const [file, setFile] = useState<File | null>(null);
+  const [compareTarget, setCompareTarget] = useState<
+    "raw_hearings" | "hearings"
+  >("raw_hearings");
   const [status, setStatus] = useState<{
     msg: string;
     type: "loading" | "success" | "error";
@@ -3925,15 +3928,20 @@ function CsvCompareModal({ onClose }: { onClose: () => void }) {
   } | null>(null);
   const [activeTab, setActiveTab] = useState<CompareCategory>("new");
   const [importing, setImporting] = useState(false);
+  const [importTarget, setImportTarget] = useState<"raw_hearings" | "hearings">(
+    "raw_hearings",
+  );
   const [importResult, setImportResult] = useState<{
     imported: number;
     skipped: number;
   } | null>(null);
 
-  // Load DB count on mount
+  // Load DB count on mount and when target changes
   useEffect(() => {
-    fetchAllHearingsForCompare().then((d) => setDbCount(d.totalCount));
-  }, []);
+    fetchAllHearingsForCompare(compareTarget).then((d) =>
+      setDbCount(d.totalCount),
+    );
+  }, [compareTarget]);
 
   const stripSuffix = (name: string) =>
     name.replace(/\s*\([^)]+\)\s*$/g, "").trim();
@@ -3977,7 +3985,8 @@ function CsvCompareModal({ onClose }: { onClose: () => void }) {
     setImportResult(null);
 
     try {
-      const { hearings: dbHearings } = await fetchAllHearingsForCompare();
+      const { hearings: dbHearings } =
+        await fetchAllHearingsForCompare(compareTarget);
       setDbCount(dbHearings.length);
 
       // Build lookup maps from DB
@@ -4166,8 +4175,14 @@ function CsvCompareModal({ onClose }: { onClose: () => void }) {
     if (!toImport.length) return;
     setImporting(true);
     try {
-      const result = await importChronicleEntries(toImport);
-      setImportResult(result);
+      if (importTarget === "hearings") {
+        const { importChronicleToHearings } = await import("./actions");
+        const result = await importChronicleToHearings(toImport);
+        setImportResult(result);
+      } else {
+        const result = await importChronicleEntries(toImport);
+        setImportResult(result);
+      }
     } catch {
       setImportResult({ imported: 0, skipped: toImport.length });
     }
@@ -4195,7 +4210,10 @@ function CsvCompareModal({ onClose }: { onClose: () => void }) {
             </h2>
             <p className="text-xs text-muted-foreground mt-0.5">
               Upload a Chronicle CSV export to compare against{" "}
-              {dbCount?.toLocaleString() ?? "..."} hearings in DB
+              {dbCount?.toLocaleString() ?? "..."} records in{" "}
+              {compareTarget === "hearings"
+                ? "Hearings (main)"
+                : "Raw Hearings"}
             </p>
           </div>
           <button
@@ -4207,8 +4225,20 @@ function CsvCompareModal({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
-          {/* Upload */}
+          {/* Compare target + Upload */}
           <div className="flex items-center gap-3">
+            <select
+              className="h-9 rounded-md border bg-background px-2 text-xs shrink-0"
+              value={compareTarget}
+              onChange={(e) => {
+                setCompareTarget(e.target.value as "raw_hearings" | "hearings");
+                setResults(null);
+                setImportResult(null);
+              }}
+            >
+              <option value="raw_hearings">vs Raw Hearings</option>
+              <option value="hearings">vs Hearings (main)</option>
+            </select>
             <label className="flex-1 flex items-center gap-3 rounded-lg border-2 border-dashed px-4 py-3 cursor-pointer hover:bg-muted/30 transition-colors">
               <span className="text-lg">📁</span>
               <div className="flex-1">
@@ -4554,19 +4584,32 @@ function CsvCompareModal({ onClose }: { onClose: () => void }) {
             Close
           </Button>
           {results && migrateCount > 0 && !importResult && (
-            <Button
-              size="sm"
-              className="gap-1.5"
-              disabled={importing}
-              onClick={handleImport}
-            >
-              {importing ? (
-                <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
-              ) : (
-                "🚀"
-              )}
-              Import {migrateCount} to RAW Hearings
-            </Button>
+            <div className="flex items-center gap-2">
+              <select
+                className="h-8 rounded-md border bg-background px-2 text-xs"
+                value={importTarget}
+                onChange={(e) =>
+                  setImportTarget(e.target.value as "raw_hearings" | "hearings")
+                }
+              >
+                <option value="raw_hearings">→ Raw Hearings</option>
+                <option value="hearings">→ Hearings (main)</option>
+              </select>
+              <Button
+                size="sm"
+                className="gap-1.5"
+                disabled={importing}
+                onClick={handleImport}
+              >
+                {importing ? (
+                  <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                ) : (
+                  "🚀"
+                )}
+                Import {migrateCount} to{" "}
+                {importTarget === "hearings" ? "Hearings" : "RAW Hearings"}
+              </Button>
+            </div>
           )}
         </div>
       </div>
