@@ -500,7 +500,7 @@ export function HearingsModal({
                   return n;
                 })}
               >
-                <span className="w-5 h-5 flex items-center justify-center bg-white text-zinc-800 dark:bg-zinc-200 dark:text-zinc-900 rounded text-sm font-bold shrink-0">
+                <span className="w-5 h-5 flex items-center justify-center bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 rounded text-sm font-bold shrink-0">
                   {expanded ? "−" : "+"}
                 </span>
                 <span className="text-xs font-semibold text-foreground">{label}</span>
@@ -585,7 +585,7 @@ export function HearingsModal({
 // ─── Inline Post HRG Review Modal ─────────────────────────────────────────────
 // Self-contained so we don't need to export PostHrgReviewModal from MR page.
 
-function PostHrgInlineModal({ hearing, onClose, onUpdated, userRole }: {
+function PostHrgInlineModal({ hearing, onClose, onUpdated, permissions, userRole }: {
   hearing: Hearing;
   onClose: () => void;
   onUpdated: (id: number, patch: Partial<Hearing>) => void;

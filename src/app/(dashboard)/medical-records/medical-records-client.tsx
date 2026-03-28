@@ -1755,7 +1755,7 @@ export function MrPivotClient({ userRole, ...data }: Props) {
                         className="flex items-center gap-2 px-4 bg-muted/40 border-b border-border cursor-pointer hover:bg-muted/60 select-none"
                         onClick={() => toggleMonth(item.key)}
                       >
-                        <span className="w-4 h-4 flex items-center justify-center bg-white text-zinc-800 dark:bg-zinc-200 dark:text-zinc-900 rounded text-sm font-bold shrink-0">
+                        <span className="w-4 h-4 flex items-center justify-center bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 rounded text-sm font-bold shrink-0">
                           {expandedMonths.has(item.key) ? "−" : "+"}
                         </span>
                         <span className="text-xs font-bold text-foreground min-w-0">
@@ -1786,7 +1786,7 @@ export function MrPivotClient({ userRole, ...data }: Props) {
                         className="flex items-center gap-2 px-4 border-b border-border cursor-pointer hover:bg-muted/50 select-none bg-muted/40"
                         onClick={() => toggleTeam(item.key)}
                       >
-                        <span className="w-4 h-4 flex items-center justify-center bg-white text-zinc-800 dark:bg-zinc-200 dark:text-zinc-900 rounded text-sm font-bold shrink-0">
+                        <span className="w-4 h-4 flex items-center justify-center bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 rounded text-sm font-bold shrink-0">
                           {expandedTeams.has(item.key) ? "−" : "+"}
                         </span>
                         <span className="w-2 h-2 rounded-full shrink-0"
