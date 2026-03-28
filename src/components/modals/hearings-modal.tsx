@@ -85,6 +85,7 @@ interface Props {
   mannerOptions: string[];
   availableMonths: Array<{ month_value: string; month_label: string }>;
   permissions: Permissions;
+  userRole: string;
 }
 
 const DATE_RANGE_OPTIONS = [
@@ -312,7 +313,7 @@ function StatsBar({ stats }: {
 export function HearingsModal({
   open, onClose,
   teams, mrStatusOptions, hearingDecisionOptions, mannerOptions,
-  availableMonths, permissions,
+  availableMonths, permissions, userRole,
 }: Props) {
   const [isPending, startTransition] = useTransition();
   const [hearings, setHearings] = useState<Hearing[]>([]);
@@ -499,7 +500,7 @@ export function HearingsModal({
                   return n;
                 })}
               >
-                <span className="w-5 h-5 flex items-center justify-center bg-primary text-white rounded text-[10px] font-bold shrink-0">
+                <span className="w-5 h-5 flex items-center justify-center bg-white text-zinc-800 dark:bg-zinc-200 dark:text-zinc-900 rounded text-sm font-bold shrink-0">
                   {expanded ? "−" : "+"}
                 </span>
                 <span className="text-xs font-semibold text-foreground">{label}</span>
@@ -574,6 +575,7 @@ export function HearingsModal({
           setPostHrgHearing((h) => h && h.id === id ? { ...h, ...patch } as Hearing : h);
         }}
         permissions={permissions}
+        userRole={userRole}
       />
     )}
     </>
@@ -583,13 +585,19 @@ export function HearingsModal({
 // ─── Inline Post HRG Review Modal ─────────────────────────────────────────────
 // Self-contained so we don't need to export PostHrgReviewModal from MR page.
 
-function PostHrgInlineModal({ hearing, onClose, onUpdated, permissions }: {
+function PostHrgInlineModal({ hearing, onClose, onUpdated, userRole }: {
   hearing: Hearing;
   onClose: () => void;
   onUpdated: (id: number, patch: Partial<Hearing>) => void;
   permissions: Permissions;
+  userRole: string;
 }) {
-  const canEditNotes = permissions.canManage;
+  // Matches server-side allowed list in addPostHrgNote (action.ts)
+  const canEditNotes = [
+    "system_admin", "admin", "manager",
+    "mr_admin", "mr_lead", "mr_agent",
+    "post_hearing_admin", "post_hearing_staff",
+  ].includes(userRole);
   const [notes, setNotes]       = useState<PostHrgNote[]>([]);
   const [newNote, setNewNote]   = useState("");
   const [deadline, setDeadline] = useState(hearing.post_hrg_deadline ?? "");
