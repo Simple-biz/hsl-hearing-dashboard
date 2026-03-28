@@ -262,7 +262,7 @@ function HearingRow({
         </button>
       </div>
 
-      {/* Worksheet */}
+      {/* MR Worksheet */}
       <div className="text-center">
         {h.medical_record_link ? (
           <a href={h.medical_record_link} target="_blank" rel="noreferrer"
@@ -270,7 +270,7 @@ function HearingRow({
             📋 Sheet
           </a>
         ) : (
-          <span className="text-muted-foreground/40 text-[10px]">—</span>
+          <span className="text-[10px] text-muted-foreground hover:text-foreground cursor-default">+ Link</span>
         )}
       </div>
     </div>
@@ -480,7 +480,7 @@ export function HearingsModal({
         >
           <div>Claimant</div><div className="text-center">MR Specialist</div><div className="text-center">Task</div><div className="text-center">Date</div>
           <div className="text-center">MR Status</div><div className="text-center">Credited</div><div className="text-center">HRG Decision</div><div className="text-center">MOA</div>
-          <div className="text-center">5-Day</div><div className="text-center">Post HRG</div><div className="text-center">Worksheet</div>
+          <div className="text-center">5-Day</div><div className="text-center">Post HRG</div><div className="text-center">MR Worksheet</div>
         </div>
 
         {Object.entries(grouped).map(([monthKey, rows]) => {
