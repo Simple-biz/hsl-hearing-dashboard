@@ -822,11 +822,11 @@ function WithdrawnModal({
 
         {/* Table */}
         <div className="flex-1 overflow-auto min-h-0">
-          <table className="w-full text-[11px]" style={{ minWidth: "860px" }}>
+          <table className="w-full text-[11px]" style={{ minWidth: "920px" }}>
             <thead>
               <tr className="bg-muted border-b sticky top-0">
                 {["Month","Hearing Date","Time","Claimant","Rep","MR Team","MR Status","Status","Post HRG","Link"].map((h) => (
-                  <th key={h} className={`px-3 py-2 font-semibold text-muted-foreground text-[10px] uppercase tracking-wide whitespace-nowrap ${h === "Hearing Date" || h === "Time" ? "text-center" : "text-left"}`}>{h}</th>
+                  <th key={h} className="px-3 py-2 font-semibold text-muted-foreground text-[10px] uppercase tracking-wide whitespace-nowrap text-center">{h}</th>
                 ))}
               </tr>
             </thead>
@@ -841,7 +841,7 @@ function WithdrawnModal({
                 const teamText  = h.mr_team_id ? "#fff" : "#374151";
                 return (
                   <tr key={h.id} className="border-b border-border/40 hover:bg-muted/30 transition-colors">
-                    <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap">
+                    <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap text-center">
                       {d.toLocaleDateString("en-US", { month: "short", year: "numeric" })}
                     </td>
                     <td className="px-3 py-1.5 font-medium text-foreground whitespace-nowrap text-center">
@@ -854,10 +854,10 @@ function WithdrawnModal({
                       <div className="font-semibold text-foreground">{h.claimant}</div>
                       {h.rep_name && <div className="text-[9px] text-muted-foreground">{h.rep_name}</div>}
                     </td>
-                    <td className="px-3 py-1.5 text-[10px] text-muted-foreground max-w-20 truncate">
+                    <td className="px-3 py-1.5 text-[10px] text-muted-foreground max-w-20 truncate text-center">
                       {h.rep_name ?? "—"}
                     </td>
-                    <td className="px-3 py-1.5">
+                    <td className="px-3 py-1.5 text-center">
                       {h.mr_team_name
                         ? <span className="inline-block text-[9px] px-1.5 py-0.5 rounded font-medium whitespace-nowrap"
                             style={{ backgroundColor: teamColor, color: teamText }}>
@@ -865,7 +865,7 @@ function WithdrawnModal({
                           </span>
                         : <span className="text-muted-foreground/50">—</span>}
                     </td>
-                    <td className="px-3 py-1.5">
+                    <td className="px-3 py-1.5 text-center">
                       {h.medical_record_status
                         ? <span className={cn("inline-block text-[9px] px-1.5 py-0.5 rounded",
                             MR_STATUS_CLS[h.medical_record_status] ?? "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300")}>
@@ -873,7 +873,7 @@ function WithdrawnModal({
                           </span>
                         : <span className="text-muted-foreground/50">—</span>}
                     </td>
-                    <td className="px-3 py-1.5 text-[10px] text-muted-foreground">
+                    <td className="px-3 py-1.5 text-[10px] text-muted-foreground text-center">
                       {h.hearing_decision_status ?? "—"}
                     </td>
                     <td className="px-3 py-1.5 text-center">
@@ -889,13 +889,13 @@ function WithdrawnModal({
                         📝 {h.post_hrg_review ? <span className="font-semibold">Notes</span> : <span>+ Add</span>}
                       </button>
                     </td>
-                    <td className="px-3 py-1.5 text-center">
+                    <td className="px-3 py-1.5 text-center whitespace-nowrap">
                       {h.medical_record_link
                         ? <a href={h.medical_record_link} target="_blank" rel="noreferrer"
                             className="text-[9px] bg-blue-600 text-white px-1.5 py-0.5 rounded hover:bg-blue-700">
                             📋
                           </a>
-                        : <span className="text-muted-foreground/30">—</span>}
+                        : <span className="text-[10px] text-muted-foreground hover:text-foreground cursor-default">+ Link</span>}
                     </td>
                   </tr>
                 );
