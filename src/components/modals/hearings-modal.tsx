@@ -113,7 +113,7 @@ function HearingRow({
   return (
     <div
       className="grid gap-3 px-4 py-2 border-b border-border/50 hover:bg-muted/40 transition-colors text-xs items-center"
-      style={{ gridTemplateColumns: "180px 120px 40px 100px 170px 120px 40px 100px 80px 48px 80px 90px", minWidth: "1260px" }}
+      style={{ gridTemplateColumns: "minmax(180px,2fr) minmax(120px,1.4fr) minmax(40px,0.4fr) minmax(90px,1fr) minmax(160px,1.8fr) minmax(55px,0.5fr) minmax(130px,1.4fr) minmax(100px,1.1fr) minmax(50px,0.5fr) minmax(80px,0.9fr) minmax(90px,1fr)", minWidth: "1180px" }}
     >
       {/* Claimant */}
       <div className="font-semibold text-foreground truncate">
@@ -122,7 +122,7 @@ function HearingRow({
       </div>
 
       {/* MR Specialist */}
-      <div>
+      <div className="text-center">
         {permissions.canEditMrTeam ? (
           <select
             className="w-full text-[10px] px-1.5 py-1 rounded border border-border bg-card cursor-pointer"
@@ -154,13 +154,13 @@ function HearingRow({
       </div>
 
       {/* Date */}
-      <div className="text-foreground font-medium">
+      <div className="text-center text-foreground font-medium">
         {dateStr}
         {h.converted_time_est && <div className="text-[10px] text-muted-foreground">{fmtTime(h.converted_time_est)}</div>}
       </div>
 
       {/* MR Status */}
-      <div>
+      <div className="text-center">
         {permissions.canManage ? (
           <select
             className={cn("w-full text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer", mrStatusCls(h.medical_record_status))}
@@ -178,7 +178,7 @@ function HearingRow({
       </div>
 
       {/* Credited */}
-      <div>
+      <div className="text-center">
         {permissions.canEditCredited ? (
           <input type="checkbox" checked={h.credited} className="w-4 h-4 cursor-pointer accent-blue-500"
             onChange={(e) => onUpdate(h.id, "credited", e.target.checked)} />
@@ -190,7 +190,7 @@ function HearingRow({
       </div>
 
       {/* Hearing Decision */}
-      <div>
+      <div className="text-center">
         {permissions.canManage ? (
           <select
             className={cn("w-full text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer", hrgStatusCls(h.hearing_decision_status))}
@@ -208,7 +208,7 @@ function HearingRow({
       </div>
 
       {/* MOA */}
-      <div>
+      <div className="text-center">
         {permissions.canEditMoa ? (
           <select
             className="w-full text-[10px] px-1.5 py-1 rounded border border-border bg-card text-foreground cursor-pointer"
@@ -231,14 +231,14 @@ function HearingRow({
       </div>
 
       {/* Post HRG */}
-      <div className="text-[10px]">
+      <div className="text-center text-[10px]">
         {h.post_hrg_review ? (
           <span className="bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300 px-1.5 py-0.5 rounded font-medium">📝 PHR</span>
         ) : <span className="text-muted-foreground/40">—</span>}
       </div>
 
       {/* Worksheet */}
-      <div>
+      <div className="text-center">
         {h.medical_record_link ? (
           <a href={h.medical_record_link} target="_blank" rel="noreferrer"
             className="text-[10px] bg-blue-600 hover:bg-blue-700 text-white px-2 py-0.5 rounded transition-colors">
@@ -431,25 +431,23 @@ export function HearingsModal({
       {/* ── Stats Bar — flex-shrink-0 ───────────────────────────────────── */}
       <StatsBar stats={stats} />
 
-      {/* ── Column Headers — flex-shrink-0, sticky above scrollable body ── */}
-      <div className="shrink-0 overflow-x-auto border-b border-border">
-        <div
-          className="grid gap-3 px-4 py-2 bg-muted text-foreground text-[10px] font-semibold uppercase tracking-wide"
-          style={{ gridTemplateColumns: "180px 120px 40px 100px 170px 120px 40px 100px 80px 48px 80px 90px", minWidth: "1260px" }}
-        >
-          <div>Claimant</div><div>MR Specialist</div><div>Task</div><div>Date</div>
-          <div>MR Status</div><div>Credited</div><div>Status</div><div>MOA</div>
-          <div>5-Day</div><div>Post HRG</div><div>Worksheet</div>
-        </div>
-      </div>
-
-      {/* ── Scrollable Rows — flex-1 min-h-0 ───────────────────────────── */}
-      <div className="flex-1 overflow-y-auto relative min-h-0">
+      {/* ── Scrollable table area — single horizontal scroll container for header + rows ── */}
+      <div className="flex-1 overflow-auto relative min-h-0">
         {isPending && (
           <div className="absolute inset-0 bg-background/70 flex items-center justify-center z-10">
             <Loader2 size={32} className="animate-spin text-primary" />
           </div>
         )}
+
+        {/* Column Headers — sticky top so they stay visible while scrolling vertically */}
+        <div
+          className="grid gap-3 px-4 py-2 bg-muted text-foreground text-[10px] font-semibold uppercase tracking-wide sticky top-0 z-5 border-b border-border"
+          style={{ gridTemplateColumns: "minmax(180px,2fr) minmax(120px,1.4fr) minmax(40px,0.4fr) minmax(90px,1fr) minmax(160px,1.8fr) minmax(55px,0.5fr) minmax(130px,1.4fr) minmax(100px,1.1fr) minmax(50px,0.5fr) minmax(80px,0.9fr) minmax(90px,1fr)", minWidth: "1180px" }}
+        >
+          <div>Claimant</div><div className="text-center">MR Specialist</div><div className="text-center">Task</div><div className="text-center">Date</div>
+          <div className="text-center">MR Status</div><div className="text-center">Credited</div><div className="text-center">HRG Decision</div><div className="text-center">MOA</div>
+          <div className="text-center">5-Day</div><div className="text-center">Post HRG</div><div className="text-center">Worksheet</div>
+        </div>
 
         {Object.entries(grouped).map(([monthKey, rows]) => {
           const expanded = expandedMonths.has(monthKey);
