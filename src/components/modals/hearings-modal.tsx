@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useTransition } from "react";
-import { RefreshCw, Download, ChevronLeft, ChevronRight, Loader2, FileText } from "lucide-react";
+import { RefreshCw, Download, ChevronLeft, ChevronRight, Loader2, FileText, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ModalShell } from "@/components/modals/modal-shell";
 import {
@@ -12,9 +12,13 @@ import {
   toggleTaskAssigned,
   toggleCredited,
   updateMoa,
+  toggleFiveDayNotice,
+  getPostHrgNotes,
+  addPostHrgNote,
+  updatePostHrgDeadline,
 } from "@/app/(dashboard)/medical-records/action";
 import type {
-  Hearing, MrTeam, HearingFilters, Permissions,
+  Hearing, MrTeam, HearingFilters, Permissions, PostHrgNote,
 } from "@/app/(dashboard)/medical-records/action";
 
 // ─── Colour helpers ───────────────────────────────────────────────────────────
@@ -223,18 +227,38 @@ function HearingRow({
         )}
       </div>
 
-      {/* 5-Day */}
-      <div className="text-center text-[10px]">
-        {h.five_day_notice
-          ? <span className="text-emerald-500 font-bold">✓</span>
-          : <span className="text-muted-foreground/40">—</span>}
+      {/* 5-Day — interactive checkbox matching MR page */}
+      <div className="flex justify-center">
+        {permissions.canManage ? (
+          <input
+            type="checkbox"
+            checked={h.five_day_notice}
+            className="w-3.5 h-3.5 accent-emerald-500 cursor-pointer"
+            onChange={(e) => onUpdate(h.id, "five_day_notice", e.target.checked)}
+          />
+        ) : (
+          <input
+            type="checkbox"
+            checked={h.five_day_notice}
+            disabled
+            className="w-3.5 h-3.5 accent-emerald-500 cursor-default"
+          />
+        )}
       </div>
 
-      {/* Post HRG */}
-      <div className="text-center text-[10px]">
-        {h.post_hrg_review ? (
-          <span className="bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300 px-1.5 py-0.5 rounded font-medium">📝 PHR</span>
-        ) : <span className="text-muted-foreground/40">—</span>}
+      {/* Post HRG — clickable button showing + Add or Notes, matching MR page */}
+      <div className="flex justify-center">
+        <button
+          onClick={() => onUpdate(h.id, "__open_post_hrg", h)}
+          className={cn(
+            "inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded border transition-colors whitespace-nowrap",
+            h.post_hrg_review
+              ? "bg-yellow-50 border-yellow-300 text-yellow-800 hover:bg-yellow-100 dark:bg-yellow-900/30 dark:border-yellow-700 dark:text-yellow-300"
+              : "border-border text-muted-foreground hover:bg-muted",
+          )}
+        >
+          📝 {h.post_hrg_review ? <span className="font-semibold">Notes</span> : <span>+ Add</span>}
+        </button>
       </div>
 
       {/* Worksheet */}
@@ -296,6 +320,7 @@ export function HearingsModal({
   const [totalPages, setTotalPages] = useState(1);
   const [stats, setStats] = useState({ total: 0, complete: 0, in_progress: 0, ready: 0, not_started: 0, urgent: 0 });
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
+  const [postHrgHearing, setPostHrgHearing] = useState<Hearing | null>(null);
 
   const [filters, setFilters] = useState<HearingFilters>({
     search: "", month_filter: "", team_filter: "", status_filter: "",
@@ -328,6 +353,12 @@ export function HearingsModal({
   }
 
   async function handleUpdate(id: number, field: string, value: unknown) {
+    // Special signal: open the Post HRG modal for a specific hearing
+    if (field === "__open_post_hrg") {
+      setPostHrgHearing(value as Hearing);
+      return;
+    }
+
     const actions: Record<string, (v: unknown) => Promise<unknown>> = {
       medical_record_status:   (v) => updateMrStatus(id, v as string),
       hearing_decision_status: (v) => updateHearingDecisionStatus(id, v as string),
@@ -335,6 +366,7 @@ export function HearingsModal({
       task_assigned:           (v) => toggleTaskAssigned(id, v as boolean),
       credited:                (v) => toggleCredited(id, v as boolean),
       manner_of_appearance:    (v) => updateMoa(id, v as string),
+      five_day_notice:         (v) => toggleFiveDayNotice(id, v as boolean),
     };
     await actions[field]?.(value);
     setHearings((prev) => prev.map((h) => h.id === id ? { ...h, [field]: value } : h));
@@ -349,6 +381,7 @@ export function HearingsModal({
   if (!open) return null;
 
   return (
+    <>
     <ModalShell
       title="Hearings — Detail View"
       icon={FileText}
@@ -441,7 +474,7 @@ export function HearingsModal({
 
         {/* Column Headers — sticky top so they stay visible while scrolling vertically */}
         <div
-          className="grid gap-3 px-4 py-2 bg-muted text-foreground text-[10px] font-semibold uppercase tracking-wide sticky top-0 z-5 border-b border-border"
+          className="grid gap-3 px-4 py-2 bg-muted text-foreground text-[10px] font-semibold uppercase tracking-wide sticky top-0 z-[5] border-b border-border"
           style={{ gridTemplateColumns: "minmax(180px,2fr) minmax(120px,1.4fr) minmax(40px,0.4fr) minmax(90px,1fr) minmax(160px,1.8fr) minmax(55px,0.5fr) minmax(130px,1.4fr) minmax(100px,1.1fr) minmax(50px,0.5fr) minmax(80px,0.9fr) minmax(90px,1fr)", minWidth: "1180px" }}
         >
           <div>Claimant</div><div className="text-center">MR Specialist</div><div className="text-center">Task</div><div className="text-center">Date</div>
@@ -530,5 +563,136 @@ export function HearingsModal({
         </div>
       </div>
     </ModalShell>
+
+    {/* Post HRG Review modal — opened from the 📝 button in each row */}
+    {postHrgHearing && (
+      <PostHrgInlineModal
+        hearing={postHrgHearing}
+        onClose={() => setPostHrgHearing(null)}
+        onUpdated={(id, patch) => {
+          setHearings((prev) => prev.map((h) => h.id === id ? { ...h, ...patch } : h));
+          setPostHrgHearing((h) => h && h.id === id ? { ...h, ...patch } as Hearing : h);
+        }}
+        permissions={permissions}
+      />
+    )}
+    </>
+  );
+}
+
+// ─── Inline Post HRG Review Modal ─────────────────────────────────────────────
+// Self-contained so we don't need to export PostHrgReviewModal from MR page.
+
+function PostHrgInlineModal({ hearing, onClose, onUpdated, permissions }: {
+  hearing: Hearing;
+  onClose: () => void;
+  onUpdated: (id: number, patch: Partial<Hearing>) => void;
+  permissions: Permissions;
+}) {
+  const canEditNotes = permissions.canManage;
+  const [notes, setNotes]       = useState<PostHrgNote[]>([]);
+  const [newNote, setNewNote]   = useState("");
+  const [deadline, setDeadline] = useState(hearing.post_hrg_deadline ?? "");
+  const [saving, setSaving]     = useState(false);
+  const [loading, setLoading]   = useState(true);
+
+  useEffect(() => {
+    getPostHrgNotes(hearing.id).then((n) => { setNotes(n); setLoading(false); });
+  }, [hearing.id]);
+
+  async function handleAddNote() {
+    if (!newNote.trim()) return;
+    setSaving(true);
+    const r = await addPostHrgNote(hearing.id, newNote.trim());
+    if (r.success) {
+      const updated = await getPostHrgNotes(hearing.id);
+      setNotes(updated);
+      onUpdated(hearing.id, { post_hrg_review: "true" });
+      setNewNote("");
+    }
+    setSaving(false);
+  }
+
+  async function handleUpdateDeadline() {
+    await updatePostHrgDeadline(hearing.id, deadline);
+    onUpdated(hearing.id, { post_hrg_deadline: deadline || null });
+  }
+
+  async function handleClearDeadline() {
+    setDeadline("");
+    await updatePostHrgDeadline(hearing.id, "");
+    onUpdated(hearing.id, { post_hrg_deadline: null });
+  }
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div className="w-full max-w-lg rounded-xl border bg-card shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b px-5 py-4">
+          <h2 className="text-sm font-semibold">Post HRG Review</h2>
+          <button onClick={onClose} className="rounded-md p-1 hover:bg-muted"><X className="h-4 w-4" /></button>
+        </div>
+
+        <div className="max-h-[70vh] overflow-y-auto px-5 py-4 space-y-4">
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            <span>Claimant: <span className="font-medium text-foreground">{hearing.claimant}</span></span>
+            <span>Hearing: <span className="font-medium text-foreground">
+              {new Date(hearing.hearing_date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+            </span></span>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium">Deadline Date</label>
+            <div className="flex items-center gap-2">
+              <input type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)}
+                className="h-8 w-auto text-xs rounded-md border bg-transparent px-2 py-1 text-foreground focus:outline-none focus:border-ring" />
+              <button onClick={handleUpdateDeadline} className="h-8 text-xs px-3 rounded-md border hover:bg-muted transition-colors">Update</button>
+              <button onClick={handleClearDeadline} className="h-8 text-xs px-3 rounded-md hover:bg-muted transition-colors text-muted-foreground">Clear</button>
+            </div>
+          </div>
+
+          {canEditNotes ? (
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium">Add New Note</label>
+            <textarea value={newNote} onChange={(e) => setNewNote(e.target.value)} rows={3}
+              placeholder="Enter your note..."
+              className="w-full rounded-md border bg-transparent px-3 py-2 text-xs placeholder:text-muted-foreground focus:border-ring focus:outline-none" />
+            <button onClick={handleAddNote} disabled={saving || !newNote.trim()}
+              className="h-8 text-xs px-3 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1">
+              {saving && <Loader2 size={10} className="animate-spin" />} Add Note
+            </button>
+          </div>
+          ) : (
+          <p className="text-xs text-muted-foreground italic py-2">You do not have permission to add notes.</p>
+          )}
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium">Notes History <span className="text-muted-foreground">({notes.length})</span></label>
+            {loading ? (
+              <div className="py-4 text-center"><Loader2 size={16} className="animate-spin mx-auto text-muted-foreground" /></div>
+            ) : notes.length === 0 ? (
+              <p className="py-4 text-center text-xs text-muted-foreground">No notes yet</p>
+            ) : (
+              <div className="space-y-2">
+                {notes.map((note, i) => (
+                  <div key={i} className="rounded-lg border bg-muted/30 p-3 space-y-1">
+                    <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                      <span className="font-medium text-foreground">{note.author_name ?? "System"}</span>
+                      {note.created_at && (
+                        <span>{new Date(note.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+                      )}
+                    </div>
+                    <p className="text-xs whitespace-pre-wrap">{note.content}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="border-t px-5 py-3 flex justify-end">
+          <button onClick={onClose} className="h-8 text-xs px-4 rounded-md border hover:bg-muted transition-colors">Close</button>
+        </div>
+      </div>
+    </div>
   );
 }
