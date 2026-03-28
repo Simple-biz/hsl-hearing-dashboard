@@ -3272,6 +3272,7 @@ export function DashboardClient({
             setShowCsvCompare(false);
             fetchPage(filters, page, pageSize, sortKey, sortDir);
           }}
+          userName={userName}
         />
       )}
 

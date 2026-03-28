@@ -425,7 +425,9 @@ export async function fetchHearingsPage(
   };
 }
 
-export async function fetchPostHrgNotes(hearingId: number): Promise<{
+export async function fetchPostHrgNotes(
+  hearingId: number,
+): Promise<{
   post_hrg_notes: string | null;
   post_hrg_deadline: string | null;
   post_hrg_review: boolean;
@@ -1611,6 +1613,118 @@ export async function importChronicleEntries(
 }
 
 // ── Export hearings to CSV (returns data for client-side download) ──
+// ── Archive Chronicle entries (excluded from future compares) ──
+export async function archiveChronicleEntries(
+  entries: {
+    claimant: string;
+    ssn_last_4: string;
+    claim_type: string;
+    hearing_date: string;
+    hearing_time: string;
+    time_zone: string;
+    claimant_location: string;
+    representative_location: string;
+    alj: string;
+    medical_expert: string;
+    vocational_expert: string;
+    status_date: string;
+    entered_hearing_level_date: string;
+    reason?: string;
+  }[],
+  archivedBy: string,
+) {
+  const { logAction } = await import("@/lib/activity-log");
+  let archived = 0;
+  let skipped = 0;
+
+  for (const e of entries) {
+    if (!e.claimant) {
+      skipped++;
+      continue;
+    }
+    try {
+      await db.query(
+        `INSERT INTO archived_chronicles
+          (claimant, ssn_last_4, claim_type, hearing_date, hearing_time, time_zone,
+           claimant_location, representative_location, alj, medical_expert,
+           vocational_expert, status_date, entered_hearing_level_date, reason, archived_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+         ON CONFLICT (claimant, ssn_last_4, hearing_date) DO NOTHING`,
+        [
+          e.claimant,
+          e.ssn_last_4
+            ? e.ssn_last_4.replace(/\D/g, "").slice(-4).padStart(4, "0")
+            : null,
+          e.claim_type || null,
+          e.hearing_date || null,
+          e.hearing_time || null,
+          e.time_zone || "ET",
+          e.claimant_location || null,
+          e.representative_location || null,
+          e.alj || null,
+          e.medical_expert || null,
+          e.vocational_expert || null,
+          e.status_date || null,
+          e.entered_hearing_level_date || null,
+          e.reason || "withdrawn",
+          archivedBy,
+        ],
+      );
+      archived++;
+    } catch {
+      skipped++;
+    }
+  }
+
+  if (archived > 0)
+    await logAction(
+      "archive_chronicles",
+      `Archived ${archived} Chronicle entries`,
+    );
+  return { archived, skipped };
+}
+
+export async function getArchivedChronicles() {
+  const { rows } = await db.query(
+    `SELECT id, claimant, ssn_last_4, claim_type, hearing_date::text, hearing_time,
+            alj, reason, archived_by, archived_at::text
+     FROM archived_chronicles ORDER BY archived_at DESC`,
+  );
+  return rows as {
+    id: number;
+    claimant: string;
+    ssn_last_4: string;
+    claim_type: string;
+    hearing_date: string;
+    hearing_time: string;
+    alj: string;
+    reason: string;
+    archived_by: string;
+    archived_at: string;
+  }[];
+}
+
+export async function unarchiveChronicleEntry(id: number) {
+  const { logAction } = await import("@/lib/activity-log");
+  const { rows } = await db.query(
+    "SELECT claimant FROM archived_chronicles WHERE id = $1",
+    [id],
+  );
+  await db.query("DELETE FROM archived_chronicles WHERE id = $1", [id]);
+  if (rows[0])
+    await logAction("unarchive_chronicles", `Unarchived: ${rows[0].claimant}`);
+  return { success: true };
+}
+
+// Fetch archived keys for filtering during compare
+export async function getArchivedChronicleKeys() {
+  const { rows } = await db.query(
+    `SELECT LOWER(claimant) as claimant_lower, COALESCE(LPAD(ssn_last_4, 4, '0'), '') as ssn, COALESCE(hearing_date::text, '') as hdate
+     FROM archived_chronicles`,
+  );
+  return rows as { claimant_lower: string; ssn: string; hdate: string }[];
+}
+
 export async function exportHearingsCsv(params: FetchPageParams) {
   // Re-use the same filtering logic but without pagination
   const exportParams = { ...params, page: 1, pageSize: 999999 };
