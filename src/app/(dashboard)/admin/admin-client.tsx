@@ -36,6 +36,7 @@ import { fetchActivityLog } from "@/app/(dashboard)/actions";
 import type { ActivityLogEntry } from "@/app/(dashboard)/actions";
 import type { AdminUser } from "./actions";
 import type { UserRole } from "@/lib/roles";
+import { BulkCreateModal } from "@/components/modals/bulk-create-modal";
 
 const ALL_ROLES = [
   { value: "admin", label: "Administrator", group: "Administration" },
@@ -94,6 +95,7 @@ export function AdminClient({
   userRole: string;
 }) {
   const [tab, setTab] = useState<"users" | "activity">("users");
+  const [showBulkCreate, setShowBulkCreate] = useState(false);
   const [users, setUsers] = useState(initUsers);
   const [, startTransition] = useTransition();
   const [toast, setToast] = useState<string | null>(null);
@@ -143,6 +145,7 @@ export function AdminClient({
             setUsers={setUsers}
             startTransition={startTransition}
             showToast={showToast}
+            onBulkCreate={() => setShowBulkCreate(true)}
           />
         )}
         {tab === "activity" && <ActivityTab />}
@@ -150,11 +153,18 @@ export function AdminClient({
 
       {/* Toast notification */}
       {toast && (
-        <div className="fixed top-4 right-4 z-[200] flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 shadow-lg dark:border-emerald-800 dark:bg-emerald-950/80 animate-in fade-in slide-in-from-top-2 duration-200">
+        <div className="fixed top-4 right-4 z-200 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 shadow-lg dark:border-emerald-800 dark:bg-emerald-950/80 animate-in fade-in slide-in-from-top-2 duration-200">
           <span className="text-sm font-medium text-emerald-800 dark:text-emerald-200">
             {toast}
           </span>
         </div>
+      )}
+      {showBulkCreate && (
+        <BulkCreateModal
+          onClose={() => setShowBulkCreate(false)}
+          onCreated={(newUsers) => setUsers((prev) => [...newUsers, ...prev])}
+          existingEmails={new Set(users.map((u) => u.email.toLowerCase()))}
+        />
       )}
     </>
   );
@@ -166,11 +176,13 @@ function UsersTab({
   setUsers,
   startTransition,
   showToast,
+  onBulkCreate,
 }: {
   users: AdminUser[];
   setUsers: (u: AdminUser[]) => void;
   startTransition: (fn: () => void) => void;
   showToast: (msg: string) => void;
+  onBulkCreate: () => void;
 }) {
   const [search, setSearch] = useState("");
   const [showAddModal, setShowAddModal] = useState(false);
@@ -223,6 +235,14 @@ function UsersTab({
           onClick={() => setShowAddModal(true)}
         >
           <UserPlus className="h-4 w-4" /> Add User
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-9 gap-2"
+          onClick={onBulkCreate}
+        >
+          👥 Bulk Create
         </Button>
       </div>
 
