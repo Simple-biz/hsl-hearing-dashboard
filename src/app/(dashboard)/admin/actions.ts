@@ -595,3 +595,89 @@ export async function sendVideoTutorialEmail(userId: number, password: string) {
     `Scheduling video tutorial sent to ${full_name} (${email})`,
   );
 }
+
+// ── Add this to your admin page's actions.ts (e.g. app/(dashboard)/admin/actions.ts) ──
+
+export async function bulkCreateUsers(
+  users: {
+    full_name: string;
+    email: string;
+    role: string;
+    password: string;
+    rep_type?: string;
+    force_password_change?: boolean;
+  }[],
+): Promise<{
+  created: { full_name: string; email: string }[];
+  skipped: { email: string; reason: string }[];
+  newUsers: AdminUser[];
+}> {
+  const bcryptjs = await import("bcryptjs");
+  const { logAction } = await import("@/lib/activity-log");
+
+  const created: { full_name: string; email: string }[] = [];
+  const skipped: { email: string; reason: string }[] = [];
+  const newUsers: AdminUser[] = [];
+
+  for (const user of users) {
+    const email = user.email.trim().toLowerCase();
+    const fullName = user.full_name.trim();
+
+    if (!email || !fullName) {
+      skipped.push({
+        email: email || "(empty)",
+        reason: "Missing name or email",
+      });
+      continue;
+    }
+
+    // Check for existing user
+    const { rows: existing } = await db.query(
+      "SELECT id FROM users WHERE LOWER(email) = $1",
+      [email],
+    );
+    if (existing.length > 0) {
+      skipped.push({ email, reason: "Email already exists" });
+      continue;
+    }
+
+    try {
+      const passwordHash = await bcryptjs.hash(user.password, 10);
+      const forceChange = user.force_password_change !== false;
+      const { rows } = await db.query(
+        `INSERT INTO users (email, password_hash, full_name, role, is_active, force_password_change)
+         VALUES ($1, $2, $3, $4, true, $5) RETURNING id, email, full_name, role, is_active, last_login, created_at`,
+        [email, passwordHash, fullName, user.role || "staff", forceChange],
+      );
+      if (rows[0]) {
+        created.push({ full_name: fullName, email });
+        newUsers.push(rows[0] as AdminUser);
+
+        // Create rep profile if role is rep
+        if (user.role === "rep") {
+          const repType = user.rep_type || "in-house";
+          try {
+            await db.query(
+              `INSERT INTO representatives (name, email, rep_type, is_active, daily_limit, weekly_limit)
+               VALUES ($1, $2, $3, true, 10, 50)`,
+              [fullName, email, repType],
+            );
+          } catch {
+            // Rep profile creation failed but user was created
+          }
+        }
+      }
+    } catch {
+      skipped.push({ email, reason: "Insert failed" });
+    }
+  }
+
+  if (created.length > 0) {
+    await logAction(
+      "bulk_create_users",
+      `Bulk created ${created.length} users: ${created.map((c) => c.email).join(", ")}`,
+    );
+  }
+
+  return { created, skipped, newUsers };
+}
