@@ -22,6 +22,8 @@ import {
   importRawHearings,
   clearRawHearings,
   getRawHearingsStats,
+  fetchRawHearingsForCompare,
+  fetchHearingsForCompare,
 } from "./actions";
 
 // ── Column mapping: CSV header → raw_hearings field ──
@@ -170,8 +172,8 @@ function parseDate(d: string): string | null {
 
 function formatSSN(v: string): string | null {
   if (!v) return null;
-  const digits = v.replace(/\D/g, "");
-  return digits.slice(-4) || null;
+  const digits = v.replace(/\D/g, "").slice(-4);
+  return digits.length > 0 ? digits.padStart(4, "0") : null;
 }
 
 // ── Component ──
@@ -208,6 +210,16 @@ export function ImportRawClient({
     skipped: number;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showCheck, setShowCheck] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [compareTarget, setCompareTarget] = useState<
+    "raw_hearings" | "hearings"
+  >("raw_hearings");
+  const [checkResult, setCheckResult] = useState<{
+    newRecords: { claimant: string; date: string; ssn: string }[];
+    duplicateRecords: { claimant: string; date: string; ssn: string }[];
+    emptyCount: number;
+  } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const handleFile = useCallback((f: File) => {
@@ -235,6 +247,116 @@ export function ImportRawClient({
     };
     reader.readAsText(f);
   }, []);
+
+  // ── Check duplicates: client-side matching against DB ──
+  const handleCheckDuplicates = useCallback(async () => {
+    if (!csvData || Object.keys(mapping).length === 0) return;
+    setChecking(true);
+    setCheckResult(null);
+    try {
+      // Fetch from selected table
+      const { hearings } =
+        compareTarget === "hearings"
+          ? await fetchHearingsForCompare()
+          : await fetchRawHearingsForCompare();
+
+      // Build DB lookup
+      const stripSuffix = (n: string) =>
+        n
+          .replace(/\s*\([^)]+\)\s*$/g, "")
+          .trim()
+          .toLowerCase();
+      const normTime = (t: string | null): string => {
+        if (!t) return "";
+        const s = t.trim();
+        const ap = s.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+        if (ap) {
+          let h = parseInt(ap[1]);
+          if (ap[3].toUpperCase() === "PM" && h !== 12) h += 12;
+          if (ap[3].toUpperCase() === "AM" && h === 12) h = 0;
+          return `${String(h).padStart(2, "0")}:${ap[2]}`;
+        }
+        const hm = s.match(/^(\d{1,2}):(\d{2})/);
+        if (hm) return `${hm[1].padStart(2, "0")}:${hm[2]}`;
+        return s;
+      };
+
+      const dbMap = new Map<string, string[]>(); // key → times[]
+      for (const row of hearings) {
+        const base = stripSuffix(row.claimant || "");
+        const ssn = (row.ssn_last_4 || "").padStart(4, "0");
+        const date = row.hearing_date || "";
+        const key = `${base}|${ssn}|${date}`;
+        const time = normTime(row.hearing_time || row.converted_time || "");
+        if (!dbMap.has(key)) dbMap.set(key, []);
+        if (time) dbMap.get(key)!.push(time);
+      }
+
+      // Check each CSV row
+      const newRecords: { claimant: string; date: string; ssn: string }[] = [];
+      const duplicateRecords: {
+        claimant: string;
+        date: string;
+        ssn: string;
+      }[] = [];
+      let emptyCount = 0;
+
+      for (const row of csvData.rows) {
+        const claimant =
+          mapping.claimant !== undefined
+            ? (row[mapping.claimant] || "").trim()
+            : "";
+        if (!claimant) {
+          emptyCount++;
+          continue;
+        }
+
+        const rawDate =
+          mapping.hearing_date !== undefined
+            ? (row[mapping.hearing_date] || "").trim()
+            : "";
+        const date = parseDate(rawDate) || rawDate;
+        const rawSsn =
+          mapping.ssn_last_4 !== undefined
+            ? (row[mapping.ssn_last_4] || "").trim()
+            : "";
+        const ssn = rawSsn ? formatSSN(rawSsn) || "" : "";
+        const rawTime =
+          mapping.hearing_time !== undefined
+            ? (row[mapping.hearing_time] || "").trim()
+            : "";
+        const convTime =
+          mapping.converted_time !== undefined
+            ? (row[mapping.converted_time] || "").trim()
+            : "";
+        const importTime = normTime(rawTime || convTime);
+
+        const base = stripSuffix(claimant);
+        const key = `${base}|${ssn.padStart(4, "0")}|${date}`;
+        const match = dbMap.get(key);
+
+        if (match) {
+          const timeMatch =
+            !importTime ||
+            match.length === 0 ||
+            match.some((t) => t === importTime);
+          if (timeMatch) {
+            duplicateRecords.push({ claimant, date, ssn });
+            continue;
+          }
+        }
+        newRecords.push({ claimant, date, ssn });
+      }
+
+      setCheckResult({ newRecords, duplicateRecords, emptyCount });
+      setShowCheck(true);
+    } catch (e) {
+      setError(
+        "Check failed: " + (e instanceof Error ? e.message : "Unknown error"),
+      );
+    }
+    setChecking(false);
+  }, [csvData, mapping, compareTarget]);
 
   const handleImport = useCallback(async () => {
     if (!csvData) return;
@@ -609,18 +731,65 @@ export function ImportRawClient({
                   {csvData.rows.length.toLocaleString()} records to import (
                   {mappedCount} fields mapped)
                 </p>
-                <div className="flex gap-2">
+                <div className="flex gap-2 items-center">
                   <Button variant="outline" size="sm" onClick={handleReset}>
                     Cancel
                   </Button>
+                  <div className="flex items-center gap-1">
+                    <select
+                      className="h-8 rounded-md border bg-background px-2 text-xs"
+                      value={compareTarget}
+                      onChange={(e) => {
+                        setCompareTarget(
+                          e.target.value as "raw_hearings" | "hearings",
+                        );
+                        setCheckResult(null);
+                      }}
+                    >
+                      <option value="raw_hearings">vs Raw Hearings</option>
+                      <option value="hearings">vs Hearings (main)</option>
+                    </select>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5"
+                      onClick={handleCheckDuplicates}
+                      disabled={!mapping.claimant || checking}
+                    >
+                      {checking ? (
+                        <>
+                          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />{" "}
+                          Checking...
+                        </>
+                      ) : (
+                        <>
+                          <Database className="h-3.5 w-3.5" /> Check Duplicates
+                        </>
+                      )}
+                    </Button>
+                  </div>
                   <Button
                     size="sm"
                     className="gap-1.5"
                     onClick={handleImport}
-                    disabled={!mapping.claimant}
+                    disabled={
+                      !mapping.claimant ||
+                      !checkResult ||
+                      (checkResult &&
+                        mode === "skip" &&
+                        checkResult.newRecords.length === 0)
+                    }
                   >
-                    <Download className="h-3.5 w-3.5" /> Import{" "}
-                    {csvData.rows.length.toLocaleString()} Records
+                    <Download className="h-3.5 w-3.5" />
+                    {checkResult
+                      ? mode === "replace"
+                        ? `Replace All (${csvData.rows.length.toLocaleString()} Records)`
+                        : mode === "update"
+                          ? `Import ${checkResult.newRecords.length.toLocaleString()} New + Update ${checkResult.duplicateRecords.length.toLocaleString()}`
+                          : checkResult.newRecords.length > 0
+                            ? `Import ${checkResult.newRecords.length.toLocaleString()} New Records`
+                            : "All Duplicates — Nothing to Import"
+                      : "Run Check First"}
                   </Button>
                 </div>
               </div>
@@ -693,6 +862,215 @@ export function ImportRawClient({
           </div>
         )}
       </div>
+
+      {/* ════════════════ CHECK DUPLICATES MODAL ════════════════ */}
+      {showCheck && checkResult && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setShowCheck(false)}
+        >
+          <div
+            className="w-full max-w-4xl max-h-[85vh] flex flex-col rounded-xl border bg-card shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b bg-muted/50 px-5 py-4 shrink-0">
+              <div>
+                <h2 className="text-sm font-semibold">
+                  🔍 CSV vs{" "}
+                  {compareTarget === "hearings"
+                    ? "Hearings (main)"
+                    : "Raw Hearings"}{" "}
+                  — Duplicate Check
+                </h2>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  CSV: {csvData?.rows.length.toLocaleString()} rows • Matching
+                  by Claimant + SSN + Date + Time
+                </p>
+              </div>
+              <button
+                onClick={() => setShowCheck(false)}
+                className="text-muted-foreground hover:text-foreground text-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
+              {/* Summary */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="rounded-lg border bg-emerald-50 dark:bg-emerald-900/30 p-3 text-center">
+                  <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-400">
+                    {checkResult.newRecords.length.toLocaleString()}
+                  </p>
+                  <p className="text-xs text-muted-foreground font-medium">
+                    New Records
+                  </p>
+                </div>
+                <div className="rounded-lg border bg-amber-50 dark:bg-amber-900/30 p-3 text-center">
+                  <p className="text-2xl font-bold text-amber-700 dark:text-amber-400">
+                    {checkResult.duplicateRecords.length.toLocaleString()}
+                  </p>
+                  <p className="text-xs text-muted-foreground font-medium">
+                    Duplicates in DB
+                  </p>
+                </div>
+                <div className="rounded-lg border bg-muted/50 p-3 text-center">
+                  <p className="text-2xl font-bold text-muted-foreground">
+                    {checkResult.emptyCount}
+                  </p>
+                  <p className="text-xs text-muted-foreground font-medium">
+                    Empty / Skipped
+                  </p>
+                </div>
+              </div>
+
+              {/* New Records */}
+              {checkResult.newRecords.length > 0 && (
+                <div className="rounded-lg border overflow-hidden">
+                  <div className="flex items-center gap-2 px-3 py-2 bg-emerald-50 dark:bg-emerald-900/30 border-b">
+                    <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                    <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-300">
+                      New Records (
+                      {checkResult.newRecords.length.toLocaleString()})
+                    </p>
+                    <p className="text-[10px] text-emerald-600 dark:text-emerald-400">
+                      — Will be inserted
+                    </p>
+                  </div>
+                  <div className="overflow-auto max-h-62.5">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10">
+                        <tr>
+                          <th className="px-3 py-1.5 text-left font-semibold">
+                            #
+                          </th>
+                          <th className="px-3 py-1.5 text-left font-semibold">
+                            Claimant
+                          </th>
+                          <th className="px-3 py-1.5 text-left font-semibold">
+                            Hearing Date
+                          </th>
+                          <th className="px-3 py-1.5 text-left font-semibold">
+                            SSN
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {checkResult.newRecords.slice(0, 200).map((r, i) => (
+                          <tr key={i} className="hover:bg-muted/30">
+                            <td className="px-3 py-1.5 text-muted-foreground">
+                              {i + 1}
+                            </td>
+                            <td className="px-3 py-1.5 font-medium">
+                              {r.claimant}
+                            </td>
+                            <td className="px-3 py-1.5 tabular-nums">
+                              {r.date || "—"}
+                            </td>
+                            <td className="px-3 py-1.5 text-muted-foreground tabular-nums">
+                              {r.ssn || "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {checkResult.newRecords.length > 200 && (
+                      <p className="px-3 py-2 text-xs text-muted-foreground text-center border-t">
+                        Showing first 200 of{" "}
+                        {checkResult.newRecords.length.toLocaleString()}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Duplicates */}
+              {checkResult.duplicateRecords.length > 0 && (
+                <div className="rounded-lg border overflow-hidden">
+                  <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-900/30 border-b">
+                    <span className="h-2 w-2 rounded-full bg-amber-500" />
+                    <p className="text-xs font-semibold text-amber-800 dark:text-amber-300">
+                      Duplicates (
+                      {checkResult.duplicateRecords.length.toLocaleString()})
+                    </p>
+                    <p className="text-[10px] text-amber-600 dark:text-amber-400">
+                      —{" "}
+                      {mode === "skip"
+                        ? "Will be skipped"
+                        : mode === "update"
+                          ? "Will be updated"
+                          : "N/A in replace mode"}
+                    </p>
+                  </div>
+                  <div className="overflow-auto max-h-62.5">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10">
+                        <tr>
+                          <th className="px-3 py-1.5 text-left font-semibold">
+                            #
+                          </th>
+                          <th className="px-3 py-1.5 text-left font-semibold">
+                            Claimant
+                          </th>
+                          <th className="px-3 py-1.5 text-left font-semibold">
+                            Hearing Date
+                          </th>
+                          <th className="px-3 py-1.5 text-left font-semibold">
+                            SSN
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {checkResult.duplicateRecords
+                          .slice(0, 200)
+                          .map((r, i) => (
+                            <tr key={i} className="hover:bg-muted/30">
+                              <td className="px-3 py-1.5 text-muted-foreground">
+                                {i + 1}
+                              </td>
+                              <td className="px-3 py-1.5 font-medium">
+                                {r.claimant}
+                              </td>
+                              <td className="px-3 py-1.5 tabular-nums">
+                                {r.date || "—"}
+                              </td>
+                              <td className="px-3 py-1.5 text-muted-foreground tabular-nums">
+                                {r.ssn || "—"}
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                    {checkResult.duplicateRecords.length > 200 && (
+                      <p className="px-3 py-2 text-xs text-muted-foreground text-center border-t">
+                        Showing first 200 of{" "}
+                        {checkResult.duplicateRecords.length.toLocaleString()}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {checkResult.newRecords.length === 0 &&
+                checkResult.duplicateRecords.length === 0 && (
+                  <div className="rounded-lg border p-8 text-center text-muted-foreground">
+                    ✅ All rows are empty — nothing to import.
+                  </div>
+                )}
+            </div>
+
+            <div className="flex items-center justify-end border-t px-5 py-3 shrink-0">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowCheck(false)}
+              >
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

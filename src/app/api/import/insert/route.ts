@@ -138,7 +138,7 @@ export async function POST(req: NextRequest) {
     );
 
   const body = await req.json();
-  const { records, mapping, hyperlinks = {} } = body;
+  const { records, mapping, hyperlinks = {}, comments = {} } = body;
 
   if (!records || records.length === 0) {
     return NextResponse.json({
@@ -193,29 +193,68 @@ export async function POST(req: NextRequest) {
           }
           continue;
         }
-
-        if (dbField === "medical_record_source") {
-          const colLetter = String.fromCharCode(65 + colIdx);
-          const cellRef = `${colLetter}${record.rowIndex + 2}`;
-          if (hyperlinks[cellRef])
-            fields.medical_record_link = hyperlinks[cellRef];
-          continue;
-        }
-
         if (dbField === "mr_team_id") {
           const tid = teamLookup[rawValue.toLowerCase().trim()];
           if (tid) fields.mr_team_id = tid;
           continue;
         }
 
-        if (!IMPORTABLE.has(dbField)) continue;
+        // Helper: convert column index to Excel letter(s) (0=A, 25=Z, 26=AA, etc.)
+        const colToLetter = (c: number): string => {
+          let s = "";
+          let n = c;
+          while (n >= 0) {
+            s = String.fromCharCode((n % 26) + 65) + s;
+            n = Math.floor(n / 26) - 1;
+          }
+          return s;
+        };
+        const cellRef = `${colToLetter(colIdx)}${record.rowIndex + 2}`;
 
         // Extract hyperlink from claimant cell → claimant_link
         if (dbField === "claimant") {
-          const colLetter = String.fromCharCode(65 + colIdx);
-          const cellRef = `${colLetter}${record.rowIndex + 2}`;
           if (hyperlinks[cellRef]) fields.claimant_link = hyperlinks[cellRef];
         }
+
+        // Extract hyperlink from medical_record_status or medical_record_source → medical_record_link
+        if (
+          dbField === "medical_record_status" ||
+          dbField === "medical_record_source"
+        ) {
+          if (hyperlinks[cellRef])
+            fields.medical_record_link = hyperlinks[cellRef];
+          if (dbField === "medical_record_source") continue; // virtual field, only extract hyperlink
+        }
+
+        // Extract comment from post_hrg_deadline → post_hrg_notes
+        if (dbField === "post_hrg_deadline" && comments[cellRef]) {
+          const rawComment = comments[cellRef];
+          const noteEntries: { user: string; date: string; note: string }[] =
+            [];
+          for (const line of rawComment.split("\n")) {
+            const authorMatch = line.match(
+              /^\[([^\]]+?)(?:\s*-\s*([^\]]+))?\]\s*(.*)/,
+            );
+            if (authorMatch) {
+              noteEntries.push({
+                user: authorMatch[1].trim(),
+                date: authorMatch[2]?.trim() || new Date().toISOString(),
+                note: authorMatch[3]?.trim() || "",
+              });
+            } else if (line.trim()) {
+              noteEntries.push({
+                user: "Imported",
+                date: new Date().toISOString(),
+                note: line.trim(),
+              });
+            }
+          }
+          if (noteEntries.length > 0) {
+            fields.post_hrg_notes = JSON.stringify(noteEntries);
+          }
+        }
+
+        if (!IMPORTABLE.has(dbField)) continue;
 
         if (
           dbField === "hearing_date" ||

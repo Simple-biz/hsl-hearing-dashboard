@@ -15,6 +15,7 @@ interface SheetData {
   headers: string[];
   rows: unknown[][];
   hyperlinks?: Record<string, string>;
+  comments?: Record<string, string>; // cellRef → comment text
 }
 
 interface DuplicateResult {
@@ -158,8 +159,12 @@ const CARD = "rounded-xl border bg-card p-6 shadow-sm";
 // ─── Auto-map logic ─────────────────────────────────────────────────────────
 
 const AUTO_MAP: Record<string, string[]> = {
+  // Basic Info
   claimant: ["claimant", "claimant name", "name", "client name", "client"],
   ssn_last_4: ["ssn", "ssn last 4", "ssn_last_4", "last 4 ssn", "social"],
+  claim_type: ["claim type", "claim_type", "type", "claimtype"],
+
+  // Hearing Details
   hearing_date: ["hearing date", "date", "hearing_date", "hrg date"],
   hearing_time: ["hearing time", "hearing_time", "hrg time", "time"],
   converted_time_est: [
@@ -170,27 +175,126 @@ const AUTO_MAP: Record<string, string[]> = {
     "time in est",
   ],
   time_zone: ["time zone", "timezone", "time_zone", "tz"],
+
+  // Location
   city: ["city", "hearing city"],
   state: ["state", "hearing state"],
-  alj: ["alj", "judge", "administrative law judge"],
-  claim_type: ["claim type", "claim_type", "type"],
-  claimant_location: ["claimant location", "claimant_location", "cl location"],
+  claimant_location: [
+    "claimant location",
+    "claimant_location",
+    "clmt location",
+  ],
   representative_location: [
+    "representative location",
     "rep location",
     "representative_location",
-    "representative location",
   ],
-  manner_of_appearance: ["manner of appearance", "moa", "appearance"],
-  medical_expert: ["medical expert", "me"],
-  vocational_expert: ["vocational expert", "ve"],
+
+  // Personnel
+  alj: ["alj", "judge", "administrative law judge"],
+  medical_expert: ["medical expert", "medical_expert", "me"],
+  vocational_expert: ["vocational expert", "vocational_expert", "ve"],
+
+  // Dates
   status_date: ["status date", "status_date"],
-  download_type: ["download type", "download_type"],
-  entered_hearing_level_date: ["entered hearing level", "ehl", "ehl date"],
-  hearing_decision_status: ["decision", "decision status"],
-  representative: ["representative", "rep", "rep name", "attorney"],
-  medical_record_link: ["mr worksheet", "mr link", "medical record link"],
-  medical_record_source: ["mr worksheet link", "mr source"],
-  claimant_link: ["claimant link", "client link"],
+  entered_hearing_level_date: [
+    "entered hearing level",
+    "hearing level date",
+    "entered_hearing_level_date",
+  ],
+  download_type: [
+    "download type",
+    "download_type",
+    "download",
+    "assure downloaded",
+  ],
+
+  // Status columns
+  manner_of_appearance: [
+    "rep manner of appearance",
+    "manner of appearance",
+    "manner_of_appearance",
+    "moa",
+    "appearance",
+  ],
+  hearing_decision_status: [
+    "status",
+    "decision",
+    "hearing_decision_status",
+    "decision status",
+    "hrg decision",
+  ],
+  phi_sheet_complete: [
+    "phi sheet",
+    "phi",
+    "phi_sheet_complete",
+    "phi complete",
+  ],
+  rep_docs_complete: [
+    "rep docs filed with oho",
+    "rep docs",
+    "rep_docs_complete",
+    "rep documents",
+  ],
+  fee_agreement_complete: [
+    "completed fee agreement",
+    "fee agmt",
+    "fee_agreement_complete",
+    "fee agreement",
+  ],
+  five_day_notice: [
+    "5-day letter sent",
+    "5-day",
+    "five_day_notice",
+    "5 day",
+    "five day",
+    "5 day notice",
+  ],
+  rfc_status: ["rfc", "rfc_status", "rfc status"],
+  task_assigned: ["task assigned", "task", "task_assigned"],
+  brief_assigned_to: ["brief", "brief_assigned_to", "brief assigned"],
+
+  // Representative assignment (lookup by name)
+  representative: ["representative", "rep", "attorney", "assigned rep"],
+
+  // Medical Records
+  mr_team_id: [
+    '"mr" specialist',
+    "mr specialist",
+    "medical team",
+    "mr_team_id",
+    "mr team",
+  ],
+  medical_record_status: [
+    "medical records status",
+    "medical_record_status",
+    "mr status",
+  ],
+  medical_record_source: [
+    "status of medical records",
+    "mr worksheet link",
+    "mr source",
+  ],
+  medical_record_link: ["mr worksheet", "medical_record_link", "mr link"],
+
+  // Links
+  claimant_link: ["claimant link", "claimant_link", "client link"],
+
+  // Post HRG Review
+  post_hrg_deadline: [
+    "post hrg review deadline",
+    "post hrg review",
+    "post hrg deadline",
+    "post_hrg_deadline",
+    "post hearing deadline",
+    "phrg deadline",
+  ],
+  post_hrg_notes: [
+    "post hrg notes",
+    "post_hrg_notes",
+    "post hearing notes",
+    "phrg notes",
+  ],
 };
 
 function autoMap(headers: string[]): Record<string, number> {
@@ -311,11 +415,113 @@ export function ImportClient({ userRole }: { userRole: string }) {
       setLookupBuilt(false);
 
       const reader = new FileReader();
-      reader.onload = (e) => {
+      reader.onload = async (e) => {
         try {
           const data = new Uint8Array(e.target!.result as ArrayBuffer);
           const wb = XLSX.read(data, { type: "array", cellStyles: true });
-          const parsed: SheetData[] = wb.SheetNames.map((name) => {
+
+          // Extract threaded comments from XLSX using JSZip (if available)
+          const threadedComments: Record<number, Record<string, string>> = {};
+          try {
+            const JSZip = (await import("jszip")).default;
+            const zip = await JSZip.loadAsync(data);
+            // Build person lookup
+            const personLookup: Record<string, string> = {};
+            const personFile = zip.file("xl/persons/person.xml");
+            if (personFile) {
+              const pXml = await personFile.async("text");
+              const pDoc = new DOMParser().parseFromString(pXml, "text/xml");
+              const ns =
+                "http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments";
+              let persons = pDoc.getElementsByTagNameNS(ns, "person");
+              if (persons.length === 0)
+                persons = pDoc.getElementsByTagName("person");
+              for (const p of Array.from(persons)) {
+                const pid = p.getAttribute("id") || "";
+                const name = p.getAttribute("displayName") || "";
+                if (pid && name) personLookup[pid] = name;
+              }
+            }
+            // Find sheet-to-comments mapping
+            for (let si = 0; si < wb.SheetNames.length; si++) {
+              const relsPath = `xl/worksheets/_rels/sheet${si + 1}.xml.rels`;
+              const relsFile = zip.file(relsPath);
+              if (!relsFile) continue;
+              const relsXml = await relsFile.async("text");
+              const relsDoc = new DOMParser().parseFromString(
+                relsXml,
+                "text/xml",
+              );
+              for (const rel of Array.from(
+                relsDoc.getElementsByTagName("Relationship"),
+              )) {
+                const type = rel.getAttribute("Type") || "";
+                const target = rel.getAttribute("Target") || "";
+                if (type.includes("threadedComment")) {
+                  const filePath = target.replace(/^\.\.\//, "xl/");
+                  const tcFile = zip.file(filePath);
+                  if (!tcFile) continue;
+                  const tcXml = await tcFile.async("text");
+                  const tcDoc = new DOMParser().parseFromString(
+                    tcXml,
+                    "text/xml",
+                  );
+                  const ns =
+                    "http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments";
+                  let tcEls = tcDoc.getElementsByTagNameNS(
+                    ns,
+                    "threadedComment",
+                  );
+                  if (tcEls.length === 0)
+                    tcEls = tcDoc.getElementsByTagName("threadedComment");
+                  const sheetComments: Record<string, string[]> = {};
+                  for (const tc of Array.from(tcEls)) {
+                    const ref = tc.getAttribute("ref");
+                    if (!ref) continue;
+                    const personId = tc.getAttribute("personId") || "";
+                    const author = personLookup[personId] || "";
+                    const dateStr = tc.getAttribute("dT") || "";
+                    let datePart = "";
+                    if (dateStr)
+                      try {
+                        datePart = new Date(dateStr).toLocaleDateString(
+                          "en-US",
+                          { month: "short", day: "numeric", year: "numeric" },
+                        );
+                      } catch {}
+                    let text = "";
+                    const textEls = tc.getElementsByTagNameNS(ns, "text");
+                    if (textEls.length > 0) text = textEls[0].textContent || "";
+                    else {
+                      const fb = tc.getElementsByTagName("text");
+                      if (fb.length > 0) text = fb[0].textContent || "";
+                    }
+                    if (text.trim()) {
+                      if (!sheetComments[ref]) sheetComments[ref] = [];
+                      const prefix =
+                        author && datePart
+                          ? `[${author} - ${datePart}] `
+                          : author
+                            ? `[${author}] `
+                            : datePart
+                              ? `[${datePart}] `
+                              : "";
+                      sheetComments[ref].push(prefix + text.trim());
+                    }
+                  }
+                  const merged: Record<string, string> = {};
+                  for (const [ref, texts] of Object.entries(sheetComments))
+                    merged[ref] = texts.join("\n");
+                  if (!threadedComments[si]) threadedComments[si] = {};
+                  Object.assign(threadedComments[si], merged);
+                }
+              }
+            }
+          } catch {
+            /* JSZip not available or not XLSX — skip threaded comments */
+          }
+
+          const parsed: SheetData[] = wb.SheetNames.map((name, sheetIdx) => {
             const ws = wb.Sheets[name];
             const json = XLSX.utils.sheet_to_json<unknown[]>(ws, {
               header: 1,
@@ -328,12 +534,36 @@ export function ImportClient({ userRole }: { userRole: string }) {
               .filter((r: unknown[]) => r.some((c) => c !== ""));
             // Extract hyperlinks
             const hyperlinks: Record<string, string> = {};
+            // Extract cell comments (cell.c)
+            const comments: Record<string, string> = {};
             for (const [cell, val] of Object.entries(ws)) {
               if (cell.startsWith("!")) continue;
-              const v = val as { l?: { Target?: string } };
+              const v = val as {
+                l?: { Target?: string };
+                c?: { t?: string; a?: string }[];
+              };
               if (v.l?.Target) hyperlinks[cell] = v.l.Target;
+              if (v.c && Array.isArray(v.c) && v.c.length > 0) {
+                const parts = v.c
+                  .map((c) => {
+                    const author = c.a || "";
+                    const text = (c.t || "").trim();
+                    if (!text) return "";
+                    return author ? `[${author}] ${text}` : text;
+                  })
+                  .filter(Boolean);
+                if (parts.length > 0) comments[cell] = parts.join("\n");
+              }
             }
-            return { name, headers, rows, hyperlinks };
+            // Merge threaded comments (overwrite cell.c if threaded exists)
+            if (threadedComments[sheetIdx]) {
+              for (const [ref, text] of Object.entries(
+                threadedComments[sheetIdx],
+              )) {
+                comments[ref] = text; // threaded comments take priority
+              }
+            }
+            return { name, headers, rows, hyperlinks, comments };
           });
           setSheets(parsed);
           if (parsed.length === 1) {
@@ -842,6 +1072,7 @@ export function ImportClient({ userRole }: { userRole: string }) {
               records: batch,
               mapping,
               hyperlinks: currentSheet!.hyperlinks || {},
+              comments: currentSheet!.comments || {},
             }),
           }).then((r) => r.json()),
         ),
@@ -899,6 +1130,7 @@ export function ImportClient({ userRole }: { userRole: string }) {
             mapping,
             headers: currentSheet!.headers,
             hyperlinks: currentSheet!.hyperlinks || {},
+            comments: currentSheet!.comments || {},
             preserveExisting,
           }),
         });
@@ -955,6 +1187,7 @@ export function ImportClient({ userRole }: { userRole: string }) {
             records: batch,
             mapping,
             hyperlinks: currentSheet!.hyperlinks || {},
+            comments: currentSheet!.comments || {},
             preserveExisting,
           }),
         });
@@ -1181,7 +1414,7 @@ export function ImportClient({ userRole }: { userRole: string }) {
             {/* Sheet info */}
             {currentSheet && (
               <div className="mb-4 text-sm text-muted-foreground">
-                Sheet <strong>&qout;{currentSheet.name}&qout;</strong>:{" "}
+                Sheet <strong>&apos;{currentSheet.name}&apos;</strong>:{" "}
                 {currentSheet.headers.length} columns,{" "}
                 {currentSheet.rows.length} rows
               </div>

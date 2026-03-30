@@ -44,6 +44,7 @@ export async function POST(req: NextRequest) {
     crossSheetLookups = {},
     rowOffset = 0,
     compare_mode = false,
+    fuzzy_name_match = false,
   } = body;
 
   // Compare mode: return minimal claimant+date+ssn for all hearings
@@ -81,6 +82,7 @@ export async function POST(req: NextRequest) {
   const tier1 = new Map<string, number>(); // claimant|ssn|date → id
   const tier2 = new Map<string, number>(); // claimant|ssn → id
   const tier3 = new Map<string, number>(); // claimant|date → id
+  const tier4 = new Map<string, number>(); // ssn|date → id (handles name typos)
 
   for (const row of existing) {
     const c = (row.claimant || "").trim();
@@ -91,6 +93,9 @@ export async function POST(req: NextRequest) {
     if (c && s && d) tier1.set(`${c}|${s}|${d}`, id);
     if (c && s && !tier2.has(`${c}|${s}`)) tier2.set(`${c}|${s}`, id);
     if (c && d && !tier3.has(`${c}|${d}`)) tier3.set(`${c}|${d}`, id);
+    // Tier 4: SSN + date only (handles name typos) — only when fuzzy matching enabled
+    if (fuzzy_name_match && s && d && !tier4.has(`${s}|${d}`))
+      tier4.set(`${s}|${d}`, id);
   }
 
   // Also build a lookup by claimant name + SSN (for rescheduled base-name matching)
@@ -99,6 +104,11 @@ export async function POST(req: NextRequest) {
   const SSN_SUFFIX_RE = /\s*\(\d{4}\)\s*$/;
 
   const byNameAndSsn = new Map<
+    string,
+    { id: number; claimant: string; hearing_date: string }
+  >();
+  // SSN-only lookup for rescheduled detection (handles name typos)
+  const bySsn = new Map<
     string,
     { id: number; claimant: string; hearing_date: string }
   >();
@@ -124,6 +134,11 @@ export async function POST(req: NextRequest) {
         const baseKey = `${baseName.toLowerCase()}|${s}`;
         const basePrev = byNameAndSsn.get(baseKey);
         if (!basePrev || id > basePrev.id) byNameAndSsn.set(baseKey, entry);
+      }
+      // SSN-only index (for name typo matching) — only when fuzzy matching enabled
+      if (fuzzy_name_match) {
+        const ssnPrev = bySsn.get(s);
+        if (!ssnPrev || id > ssnPrev.id) bySsn.set(s, entry);
       }
     }
   }
@@ -247,12 +262,14 @@ export async function POST(req: NextRequest) {
         const alreadyImported = tier1.has(exactTier1Key);
 
         if (!alreadyImported) {
-          // Find the record to update: first try exact name+SSN (update existing rescheduled),
-          // then try base name+SSN (first-time reschedule of original)
+          // Find the record to update: first try exact name+SSN, then base name+SSN,
+          // then SSN-only (handles name typos like "RaZiyah" vs "Ra'Ziyah")
           const exactKey = `${claimant.toLowerCase()}|${ssnFormatted}`;
           const origKey = `${baseName.toLowerCase()}|${ssnFormatted}`;
           const existing =
-            byNameAndSsn.get(exactKey) || byNameAndSsn.get(origKey);
+            byNameAndSsn.get(exactKey) ||
+            byNameAndSsn.get(origKey) ||
+            (fuzzy_name_match ? bySsn.get(ssnFormatted) : undefined);
 
           if (existing) {
             rescheduledRecords.push({
@@ -302,6 +319,10 @@ export async function POST(req: NextRequest) {
     }
     if (!existingId && hearingDate) {
       existingId = tier3.get(`${claimant}|${hearingDate}`) ?? null;
+    }
+    // Tier 4: SSN + date only — catches name typos (only when fuzzy matching enabled)
+    if (!existingId && fuzzy_name_match && ssnFormatted && hearingDate) {
+      existingId = tier4.get(`${ssnFormatted}|${hearingDate}`) ?? null;
     }
 
     const record: Record<string, unknown> = {
