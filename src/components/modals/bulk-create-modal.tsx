@@ -326,8 +326,8 @@ export function BulkCreateModal({
                   className="w-full h-40 rounded-md border bg-background px-3 py-2 text-xs font-mono resize-none focus:outline-none focus:ring-2 focus:ring-ring"
                   placeholder={`John Doe, john@hogansmith.com, hearings_agent
 Jane Smith, jane@hogansmith.com, mr_agent
-Bob Test, bob@hogansmith.com, staff, customP@ss123
-Mike Rep, mike@hogansmith.com, rep, , in-house`}
+Test User, testuser@hogansmith.com, staff, customP@ss123
+Test Rep, testrep@hogansmith.com, rep, , in-house`}
                   value={csvText}
                   onChange={(e) => setCsvText(e.target.value)}
                 />

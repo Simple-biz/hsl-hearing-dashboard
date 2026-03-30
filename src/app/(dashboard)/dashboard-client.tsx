@@ -330,6 +330,35 @@ function fmtTime(timeStr: string | null | undefined): string {
 // function getDateYear(dateStr: string): number {
 //   return parseDate(dateStr).getFullYear();
 // }
+// Decision colors — hex values matching old PHP dashboard for inline styles on <select>
+const DECISION_HEX: Record<string, { bg: string; color: string }> = {
+  Scheduled: { bg: "#e9d5ff", color: "#6b21a8" },
+  "Post HRG Review/ Dev": { bg: "#fef9c3", color: "#854d0e" },
+  "Fully Favorable": { bg: "#bbf7d0", color: "#065f46" },
+  "Partially Favorable": { bg: "#bbf7d0", color: "#065f46" },
+  Favorable: { bg: "#bbf7d0", color: "#065f46" },
+  Unfavorable: { bg: "#fecaca", color: "#991b1b" },
+  "Pending Decision": { bg: "#fef08a", color: "#854d0e" },
+  Pending: { bg: "#fef08a", color: "#854d0e" },
+  Continued: { bg: "#a5f3fc", color: "#155e75" },
+  "OTR AT HRG": { bg: "#86efac", color: "#065f46" },
+  Dismissed: { bg: "#fecaca", color: "#991b1b" },
+  // All withdrawal-related statuses = red
+  "GOOD CAUSE LTR TO CLMT": { bg: "#fecaca", color: "#991b1b" },
+  "WD CLMT DECEASED": { bg: "#fecaca", color: "#991b1b" },
+  Dismissal: { bg: "#fecaca", color: "#991b1b" },
+  "Withdrawal - No Contact": { bg: "#fecaca", color: "#991b1b" },
+  "Withdrawal - SGA": { bg: "#fecaca", color: "#991b1b" },
+  "Withdrawal - Client Terminated Rep": { bg: "#fecaca", color: "#991b1b" },
+  "Withdrawal - In-Person": { bg: "#fecaca", color: "#991b1b" },
+  "Withdrawal - Client Working/ Doing Better/WD Hrg Req": {
+    bg: "#fecaca",
+    color: "#991b1b",
+  },
+  "Withdrawal - UFD": { bg: "#fecaca", color: "#991b1b" },
+  "Withdrawal - Receiving Benefits": { bg: "#fecaca", color: "#991b1b" },
+  "Withdrawal - Misc": { bg: "#fecaca", color: "#991b1b" },
+};
 const DECISION_COLORS: Record<string, string> = {
   "Fully Favorable":
     "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400",
@@ -462,6 +491,7 @@ function InlineDropdown({
   onSave,
   editable,
   colorMap,
+  hexColorMap,
   placeholder = "-",
 }: {
   value: string | number | null;
@@ -469,6 +499,7 @@ function InlineDropdown({
   onSave: (v: string | null) => void;
   editable: boolean;
   colorMap?: Record<string, string>;
+  hexColorMap?: Record<string, { bg: string; color: string }>;
   placeholder?: string;
 }) {
   if (!editable) {
@@ -486,27 +517,36 @@ function InlineDropdown({
   const currentLabel =
     options.find((o) => o.value === String(value ?? ""))?.label || null;
   const currentColor = colorMap && currentLabel ? colorMap[currentLabel] : null;
+  const currentHex =
+    hexColorMap && currentLabel ? hexColorMap[currentLabel] : null;
 
   return (
     <select
       value={value != null ? String(value) : ""}
       onChange={(e) => onSave(e.target.value || null)}
+      style={
+        currentHex
+          ? { backgroundColor: currentHex.bg, color: currentHex.color }
+          : undefined
+      }
       className={cn(
-        "h-6 w-full rounded border px-1 text-[11px] font-semibold cursor-pointer transition-colors bg-card",
+        "h-6 w-full rounded border px-1 text-[11px] font-semibold cursor-pointer transition-colors",
         "focus:outline-none focus:ring-1 focus:ring-blue-400",
-        currentColor
-          ? cn(currentColor, "border-current")
-          : "border-transparent hover:border-border text-foreground",
+        currentHex
+          ? "border-current"
+          : currentColor
+            ? cn(currentColor, "border-current")
+            : "border-transparent hover:border-border text-foreground bg-card",
       )}
     >
-      <option value="" className="text-foreground bg-card font-normal">
+      <option value="" style={{ backgroundColor: "white", color: "#333" }}>
         {placeholder}
       </option>
       {options.map((o) => (
         <option
           key={o.value}
           value={o.value}
-          className="text-foreground bg-card font-normal"
+          style={{ backgroundColor: "white", color: "#333" }}
         >
           {o.label}
         </option>
@@ -705,12 +745,6 @@ function ActionMenu({
                       >
                         🔄 Unassign
                       </button>
-                      <button
-                        onClick={openSub(setShowWithdrawal)}
-                        className="flex w-full items-center justify-between px-3 py-1.5 text-xs hover:bg-muted/50"
-                      >
-                        🚫 Withdrawal <ChevronRight className="h-3 w-3" />
-                      </button>
                     </>
                   )}
                   {hasStatus && !isAssigned && (
@@ -732,6 +766,13 @@ function ActionMenu({
                       </button>
                     </>
                   )}
+                  {/* Withdrawal — always available */}
+                  <button
+                    onClick={openSub(setShowWithdrawal)}
+                    className="flex w-full items-center justify-between px-3 py-1.5 text-xs hover:bg-muted/50"
+                  >
+                    🚫 Withdrawal <ChevronRight className="h-3 w-3" />
+                  </button>
                   <div className="my-1 border-t" />
                 </>
               )}
@@ -1973,6 +2014,7 @@ const HearingTable = memo(function HearingTable({
 
   // Filter columns based on role visibility
   const visibleKeys = getVisibleColumns(userRole) || ["ALL"];
+  const isRepView = visibleKeys[0] !== "ALL" && userRole === "rep";
   const columns =
     visibleKeys[0] === "ALL"
       ? ALL_COLUMNS
@@ -1984,6 +2026,23 @@ const HearingTable = memo(function HearingTable({
               visibleKeys.includes("city") || visibleKeys.includes("state")
             );
           return visibleKeys.includes(col.key);
+        }).map((col) => {
+          if (!isRepView) return col;
+          // For rep view: remove frozen, widen columns to fill space
+          const repWidths: Record<string, number> = {
+            hearing_date: 110,
+            hearing_time: 90,
+            claimant: 250,
+            alj: 200,
+            location: 180,
+            manner_of_appearance: 120,
+            actions: 50,
+          };
+          return {
+            ...col,
+            frozen: false,
+            w: repWidths[col.key] || col.w,
+          };
         });
 
   // Build option lists for dropdowns
@@ -2276,6 +2335,7 @@ const HearingTable = memo(function HearingTable({
             onSave={(v) => onUpdate(hearing.id, "hearing_decision_status", v)}
             editable={editable}
             colorMap={DECISION_COLORS}
+            hexColorMap={DECISION_HEX}
           />
         );
       case "post_hrg_review":
@@ -2345,7 +2405,10 @@ const HearingTable = memo(function HearingTable({
           <table
             data-hearing-table
             className="border-collapse text-sm"
-            style={{ minWidth: columns.reduce((s, c) => s + c.w, 0) }}
+            style={{
+              minWidth: columns.reduce((s, c) => s + c.w, 0),
+              width: isRepView ? "100%" : undefined,
+            }}
           >
             <thead className="sticky top-0 z-30">
               <tr>
@@ -3158,9 +3221,13 @@ export function DashboardClient({
 
         {/* Scroll hint */}
         <div className="hidden items-center gap-2 text-[10px] text-muted-foreground md:flex">
-          <span>Left columns frozen</span>
-          <span className="text-border">|</span>
-          <span>Shift + scroll to pan right</span>
+          {userRole !== "rep" && (
+            <>
+              <span>Left columns frozen</span>
+              <span className="text-border">|</span>
+              <span>Shift + scroll to pan right</span>
+            </>
+          )}
           {userRole !== "rep" && (
             <>
               <span className="text-border">|</span>

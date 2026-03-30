@@ -106,7 +106,7 @@ export async function fetchDashboardData(
       [userEmail],
     );
     if (repRows.length > 0) {
-      repFilter = ` WHERE h.assigned_rep_id = ${repRows[0].id}`;
+      repFilter = ` WHERE h.assigned_rep_id = ${repRows[0].id} AND (h.assignment_status IS NULL OR h.assignment_status NOT IN ('withdrawal', 'wd_never_assigned')) AND (h.hearing_decision_status IS NULL OR h.hearing_decision_status = '' OR h.hearing_decision_status NOT LIKE 'Withdrawal%')`;
     } else {
       return {
         totalCount: 0,
@@ -225,6 +225,13 @@ export async function fetchHearingsPage(
       conditions.push(`h.assigned_rep_id = $${idx}`);
       values.push(rows[0].id);
       idx++;
+      // Hide withdrawn hearings from rep view
+      conditions.push(
+        `(h.assignment_status IS NULL OR h.assignment_status NOT IN ('withdrawal', 'wd_never_assigned'))`,
+      );
+      conditions.push(
+        `(h.hearing_decision_status IS NULL OR h.hearing_decision_status = '' OR h.hearing_decision_status NOT LIKE 'Withdrawal%')`,
+      );
     } else return { hearings: [], totalFiltered: 0 };
   }
 
