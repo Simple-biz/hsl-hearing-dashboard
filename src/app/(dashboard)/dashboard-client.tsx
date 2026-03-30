@@ -2312,6 +2312,7 @@ const HearingTable = memo(function HearingTable({
   // ── Virtualization — only render visible rows ──
   const ROW_H = 36;
   const parentRef = useRef<HTMLDivElement>(null);
+  // This is a React Compiler compatibility warning with TanStack Virtual Not an error
   const virtualizer = useVirtualizer({
     count: hearings.length,
     getScrollElement: () => parentRef.current,
