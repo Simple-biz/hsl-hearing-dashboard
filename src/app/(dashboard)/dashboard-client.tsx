@@ -30,6 +30,7 @@ import {
   Trash,
   ClipboardList,
   BarChart3,
+  Link2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatCard, StatCardGrid } from "@/components/stat-card";
@@ -61,6 +62,7 @@ import {
   ActivityLogModal,
   RepStatsModal,
 } from "@/components/modals";
+import { CsvCompareModal } from "@/components/modals/csv-compare-modal";
 import {
   updateHearing,
   deleteHearing,
@@ -68,8 +70,6 @@ import {
   fetchHearingsPage,
   bulkAutoAssignSelected,
   bulkEmailSelected,
-  fetchAllHearingsForCompare,
-  importChronicleEntries,
   exportHearingsCsv,
 } from "./actions";
 import type {
@@ -155,6 +155,114 @@ function noteContent(n: PostHrgNote): string {
 /** Resolve date from a note */
 function noteDate(n: PostHrgNote): string {
   return n.date || "";
+}
+
+// ── MR Worksheet Link cell — link + edit button ──
+function MrLinkCell({
+  hearing,
+  editable,
+  onSave,
+}: {
+  hearing: HearingRow;
+  editable?: boolean;
+  onSave?: (id: number, field: string, value: UpdateValue) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [url, setUrl] = useState(hearing.medical_record_link || "");
+  const handleSave = () => {
+    if (onSave) onSave(hearing.id, "medical_record_link", url.trim() || null);
+    setEditing(false);
+  };
+  return (
+    <>
+      <div className="flex items-center gap-1">
+        {hearing.medical_record_link ? (
+          <a
+            href={hearing.medical_record_link}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center text-blue-600 hover:text-blue-800 dark:text-blue-400"
+          >
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        ) : (
+          <span className="text-xs text-muted-foreground">-</span>
+        )}
+        {editable && (
+          <button
+            onClick={() => {
+              setUrl(hearing.medical_record_link || "");
+              setEditing(true);
+            }}
+            className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-blue-600 hover:bg-muted"
+            title="Edit MR Worksheet link"
+          >
+            {hearing.medical_record_link ? (
+              <Pencil className="h-2.5 w-2.5" />
+            ) : (
+              <Link2 className="h-2.5 w-2.5" />
+            )}
+          </button>
+        )}
+      </div>
+      {editing &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+            onClick={() => setEditing(false)}
+          >
+            <div
+              className="w-full max-w-md rounded-lg border bg-card p-4 shadow-lg space-y-3"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-sm font-semibold">
+                MR Worksheet Link — {hearing.claimant}
+              </h3>
+              <input
+                type="url"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://..."
+                className="w-full rounded-md border bg-transparent px-3 py-2 text-xs focus:border-ring focus:outline-none"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleSave();
+                  if (e.key === "Escape") setEditing(false);
+                }}
+              />
+              <div className="flex justify-end gap-2">
+                {hearing.medical_record_link && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-xs text-destructive"
+                    onClick={() => {
+                      if (onSave)
+                        onSave(hearing.id, "medical_record_link", null);
+                      setEditing(false);
+                    }}
+                  >
+                    Remove Link
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-xs"
+                  onClick={() => setEditing(false)}
+                >
+                  Cancel
+                </Button>
+                <Button size="sm" className="text-xs" onClick={handleSave}>
+                  Save
+                </Button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+    </>
+  );
 }
 
 // ── Color maps ──
@@ -796,25 +904,112 @@ function ActionMenu({
   );
 }
 
-// ── Claimant cell — link if claimant_link exists ──
-function ClaimantCell({ hearing }: { hearing: HearingRow }) {
+// ── Claimant cell — link if claimant_link exists + edit button ──
+function ClaimantCell({
+  hearing,
+  editable,
+  onSave,
+}: {
+  hearing: HearingRow;
+  editable?: boolean;
+  onSave?: (id: number, field: string, value: UpdateValue) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [url, setUrl] = useState(hearing.claimant_link || "");
+  const handleSave = () => {
+    if (onSave) onSave(hearing.id, "claimant_link", url.trim() || null);
+    setEditing(false);
+  };
   return (
     <div className="min-w-0 pr-1">
-      {hearing.claimant_link ? (
-        <a
-          href={hearing.claimant_link}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="truncate text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
-        >
-          {hearing.claimant}
-        </a>
-      ) : (
-        <p className="truncate text-xs font-medium">{hearing.claimant}</p>
-      )}
+      <div className="flex items-center gap-1 min-w-0">
+        {hearing.claimant_link ? (
+          <a
+            href={hearing.claimant_link}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="truncate text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+          >
+            {hearing.claimant}
+          </a>
+        ) : (
+          <p className="truncate text-xs font-medium">{hearing.claimant}</p>
+        )}
+        {editable && (
+          <button
+            onClick={() => {
+              setUrl(hearing.claimant_link || "");
+              setEditing(true);
+            }}
+            className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-blue-600 hover:bg-muted"
+            title="Edit claimant link"
+          >
+            {hearing.claimant_link ? (
+              <Pencil className="h-2.5 w-2.5" />
+            ) : (
+              <Link2 className="h-2.5 w-2.5" />
+            )}
+          </button>
+        )}
+      </div>
       <p className="truncate text-[10px] text-muted-foreground">
         {hearing.claim_type}
       </p>
+      {editing &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+            onClick={() => setEditing(false)}
+          >
+            <div
+              className="w-full max-w-md rounded-lg border bg-card p-4 shadow-lg space-y-3"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 className="text-sm font-semibold">
+                Claimant Link — {hearing.claimant}
+              </h3>
+              <input
+                type="url"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://..."
+                className="w-full rounded-md border bg-transparent px-3 py-2 text-xs focus:border-ring focus:outline-none"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleSave();
+                  if (e.key === "Escape") setEditing(false);
+                }}
+              />
+              <div className="flex justify-end gap-2">
+                {hearing.claimant_link && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-xs text-destructive"
+                    onClick={() => {
+                      if (onSave) onSave(hearing.id, "claimant_link", null);
+                      setEditing(false);
+                    }}
+                  >
+                    Remove Link
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-xs"
+                  onClick={() => setEditing(false)}
+                >
+                  Cancel
+                </Button>
+                <Button size="sm" className="text-xs" onClick={handleSave}>
+                  Save
+                </Button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
@@ -1882,7 +2077,13 @@ const HearingTable = memo(function HearingTable({
           </span>
         );
       case "claimant":
-        return <ClaimantCell hearing={hearing} />;
+        return (
+          <ClaimantCell
+            hearing={hearing}
+            editable={canEditField(userRole, "claimant_link")}
+            onSave={onUpdate}
+          />
+        );
       case "ssn_last_4":
         return (
           <span className="text-xs font-mono text-muted-foreground">
@@ -2085,17 +2286,8 @@ const HearingTable = memo(function HearingTable({
           />
         );
       case "medical_record_link":
-        return hearing.medical_record_link ? (
-          <a
-            href={hearing.medical_record_link}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center text-blue-600 hover:text-blue-800 dark:text-blue-400"
-          >
-            <ExternalLink className="h-3 w-3" />
-          </a>
-        ) : (
-          <span className="text-xs text-muted-foreground">-</span>
+        return (
+          <MrLinkCell hearing={hearing} editable={editable} onSave={onUpdate} />
         );
       case "task_assigned":
       case "rep_docs_complete":
@@ -3080,6 +3272,7 @@ export function DashboardClient({
             setShowCsvCompare(false);
             fetchPage(filters, page, pageSize, sortKey, sortDir);
           }}
+          userName={userName}
         />
       )}
 
@@ -3690,691 +3883,5 @@ export function DashboardClient({
           document.body,
         )}
     </div>
-  );
-}
-
-// ── CSV Compare Modal ──────────────────────────────────────────────────────
-
-interface ChronicleEntry {
-  claimant: string;
-  ssn: string;
-  claimType: string;
-  hearingDate: string;
-  time: string;
-  timeZone: string;
-  claimantLocation: string;
-  repLocation: string;
-  alj: string;
-  medExpert: string;
-  vocExpert: string;
-  statusDate: string;
-  enteredDate: string;
-}
-
-type CompareCategory = "new" | "rescheduled" | "duplicate";
-
-function CsvCompareModal({ onClose }: { onClose: () => void }) {
-  const [file, setFile] = useState<File | null>(null);
-  const [status, setStatus] = useState<{
-    msg: string;
-    type: "loading" | "success" | "error";
-  } | null>(null);
-  const [dbCount, setDbCount] = useState<number | null>(null);
-  const [results, setResults] = useState<{
-    newEntries: (ChronicleEntry & { _cat: "new" })[];
-    rescheduled: (ChronicleEntry & {
-      _cat: "rescheduled";
-      prevDate: string;
-      prevTime: string;
-      prevClaimant: string;
-    })[];
-    duplicates: (ChronicleEntry & { _cat: "duplicate" })[];
-  } | null>(null);
-  const [activeTab, setActiveTab] = useState<CompareCategory>("new");
-  const [importing, setImporting] = useState(false);
-  const [importResult, setImportResult] = useState<{
-    imported: number;
-    skipped: number;
-  } | null>(null);
-
-  // Load DB count on mount
-  useEffect(() => {
-    fetchAllHearingsForCompare().then((d) => setDbCount(d.totalCount));
-  }, []);
-
-  const stripSuffix = (name: string) =>
-    name.replace(/\s*\([^)]+\)\s*$/g, "").trim();
-
-  const normalizeTime = (t: string) => {
-    if (!t) return "";
-    const m = t.match(/(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)?/i);
-    if (!m) return t.toLowerCase().replace(/\s+/g, "");
-    let h = parseInt(m[1], 10);
-    const ampm = (m[3] || "").toUpperCase();
-    if (ampm === "PM" && h < 12) h += 12;
-    if (ampm === "AM" && h === 12) h = 0;
-    return `${String(h).padStart(2, "0")}:${m[2]}`;
-  };
-
-  const normalizeDate = (d: string) => {
-    if (!d) return "";
-    // YYYY-MM-DD
-    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
-    // MM/DD/YYYY
-    const m = d.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
-    if (m) {
-      const y = m[3].length === 2 ? `20${m[3]}` : m[3];
-      return `${y}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`;
-    }
-    return d;
-  };
-
-  const parseChronicleDateTime = (dt: string) => {
-    if (!dt) return { date: "", time: "" };
-    const parts = dt.trim().split(/\s+/);
-    const datePart = normalizeDate(parts[0] || "");
-    const timePart = parts.slice(1).join(" ");
-    return { date: datePart, time: timePart };
-  };
-
-  const handleCompare = async () => {
-    if (!file) return;
-    setStatus({ msg: "Loading hearings from database...", type: "loading" });
-    setResults(null);
-    setImportResult(null);
-
-    try {
-      const { hearings: dbHearings } = await fetchAllHearingsForCompare();
-      setDbCount(dbHearings.length);
-
-      // Build lookup maps from DB
-      const exactMap = new Map<string, boolean>();
-      const dateMap = new Map<string, boolean>(); // name+ssn+date (ignoring time)
-      const personMap = new Map<
-        string,
-        { date: string; time: string; claimant: string }[]
-      >();
-
-      for (const h of dbHearings) {
-        const base = stripSuffix(h.claimant || "").toLowerCase();
-        const ssn = (h.ssn_last_4 || "").trim();
-        const date = h.hearing_date || "";
-        const time = normalizeTime(h.hearing_time || h.converted_time || "");
-
-        if (base && ssn) {
-          exactMap.set(`${base}|${ssn}|${date}|${time}`, true);
-          dateMap.set(`${base}|${ssn}|${date}`, true); // date-only key
-          const pk = `${base}|${ssn}`;
-          if (!personMap.has(pk)) personMap.set(pk, []);
-          personMap.get(pk)!.push({ date, time, claimant: h.claimant });
-        }
-      }
-
-      setStatus({ msg: "Parsing Chronicle CSV...", type: "loading" });
-
-      // Parse CSV
-      const text = await file.text();
-      const lines = text.split(/\r?\n/);
-      const headers = lines[0]
-        .split(",")
-        .map((h) => h.trim().replace(/^"|"$/g, ""));
-
-      // Proper CSV row parser that handles quoted fields with commas
-      const parseCsvRow = (line: string): string[] => {
-        const result: string[] = [];
-        let current = "";
-        let inQuotes = false;
-        for (const ch of line) {
-          if (ch === '"') {
-            inQuotes = !inQuotes;
-            continue;
-          }
-          if (ch === "," && !inQuotes) {
-            result.push(current.trim());
-            current = "";
-            continue;
-          }
-          current += ch;
-        }
-        result.push(current.trim());
-        return result;
-      };
-
-      const col = (row: string[], name: string) => {
-        const idx = headers.findIndex((h) =>
-          h.toLowerCase().includes(name.toLowerCase()),
-        );
-        return idx >= 0 ? (row[idx] || "").trim().replace(/^"|"$/g, "") : "";
-      };
-
-      const newEntries: (ChronicleEntry & { _cat: "new" })[] = [];
-      const rescheduled: (ChronicleEntry & {
-        _cat: "rescheduled";
-        prevDate: string;
-        prevTime: string;
-        prevClaimant: string;
-      })[] = [];
-      const duplicates: (ChronicleEntry & { _cat: "duplicate" })[] = [];
-
-      for (let i = 1; i < lines.length; i++) {
-        if (!lines[i].trim()) continue;
-        const row = parseCsvRow(lines[i]);
-
-        const firstName = col(row, "client_firstName");
-        const lastName = col(row, "client_lastName");
-        const fullName = `${firstName} ${lastName}`.trim();
-        if (!fullName || fullName === " ") continue;
-        const ssn = col(row, "client_last4Ssn");
-        const { date: hDate, time: hTime } = parseChronicleDateTime(
-          col(row, "hearingScheduledDatetime"),
-        );
-
-        let claimType = col(row, "claimType");
-        if (claimType.includes("TITLE 2") && claimType.includes("TITLE 16"))
-          claimType = "Concurrent";
-        else if (claimType.includes("TITLE 2")) claimType = "Title II";
-        else if (claimType.includes("TITLE 16")) claimType = "Title XVI";
-
-        const entry: ChronicleEntry = {
-          claimant: fullName,
-          ssn,
-          claimType,
-          hearingDate: hDate,
-          time: hTime,
-          timeZone: "ET",
-          claimantLocation: col(row, "aljLocation") || "By Phone",
-          repLocation: col(row, "aljLocation") || "By Phone",
-          alj: col(row, "aljFullName"),
-          medExpert: col(row, "medicalExpert"),
-          vocExpert: col(row, "vocationalExpert"),
-          statusDate: col(row, "statusDate"),
-          enteredDate: col(row, "hearingRequestDate"),
-        };
-
-        const nameLower = fullName.toLowerCase();
-        const normTime = normalizeTime(hTime);
-        const normDate = normalizeDate(hDate);
-
-        // Exact duplicate? (name + ssn + date + time all match)
-        if (exactMap.has(`${nameLower}|${ssn}|${normDate}|${normTime}`)) {
-          duplicates.push({ ...entry, _cat: "duplicate" });
-          continue;
-        }
-
-        // Same date, different time? Still a duplicate (time mismatch in DB, e.g. 11:30 vs 23:30)
-        if (dateMap.has(`${nameLower}|${ssn}|${normDate}`)) {
-          duplicates.push({ ...entry, _cat: "duplicate" });
-          continue;
-        }
-
-        // Rescheduled? (same person + SSN, completely different date)
-        const pk = `${nameLower}|${ssn}`;
-        if (personMap.has(pk)) {
-          const prev = personMap
-            .get(pk)!
-            .sort((a, b) => b.date.localeCompare(a.date))[0];
-          rescheduled.push({
-            ...entry,
-            _cat: "rescheduled",
-            prevDate: prev.date,
-            prevTime: prev.time,
-            prevClaimant: prev.claimant,
-          });
-          continue;
-        }
-
-        newEntries.push({ ...entry, _cat: "new" });
-      }
-
-      setResults({ newEntries, rescheduled, duplicates });
-      const total = newEntries.length + rescheduled.length + duplicates.length;
-      setStatus({
-        msg: `Compared ${total} entries: ${newEntries.length} new, ${rescheduled.length} rescheduled, ${duplicates.length} duplicates`,
-        type: "success",
-      });
-      setActiveTab(
-        newEntries.length > 0
-          ? "new"
-          : rescheduled.length > 0
-            ? "rescheduled"
-            : "duplicate",
-      );
-    } catch (e: unknown) {
-      setStatus({
-        msg: e instanceof Error ? e.message : "Compare failed",
-        type: "error",
-      });
-    }
-  };
-
-  const handleImport = async () => {
-    if (!results) return;
-    const toImport = [...results.newEntries, ...results.rescheduled].map(
-      (e) => ({
-        claimant:
-          e._cat === "rescheduled" ? `${e.claimant} (Rescheduled)` : e.claimant,
-        ssn_last_4: e.ssn,
-        claim_type: e.claimType,
-        hearing_date: e.hearingDate,
-        hearing_time: e.time,
-        time_zone: e.timeZone,
-        claimant_location: e.claimantLocation,
-        representative_location: e.repLocation,
-        alj: e.alj,
-        medical_expert: e.medExpert,
-        vocational_expert: e.vocExpert,
-        status_date: e.statusDate,
-        entered_hearing_level_date: e.enteredDate,
-      }),
-    );
-    if (!toImport.length) return;
-    setImporting(true);
-    try {
-      const result = await importChronicleEntries(toImport);
-      setImportResult(result);
-    } catch {
-      setImportResult({ imported: 0, skipped: toImport.length });
-    }
-    setImporting(false);
-  };
-
-  const migrateCount = results
-    ? results.newEntries.length + results.rescheduled.length
-    : 0;
-
-  return createPortal(
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-4xl max-h-[90vh] flex flex-col rounded-xl border bg-card shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between border-b bg-muted/50 px-5 py-4 shrink-0">
-          <div>
-            <h2 className="text-sm font-semibold">
-              📊 CSV Compare — Chronicle Legal
-            </h2>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Upload a Chronicle CSV export to compare against{" "}
-              {dbCount?.toLocaleString() ?? "..."} hearings in DB
-            </p>
-          </div>
-          <button
-            onClick={onClose}
-            className="text-muted-foreground hover:text-foreground"
-          >
-            <XIcon className="h-5 w-5" />
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-5 space-y-4">
-          {/* Upload */}
-          <div className="flex items-center gap-3">
-            <label className="flex-1 flex items-center gap-3 rounded-lg border-2 border-dashed px-4 py-3 cursor-pointer hover:bg-muted/30 transition-colors">
-              <span className="text-lg">📁</span>
-              <div className="flex-1">
-                <p className="text-sm font-medium">
-                  {file ? file.name : "Choose Chronicle CSV file"}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {file
-                    ? `${(file.size / 1024).toFixed(1)} KB`
-                    : "Export from Chronicle Legal → Upload here"}
-                </p>
-              </div>
-              <input
-                type="file"
-                accept=".csv"
-                className="hidden"
-                onChange={(e) => {
-                  setFile(e.target.files?.[0] || null);
-                  setResults(null);
-                  setImportResult(null);
-                }}
-              />
-            </label>
-            <Button
-              size="sm"
-              disabled={!file || status?.type === "loading"}
-              onClick={handleCompare}
-              className="h-10 gap-1.5"
-            >
-              {status?.type === "loading" ? (
-                <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
-              ) : (
-                <Search className="h-3.5 w-3.5" />
-              )}
-              Compare
-            </Button>
-          </div>
-
-          {/* Status */}
-          {status && (
-            <div
-              className={cn(
-                "rounded-lg px-4 py-2.5 text-sm",
-                status.type === "loading" &&
-                  "bg-blue-50 text-blue-800 border border-blue-200 dark:bg-blue-950/30 dark:text-blue-300 dark:border-blue-800",
-                status.type === "success" &&
-                  "bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800",
-                status.type === "error" &&
-                  "bg-red-50 text-red-800 border border-red-200 dark:bg-red-950/30 dark:text-red-300 dark:border-red-800",
-              )}
-            >
-              {status.msg}
-            </div>
-          )}
-
-          {/* Results */}
-          {results && (
-            <>
-              {/* Summary stats — clickable to jump to section */}
-              <div className="grid grid-cols-3 gap-3">
-                <button
-                  onClick={() => setActiveTab("new")}
-                  className={cn(
-                    "rounded-lg border p-3 text-center transition-all",
-                    activeTab === "new"
-                      ? "border-emerald-400 ring-1 ring-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/20"
-                      : "hover:bg-muted/40",
-                  )}
-                >
-                  <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-400 tabular-nums">
-                    {results.newEntries.length}
-                  </p>
-                  <p className="text-xs text-muted-foreground font-medium">
-                    New Entries
-                  </p>
-                </button>
-                <button
-                  onClick={() => setActiveTab("rescheduled")}
-                  className={cn(
-                    "rounded-lg border p-3 text-center transition-all",
-                    activeTab === "rescheduled"
-                      ? "border-blue-400 ring-1 ring-blue-400 bg-blue-50/50 dark:bg-blue-950/20"
-                      : "hover:bg-muted/40",
-                  )}
-                >
-                  <p className="text-2xl font-bold text-blue-700 dark:text-blue-400 tabular-nums">
-                    {results.rescheduled.length}
-                  </p>
-                  <p className="text-xs text-muted-foreground font-medium">
-                    Rescheduled
-                  </p>
-                </button>
-                <button
-                  onClick={() => setActiveTab("duplicate")}
-                  className={cn(
-                    "rounded-lg border p-3 text-center transition-all",
-                    activeTab === "duplicate"
-                      ? "border-amber-400 ring-1 ring-amber-400 bg-amber-50/50 dark:bg-amber-950/20"
-                      : "hover:bg-muted/40",
-                  )}
-                >
-                  <p className="text-2xl font-bold text-amber-700 dark:text-amber-400 tabular-nums">
-                    {results.duplicates.length}
-                  </p>
-                  <p className="text-xs text-muted-foreground font-medium">
-                    Duplicates
-                  </p>
-                </button>
-              </div>
-
-              {/* New Entries */}
-              {(activeTab === "new" || activeTab === null) &&
-                results.newEntries.length > 0 && (
-                  <div className="rounded-lg border overflow-hidden">
-                    <div className="flex items-center gap-2 px-3 py-2 bg-emerald-50 dark:bg-emerald-950/20 border-b">
-                      <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                      <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-300">
-                        New Entries ({results.newEntries.length})
-                      </p>
-                      <p className="text-[10px] text-emerald-600 dark:text-emerald-400">
-                        — Not found in RAW hearings database
-                      </p>
-                    </div>
-                    <div className="overflow-auto max-h-50">
-                      <table className="w-full text-xs">
-                        <thead className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10">
-                          <tr>
-                            <th className="px-2 py-1.5 text-left font-semibold">
-                              Claimant
-                            </th>
-                            <th className="px-2 py-1.5 text-left font-semibold">
-                              SSN
-                            </th>
-                            <th className="px-2 py-1.5 text-left font-semibold">
-                              Claim Type
-                            </th>
-                            <th className="px-2 py-1.5 text-left font-semibold">
-                              Hearing Date
-                            </th>
-                            <th className="px-2 py-1.5 text-left font-semibold">
-                              Time
-                            </th>
-                            <th className="px-2 py-1.5 text-left font-semibold">
-                              ALJ
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y">
-                          {results.newEntries.map((e, i) => (
-                            <tr key={i} className="hover:bg-muted/30">
-                              <td className="px-2 py-1.5 font-medium">
-                                {e.claimant}
-                              </td>
-                              <td className="px-2 py-1.5 text-muted-foreground tabular-nums">
-                                {e.ssn || "—"}
-                              </td>
-                              <td className="px-2 py-1.5">
-                                {e.claimType || "—"}
-                              </td>
-                              <td className="px-2 py-1.5 tabular-nums">
-                                {e.hearingDate}
-                              </td>
-                              <td className="px-2 py-1.5 tabular-nums">
-                                {e.time || "—"}
-                              </td>
-                              <td className="px-2 py-1.5">{e.alj || "—"}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-
-              {/* Rescheduled */}
-              {(activeTab === "rescheduled" || activeTab === null) &&
-                results.rescheduled.length > 0 && (
-                  <div className="rounded-lg border overflow-hidden">
-                    <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-950/20 border-b">
-                      <span className="h-2 w-2 rounded-full bg-blue-500" />
-                      <p className="text-xs font-semibold text-blue-800 dark:text-blue-300">
-                        Rescheduled ({results.rescheduled.length})
-                      </p>
-                      <p className="text-[10px] text-blue-600 dark:text-blue-400">
-                        — Same person + SSN, different hearing date
-                      </p>
-                    </div>
-                    <div className="overflow-auto max-h-50">
-                      <table className="w-full text-xs">
-                        <thead className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10">
-                          <tr>
-                            <th className="px-2 py-1.5 text-left font-semibold">
-                              Claimant
-                            </th>
-                            <th className="px-2 py-1.5 text-left font-semibold">
-                              SSN
-                            </th>
-                            <th className="px-2 py-1.5 text-left font-semibold">
-                              Claim Type
-                            </th>
-                            <th className="px-2 py-1.5 text-left font-semibold">
-                              New Date
-                            </th>
-                            <th className="px-2 py-1.5 text-left font-semibold">
-                              Time
-                            </th>
-                            <th className="px-2 py-1.5 text-left font-semibold">
-                              Previous Date
-                            </th>
-                            <th className="px-2 py-1.5 text-left font-semibold">
-                              Previous Time
-                            </th>
-                            <th className="px-2 py-1.5 text-left font-semibold">
-                              ALJ
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y">
-                          {results.rescheduled.map((e, i) => (
-                            <tr key={i} className="hover:bg-muted/30">
-                              <td className="px-2 py-1.5 font-medium">
-                                {e.claimant}
-                              </td>
-                              <td className="px-2 py-1.5 text-muted-foreground tabular-nums">
-                                {e.ssn || "—"}
-                              </td>
-                              <td className="px-2 py-1.5">
-                                {e.claimType || "—"}
-                              </td>
-                              <td className="px-2 py-1.5 tabular-nums font-medium text-blue-700 dark:text-blue-400">
-                                {e.hearingDate}
-                              </td>
-                              <td className="px-2 py-1.5 tabular-nums">
-                                {e.time || "—"}
-                              </td>
-                              <td className="px-2 py-1.5 tabular-nums text-muted-foreground line-through">
-                                {e.prevDate}
-                              </td>
-                              <td className="px-2 py-1.5 tabular-nums text-muted-foreground line-through">
-                                {e.prevTime || "—"}
-                              </td>
-                              <td className="px-2 py-1.5">{e.alj || "—"}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-
-              {/* Duplicates */}
-              {(activeTab === "duplicate" || activeTab === null) &&
-                results.duplicates.length > 0 && (
-                  <div className="rounded-lg border overflow-hidden">
-                    <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/20 border-b">
-                      <span className="h-2 w-2 rounded-full bg-amber-500" />
-                      <p className="text-xs font-semibold text-amber-800 dark:text-amber-300">
-                        Duplicates ({results.duplicates.length})
-                      </p>
-                      <p className="text-[10px] text-amber-600 dark:text-amber-400">
-                        — Already in RAW hearings (name + SSN + date + time
-                        match)
-                      </p>
-                    </div>
-                    <div className="overflow-auto max-h-50">
-                      <table className="w-full text-xs">
-                        <thead className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10">
-                          <tr>
-                            <th className="px-2 py-1.5 text-left font-semibold">
-                              Claimant
-                            </th>
-                            <th className="px-2 py-1.5 text-left font-semibold">
-                              SSN
-                            </th>
-                            <th className="px-2 py-1.5 text-left font-semibold">
-                              Claim Type
-                            </th>
-                            <th className="px-2 py-1.5 text-left font-semibold">
-                              Hearing Date
-                            </th>
-                            <th className="px-2 py-1.5 text-left font-semibold">
-                              Time
-                            </th>
-                            <th className="px-2 py-1.5 text-left font-semibold">
-                              ALJ
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y">
-                          {results.duplicates.map((e, i) => (
-                            <tr
-                              key={i}
-                              className="hover:bg-muted/30 opacity-50"
-                            >
-                              <td className="px-2 py-1.5 font-medium">
-                                {e.claimant}
-                              </td>
-                              <td className="px-2 py-1.5 text-muted-foreground tabular-nums">
-                                {e.ssn || "—"}
-                              </td>
-                              <td className="px-2 py-1.5">
-                                {e.claimType || "—"}
-                              </td>
-                              <td className="px-2 py-1.5 tabular-nums">
-                                {e.hearingDate}
-                              </td>
-                              <td className="px-2 py-1.5 tabular-nums">
-                                {e.time || "—"}
-                              </td>
-                              <td className="px-2 py-1.5">{e.alj || "—"}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-
-              {/* All empty */}
-              {results.newEntries.length === 0 &&
-                results.rescheduled.length === 0 &&
-                results.duplicates.length === 0 && (
-                  <div className="rounded-lg border p-8 text-center text-muted-foreground">
-                    No entries found in the Chronicles CSV.
-                  </div>
-                )}
-
-              {/* Import result */}
-              {importResult && (
-                <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800">
-                  ✅ Imported {importResult.imported} hearings to RAW
-                  {importResult.skipped > 0 &&
-                    ` (${importResult.skipped} skipped)`}
-                </div>
-              )}
-            </>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-between border-t px-5 py-3 shrink-0">
-          <Button variant="outline" size="sm" onClick={onClose}>
-            Close
-          </Button>
-          {results && migrateCount > 0 && !importResult && (
-            <Button
-              size="sm"
-              className="gap-1.5"
-              disabled={importing}
-              onClick={handleImport}
-            >
-              {importing ? (
-                <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
-              ) : (
-                "🚀"
-              )}
-              Import {migrateCount} to RAW Hearings
-            </Button>
-          )}
-        </div>
-      </div>
-    </div>,
-    document.body,
   );
 }

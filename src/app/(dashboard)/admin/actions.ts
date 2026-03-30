@@ -531,7 +531,7 @@ export async function sendPasswordResetEmail(userId: number, password: string) {
     },
     body: JSON.stringify({
       email_type: "password_reset",
-      to: email,
+      to_email: email,
       subject: "Your HSL Password Has Been Reset",
       body: `Hello ${full_name},\n\nYour password has been reset.\n\nLogin URL: ${appUrl}\nEmail: ${email}\nNew Password: ${password}\n\nPlease log in and change your password.\n\nHogan Smith Law`,
     }),
