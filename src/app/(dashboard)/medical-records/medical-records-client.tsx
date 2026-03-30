@@ -947,8 +947,8 @@ function WithdrawnModal({
 // Shared grid template — must match columnHeaders exactly.
 // Month(120) | MR Specialist(150) | Task(52) | Date(96) | Claimant(200) |
 // MR Status(160) | Credited(60) | Status(120) | MOA(110) | 5Day(48) | Post HRG(110) | MR Worksheet(130)
-const GRID_COLS = "200px 1.2fr 52px 96px 1.5fr 1.2fr 60px 1fr 100px 48px 100px 120px";
-const MIN_W     = "1200px";
+const GRID_COLS = "200px 1.2fr 70px 110px 1.5fr 1.2fr 60px 1fr 100px 48px 100px 120px";
+const MIN_W     = "1280px";
 
 function HearingRow({
   h, teams, mrStatusOptions, hearingDecisionOptions, mannerOptions, permissions,
@@ -1707,21 +1707,34 @@ export function MrPivotClient({ userRole, ...data }: Props) {
             </div>
           </div>
 
-          {/* Column headers */}
-          <div className="overflow-x-auto shrink-0">
-            {columnHeaders}
-          </div>
-
-          {/* Scrollable body — TanStack virtualised */}
+          {/* Scrollable body + sticky header — single scroll container */}
           <div
             ref={scrollRef}
-            className="flex-1 overflow-y-auto overflow-x-auto relative min-h-0"
+            className="flex-1 overflow-auto relative min-h-0"
             onScroll={() => {
               if (!isScrolling) setIsScrolling(true);
               if (scrollTimer.current) clearTimeout(scrollTimer.current);
               scrollTimer.current = setTimeout(() => setIsScrolling(false), 150);
             }}
           >
+            {/* Column headers — sticky so they stay visible */}
+            <div
+              className="grid gap-x-2 px-4 py-2.5 bg-muted text-foreground text-[9px] font-semibold uppercase tracking-wide shrink-0 border-b border-border items-center sticky top-0 z-[5]"
+              style={{ gridTemplateColumns: GRID_COLS, minWidth: MIN_W }}
+            >
+              <div className="text-left font-bold whitespace-nowrap">{viewMode === "date" ? "Month" : "Team"}</div>
+              <div className="text-center font-bold whitespace-nowrap">MR Specialist</div>
+              <div className="text-center font-bold whitespace-nowrap">Task Assigned</div>
+              <div className="text-center font-bold whitespace-nowrap">Hearing Date</div>
+              <div className="text-center font-bold whitespace-nowrap">Claimant</div>
+              <div className="text-center font-bold whitespace-nowrap">MR Status</div>
+              <div className="text-center font-bold whitespace-nowrap">Credited</div>
+              <div className="text-center font-bold whitespace-nowrap">Status</div>
+              <div className="text-center font-bold whitespace-nowrap">MOA</div>
+              <div className="text-center font-bold whitespace-nowrap">5Day</div>
+              <div className="text-center font-bold whitespace-nowrap">Post HRG</div>
+              <div className="text-center font-bold whitespace-nowrap">MR Worksheet</div>
+            </div>
             {/* Full-page loader during server action transitions */}
             {isPending && (
               <div className="absolute inset-0 bg-background/70 flex items-center justify-center z-10">

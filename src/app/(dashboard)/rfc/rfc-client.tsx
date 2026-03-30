@@ -814,7 +814,7 @@ export function RfcClient(data: RfcPageData) {
 
   const perPage = filters.per_page as number;
   const curPage = filters.page ?? 1;
-  const COLS = ["Date", "MR Team", "Hearing Date", "Client Name", "Doc Type", "Provider", "Date Signed", "MyCase", "Method", "Date Received", "Filed OHO", "Appr. TL"];
+  // const COLS = ["Date", "MR Team", "Hearing Date", "Client Name", "Doc Type", "Provider", "Date Signed", "MyCase", "Method", "Date Received", "Filed OHO", "Appr. TL"];
 
   return (
     <>
