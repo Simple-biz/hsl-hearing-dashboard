@@ -425,9 +425,7 @@ export async function fetchHearingsPage(
   };
 }
 
-export async function fetchPostHrgNotes(
-  hearingId: number,
-): Promise<{
+export async function fetchPostHrgNotes(hearingId: number): Promise<{
   post_hrg_notes: string | null;
   post_hrg_deadline: string | null;
   post_hrg_review: boolean;
