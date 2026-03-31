@@ -636,8 +636,6 @@ function ViewDetailsModal({
 
   if (!open) return null;
 
-  const COLS = ["Date", "MR Team", "Hearing Date", "Client Name", "Doc Type", "Provider", "Date Signed", "MyCase", "Method", "Date Received", "Filed OHO", "Appr. TL"];
-
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-6 overflow-auto">
       <div className="w-full max-w-425 max-h-[95vh] flex flex-col rounded-xl border bg-card shadow-2xl">
@@ -701,7 +699,7 @@ function ViewDetailsModal({
           <div className="text-[11px]" style={{ minWidth: "1400px" }}>
             {/* Header */}
             <div
-              className="grid gap-0 bg-muted border-b border-border sticky top-0 z-[2]"
+              className="grid gap-0 bg-muted border-b border-border sticky top-0 z-2"
               style={{ gridTemplateColumns: data.permissions.canDelete
                 ? "115px 120px 115px 155px 110px 155px 115px 65px 120px 120px 80px 65px 45px"
                 : "115px 120px 115px 155px 110px 155px 115px 65px 120px 120px 80px 65px" }}
@@ -825,6 +823,14 @@ export function RfcClient(data: RfcPageData) {
 
       <div className="max-w-450 mx-auto px-6 py-6 space-y-5">
 
+        {/* ── Back navigation ──────────────────────────────────────────────── */}
+        <button
+          onClick={() => router.push("/medical-records")}
+          className="flex items-center gap-1 text-[12px] font-semibold text-muted-foreground hover:text-foreground transition-colors"
+        >
+          ← Back to MR Pivot
+        </button>
+
         {/* ── Stat Cards ──────────────────────────────────────────────── */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <StatCard label="Total Entries"   value={stats.total}    bg="bg-violet-600" />
@@ -865,10 +871,6 @@ export function RfcClient(data: RfcPageData) {
                   <Plus size={12} /><span className="hidden sm:inline">Add Entry</span><span className="sm:hidden">Add</span>
                 </button>
               )}
-              <button onClick={() => router.push("/medical-records")}
-                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-muted-foreground transition-colors">
-                ← <span className="hidden sm:inline">MR Pivot</span><span className="sm:hidden">MR</span>
-              </button>
             </div>
           </div>
 
@@ -945,7 +947,7 @@ export function RfcClient(data: RfcPageData) {
               )}
               {/* Column headers — sticky */}
               <div
-                className="grid gap-0 bg-muted border-b border-border sticky top-0 z-[2] text-[9px] font-semibold uppercase tracking-wide"
+                className="grid gap-0 bg-muted border-b border-border sticky top-0 z-2 text-[9px] font-semibold uppercase tracking-wide"
                 style={{ gridTemplateColumns: data.permissions.canDelete
                   ? "115px 120px 115px 155px 110px 155px 115px 65px 120px 120px 80px 65px 45px"
                   : "115px 120px 115px 155px 110px 155px 115px 65px 120px 120px 80px 65px",
