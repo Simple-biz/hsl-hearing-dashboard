@@ -121,8 +121,14 @@ function HearingRow({
       style={{ gridTemplateColumns: "minmax(180px,2fr) minmax(120px,1.4fr) minmax(40px,0.4fr) minmax(90px,1fr) minmax(160px,1.8fr) minmax(55px,0.5fr) minmax(130px,1.4fr) minmax(100px,1.1fr) minmax(50px,0.5fr) minmax(80px,0.9fr) minmax(90px,1fr)", minWidth: "1180px" }}
     >
       {/* Claimant */}
-      <div className="font-semibold text-foreground truncate">
-        {h.claimant}
+      <div className="font-semibold truncate">
+        {h.claimant_link ? (
+          <a href={h.claimant_link} target="_blank" rel="noreferrer" className="text-blue-500 hover:text-blue-400 underline truncate">
+            {h.claimant}
+          </a>
+        ) : (
+          <span className="text-foreground truncate">{h.claimant}</span>
+        )}
         {h.rep_name && <div className="text-[10px] text-muted-foreground font-normal truncate">{h.rep_name}</div>}
       </div>
 

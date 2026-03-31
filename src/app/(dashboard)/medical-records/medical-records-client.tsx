@@ -1026,10 +1026,16 @@ function HearingRow({
         )}
       </div>
 
-      {/* Claimant — primary-colored name (matches PHP link style) + rep below */}
+      {/* Claimant — hyperlinked name if claimant_link exists + rep below */}
       <div className="min-w-0">
-        <div className="font-semibold text-primary truncate flex items-center gap-1">
-          {h.claimant}
+        <div className="font-semibold truncate flex items-center gap-1">
+          {h.claimant_link ? (
+            <a href={h.claimant_link} target="_blank" rel="noreferrer" className="text-blue-500 hover:text-blue-400 underline truncate">
+              {h.claimant}
+            </a>
+          ) : (
+            <span className="text-foreground truncate">{h.claimant}</span>
+          )}
           {h.mr_team_id && (
             <span className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
               style={{ backgroundColor: teamHex(h.mr_team_color) }} />
