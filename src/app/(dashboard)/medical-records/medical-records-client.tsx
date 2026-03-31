@@ -1388,27 +1388,6 @@ export function MrPivotClient({ userRole, ...data }: Props) {
     else setExpandedTeams(new Set());
   }
 
-  // ── Column headers (shared between both views) ────────────────────────────
-  const columnHeaders = (
-    <div
-      className="grid gap-x-2 px-4 py-2.5 bg-muted text-foreground text-[9px] font-semibold uppercase tracking-wide shrink-0 border-b border-border items-center"
-      style={{ gridTemplateColumns: GRID_COLS, minWidth: MIN_W }}
-    >
-      <div className="text-left font-bold">{viewMode === "date" ? "Month" : "Team"}</div>
-      <div className="text-center font-bold">MR Specialist</div>
-      <div className="text-center font-bold">Task Assigned</div>
-      <div className="text-center font-bold">Hearing Date</div>
-      <div className="text-left font-bold">Claimant</div>
-      <div className="text-center font-bold">MR Status</div>
-      <div className="text-center font-bold">Credited</div>
-      <div className="text-center font-bold">Status</div>
-      <div className="text-center font-bold">MOA</div>
-      <div className="text-center font-bold">5Day</div>
-      <div className="text-center font-bold">Post HRG</div>
-      <div className="text-center font-bold">MR Worksheet</div>
-    </div>
-  );
-
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <>
@@ -1725,7 +1704,7 @@ export function MrPivotClient({ userRole, ...data }: Props) {
           >
             {/* Column headers — sticky so they stay visible */}
             <div
-              className="grid gap-x-2 px-4 py-2.5 bg-muted text-foreground text-[9px] font-semibold uppercase tracking-wide shrink-0 border-b border-border items-center sticky top-0 z-[5]"
+              className="grid gap-x-2 px-4 py-2.5 bg-muted text-foreground text-[9px] font-semibold uppercase tracking-wide shrink-0 border-b border-border items-center sticky top-0 z-5"
               style={{ gridTemplateColumns: GRID_COLS, minWidth: MIN_W }}
             >
               <div className="text-left font-bold whitespace-nowrap">{viewMode === "date" ? "Month" : "Team"}</div>
