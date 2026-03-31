@@ -1121,11 +1121,11 @@ function parsePostHrgNotes(raw: unknown): PostHrgNote[] {
     if (Array.isArray(parsed)) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return parsed.map((n: any, i: number) => ({
-        id:i,
-        hearing_id: 0,
+        id:          i,
+        hearing_id:  0,
         author_name: n.author ?? n.author_name ?? n.user ?? "Unknown",
-        content: n.content ?? n.note ?? "",
-        created_at: n.date ?? n.created_at ?? new Date().toISOString(),
+        content:     n.content ?? n.note ?? "",
+        created_at:  n.date   ?? n.created_at  ?? new Date().toISOString(),
       }));
     }
   } catch { /* fall through */ }
@@ -1152,7 +1152,7 @@ export async function addPostHrgNote(
 
   const session = await getSession();
 
-  // Server-side permission check — per HSL Permissions matrix, Post HRG Notes Edit:
+  // Server-side permission check — per PDF matrix, Post HRG Notes Edit:
   // system_admin, admin, manager, mr_admin, mr_lead, mr_agent, post_hearing_admin, post_hearing_staff
   const allowedRoles = [
     "system_admin", "admin", "manager",
@@ -1258,7 +1258,7 @@ export async function getPostHrgHearings(
          h.medical_record_status, h.hearing_decision_status,
          h.manner_of_appearance, h.five_day_notice, h.task_assigned,
          h.credited, h.post_hrg_review, h.post_hrg_deadline, h.post_hrg_notes,
-         h.medical_record_link, h.mr_team_id,
+         h.medical_record_link, h.claimant_link, h.mr_team_id,
          r.name       AS rep_name,
          t.team_name  AS mr_team_name,
          t.team_color AS mr_team_color,
