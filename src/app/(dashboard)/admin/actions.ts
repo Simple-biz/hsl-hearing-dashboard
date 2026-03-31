@@ -653,6 +653,12 @@ export async function bulkCreateUsers(
         created.push({ full_name: fullName, email });
         newUsers.push(rows[0] as AdminUser);
 
+        // Log individual user creation
+        await logAction(
+          "user_created",
+          `Created user: ${fullName} (${email}) as ${user.role}${user.role === "rep" ? ` [${user.rep_type || "in-house"}]` : ""}`,
+        );
+
         // Create rep profile if role is rep
         if (user.role === "rep") {
           const repType = user.rep_type || "in-house";
