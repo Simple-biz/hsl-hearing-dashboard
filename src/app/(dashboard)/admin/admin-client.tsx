@@ -1048,6 +1048,7 @@ const LOG_CATEGORIES = [
   { key: "hearings", label: "Hearings", icon: "📅" },
   { key: "schedule", label: "Schedule", icon: "🗓️" },
   { key: "reps", label: "Reps", icon: "👥" },
+  { key: "users", label: "Users", icon: "🔑" },
 ];
 
 const ACTION_COLORS: Record<string, string> = {
