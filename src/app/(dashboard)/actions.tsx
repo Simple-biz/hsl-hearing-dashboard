@@ -1286,6 +1286,17 @@ export async function fetchActivityLog(params: {
       ],
       schedule: ["schedule_updated", "schedule_lock_override"],
       reps: ["rep_created", "rep_updated", "rep_deleted", "token_revoked"],
+      users: [
+        "user_created",
+        "user_updated",
+        "user_deleted",
+        "user_deactivated",
+        "user_activated",
+        "password_reset",
+        "bulk_create_users",
+        "welcome_email_sent",
+        "video_tutorial_sent",
+      ],
     };
     const actions = catMap[params.category];
     if (actions) {
