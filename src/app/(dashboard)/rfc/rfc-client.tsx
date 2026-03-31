@@ -314,21 +314,28 @@ function RfcRow({
     return new Date(d + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" });
   }
 
+  const gridCols = p.canDelete
+    ? "115px 120px 115px 155px 110px 155px 115px 65px 120px 120px 80px 65px 45px"
+    : "115px 120px 115px 155px 110px 155px 115px 65px 120px 120px 80px 65px";
+
   return (
-    <tr className="border-b border-border/40 hover:bg-muted/30 transition-colors text-[11px]">
+    <div
+      className="grid gap-0 border-b border-border/40 hover:bg-muted/30 transition-colors text-[11px] items-center"
+      style={{ gridTemplateColumns: gridCols }}
+    >
       {/* Entry Date */}
-      <td className="px-3 py-1.5 whitespace-nowrap">
+      <div className="px-3 py-1.5 whitespace-nowrap">
         {p.canEdit
-          ? <input type="date" value={entry.entry_date ?? ""} className="text-[10px] border border-border rounded px-1.5 py-0.5 bg-card text-foreground w-28"
+          ? <input type="date" value={entry.entry_date ?? ""} className="text-[10px] border border-border rounded px-1.5 py-0.5 bg-card text-foreground w-full max-w-28"
               onChange={(e) => onUpdate(entry.id, "entry_date", e.target.value)} />
           : <span className="text-foreground">{fmtDate(entry.entry_date)}</span>}
-      </td>
+      </div>
 
       {/* MR Team */}
-      <td className="px-3 py-1.5 whitespace-nowrap">
+      <div className="px-3 py-1.5 whitespace-nowrap text-center">
         {p.canAssignTeam
           ? <select value={entry.mr_team_id ?? ""}
-              className="text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer font-medium min-w-25"
+              className="text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer font-medium w-full"
               style={teamColor ? { backgroundColor: teamColor, color: isLight(teamColor) ? "#1f2937" : "#fff" } : { backgroundColor: "#e5e7eb", color: "#374151" }}
               onChange={(e) => onUpdate(entry.id, "mr_team_id", e.target.value ? Number(e.target.value) : null)}>
               <option value="">—</option>
@@ -338,29 +345,29 @@ function RfcRow({
             ? <span className="px-1.5 py-0.5 rounded text-[10px] font-medium" style={teamColor ? { backgroundColor: teamColor, color: isLight(teamColor) ? "#1f2937" : "#fff" } : {}}>{entry.team_name}</span>
             : <span className="text-muted-foreground/40">—</span>
         }
-      </td>
+      </div>
 
       {/* Hearing Date */}
-      <td className="px-3 py-1.5 whitespace-nowrap">
+      <div className="px-3 py-1.5 whitespace-nowrap">
         {p.canEdit
-          ? <input type="date" value={entry.hearing_date ?? ""} className="text-[10px] border border-border rounded px-1.5 py-0.5 bg-card text-foreground w-28"
+          ? <input type="date" value={entry.hearing_date ?? ""} className="text-[10px] border border-border rounded px-1.5 py-0.5 bg-card text-foreground w-full max-w-28"
               onChange={(e) => onUpdate(entry.id, "hearing_date", e.target.value)} />
           : <span>{fmtDate(entry.hearing_date)}</span>}
-      </td>
+      </div>
 
       {/* Client Name */}
-      <td className="px-3 py-1.5">
+      <div className="px-3 py-1.5">
         {p.canEdit
-          ? <input type="text" value={entry.client_name} className="text-[10px] border border-border rounded px-1.5 py-0.5 bg-card text-foreground w-32"
+          ? <input type="text" value={entry.client_name} className="text-[10px] border border-border rounded px-1.5 py-0.5 bg-card text-foreground w-full"
               onChange={(e) => onUpdate(entry.id, "client_name", e.target.value)} />
           : <strong className="text-foreground">{entry.client_name}</strong>}
-      </td>
+      </div>
 
       {/* Doc Type */}
-      <td className="px-3 py-1.5 whitespace-nowrap">
+      <div className="px-3 py-1.5 whitespace-nowrap flex items-center justify-center">
         {p.canEdit
           ? <select value={entry.document_type ?? ""}
-              className="text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer min-w-27.5"
+              className="text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer text-center"
               style={docType?.color ? colorStyle(docType.color) : { backgroundColor: "#f3f4f6", color: "#374151" }}
               onChange={(e) => onUpdate(entry.id, "document_type", e.target.value)}>
               <option value="">—</option>
@@ -370,26 +377,26 @@ function RfcRow({
             ? <span className="px-1.5 py-0.5 rounded text-[10px] font-medium" style={docType?.color ? colorStyle(docType.color) : {}}>{entry.document_type}</span>
             : <span className="text-muted-foreground/40">—</span>
         }
-      </td>
+      </div>
 
       {/* Provider */}
-      <td className="px-3 py-1.5">
+      <div className="px-3 py-1.5">
         {p.canEdit
-          ? <input type="text" value={entry.provider_name ?? ""} className="text-[10px] border border-border rounded px-1.5 py-0.5 bg-card text-foreground w-28"
+          ? <input type="text" value={entry.provider_name ?? ""} className="text-[10px] border border-border rounded px-1.5 py-0.5 bg-card text-foreground w-full"
               onChange={(e) => onUpdate(entry.id, "provider_name", e.target.value)} />
-          : <span className="text-foreground">{entry.provider_name ?? "—"}</span>}
-      </td>
+          : <span className="text-foreground truncate">{entry.provider_name ?? "—"}</span>}
+      </div>
 
       {/* Date Signed */}
-      <td className="px-3 py-1.5 whitespace-nowrap">
+      <div className="px-3 py-1.5 whitespace-nowrap">
         {p.canEdit
-          ? <input type="date" value={entry.date_signed ?? ""} className="text-[10px] border border-border rounded px-1.5 py-0.5 bg-card text-foreground w-28"
+          ? <input type="date" value={entry.date_signed ?? ""} className="text-[10px] border border-border rounded px-1.5 py-0.5 bg-card text-foreground w-full max-w-28"
               onChange={(e) => onUpdate(entry.id, "date_signed", e.target.value)} />
           : <span>{fmtDate(entry.date_signed)}</span>}
-      </td>
+      </div>
 
       {/* MyCase Link */}
-      <td className="px-3 py-1.5 text-center">
+      <div className="px-3 py-1.5 flex items-center justify-center">
         {entry.mycase_link
           ? <a href={entry.mycase_link} target="_blank" rel="noreferrer"
               className="inline-flex items-center gap-1 text-[10px] bg-primary text-primary-foreground px-2 py-0.5 rounded hover:bg-primary/80">
@@ -400,13 +407,13 @@ function RfcRow({
                 className="text-[10px] text-muted-foreground hover:text-foreground border border-dashed border-border rounded px-1.5 py-0.5">+</button>
             : <span className="text-muted-foreground/40">—</span>
         }
-      </td>
+      </div>
 
       {/* Method Received */}
-      <td className="px-3 py-1.5 whitespace-nowrap">
+      <div className="px-3 py-1.5 whitespace-nowrap text-center">
         {p.canEdit
           ? <select value={entry.method_received ?? ""}
-              className="text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer min-w-25"
+              className="text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer w-full"
               style={method?.color ? colorStyle(method.color) : { backgroundColor: "#f3f4f6", color: "#374151" }}
               onChange={(e) => onUpdate(entry.id, "method_received", e.target.value)}>
               <option value="">—</option>
@@ -416,18 +423,18 @@ function RfcRow({
             ? <span className="px-1.5 py-0.5 rounded text-[10px] font-medium" style={method?.color ? colorStyle(method.color) : {}}>{entry.method_received}</span>
             : <span className="text-muted-foreground/40">—</span>
         }
-      </td>
+      </div>
 
       {/* Date Received */}
-      <td className="px-3 py-1.5 whitespace-nowrap">
+      <div className="px-3 py-1.5 whitespace-nowrap">
         {p.canEdit
-          ? <input type="date" value={entry.date_received ?? ""} className="text-[10px] border border-border rounded px-1.5 py-0.5 bg-card text-foreground w-28"
+          ? <input type="date" value={entry.date_received ?? ""} className="text-[10px] border border-border rounded px-1.5 py-0.5 bg-card text-foreground w-full max-w-28"
               onChange={(e) => onUpdate(entry.id, "date_received", e.target.value)} />
           : <span>{fmtDate(entry.date_received)}</span>}
-      </td>
+      </div>
 
       {/* Filed to OHO */}
-      <td className="px-3 py-1.5 text-center">
+      <div className="px-3 py-1.5 flex items-center justify-center">
         {p.canEdit
           ? <input type="checkbox" checked={entry.filed_to_oho} className="w-4 h-4 cursor-pointer accent-emerald-500"
               onChange={(e) => onUpdate(entry.id, "filed_to_oho", e.target.checked)} />
@@ -435,10 +442,10 @@ function RfcRow({
             ? <span className="text-emerald-500 font-bold">✓</span>
             : <span className="text-muted-foreground/30">—</span>
         }
-      </td>
+      </div>
 
       {/* Approved by TL */}
-      <td className="px-3 py-1.5 text-center">
+      <div className="px-3 py-1.5 flex items-center justify-center">
         {p.canEdit
           ? <input type="checkbox" checked={entry.approved_by_tl} className="w-4 h-4 cursor-pointer accent-blue-500"
               onChange={(e) => onUpdate(entry.id, "approved_by_tl", e.target.checked)} />
@@ -446,18 +453,18 @@ function RfcRow({
             ? <span className="text-blue-500 font-bold">✓</span>
             : <span className="text-muted-foreground/30">—</span>
         }
-      </td>
+      </div>
 
       {/* Actions */}
       {p.canDelete && (
-        <td className="px-3 py-1.5 text-center">
+        <div className="px-3 py-1.5 text-center">
           <button onClick={() => { if (confirm(`Delete entry for "${entry.client_name}"?`)) onDelete(entry.id); }}
             className="text-red-500 hover:text-red-700 transition-colors p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20">
             <Trash2 size={13} />
           </button>
-        </td>
+        </div>
       )}
-    </tr>
+    </div>
   );
 }
 
@@ -629,8 +636,6 @@ function ViewDetailsModal({
 
   if (!open) return null;
 
-  const COLS = ["Date", "MR Team", "Hearing Date", "Client Name", "Doc Type", "Provider", "Date Signed", "MyCase", "Method", "Date Received", "Filed OHO", "Appr. TL"];
-
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-6 overflow-auto">
       <div className="w-full max-w-425 max-h-[95vh] flex flex-col rounded-xl border bg-card shadow-2xl">
@@ -691,22 +696,36 @@ function ViewDetailsModal({
               <Loader2 size={28} className="animate-spin text-primary" />
             </div>
           )}
-          <table className="w-full text-[11px]" style={{ minWidth: "1400px" }}>
-            <thead>
-              <tr className="bg-[#4a5568] text-white sticky top-0">
-                {COLS.map((c) => <th key={c} className="px-3 py-2.5 text-left text-[9px] font-semibold uppercase tracking-wide whitespace-nowrap">{c}</th>)}
-                {data.permissions.canDelete && <th className="px-3 py-2.5 text-center text-[9px] font-semibold uppercase">Del</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {entries.length === 0 && !isPending
-                ? <tr><td colSpan={14} className="text-center py-12 text-sm text-muted-foreground">No entries found.</td></tr>
-                : entries.map((e) => (
-                    <RfcRow key={e.id} entry={e} data={data} onUpdate={handleUpdate} onDelete={handleDelete} />
-                  ))
-              }
-            </tbody>
-          </table>
+          <div className="text-[11px]" style={{ minWidth: "1400px" }}>
+            {/* Header */}
+            <div
+              className="grid gap-0 bg-muted border-b border-border sticky top-0 z-2"
+              style={{ gridTemplateColumns: data.permissions.canDelete
+                ? "115px 120px 115px 155px 110px 155px 115px 65px 120px 120px 80px 65px 45px"
+                : "115px 120px 115px 155px 110px 155px 115px 65px 120px 120px 80px 65px" }}
+            >
+              <div className="px-3 py-2.5 text-center text-[9px] font-semibold uppercase tracking-wide whitespace-nowrap text-foreground">Date</div>
+              <div className="px-3 py-2.5 text-center text-[9px] font-semibold uppercase tracking-wide whitespace-nowrap text-foreground">MR Team</div>
+              <div className="px-3 py-2.5 text-left text-[9px] font-semibold uppercase tracking-wide whitespace-nowrap text-foreground">Hearing Date</div>
+              <div className="px-3 py-2.5 text-center text-[9px] font-semibold uppercase tracking-wide whitespace-nowrap text-foreground">Client Name</div>
+              <div className="px-3 py-2.5 text-center text-[9px] font-semibold uppercase tracking-wide whitespace-nowrap text-foreground">Doc Type</div>
+              <div className="px-3 py-2.5 text-center text-[9px] font-semibold uppercase tracking-wide whitespace-nowrap text-foreground">Provider</div>
+              <div className="px-3 py-2.5 text-left text-[9px] font-semibold uppercase tracking-wide whitespace-nowrap text-foreground">Date Signed</div>
+              <div className="px-3 py-2.5 text-center text-[9px] font-semibold uppercase tracking-wide whitespace-nowrap text-foreground">MyCase</div>
+              <div className="px-3 py-2.5 text-center text-[9px] font-semibold uppercase tracking-wide whitespace-nowrap text-foreground">Method</div>
+              <div className="px-3 py-2.5 text-left text-[9px] font-semibold uppercase tracking-wide whitespace-nowrap text-foreground">Date Received</div>
+              <div className="px-3 py-2.5 text-center text-[9px] font-semibold uppercase tracking-wide whitespace-nowrap text-foreground">Filed OHO</div>
+              <div className="px-3 py-2.5 text-center text-[9px] font-semibold uppercase tracking-wide whitespace-nowrap text-foreground">Appr. TL</div>
+              {data.permissions.canDelete && <div className="px-3 py-2.5 text-center text-[9px] font-semibold uppercase tracking-wide whitespace-nowrap text-foreground">Del</div>}
+            </div>
+            {/* Rows */}
+            {entries.length === 0 && !isPending
+              ? <div className="text-center py-12 text-sm text-muted-foreground">No entries found.</div>
+              : entries.map((e) => (
+                  <RfcRow key={e.id} entry={e} data={data} onUpdate={handleUpdate} onDelete={handleDelete} />
+                ))
+            }
+          </div>
         </div>
 
         {/* Pagination */}
@@ -793,7 +812,7 @@ export function RfcClient(data: RfcPageData) {
 
   const perPage = filters.per_page as number;
   const curPage = filters.page ?? 1;
-  const COLS = ["Date", "MR Team", "Hearing Date", "Client Name", "Doc Type", "Provider", "Date Signed", "MyCase", "Method", "Date Received", "Filed OHO", "Appr. TL"];
+  // const COLS = ["Date", "MR Team", "Hearing Date", "Client Name", "Doc Type", "Provider", "Date Signed", "MyCase", "Method", "Date Received", "Filed OHO", "Appr. TL"];
 
   return (
     <>
@@ -803,6 +822,14 @@ export function RfcClient(data: RfcPageData) {
       />
 
       <div className="max-w-450 mx-auto px-6 py-6 space-y-5">
+
+        {/* ── Back navigation ──────────────────────────────────────────────── */}
+        <button
+          onClick={() => router.push("/medical-records")}
+          className="flex items-center gap-1 text-[12px] font-semibold text-muted-foreground hover:text-foreground transition-colors"
+        >
+          ← Back to MR Pivot
+        </button>
 
         {/* ── Stat Cards ──────────────────────────────────────────────── */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -844,10 +871,6 @@ export function RfcClient(data: RfcPageData) {
                   <Plus size={12} /><span className="hidden sm:inline">Add Entry</span><span className="sm:hidden">Add</span>
                 </button>
               )}
-              <button onClick={() => router.push("/medical-records")}
-                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-muted-foreground transition-colors">
-                ← <span className="hidden sm:inline">MR Pivot</span><span className="sm:hidden">MR</span>
-              </button>
             </div>
           </div>
 
@@ -915,36 +938,43 @@ export function RfcClient(data: RfcPageData) {
 
           {/* ── Desktop table (≥ md) ─────────────────────────────────── */}
           <div className="hidden md:flex md:flex-col md:flex-1 md:min-h-0">
-            {/* Column headers */}
-            <div className="overflow-x-auto shrink-0">
-              <div className="bg-[#4a5568] text-white text-[9px] font-semibold uppercase tracking-wide" style={{ minWidth: "1300px" }}>
-                <div className="grid px-3 py-2.5"
-                  style={{ gridTemplateColumns: data.permissions.canDelete
-                    ? "100px 110px 100px 160px 130px 130px 100px 70px 110px 100px 60px 60px 50px"
-                    : "100px 110px 100px 160px 130px 130px 100px 70px 110px 100px 60px 60px" }}>
-                  {[...COLS, ...(data.permissions.canDelete ? ["Del"] : [])].map((c) => (
-                    <div key={c}>{c}</div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Scrollable body */}
-            <div className="flex-1 overflow-y-auto overflow-x-auto min-h-0 relative">
+            {/* Single scroll container for header + rows */}
+            <div className="flex-1 overflow-auto min-h-0 relative">
               {isPending && (
                 <div className="absolute inset-0 bg-background/70 flex items-center justify-center z-10">
                   <Loader2 size={28} className="animate-spin text-primary" />
                 </div>
               )}
-              <table className="w-full" style={{ minWidth: "1300px" }}>
-                <tbody>
+              {/* Column headers — sticky */}
+              <div
+                className="grid gap-0 bg-muted border-b border-border sticky top-0 z-2 text-[9px] font-semibold uppercase tracking-wide"
+                style={{ gridTemplateColumns: data.permissions.canDelete
+                  ? "115px 120px 115px 155px 110px 155px 115px 65px 120px 120px 80px 65px 45px"
+                  : "115px 120px 115px 155px 110px 155px 115px 65px 120px 120px 80px 65px",
+                  minWidth: "1400px" }}
+              >
+                <div className="px-3 py-2.5 text-center text-foreground whitespace-nowrap">Date</div>
+                <div className="px-3 py-2.5 text-center text-foreground whitespace-nowrap">MR Team</div>
+                <div className="px-3 py-2.5 text-left text-foreground whitespace-nowrap">Hearing Date</div>
+                <div className="px-3 py-2.5 text-center text-foreground whitespace-nowrap">Client Name</div>
+                <div className="px-3 py-2.5 text-center text-foreground whitespace-nowrap">Doc Type</div>
+                <div className="px-3 py-2.5 text-center text-foreground whitespace-nowrap">Provider</div>
+                <div className="px-3 py-2.5 text-left text-foreground whitespace-nowrap">Date Signed</div>
+                <div className="px-3 py-2.5 text-center text-foreground whitespace-nowrap">MyCase</div>
+                <div className="px-3 py-2.5 text-center text-foreground whitespace-nowrap">Method</div>
+                <div className="px-3 py-2.5 text-left text-foreground whitespace-nowrap">Date Received</div>
+                <div className="px-3 py-2.5 text-center text-foreground whitespace-nowrap">Filed OHO</div>
+                <div className="px-3 py-2.5 text-center text-foreground whitespace-nowrap">Appr. TL</div>
+                {data.permissions.canDelete && <div className="px-3 py-2.5 text-center text-foreground whitespace-nowrap">Del</div>}
+              </div>
+              {/* Rows */}
+              <div style={{ minWidth: "1400px" }}>
                   {!isPending && entries.length === 0
-                    ? <tr><td colSpan={14} className="text-center py-16 text-sm text-muted-foreground">No entries found.</td></tr>
+                    ? <div className="text-center py-16 text-sm text-muted-foreground">No entries found.</div>
                     : entries.map((e) => (
                         <RfcRow key={e.id} entry={e} data={data} onUpdate={handleUpdate} onDelete={handleDelete} />
                       ))}
-                </tbody>
-              </table>
+              </div>
             </div>
           </div>
 

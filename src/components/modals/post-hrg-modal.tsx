@@ -46,9 +46,28 @@ const MR_STATUS_CLS: Record<string, string> = {
   "URGENT! NEEDS ATTENTION":   "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
 };
 
-function fmtDate(d: string | null) {
+/** Safely parse a date string or Date object — returns null if invalid */
+function safeDate(d: string | Date | null | undefined): Date | null {
+  if (!d) return null;
+  // Already a Date object (Postgres driver returns DATE columns as Date)
+  if (d instanceof Date) return isNaN(d.getTime()) ? null : d;
+  if (typeof d !== "string" || d.length < 6) return null;
+  // Strip time portion if it's a full ISO string, then parse as local date
+  const dateOnly = d.includes("T") ? d.split("T")[0] : d;
+  const parsed = new Date(dateOnly + "T00:00:00");
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function fmtDate(d: string | Date | null) {
   if (!d) return "—";
-  return new Date(d + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  // If it's already a Date object, use it directly
+  if (d instanceof Date) {
+    return isNaN(d.getTime()) ? "—" : d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  }
+  // For strings, force local date parsing to avoid timezone shifts
+  const dateOnly = d.includes("T") ? d.split("T")[0] : d;
+  const parsed = new Date(dateOnly + "T00:00:00");
+  return isNaN(parsed.getTime()) ? "—" : parsed.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
 // Parses "13:00:00", "13:00", "1:00 PM" etc → "01:00 PM"
@@ -210,15 +229,15 @@ function ExpandedRow({
               </div>
             ) : (
               <div className="flex items-center gap-2">
-                {h.post_hrg_deadline ? (
+                {h.post_hrg_deadline && safeDate(h.post_hrg_deadline) ? (
                   <>
                     <span className="text-xs font-semibold text-amber-700 dark:text-amber-300">{fmtDate(h.post_hrg_deadline)}</span>
                     <span className={cn("text-[9px] px-1.5 py-0.5 rounded font-medium",
-                      new Date(h.post_hrg_deadline) < new Date()
+                      safeDate(h.post_hrg_deadline)! < new Date()
                         ? "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
                         : "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300"
                     )}>
-                      {new Date(h.post_hrg_deadline) < new Date() ? "Overdue" : "Upcoming"}
+                      {safeDate(h.post_hrg_deadline)! < new Date() ? "Overdue" : "Upcoming"}
                     </span>
                   </>
                 ) : (
@@ -348,7 +367,7 @@ export function PostHrgModal({ open, onClose, teams, mrStatusOptions, hearingId,
                 <th className="px-3 py-2.5 text-left whitespace-nowrap">Status</th>
                 <th className="px-3 py-2.5 text-center whitespace-nowrap">MOA</th>
                 <th className="px-3 py-2.5 text-center whitespace-nowrap">5-Day</th>
-                <th className="px-3 py-2.5 text-left whitespace-nowrap">Post HRG</th>
+                <th className="px-3 py-2.5 text-center whitespace-nowrap">Post HRG</th>
                 <th className="px-3 py-2.5 text-center whitespace-nowrap">Link</th>
               </tr>
             </thead>
@@ -426,16 +445,16 @@ export function PostHrgModal({ open, onClose, teams, mrStatusOptions, hearingId,
                       {/* Post HRG deadline + notes badge */}
                       <td className="px-3 py-2">
                         <div
-                          className="flex items-center gap-1.5 flex-wrap cursor-pointer"
+                          className="flex items-center justify-center gap-1.5 flex-wrap cursor-pointer"
                           onClick={() => setExpandedId(isExpanded ? null : h.id)}
                         >
-                          {h.post_hrg_deadline && (
+                          {h.post_hrg_deadline && safeDate(h.post_hrg_deadline) && (
                             <span className={cn("text-[9px] px-1.5 py-0.5 rounded font-medium whitespace-nowrap",
-                              new Date(h.post_hrg_deadline) < new Date()
+                              safeDate(h.post_hrg_deadline)! < new Date()
                                 ? "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
                                 : "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
                             )}>
-                              📅 {new Date(h.post_hrg_deadline).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                              📅 {fmtDate(h.post_hrg_deadline)}
                             </span>
                           )}
                           {h.post_hrg_review && (
@@ -449,7 +468,7 @@ export function PostHrgModal({ open, onClose, teams, mrStatusOptions, hearingId,
                         </div>
                       </td>
                       {/* Worksheet link */}
-                      <td className="px-3 py-2 text-center">
+                      <td className="px-3 py-2 text-center whitespace-nowrap">
                         <div className="flex items-center justify-center gap-1">
                           {h.medical_record_link ? (
                             <a
@@ -460,7 +479,7 @@ export function PostHrgModal({ open, onClose, teams, mrStatusOptions, hearingId,
                             >
                               📋
                             </a>
-                          ) : <span className="text-muted-foreground/30">—</span>}
+                          ) : <span className="text-[10px] text-muted-foreground hover:text-foreground cursor-default">+ Link</span>}
                           {/* Expand toggle — only trigger */}
                           <button
                             onClick={() => setExpandedId(isExpanded ? null : h.id)}
