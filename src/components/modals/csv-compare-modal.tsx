@@ -77,6 +77,7 @@ export function CsvCompareModal({
   const [reschedSearch, setReschedSearch] = useState("");
   const [archiving, setArchiving] = useState(false);
   const [showArchiveModal, setShowArchiveModal] = useState(false);
+  const [archiveSearch, setArchiveSearch] = useState("");
   const [archivedEntries, setArchivedEntries] = useState<
     {
       id: number;
@@ -203,11 +204,13 @@ export function CsvCompareModal({
         reason: "withdrawn",
       }));
     await archiveChronicleEntries(toArchive, userName);
-    // Refresh archived keys
+    // Refresh archived keys and entries list
     const keys = await getArchivedChronicleKeys();
     const set = new Set<string>();
     for (const k of keys) set.add(`${k.claimant_lower}|${k.ssn}|${k.hdate}`);
     setArchivedKeys(set);
+    const refreshedEntries = await getArchivedChronicles();
+    setArchivedEntries(refreshedEntries);
     setArchiveSelected(new Set());
     setReschedArchiveSelected(new Set());
     setArchiving(false);
@@ -668,12 +671,22 @@ export function CsvCompareModal({
       return;
     setImportingResched(true);
     try {
-      const records = hearingsCheckResult.rescheduledRecords.map((r) => ({
-        data: hearingsCheckResult.syntheticRows[r.rowIndex],
-        rowIndex: r.rowIndex,
-        row: r.row,
-        original_id: r.original_id,
-      }));
+      const records = hearingsCheckResult.rescheduledRecords.map((r) => {
+        const row = hearingsCheckResult.syntheticRows[r.rowIndex];
+        const m = hearingsCheckResult.mapping;
+        return {
+          data: row,
+          rowIndex: r.rowIndex,
+          row: r.row,
+          original_id: r.original_id,
+          claimant: r.claimant,
+          ssn: r.ssn,
+          claimantLocation: row?.[m.claimant_location] || "",
+          repLocation: row?.[m.representative_location] || "",
+          downloadType: "",
+          statusDate: row?.[m.status_date] || "",
+        };
+      });
       const res = await fetch("/api/import/process-rescheduled", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1468,417 +1481,453 @@ export function CsvCompareModal({
                     )}
 
                     {/* Hearings DB check detail view */}
-                    {hearingsCheckResult && compareTarget === "hearings" && (
-                      <div className="space-y-3 mt-4 pt-4 border-t">
-                        <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                          Hearings DB Check Results
-                        </h3>
+                    {hearingsCheckResult &&
+                      compareTarget === "hearings" &&
+                      (() => {
+                        const m = hearingsCheckResult.mapping;
+                        const rows = hearingsCheckResult.syntheticRows;
+                        // Filter archived from hearings check results
+                        const isCheckArchived = (r: { rowIndex: number }) => {
+                          const row = rows[r.rowIndex];
+                          if (!row) return false;
+                          const key = `${(row[m.claimant] || "")
+                            .toLowerCase()
+                            .replace(/\s*\(rescheduled(?:\s+\d+)?\)\s*$/i, "")
+                            .trim()}|${(row[m.ssn_last_4] || "").padStart(4, "0")}|${row[m.hearing_date] || ""}`;
+                          return archivedKeys.has(key);
+                        };
+                        const filteredNew =
+                          hearingsCheckResult.newRecords.filter(
+                            (r) => !isCheckArchived(r),
+                          );
+                        const filteredResched =
+                          hearingsCheckResult.rescheduledRecords.filter(
+                            (r) => !isCheckArchived(r),
+                          );
 
-                        {/* Summary cards */}
-                        <div
-                          className={`grid gap-2 ${hearingsCheckResult.skippedRecords.length > 0 ? "grid-cols-4" : "grid-cols-3"}`}
-                        >
-                          <div className="rounded-lg border bg-emerald-50 dark:bg-emerald-900/30 p-2 text-center">
-                            <p className="text-lg font-bold text-emerald-700 dark:text-emerald-400">
-                              {hearingsCheckResult.newRecords.length}
-                            </p>
-                            <p className="text-[10px] text-muted-foreground">
-                              New
-                            </p>
-                          </div>
-                          <div className="rounded-lg border bg-blue-50 dark:bg-blue-900/30 p-2 text-center">
-                            <p className="text-lg font-bold text-blue-700 dark:text-blue-400">
-                              {hearingsCheckResult.rescheduledRecords.length}
-                            </p>
-                            <p className="text-[10px] text-muted-foreground">
-                              Rescheduled
-                            </p>
-                          </div>
-                          <div className="rounded-lg border bg-muted/50 p-2 text-center">
-                            <p className="text-lg font-bold text-muted-foreground">
-                              {hearingsCheckResult.duplicateRecords.length}
-                            </p>
-                            <p className="text-[10px] text-muted-foreground">
-                              Duplicates
-                            </p>
-                          </div>
-                          {hearingsCheckResult.skippedRecords.length > 0 && (
-                            <div className="rounded-lg border bg-amber-50 dark:bg-amber-900/30 p-2 text-center">
-                              <p className="text-lg font-bold text-amber-700 dark:text-amber-400">
-                                {hearingsCheckResult.skippedRecords.length}
-                              </p>
-                              <p className="text-[10px] text-muted-foreground">
-                                Skipped
-                              </p>
-                            </div>
-                          )}
-                        </div>
+                        return (
+                          <div className="space-y-3 mt-4 pt-4 border-t">
+                            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                              Hearings DB Check Results
+                            </h3>
 
-                        {/* New Records */}
-                        {hearingsCheckResult.newRecords.length > 0 && (
-                          <div className="rounded-lg border overflow-hidden">
-                            <div className="flex items-center justify-between px-3 py-1.5 bg-emerald-50 dark:bg-emerald-900/30 border-b">
-                              <div className="flex items-center gap-2">
-                                <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                                <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-300">
-                                  New — Not in Hearings DB (
-                                  {hearingsCheckResult.newRecords.length})
+                            {/* Summary cards */}
+                            <div
+                              className={`grid gap-2 ${hearingsCheckResult.skippedRecords.length > 0 ? "grid-cols-4" : "grid-cols-3"}`}
+                            >
+                              <div className="rounded-lg border bg-emerald-50 dark:bg-emerald-900/30 p-2 text-center">
+                                <p className="text-lg font-bold text-emerald-700 dark:text-emerald-400">
+                                  {filteredNew.length}
+                                </p>
+                                <p className="text-[10px] text-muted-foreground">
+                                  New
                                 </p>
                               </div>
-                              <button
-                                onClick={handleExportNew}
-                                className="p-1 rounded hover:bg-emerald-100 dark:hover:bg-emerald-800/40 text-emerald-700 dark:text-emerald-400"
-                                title="Export New as CSV"
-                              >
-                                <Download className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                            <div className="overflow-auto max-h-45">
-                              <table className="w-full text-xs">
-                                <thead className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10">
-                                  <tr>
-                                    <th className="px-2 py-1 text-left font-semibold">
-                                      #
-                                    </th>
-                                    <th className="px-2 py-1 text-left font-semibold">
-                                      Claimant
-                                    </th>
-                                    <th className="px-2 py-1 text-left font-semibold">
-                                      Date
-                                    </th>
-                                    <th className="px-2 py-1 text-left font-semibold">
-                                      Time
-                                    </th>
-                                    <th className="px-2 py-1 text-left font-semibold">
-                                      SSN
-                                    </th>
-                                    <th className="px-2 py-1 text-left font-semibold">
-                                      ALJ
-                                    </th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y">
-                                  {hearingsCheckResult.newRecords
-                                    .slice(0, 100)
-                                    .map((r, i) => {
-                                      const row =
-                                        hearingsCheckResult.syntheticRows[
-                                          r.rowIndex
-                                        ];
-                                      const m = hearingsCheckResult.mapping;
-                                      return (
-                                        <tr
-                                          key={i}
-                                          className="hover:bg-muted/30"
-                                        >
-                                          <td className="px-2 py-1 text-muted-foreground">
-                                            {i + 1}
-                                          </td>
-                                          <td className="px-2 py-1 font-medium">
-                                            {r.claimant}
-                                          </td>
-                                          <td className="px-2 py-1 tabular-nums">
-                                            {r.hearing_date || "—"}
-                                          </td>
-                                          <td className="px-2 py-1 tabular-nums">
-                                            {row?.[m.hearing_time] || "—"}
-                                          </td>
-                                          <td className="px-2 py-1 text-muted-foreground tabular-nums">
-                                            {r.ssn || "—"}
-                                          </td>
-                                          <td className="px-2 py-1">
-                                            {row?.[m.alj] || "—"}
-                                          </td>
-                                        </tr>
-                                      );
-                                    })}
-                                </tbody>
-                              </table>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Rescheduled Records */}
-                        {hearingsCheckResult.rescheduledRecords.length > 0 && (
-                          <div className="rounded-lg border overflow-hidden">
-                            <div className="flex items-center justify-between px-3 py-1.5 bg-blue-50 dark:bg-blue-900/30 border-b">
-                              <div className="flex items-center gap-2">
-                                <span className="h-2 w-2 rounded-full bg-blue-500" />
-                                <p className="text-xs font-semibold text-blue-800 dark:text-blue-300">
-                                  Rescheduled — Will update original (
-                                  {
-                                    hearingsCheckResult.rescheduledRecords
-                                      .length
-                                  }
-                                  )
+                              <div className="rounded-lg border bg-blue-50 dark:bg-blue-900/30 p-2 text-center">
+                                <p className="text-lg font-bold text-blue-700 dark:text-blue-400">
+                                  {filteredResched.length}
+                                </p>
+                                <p className="text-[10px] text-muted-foreground">
+                                  Rescheduled
                                 </p>
                               </div>
-                              <button
-                                onClick={handleExportRescheduled}
-                                className="p-1 rounded hover:bg-blue-100 dark:hover:bg-blue-800/40 text-blue-700 dark:text-blue-400"
-                                title="Export Rescheduled as CSV"
-                              >
-                                <Download className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                            <div className="overflow-auto max-h-45">
-                              <table className="w-full text-xs">
-                                <thead className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10">
-                                  <tr>
-                                    <th className="px-2 py-1 text-left font-semibold">
-                                      #
-                                    </th>
-                                    <th className="px-2 py-1 text-left font-semibold">
-                                      Claimant
-                                    </th>
-                                    <th className="px-2 py-1 text-left font-semibold">
-                                      New Date
-                                    </th>
-                                    <th className="px-2 py-1 text-left font-semibold">
-                                      Time
-                                    </th>
-                                    <th className="px-2 py-1 text-left font-semibold">
-                                      ALJ
-                                    </th>
-                                    <th className="px-2 py-1 text-left font-semibold">
-                                      Original
-                                    </th>
-                                    <th className="px-2 py-1 text-left font-semibold">
-                                      Old Date
-                                    </th>
-                                    <th className="px-2 py-1 text-left font-semibold">
-                                      Old Time
-                                    </th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y">
-                                  {hearingsCheckResult.rescheduledRecords
-                                    .slice(0, 100)
-                                    .map((r, i) => {
-                                      const row =
-                                        hearingsCheckResult.syntheticRows[
-                                          r.rowIndex
-                                        ];
-                                      const m = hearingsCheckResult.mapping;
-                                      return (
-                                        <tr
-                                          key={i}
-                                          className="hover:bg-muted/30"
-                                        >
-                                          <td className="px-2 py-1 text-muted-foreground">
-                                            {i + 1}
-                                          </td>
-                                          <td className="px-2 py-1 font-medium">
-                                            {r.claimant}
-                                          </td>
-                                          <td className="px-2 py-1 tabular-nums">
-                                            {r.hearing_date || "—"}
-                                          </td>
-                                          <td className="px-2 py-1 tabular-nums">
-                                            {row?.[m.hearing_time] || "—"}
-                                          </td>
-                                          <td className="px-2 py-1">
-                                            {row?.[m.alj] || "—"}
-                                          </td>
-                                          <td className="px-2 py-1 text-muted-foreground">
-                                            {r.original_claimant || "—"}
-                                          </td>
-                                          <td className="px-2 py-1 tabular-nums text-muted-foreground">
-                                            {r.original_date || "—"}
-                                          </td>
-                                          <td className="px-2 py-1 tabular-nums text-muted-foreground">
-                                            {r.original_time || "—"}
-                                          </td>
-                                        </tr>
-                                      );
-                                    })}
-                                </tbody>
-                              </table>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Duplicates */}
-                        {hearingsCheckResult.duplicateRecords.length > 0 && (
-                          <div className="rounded-lg border overflow-hidden">
-                            <div className="flex items-center gap-2 px-3 py-1.5 bg-muted/50 border-b">
-                              <span className="h-2 w-2 rounded-full bg-gray-400" />
-                              <p className="text-xs font-semibold text-muted-foreground">
-                                Duplicates — Already in Hearings (
-                                {hearingsCheckResult.duplicateRecords.length})
-                              </p>
-                            </div>
-                            <div className="overflow-auto max-h-45">
-                              <table className="w-full text-xs">
-                                <thead className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10">
-                                  <tr>
-                                    <th className="px-2 py-1 text-left font-semibold">
-                                      #
-                                    </th>
-                                    <th className="px-2 py-1 text-left font-semibold">
-                                      Claimant
-                                    </th>
-                                    <th className="px-2 py-1 text-left font-semibold">
-                                      Date
-                                    </th>
-                                    <th className="px-2 py-1 text-left font-semibold">
-                                      SSN
-                                    </th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y">
-                                  {hearingsCheckResult.duplicateRecords
-                                    .slice(0, 100)
-                                    .map((r, i) => (
-                                      <tr key={i} className="hover:bg-muted/30">
-                                        <td className="px-2 py-1 text-muted-foreground">
-                                          {i + 1}
-                                        </td>
-                                        <td className="px-2 py-1">
-                                          {r.claimant}
-                                        </td>
-                                        <td className="px-2 py-1 tabular-nums">
-                                          {r.hearing_date || "—"}
-                                        </td>
-                                        <td className="px-2 py-1 text-muted-foreground tabular-nums">
-                                          {r.ssn || "—"}
-                                        </td>
-                                      </tr>
-                                    ))}
-                                </tbody>
-                              </table>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Skipped Records */}
-                        {hearingsCheckResult.skippedRecords.length > 0 && (
-                          <div className="rounded-lg border overflow-hidden">
-                            <div className="flex items-center justify-between px-3 py-1.5 bg-amber-50 dark:bg-amber-900/30 border-b">
-                              <div className="flex items-center gap-2">
-                                <span className="h-2 w-2 rounded-full bg-amber-500" />
-                                <p className="text-xs font-semibold text-amber-800 dark:text-amber-300">
-                                  Skipped (
-                                  {hearingsCheckResult.skippedRecords.length})
+                              <div className="rounded-lg border bg-muted/50 p-2 text-center">
+                                <p className="text-lg font-bold text-muted-foreground">
+                                  {hearingsCheckResult.duplicateRecords.length}
                                 </p>
-                                <p className="text-[10px] text-amber-600 dark:text-amber-400">
-                                  — Fill in missing dates to include them
+                                <p className="text-[10px] text-muted-foreground">
+                                  Duplicates
                                 </p>
                               </div>
-                              {Object.values(skippedDates).some((d) =>
-                                d.trim(),
-                              ) && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-6 text-[10px] gap-1"
-                                  disabled={importing}
-                                  onClick={handleRecheckSkipped}
-                                >
-                                  {importing ? (
-                                    <div className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                                  ) : (
-                                    "🔄"
-                                  )}
-                                  Re-check{" "}
-                                  {
-                                    Object.values(skippedDates).filter((d) =>
-                                      d.trim(),
-                                    ).length
-                                  }{" "}
-                                  with dates
-                                </Button>
+                              {hearingsCheckResult.skippedRecords.length >
+                                0 && (
+                                <div className="rounded-lg border bg-amber-50 dark:bg-amber-900/30 p-2 text-center">
+                                  <p className="text-lg font-bold text-amber-700 dark:text-amber-400">
+                                    {hearingsCheckResult.skippedRecords.length}
+                                  </p>
+                                  <p className="text-[10px] text-muted-foreground">
+                                    Skipped
+                                  </p>
+                                </div>
                               )}
-                              <button
-                                onClick={handleExportSkipped}
-                                className="p-1 rounded hover:bg-amber-100 dark:hover:bg-amber-800/40 text-amber-700 dark:text-amber-400"
-                                title="Export Skipped as CSV"
-                              >
-                                <Download className="h-3.5 w-3.5" />
-                              </button>
                             </div>
-                            <div className="overflow-auto max-h-45">
-                              <table className="w-full text-xs">
-                                <thead className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10">
-                                  <tr>
-                                    <th className="px-2 py-1 text-left font-semibold">
-                                      #
-                                    </th>
-                                    <th className="px-2 py-1 text-left font-semibold">
-                                      Claimant
-                                    </th>
-                                    <th className="px-2 py-1 text-left font-semibold">
-                                      Hearing Date
-                                    </th>
-                                    <th className="px-2 py-1 text-left font-semibold">
-                                      Reason
-                                    </th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y">
-                                  {hearingsCheckResult.skippedRecords
-                                    .slice(0, 100)
-                                    .map((r, i) => (
-                                      <tr key={i} className="hover:bg-muted/30">
-                                        <td className="px-2 py-1 text-muted-foreground">
-                                          {i + 1}
-                                        </td>
-                                        <td className="px-2 py-1 font-medium">
-                                          {r.claimant || "(empty)"}
-                                        </td>
-                                        <td className="px-2 py-1">
-                                          {r.reason ===
-                                          "Missing hearing date" ? (
-                                            <input
-                                              type="date"
-                                              value={skippedDates[i] || ""}
-                                              onChange={(e) =>
-                                                setSkippedDates((prev) => ({
-                                                  ...prev,
-                                                  [i]: e.target.value,
-                                                }))
-                                              }
-                                              className="h-6 rounded border bg-background px-1.5 text-xs w-32"
-                                            />
-                                          ) : (
-                                            <span className="tabular-nums">
-                                              {r.hearing_date || "—"}
-                                            </span>
-                                          )}
-                                        </td>
-                                        <td className="px-2 py-1 text-amber-600 dark:text-amber-400">
-                                          {r.reason}
-                                        </td>
-                                      </tr>
-                                    ))}
-                                </tbody>
-                              </table>
-                            </div>
-                          </div>
-                        )}
 
-                        {/* Hearings import result */}
-                        {hearingsImportResult && (
-                          <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800">
-                            ✅{" "}
-                            {hearingsImportResult.newImported > 0
-                              ? `${hearingsImportResult.newImported} inserted`
-                              : ""}
-                            {hearingsImportResult.newImported > 0 &&
-                            hearingsImportResult.reschedUpdated > 0
-                              ? " • "
-                              : ""}
-                            {hearingsImportResult.reschedUpdated > 0
-                              ? `${hearingsImportResult.reschedUpdated} rescheduled updated`
-                              : ""}
-                            {!hearingsImportResult.newImported &&
-                            !hearingsImportResult.reschedUpdated
-                              ? "No changes"
-                              : ""}
+                            {/* New Records */}
+                            {filteredNew.length > 0 && (
+                              <div className="rounded-lg border overflow-hidden">
+                                <div className="flex items-center justify-between px-3 py-1.5 bg-emerald-50 dark:bg-emerald-900/30 border-b">
+                                  <div className="flex items-center gap-2">
+                                    <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                                    <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-300">
+                                      New — Not in Hearings DB (
+                                      {filteredNew.length})
+                                    </p>
+                                  </div>
+                                  <button
+                                    onClick={handleExportNew}
+                                    className="p-1 rounded hover:bg-emerald-100 dark:hover:bg-emerald-800/40 text-emerald-700 dark:text-emerald-400"
+                                    title="Export New as CSV"
+                                  >
+                                    <Download className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
+                                <div className="overflow-auto max-h-45">
+                                  <table className="w-full text-xs">
+                                    <thead className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10">
+                                      <tr>
+                                        <th className="px-2 py-1 text-left font-semibold">
+                                          #
+                                        </th>
+                                        <th className="px-2 py-1 text-left font-semibold">
+                                          Claimant
+                                        </th>
+                                        <th className="px-2 py-1 text-left font-semibold">
+                                          Date
+                                        </th>
+                                        <th className="px-2 py-1 text-left font-semibold">
+                                          Time
+                                        </th>
+                                        <th className="px-2 py-1 text-left font-semibold">
+                                          SSN
+                                        </th>
+                                        <th className="px-2 py-1 text-left font-semibold">
+                                          ALJ
+                                        </th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y">
+                                      {filteredNew.slice(0, 100).map((r, i) => {
+                                        const row =
+                                          hearingsCheckResult.syntheticRows[
+                                            r.rowIndex
+                                          ];
+                                        const mp = hearingsCheckResult.mapping;
+                                        return (
+                                          <tr
+                                            key={i}
+                                            className="hover:bg-muted/30"
+                                          >
+                                            <td className="px-2 py-1 text-muted-foreground">
+                                              {i + 1}
+                                            </td>
+                                            <td className="px-2 py-1 font-medium">
+                                              {r.claimant}
+                                            </td>
+                                            <td className="px-2 py-1 tabular-nums">
+                                              {r.hearing_date || "—"}
+                                            </td>
+                                            <td className="px-2 py-1 tabular-nums">
+                                              {row?.[mp.hearing_time] || "—"}
+                                            </td>
+                                            <td className="px-2 py-1 text-muted-foreground tabular-nums">
+                                              {r.ssn || "—"}
+                                            </td>
+                                            <td className="px-2 py-1">
+                                              {row?.[mp.alj] || "—"}
+                                            </td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Rescheduled Records */}
+                            {filteredResched.length > 0 && (
+                              <div className="rounded-lg border overflow-hidden">
+                                <div className="flex items-center justify-between px-3 py-1.5 bg-blue-50 dark:bg-blue-900/30 border-b">
+                                  <div className="flex items-center gap-2">
+                                    <span className="h-2 w-2 rounded-full bg-blue-500" />
+                                    <p className="text-xs font-semibold text-blue-800 dark:text-blue-300">
+                                      Rescheduled — Will update original (
+                                      {filteredResched.length})
+                                    </p>
+                                  </div>
+                                  <button
+                                    onClick={handleExportRescheduled}
+                                    className="p-1 rounded hover:bg-blue-100 dark:hover:bg-blue-800/40 text-blue-700 dark:text-blue-400"
+                                    title="Export Rescheduled as CSV"
+                                  >
+                                    <Download className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
+                                <div className="overflow-auto max-h-45">
+                                  <table className="w-full text-xs">
+                                    <thead className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10">
+                                      <tr>
+                                        <th className="px-2 py-1 text-left font-semibold">
+                                          #
+                                        </th>
+                                        <th className="px-2 py-1 text-left font-semibold">
+                                          Claimant
+                                        </th>
+                                        <th className="px-2 py-1 text-left font-semibold">
+                                          New Date
+                                        </th>
+                                        <th className="px-2 py-1 text-left font-semibold">
+                                          Time
+                                        </th>
+                                        <th className="px-2 py-1 text-left font-semibold">
+                                          ALJ
+                                        </th>
+                                        <th className="px-2 py-1 text-left font-semibold">
+                                          Original
+                                        </th>
+                                        <th className="px-2 py-1 text-left font-semibold">
+                                          Old Date
+                                        </th>
+                                        <th className="px-2 py-1 text-left font-semibold">
+                                          Old Time
+                                        </th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y">
+                                      {filteredResched
+                                        .slice(0, 100)
+                                        .map((r, i) => {
+                                          const row =
+                                            hearingsCheckResult.syntheticRows[
+                                              r.rowIndex
+                                            ];
+                                          const mp =
+                                            hearingsCheckResult.mapping;
+                                          return (
+                                            <tr
+                                              key={i}
+                                              className="hover:bg-muted/30"
+                                            >
+                                              <td className="px-2 py-1 text-muted-foreground">
+                                                {i + 1}
+                                              </td>
+                                              <td className="px-2 py-1 font-medium">
+                                                {r.claimant}
+                                              </td>
+                                              <td className="px-2 py-1 tabular-nums">
+                                                {r.hearing_date || "—"}
+                                              </td>
+                                              <td className="px-2 py-1 tabular-nums">
+                                                {row?.[mp.hearing_time] || "—"}
+                                              </td>
+                                              <td className="px-2 py-1">
+                                                {row?.[mp.alj] || "—"}
+                                              </td>
+                                              <td className="px-2 py-1 text-muted-foreground">
+                                                {r.original_claimant || "—"}
+                                              </td>
+                                              <td className="px-2 py-1 tabular-nums text-muted-foreground">
+                                                {r.original_date || "—"}
+                                              </td>
+                                              <td className="px-2 py-1 tabular-nums text-muted-foreground">
+                                                {r.original_time || "—"}
+                                              </td>
+                                            </tr>
+                                          );
+                                        })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Duplicates */}
+                            {hearingsCheckResult.duplicateRecords.length >
+                              0 && (
+                              <div className="rounded-lg border overflow-hidden">
+                                <div className="flex items-center gap-2 px-3 py-1.5 bg-muted/50 border-b">
+                                  <span className="h-2 w-2 rounded-full bg-gray-400" />
+                                  <p className="text-xs font-semibold text-muted-foreground">
+                                    Duplicates — Already in Hearings (
+                                    {
+                                      hearingsCheckResult.duplicateRecords
+                                        .length
+                                    }
+                                    )
+                                  </p>
+                                </div>
+                                <div className="overflow-auto max-h-45">
+                                  <table className="w-full text-xs">
+                                    <thead className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10">
+                                      <tr>
+                                        <th className="px-2 py-1 text-left font-semibold">
+                                          #
+                                        </th>
+                                        <th className="px-2 py-1 text-left font-semibold">
+                                          Claimant
+                                        </th>
+                                        <th className="px-2 py-1 text-left font-semibold">
+                                          Date
+                                        </th>
+                                        <th className="px-2 py-1 text-left font-semibold">
+                                          SSN
+                                        </th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y">
+                                      {hearingsCheckResult.duplicateRecords
+                                        .slice(0, 100)
+                                        .map((r, i) => (
+                                          <tr
+                                            key={i}
+                                            className="hover:bg-muted/30"
+                                          >
+                                            <td className="px-2 py-1 text-muted-foreground">
+                                              {i + 1}
+                                            </td>
+                                            <td className="px-2 py-1">
+                                              {r.claimant}
+                                            </td>
+                                            <td className="px-2 py-1 tabular-nums">
+                                              {r.hearing_date || "—"}
+                                            </td>
+                                            <td className="px-2 py-1 text-muted-foreground tabular-nums">
+                                              {r.ssn || "—"}
+                                            </td>
+                                          </tr>
+                                        ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Skipped Records */}
+                            {hearingsCheckResult.skippedRecords.length > 0 && (
+                              <div className="rounded-lg border overflow-hidden">
+                                <div className="flex items-center justify-between px-3 py-1.5 bg-amber-50 dark:bg-amber-900/30 border-b">
+                                  <div className="flex items-center gap-2">
+                                    <span className="h-2 w-2 rounded-full bg-amber-500" />
+                                    <p className="text-xs font-semibold text-amber-800 dark:text-amber-300">
+                                      Skipped (
+                                      {
+                                        hearingsCheckResult.skippedRecords
+                                          .length
+                                      }
+                                      )
+                                    </p>
+                                    <p className="text-[10px] text-amber-600 dark:text-amber-400">
+                                      — Fill in missing dates to include them
+                                    </p>
+                                  </div>
+                                  {Object.values(skippedDates).some((d) =>
+                                    d.trim(),
+                                  ) && (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-6 text-[10px] gap-1"
+                                      disabled={importing}
+                                      onClick={handleRecheckSkipped}
+                                    >
+                                      {importing ? (
+                                        <div className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                                      ) : (
+                                        "🔄"
+                                      )}
+                                      Re-check{" "}
+                                      {
+                                        Object.values(skippedDates).filter(
+                                          (d) => d.trim(),
+                                        ).length
+                                      }{" "}
+                                      with dates
+                                    </Button>
+                                  )}
+                                  <button
+                                    onClick={handleExportSkipped}
+                                    className="p-1 rounded hover:bg-amber-100 dark:hover:bg-amber-800/40 text-amber-700 dark:text-amber-400"
+                                    title="Export Skipped as CSV"
+                                  >
+                                    <Download className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
+                                <div className="overflow-auto max-h-45">
+                                  <table className="w-full text-xs">
+                                    <thead className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10">
+                                      <tr>
+                                        <th className="px-2 py-1 text-left font-semibold">
+                                          #
+                                        </th>
+                                        <th className="px-2 py-1 text-left font-semibold">
+                                          Claimant
+                                        </th>
+                                        <th className="px-2 py-1 text-left font-semibold">
+                                          Hearing Date
+                                        </th>
+                                        <th className="px-2 py-1 text-left font-semibold">
+                                          Reason
+                                        </th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y">
+                                      {hearingsCheckResult.skippedRecords
+                                        .slice(0, 100)
+                                        .map((r, i) => (
+                                          <tr
+                                            key={i}
+                                            className="hover:bg-muted/30"
+                                          >
+                                            <td className="px-2 py-1 text-muted-foreground">
+                                              {i + 1}
+                                            </td>
+                                            <td className="px-2 py-1 font-medium">
+                                              {r.claimant || "(empty)"}
+                                            </td>
+                                            <td className="px-2 py-1">
+                                              {r.reason ===
+                                              "Missing hearing date" ? (
+                                                <input
+                                                  type="date"
+                                                  value={skippedDates[i] || ""}
+                                                  onChange={(e) =>
+                                                    setSkippedDates((prev) => ({
+                                                      ...prev,
+                                                      [i]: e.target.value,
+                                                    }))
+                                                  }
+                                                  className="h-6 rounded border bg-background px-1.5 text-xs w-32"
+                                                />
+                                              ) : (
+                                                <span className="tabular-nums">
+                                                  {r.hearing_date || "—"}
+                                                </span>
+                                              )}
+                                            </td>
+                                            <td className="px-2 py-1 text-amber-600 dark:text-amber-400">
+                                              {r.reason}
+                                            </td>
+                                          </tr>
+                                        ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Hearings import result */}
+                            {hearingsImportResult && (
+                              <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800">
+                                ✅{" "}
+                                {hearingsImportResult.newImported > 0
+                                  ? `${hearingsImportResult.newImported} inserted`
+                                  : ""}
+                                {hearingsImportResult.newImported > 0 &&
+                                hearingsImportResult.reschedUpdated > 0
+                                  ? " • "
+                                  : ""}
+                                {hearingsImportResult.reschedUpdated > 0
+                                  ? `${hearingsImportResult.reschedUpdated} rescheduled updated`
+                                  : ""}
+                                {!hearingsImportResult.newImported &&
+                                !hearingsImportResult.reschedUpdated
+                                  ? "No changes"
+                                  : ""}
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
-                    )}
+                        );
+                      })()}
                   </>
                 )}
               </div>
@@ -2008,84 +2057,111 @@ export function CsvCompareModal({
                       {archivedEntries.length} entries archived
                     </p>
                   </div>
-                  <button
-                    onClick={() => setShowArchiveModal(false)}
-                    className="text-muted-foreground hover:text-foreground"
-                  >
-                    <XIcon className="h-5 w-5" />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <div className="relative">
+                      <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
+                      <input
+                        type="text"
+                        placeholder="Search archive..."
+                        value={archiveSearch}
+                        onChange={(e) => setArchiveSearch(e.target.value)}
+                        className="h-7 w-44 rounded border bg-background pl-6 pr-2 text-[10px] focus:outline-none focus:ring-1 focus:ring-ring"
+                      />
+                    </div>
+                    <button
+                      onClick={() => setShowArchiveModal(false)}
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      <XIcon className="h-5 w-5" />
+                    </button>
+                  </div>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4">
-                  {archivedEntries.length === 0 ? (
-                    <p className="py-8 text-center text-sm text-muted-foreground">
-                      No archived entries
-                    </p>
-                  ) : (
-                    <table className="w-full text-xs">
-                      <thead className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10">
-                        <tr>
-                          <th className="px-2 py-1.5 text-left font-semibold">
-                            Claimant
-                          </th>
-                          <th className="px-2 py-1.5 text-left font-semibold">
-                            SSN
-                          </th>
-                          <th className="px-2 py-1.5 text-left font-semibold">
-                            Date
-                          </th>
-                          <th className="px-2 py-1.5 text-left font-semibold">
-                            ALJ
-                          </th>
-                          <th className="px-2 py-1.5 text-left font-semibold">
-                            Reason
-                          </th>
-                          <th className="px-2 py-1.5 text-left font-semibold">
-                            Archived By
-                          </th>
-                          <th className="px-2 py-1.5 text-left font-semibold">
-                            Date
-                          </th>
-                          <th className="px-2 py-1.5 w-8"></th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y">
-                        {archivedEntries.map((e) => (
-                          <tr key={e.id} className="hover:bg-muted/30">
-                            <td className="px-2 py-1.5 font-medium">
-                              {e.claimant}
-                            </td>
-                            <td className="px-2 py-1.5 tabular-nums text-muted-foreground">
-                              {e.ssn_last_4 || "—"}
-                            </td>
-                            <td className="px-2 py-1.5 tabular-nums">
-                              {e.hearing_date || "—"}
-                            </td>
-                            <td className="px-2 py-1.5">{e.alj || "—"}</td>
-                            <td className="px-2 py-1.5 text-amber-600 dark:text-amber-400">
-                              {e.reason}
-                            </td>
-                            <td className="px-2 py-1.5 text-muted-foreground">
-                              {e.archived_by}
-                            </td>
-                            <td className="px-2 py-1.5 tabular-nums text-muted-foreground">
-                              {e.archived_at
-                                ? new Date(e.archived_at).toLocaleDateString()
-                                : "—"}
-                            </td>
-                            <td className="px-2 py-1.5">
-                              <button
-                                onClick={() => handleUnarchive(e.id)}
-                                className="rounded p-1 text-muted-foreground hover:text-blue-600 hover:bg-muted"
-                                title="Unarchive"
-                              >
-                                <ArchiveRestore className="h-3.5 w-3.5" />
-                              </button>
-                            </td>
+                  {(() => {
+                    const aq = archiveSearch.toLowerCase();
+                    const filteredArchive = aq
+                      ? archivedEntries.filter(
+                          (e) =>
+                            e.claimant.toLowerCase().includes(aq) ||
+                            (e.ssn_last_4 || "").includes(aq) ||
+                            (e.alj || "").toLowerCase().includes(aq) ||
+                            (e.hearing_date || "").includes(aq) ||
+                            (e.reason || "").toLowerCase().includes(aq),
+                        )
+                      : archivedEntries;
+                    return filteredArchive.length === 0 ? (
+                      <p className="py-8 text-center text-sm text-muted-foreground">
+                        {archiveSearch
+                          ? `No results for "${archiveSearch}"`
+                          : "No archived entries"}
+                      </p>
+                    ) : (
+                      <table className="w-full text-xs">
+                        <thead className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10">
+                          <tr>
+                            <th className="px-2 py-1.5 text-left font-semibold">
+                              Claimant
+                            </th>
+                            <th className="px-2 py-1.5 text-left font-semibold">
+                              SSN
+                            </th>
+                            <th className="px-2 py-1.5 text-left font-semibold">
+                              Date
+                            </th>
+                            <th className="px-2 py-1.5 text-left font-semibold">
+                              ALJ
+                            </th>
+                            <th className="px-2 py-1.5 text-left font-semibold">
+                              Reason
+                            </th>
+                            <th className="px-2 py-1.5 text-left font-semibold">
+                              Archived By
+                            </th>
+                            <th className="px-2 py-1.5 text-left font-semibold">
+                              Date
+                            </th>
+                            <th className="px-2 py-1.5 w-8"></th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
+                        </thead>
+                        <tbody className="divide-y">
+                          {filteredArchive.map((e) => (
+                            <tr key={e.id} className="hover:bg-muted/30">
+                              <td className="px-2 py-1.5 font-medium">
+                                {e.claimant}
+                              </td>
+                              <td className="px-2 py-1.5 tabular-nums text-muted-foreground">
+                                {e.ssn_last_4 || "—"}
+                              </td>
+                              <td className="px-2 py-1.5 tabular-nums">
+                                {e.hearing_date || "—"}
+                              </td>
+                              <td className="px-2 py-1.5">{e.alj || "—"}</td>
+                              <td className="px-2 py-1.5 text-amber-600 dark:text-amber-400">
+                                {e.reason}
+                              </td>
+                              <td className="px-2 py-1.5 text-muted-foreground">
+                                {e.archived_by}
+                              </td>
+                              <td className="px-2 py-1.5 tabular-nums text-muted-foreground">
+                                {e.archived_at
+                                  ? new Date(e.archived_at).toLocaleDateString()
+                                  : "—"}
+                              </td>
+                              <td className="px-2 py-1.5">
+                                <button
+                                  onClick={() => handleUnarchive(e.id)}
+                                  className="rounded p-1 text-muted-foreground hover:text-blue-600 hover:bg-muted"
+                                  title="Unarchive"
+                                >
+                                  <ArchiveRestore className="h-3.5 w-3.5" />
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    );
+                  })()}
                 </div>
                 <div className="flex justify-end border-t px-5 py-3 shrink-0">
                   <Button
