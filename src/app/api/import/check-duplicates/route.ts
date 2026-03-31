@@ -105,19 +105,24 @@ export async function POST(req: NextRequest) {
 
   const byNameAndSsn = new Map<
     string,
-    { id: number; claimant: string; hearing_date: string }
+    { id: number; claimant: string; hearing_date: string; hearing_time: string }
   >();
   // SSN-only lookup for rescheduled detection (handles name typos)
   const bySsn = new Map<
     string,
-    { id: number; claimant: string; hearing_date: string }
+    { id: number; claimant: string; hearing_date: string; hearing_time: string }
   >();
   for (const row of existing) {
     const c = (row.claimant || "").trim();
     const s = (row.ssn_last_4 || "").padStart(4, "0");
     if (c && s) {
       const id = row.id as number;
-      const entry = { id, claimant: c, hearing_date: row.hearing_date || "" };
+      const entry = {
+        id,
+        claimant: c,
+        hearing_date: row.hearing_date || "",
+        hearing_time: row.hearing_time || row.converted_time_est || "",
+      };
 
       // Index by exact name
       const exactKey = `${c.toLowerCase()}|${s}`;
@@ -288,6 +293,7 @@ export async function POST(req: NextRequest) {
               base_name: baseName,
               original_claimant: existing.claimant,
               original_date: existing.hearing_date,
+              original_time: existing.hearing_time,
             });
             debugEntry.reason = "MATCHED as rescheduled";
             debugEntry.originalId = existing.id;
