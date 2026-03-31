@@ -2,7 +2,13 @@
 
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { Search, X as XIcon, Archive, ArchiveRestore } from "lucide-react";
+import {
+  Search,
+  X as XIcon,
+  Archive,
+  ArchiveRestore,
+  Download,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
@@ -114,6 +120,7 @@ export function CsvCompareModal({
       base_name: string;
       original_claimant: string;
       original_date: string;
+      original_time: string;
     }[];
     duplicateRecords: {
       rowIndex: number;
@@ -686,6 +693,92 @@ export function CsvCompareModal({
       }));
     }
     setImportingResched(false);
+  };
+
+  // Export records as CSV download — enriches from syntheticRows via mapping
+  const exportHearingsCsv = (
+    filename: string,
+    records: { rowIndex: number; [key: string]: unknown }[],
+    extraColumns?: { key: string; label: string }[],
+  ) => {
+    if (!hearingsCheckResult) return;
+    const { syntheticRows, mapping: m } = hearingsCheckResult;
+    const baseHeaders = [
+      "Claimant",
+      "SSN",
+      "Claim Type",
+      "Hearing Date",
+      "Time",
+      "Time Zone",
+      "ALJ",
+      "Claimant Location",
+      "Rep Location",
+      "Medical Expert",
+      "Vocational Expert",
+      "Status Date",
+      "Entered Hearing Level Date",
+    ];
+    const extraHeaders = extraColumns?.map((c) => c.label) || [];
+    const headers = [...baseHeaders, ...extraHeaders];
+
+    const rows = records.map((r) => {
+      const row = syntheticRows[r.rowIndex] || [];
+      const base = [
+        row[m.claimant] || r.claimant || "",
+        row[m.ssn_last_4] || r.ssn || "",
+        row[m.claim_type] || "",
+        row[m.hearing_date] || r.hearing_date || "",
+        row[m.hearing_time] || "",
+        row[m.time_zone] || "",
+        row[m.alj] || "",
+        row[m.claimant_location] || "",
+        row[m.representative_location] || "",
+        row[m.medical_expert] || "",
+        row[m.vocational_expert] || "",
+        row[m.status_date] || "",
+        row[m.entered_hearing_level_date] || "",
+      ];
+      const extra = extraColumns?.map((c) => String(r[c.key] || "")) || [];
+      return [...base, ...extra]
+        .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+        .join(",");
+    });
+
+    const csv = [headers.join(","), ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportNew = () => {
+    if (!hearingsCheckResult) return;
+    exportHearingsCsv("new_hearings.csv", hearingsCheckResult.newRecords);
+  };
+
+  const handleExportRescheduled = () => {
+    if (!hearingsCheckResult) return;
+    exportHearingsCsv(
+      "rescheduled_hearings.csv",
+      hearingsCheckResult.rescheduledRecords,
+      [
+        { key: "original_claimant", label: "Original Claimant" },
+        { key: "original_date", label: "Original Date" },
+        { key: "original_time", label: "Original Time" },
+      ],
+    );
+  };
+
+  const handleExportSkipped = () => {
+    if (!hearingsCheckResult) return;
+    exportHearingsCsv(
+      "skipped_hearings.csv",
+      hearingsCheckResult.skippedRecords,
+      [{ key: "reason", label: "Reason" }],
+    );
   };
 
   // Import to raw_hearings (simple)
@@ -1269,12 +1362,21 @@ export function CsvCompareModal({
                         {/* New Records */}
                         {hearingsCheckResult.newRecords.length > 0 && (
                           <div className="rounded-lg border overflow-hidden">
-                            <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 dark:bg-emerald-900/30 border-b">
-                              <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                              <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-300">
-                                New — Not in Hearings DB (
-                                {hearingsCheckResult.newRecords.length})
-                              </p>
+                            <div className="flex items-center justify-between px-3 py-1.5 bg-emerald-50 dark:bg-emerald-900/30 border-b">
+                              <div className="flex items-center gap-2">
+                                <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                                <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-300">
+                                  New — Not in Hearings DB (
+                                  {hearingsCheckResult.newRecords.length})
+                                </p>
+                              </div>
+                              <button
+                                onClick={handleExportNew}
+                                className="p-1 rounded hover:bg-emerald-100 dark:hover:bg-emerald-800/40 text-emerald-700 dark:text-emerald-400"
+                                title="Export New as CSV"
+                              >
+                                <Download className="h-3.5 w-3.5" />
+                              </button>
                             </div>
                             <div className="overflow-auto max-h-45">
                               <table className="w-full text-xs">
@@ -1290,29 +1392,51 @@ export function CsvCompareModal({
                                       Date
                                     </th>
                                     <th className="px-2 py-1 text-left font-semibold">
+                                      Time
+                                    </th>
+                                    <th className="px-2 py-1 text-left font-semibold">
                                       SSN
+                                    </th>
+                                    <th className="px-2 py-1 text-left font-semibold">
+                                      ALJ
                                     </th>
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y">
                                   {hearingsCheckResult.newRecords
                                     .slice(0, 100)
-                                    .map((r, i) => (
-                                      <tr key={i} className="hover:bg-muted/30">
-                                        <td className="px-2 py-1 text-muted-foreground">
-                                          {i + 1}
-                                        </td>
-                                        <td className="px-2 py-1 font-medium">
-                                          {r.claimant}
-                                        </td>
-                                        <td className="px-2 py-1 tabular-nums">
-                                          {r.hearing_date || "—"}
-                                        </td>
-                                        <td className="px-2 py-1 text-muted-foreground tabular-nums">
-                                          {r.ssn || "—"}
-                                        </td>
-                                      </tr>
-                                    ))}
+                                    .map((r, i) => {
+                                      const row =
+                                        hearingsCheckResult.syntheticRows[
+                                          r.rowIndex
+                                        ];
+                                      const m = hearingsCheckResult.mapping;
+                                      return (
+                                        <tr
+                                          key={i}
+                                          className="hover:bg-muted/30"
+                                        >
+                                          <td className="px-2 py-1 text-muted-foreground">
+                                            {i + 1}
+                                          </td>
+                                          <td className="px-2 py-1 font-medium">
+                                            {r.claimant}
+                                          </td>
+                                          <td className="px-2 py-1 tabular-nums">
+                                            {r.hearing_date || "—"}
+                                          </td>
+                                          <td className="px-2 py-1 tabular-nums">
+                                            {row?.[m.hearing_time] || "—"}
+                                          </td>
+                                          <td className="px-2 py-1 text-muted-foreground tabular-nums">
+                                            {r.ssn || "—"}
+                                          </td>
+                                          <td className="px-2 py-1">
+                                            {row?.[m.alj] || "—"}
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
                                 </tbody>
                               </table>
                             </div>
@@ -1322,12 +1446,25 @@ export function CsvCompareModal({
                         {/* Rescheduled Records */}
                         {hearingsCheckResult.rescheduledRecords.length > 0 && (
                           <div className="rounded-lg border overflow-hidden">
-                            <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 dark:bg-blue-900/30 border-b">
-                              <span className="h-2 w-2 rounded-full bg-blue-500" />
-                              <p className="text-xs font-semibold text-blue-800 dark:text-blue-300">
-                                Rescheduled — Will update original (
-                                {hearingsCheckResult.rescheduledRecords.length})
-                              </p>
+                            <div className="flex items-center justify-between px-3 py-1.5 bg-blue-50 dark:bg-blue-900/30 border-b">
+                              <div className="flex items-center gap-2">
+                                <span className="h-2 w-2 rounded-full bg-blue-500" />
+                                <p className="text-xs font-semibold text-blue-800 dark:text-blue-300">
+                                  Rescheduled — Will update original (
+                                  {
+                                    hearingsCheckResult.rescheduledRecords
+                                      .length
+                                  }
+                                  )
+                                </p>
+                              </div>
+                              <button
+                                onClick={handleExportRescheduled}
+                                className="p-1 rounded hover:bg-blue-100 dark:hover:bg-blue-800/40 text-blue-700 dark:text-blue-400"
+                                title="Export Rescheduled as CSV"
+                              >
+                                <Download className="h-3.5 w-3.5" />
+                              </button>
                             </div>
                             <div className="overflow-auto max-h-45">
                               <table className="w-full text-xs">
@@ -1343,35 +1480,63 @@ export function CsvCompareModal({
                                       New Date
                                     </th>
                                     <th className="px-2 py-1 text-left font-semibold">
+                                      Time
+                                    </th>
+                                    <th className="px-2 py-1 text-left font-semibold">
+                                      ALJ
+                                    </th>
+                                    <th className="px-2 py-1 text-left font-semibold">
                                       Original
                                     </th>
                                     <th className="px-2 py-1 text-left font-semibold">
                                       Old Date
+                                    </th>
+                                    <th className="px-2 py-1 text-left font-semibold">
+                                      Old Time
                                     </th>
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y">
                                   {hearingsCheckResult.rescheduledRecords
                                     .slice(0, 100)
-                                    .map((r, i) => (
-                                      <tr key={i} className="hover:bg-muted/30">
-                                        <td className="px-2 py-1 text-muted-foreground">
-                                          {i + 1}
-                                        </td>
-                                        <td className="px-2 py-1 font-medium">
-                                          {r.claimant}
-                                        </td>
-                                        <td className="px-2 py-1 tabular-nums">
-                                          {r.hearing_date || "—"}
-                                        </td>
-                                        <td className="px-2 py-1 text-muted-foreground">
-                                          {r.original_claimant || "—"}
-                                        </td>
-                                        <td className="px-2 py-1 tabular-nums text-muted-foreground">
-                                          {r.original_date || "—"}
-                                        </td>
-                                      </tr>
-                                    ))}
+                                    .map((r, i) => {
+                                      const row =
+                                        hearingsCheckResult.syntheticRows[
+                                          r.rowIndex
+                                        ];
+                                      const m = hearingsCheckResult.mapping;
+                                      return (
+                                        <tr
+                                          key={i}
+                                          className="hover:bg-muted/30"
+                                        >
+                                          <td className="px-2 py-1 text-muted-foreground">
+                                            {i + 1}
+                                          </td>
+                                          <td className="px-2 py-1 font-medium">
+                                            {r.claimant}
+                                          </td>
+                                          <td className="px-2 py-1 tabular-nums">
+                                            {r.hearing_date || "—"}
+                                          </td>
+                                          <td className="px-2 py-1 tabular-nums">
+                                            {row?.[m.hearing_time] || "—"}
+                                          </td>
+                                          <td className="px-2 py-1">
+                                            {row?.[m.alj] || "—"}
+                                          </td>
+                                          <td className="px-2 py-1 text-muted-foreground">
+                                            {r.original_claimant || "—"}
+                                          </td>
+                                          <td className="px-2 py-1 tabular-nums text-muted-foreground">
+                                            {r.original_date || "—"}
+                                          </td>
+                                          <td className="px-2 py-1 tabular-nums text-muted-foreground">
+                                            {r.original_time || "—"}
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
                                 </tbody>
                               </table>
                             </div>
@@ -1469,6 +1634,13 @@ export function CsvCompareModal({
                                   with dates
                                 </Button>
                               )}
+                              <button
+                                onClick={handleExportSkipped}
+                                className="p-1 rounded hover:bg-amber-100 dark:hover:bg-amber-800/40 text-amber-700 dark:text-amber-400"
+                                title="Export Skipped as CSV"
+                              >
+                                <Download className="h-3.5 w-3.5" />
+                              </button>
                             </div>
                             <div className="overflow-auto max-h-45">
                               <table className="w-full text-xs">
