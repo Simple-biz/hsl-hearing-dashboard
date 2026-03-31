@@ -65,11 +65,16 @@ export function CsvCompareModal({
     duplicates: (ChronicleEntry & { _cat: "duplicate" })[];
   } | null>(null);
   const [activeTab, setActiveTab] = useState<CompareCategory>("new");
+  const [newSearch, setNewSearch] = useState("");
   const [importing, setImporting] = useState(false);
 
   const [archiveSelected, setArchiveSelected] = useState<Set<number>>(
     new Set(),
-  ); // indices into results arrays
+  ); // indices into results.newEntries
+  const [reschedArchiveSelected, setReschedArchiveSelected] = useState<
+    Set<number>
+  >(new Set()); // indices into results.rescheduled
+  const [reschedSearch, setReschedSearch] = useState("");
   const [archiving, setArchiving] = useState(false);
   const [showArchiveModal, setShowArchiveModal] = useState(false);
   const [archivedEntries, setArchivedEntries] = useState<
@@ -204,6 +209,7 @@ export function CsvCompareModal({
     for (const k of keys) set.add(`${k.claimant_lower}|${k.ssn}|${k.hdate}`);
     setArchivedKeys(set);
     setArchiveSelected(new Set());
+    setReschedArchiveSelected(new Set());
     setArchiving(false);
   };
 
@@ -988,12 +994,26 @@ export function CsvCompareModal({
                         );
                         const archivedCount =
                           results.newEntries.length - visible.length;
+                        const q = newSearch.toLowerCase();
+                        const filtered = q
+                          ? visible.filter(
+                              (e) =>
+                                e.claimant.toLowerCase().includes(q) ||
+                                (e.ssn || "").includes(q) ||
+                                (e.alj || "").toLowerCase().includes(q) ||
+                                (e.hearingDate || "").includes(q),
+                            )
+                          : visible;
                         return (
                           <div className="rounded-lg border overflow-hidden">
                             <div className="flex items-center gap-2 px-3 py-2 bg-emerald-50 dark:bg-emerald-950/20 border-b">
                               <span className="h-2 w-2 rounded-full bg-emerald-500" />
                               <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-300">
-                                New Entries ({visible.length})
+                                New Entries (
+                                {newSearch
+                                  ? `${filtered.length}/${visible.length}`
+                                  : visible.length}
+                                )
                                 {archivedCount > 0 && (
                                   <span className="font-normal text-muted-foreground">
                                     {" "}
@@ -1004,7 +1024,19 @@ export function CsvCompareModal({
                               <p className="text-[10px] text-emerald-600 dark:text-emerald-400">
                                 — Not found in RAW hearings database
                               </p>
-                              <div className="ml-auto flex items-center gap-1">
+                              <div className="ml-auto flex items-center gap-1.5">
+                                <div className="relative">
+                                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
+                                  <input
+                                    type="text"
+                                    placeholder="Search..."
+                                    value={newSearch}
+                                    onChange={(e) =>
+                                      setNewSearch(e.target.value)
+                                    }
+                                    className="h-6 w-36 rounded border bg-background pl-6 pr-2 text-[10px] focus:outline-none focus:ring-1 focus:ring-emerald-400"
+                                  />
+                                </div>
                                 {archiveSelected.size > 0 && (
                                   <Button
                                     variant="outline"
@@ -1026,7 +1058,7 @@ export function CsvCompareModal({
                                 )}
                               </div>
                             </div>
-                            {visible.length > 0 ? (
+                            {filtered.length > 0 ? (
                               <div className="overflow-auto max-h-50">
                                 <table className="w-full text-xs">
                                   <thead className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10">
@@ -1036,10 +1068,10 @@ export function CsvCompareModal({
                                           type="checkbox"
                                           checked={
                                             archiveSelected.size > 0 &&
-                                            visible.every((_, i) =>
+                                            filtered.every((_, i) =>
                                               archiveSelected.has(
                                                 results.newEntries.indexOf(
-                                                  visible[i],
+                                                  filtered[i],
                                                 ),
                                               ),
                                             )
@@ -1048,7 +1080,7 @@ export function CsvCompareModal({
                                             if (e.target.checked) {
                                               setArchiveSelected(
                                                 new Set(
-                                                  visible.map((v) =>
+                                                  filtered.map((v) =>
                                                     results.newEntries.indexOf(
                                                       v,
                                                     ),
@@ -1083,7 +1115,7 @@ export function CsvCompareModal({
                                     </tr>
                                   </thead>
                                   <tbody className="divide-y">
-                                    {visible.map((e, vi) => {
+                                    {filtered.map((e, vi) => {
                                       const realIdx =
                                         results.newEntries.indexOf(e);
                                       return (
@@ -1139,7 +1171,9 @@ export function CsvCompareModal({
                               </div>
                             ) : (
                               <p className="py-3 text-center text-xs text-muted-foreground">
-                                All new entries are archived
+                                {newSearch
+                                  ? `No results for "${newSearch}"`
+                                  : "All new entries are archived"}
                               </p>
                             )}
                           </div>
@@ -1148,81 +1182,202 @@ export function CsvCompareModal({
 
                     {/* Rescheduled */}
                     {(activeTab === "rescheduled" || activeTab === null) &&
-                      results.rescheduled.length > 0 && (
-                        <div className="rounded-lg border overflow-hidden">
-                          <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-950/20 border-b">
-                            <span className="h-2 w-2 rounded-full bg-blue-500" />
-                            <p className="text-xs font-semibold text-blue-800 dark:text-blue-300">
-                              Rescheduled ({results.rescheduled.length})
-                            </p>
-                            <p className="text-[10px] text-blue-600 dark:text-blue-400">
-                              — Same person + SSN, different hearing date
-                            </p>
-                          </div>
-                          <div className="overflow-auto max-h-50">
-                            <table className="w-full text-xs">
-                              <thead className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10">
-                                <tr>
-                                  <th className="px-2 py-1.5 text-left font-semibold">
-                                    Claimant
-                                  </th>
-                                  <th className="px-2 py-1.5 text-left font-semibold">
-                                    SSN
-                                  </th>
-                                  <th className="px-2 py-1.5 text-left font-semibold">
-                                    Claim Type
-                                  </th>
-                                  <th className="px-2 py-1.5 text-left font-semibold">
-                                    New Date
-                                  </th>
-                                  <th className="px-2 py-1.5 text-left font-semibold">
-                                    Time
-                                  </th>
-                                  <th className="px-2 py-1.5 text-left font-semibold">
-                                    Previous Date
-                                  </th>
-                                  <th className="px-2 py-1.5 text-left font-semibold">
-                                    Previous Time
-                                  </th>
-                                  <th className="px-2 py-1.5 text-left font-semibold">
-                                    ALJ
-                                  </th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y">
-                                {results.rescheduled.map((e, i) => (
-                                  <tr key={i} className="hover:bg-muted/30">
-                                    <td className="px-2 py-1.5 font-medium">
-                                      {e.claimant}
-                                    </td>
-                                    <td className="px-2 py-1.5 text-muted-foreground tabular-nums">
-                                      {e.ssn || "—"}
-                                    </td>
-                                    <td className="px-2 py-1.5">
-                                      {e.claimType || "—"}
-                                    </td>
-                                    <td className="px-2 py-1.5 tabular-nums font-medium text-blue-700 dark:text-blue-400">
-                                      {e.hearingDate}
-                                    </td>
-                                    <td className="px-2 py-1.5 tabular-nums">
-                                      {e.time || "—"}
-                                    </td>
-                                    <td className="px-2 py-1.5 tabular-nums text-muted-foreground line-through">
-                                      {e.prevDate}
-                                    </td>
-                                    <td className="px-2 py-1.5 tabular-nums text-muted-foreground line-through">
-                                      {e.prevTime || "—"}
-                                    </td>
-                                    <td className="px-2 py-1.5">
-                                      {e.alj || "—"}
-                                    </td>
+                      results.rescheduled.length > 0 &&
+                      (() => {
+                        const visibleResched = results.rescheduled.filter(
+                          (e) => !isArchived(e),
+                        );
+                        const archivedReschedCount =
+                          results.rescheduled.length - visibleResched.length;
+                        const rq = reschedSearch.toLowerCase();
+                        const filteredResched = rq
+                          ? visibleResched.filter(
+                              (e) =>
+                                e.claimant.toLowerCase().includes(rq) ||
+                                (e.ssn || "").includes(rq) ||
+                                (e.alj || "").toLowerCase().includes(rq) ||
+                                (e.hearingDate || "").includes(rq),
+                            )
+                          : visibleResched;
+                        return (
+                          <div className="rounded-lg border overflow-hidden">
+                            <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-950/20 border-b">
+                              <span className="h-2 w-2 rounded-full bg-blue-500" />
+                              <p className="text-xs font-semibold text-blue-800 dark:text-blue-300">
+                                Rescheduled (
+                                {reschedSearch
+                                  ? `${filteredResched.length}/${visibleResched.length}`
+                                  : visibleResched.length}
+                                )
+                                {archivedReschedCount > 0 && (
+                                  <span className="font-normal text-muted-foreground">
+                                    {" "}
+                                    • {archivedReschedCount} archived
+                                  </span>
+                                )}
+                              </p>
+                              <p className="text-[10px] text-blue-600 dark:text-blue-400">
+                                — Same person + SSN, different hearing date
+                              </p>
+                              <div className="ml-auto flex items-center gap-1.5">
+                                <div className="relative">
+                                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
+                                  <input
+                                    type="text"
+                                    placeholder="Search..."
+                                    value={reschedSearch}
+                                    onChange={(e) =>
+                                      setReschedSearch(e.target.value)
+                                    }
+                                    className="h-6 w-36 rounded border bg-background pl-6 pr-2 text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-400"
+                                  />
+                                </div>
+                                {reschedArchiveSelected.size > 0 && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-6 text-[10px] gap-1"
+                                    disabled={archiving}
+                                    onClick={() =>
+                                      handleArchiveSelected(
+                                        results.rescheduled,
+                                        reschedArchiveSelected,
+                                      )
+                                    }
+                                  >
+                                    <Archive className="h-3 w-3" />
+                                    {archiving
+                                      ? "Archiving..."
+                                      : `Archive ${reschedArchiveSelected.size} Selected`}
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
+                            <div className="overflow-auto max-h-50">
+                              <table className="w-full text-xs">
+                                <thead className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10">
+                                  <tr>
+                                    <th className="px-2 py-1.5 w-8">
+                                      <input
+                                        type="checkbox"
+                                        checked={
+                                          reschedArchiveSelected.size > 0 &&
+                                          filteredResched.every((_, i) =>
+                                            reschedArchiveSelected.has(
+                                              results.rescheduled.indexOf(
+                                                filteredResched[i],
+                                              ),
+                                            ),
+                                          )
+                                        }
+                                        onChange={(e) => {
+                                          if (e.target.checked) {
+                                            setReschedArchiveSelected(
+                                              new Set(
+                                                filteredResched.map((v) =>
+                                                  results.rescheduled.indexOf(
+                                                    v,
+                                                  ),
+                                                ),
+                                              ),
+                                            );
+                                          } else {
+                                            setReschedArchiveSelected(
+                                              new Set(),
+                                            );
+                                          }
+                                        }}
+                                        className="accent-primary"
+                                      />
+                                    </th>
+                                    <th className="px-2 py-1.5 text-left font-semibold">
+                                      Claimant
+                                    </th>
+                                    <th className="px-2 py-1.5 text-left font-semibold">
+                                      SSN
+                                    </th>
+                                    <th className="px-2 py-1.5 text-left font-semibold">
+                                      Claim Type
+                                    </th>
+                                    <th className="px-2 py-1.5 text-left font-semibold">
+                                      New Date
+                                    </th>
+                                    <th className="px-2 py-1.5 text-left font-semibold">
+                                      Time
+                                    </th>
+                                    <th className="px-2 py-1.5 text-left font-semibold">
+                                      Previous Date
+                                    </th>
+                                    <th className="px-2 py-1.5 text-left font-semibold">
+                                      Previous Time
+                                    </th>
+                                    <th className="px-2 py-1.5 text-left font-semibold">
+                                      ALJ
+                                    </th>
                                   </tr>
-                                ))}
-                              </tbody>
-                            </table>
+                                </thead>
+                                <tbody className="divide-y">
+                                  {filteredResched.map((e, vi) => {
+                                    const realIdx =
+                                      results.rescheduled.indexOf(e);
+                                    return (
+                                      <tr
+                                        key={vi}
+                                        className="hover:bg-muted/30"
+                                      >
+                                        <td className="px-2 py-1.5">
+                                          <input
+                                            type="checkbox"
+                                            checked={reschedArchiveSelected.has(
+                                              realIdx,
+                                            )}
+                                            onChange={(ev) => {
+                                              const next = new Set(
+                                                reschedArchiveSelected,
+                                              );
+                                              if (ev.target.checked) {
+                                                next.add(realIdx);
+                                              } else {
+                                                next.delete(realIdx);
+                                              }
+                                              setReschedArchiveSelected(next);
+                                            }}
+                                            className="accent-primary"
+                                          />
+                                        </td>
+                                        <td className="px-2 py-1.5 font-medium">
+                                          {e.claimant}
+                                        </td>
+                                        <td className="px-2 py-1.5 text-muted-foreground tabular-nums">
+                                          {e.ssn || "—"}
+                                        </td>
+                                        <td className="px-2 py-1.5">
+                                          {e.claimType || "—"}
+                                        </td>
+                                        <td className="px-2 py-1.5 tabular-nums font-medium text-blue-700 dark:text-blue-400">
+                                          {e.hearingDate}
+                                        </td>
+                                        <td className="px-2 py-1.5 tabular-nums">
+                                          {e.time || "—"}
+                                        </td>
+                                        <td className="px-2 py-1.5 tabular-nums text-muted-foreground line-through">
+                                          {e.prevDate}
+                                        </td>
+                                        <td className="px-2 py-1.5 tabular-nums text-muted-foreground line-through">
+                                          {e.prevTime || "—"}
+                                        </td>
+                                        <td className="px-2 py-1.5">
+                                          {e.alj || "—"}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
                           </div>
-                        </div>
-                      )}
+                        );
+                      })()}
 
                     {/* Duplicates */}
                     {(activeTab === "duplicate" || activeTab === null) &&
