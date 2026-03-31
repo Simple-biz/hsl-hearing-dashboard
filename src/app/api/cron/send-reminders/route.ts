@@ -10,10 +10,7 @@ import { db } from "@/lib/db";
  */
 
 const REMINDER_INTERVALS = [
-  { type: "56_days", days: 56 },
-  { type: "45_days", days: 45 },
-  { type: "30_days", days: 30 },
-  { type: "10_days", days: 10 },
+  { type: "7_days", days: 7 },
   { type: "1_day", days: 1 },
 ];
 
