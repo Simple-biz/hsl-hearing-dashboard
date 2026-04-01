@@ -214,6 +214,9 @@ export function CsvCompareModal({
     setArchiveSelected(new Set());
     setReschedArchiveSelected(new Set());
     setArchiving(false);
+    // Re-run hearings check so skipped/new/rescheduled counts update
+    setHearingsImportResult(null);
+    handleCheckHearings(set);
   };
 
   const handleShowArchive = async () => {
@@ -230,6 +233,9 @@ export function CsvCompareModal({
     const set = new Set<string>();
     for (const k of keys) set.add(`${k.claimant_lower}|${k.ssn}|${k.hdate}`);
     setArchivedKeys(set);
+    // Re-run hearings check so counts update
+    setHearingsImportResult(null);
+    handleCheckHearings(set);
   };
 
   const stripSuffix = (name: string) =>
@@ -442,15 +448,21 @@ export function CsvCompareModal({
   };
 
   // Build synthetic rows from Chronicle entries for the import APIs
-  const buildSyntheticData = () => {
+  const buildSyntheticData = (keysOverride?: Set<string>) => {
     if (!results) return null;
     // Send ALL entries to the server for checking — let the server do the matching
     // Filter out archived entries so they don't appear in hearings check results
+    const checkArchived = keysOverride
+      ? (entry: ChronicleEntry) => {
+          const key = `${entry.claimant.toLowerCase()}|${(entry.ssn || "").padStart(4, "0")}|${entry.hearingDate || ""}`;
+          return keysOverride.has(key);
+        }
+      : isArchived;
     const entries = [
       ...results.newEntries,
       ...results.rescheduled,
       ...results.duplicates,
-    ].filter((e) => !isArchived(e));
+    ].filter((e) => !checkArchived(e));
     const FIELDS = [
       "claimant",
       "ssn_last_4",
@@ -489,8 +501,8 @@ export function CsvCompareModal({
   };
 
   // Check duplicates against hearings table before importing
-  const handleCheckHearings = async () => {
-    const data = buildSyntheticData();
+  const handleCheckHearings = async (keysOverride?: Set<string>) => {
+    const data = buildSyntheticData(keysOverride);
     if (!data) return;
     setImporting(true);
     try {
@@ -947,56 +959,67 @@ export function CsvCompareModal({
                 {results && (
                   <>
                     {/* Summary stats — clickable to jump to section */}
-                    <div className="grid grid-cols-3 gap-3">
-                      <button
-                        onClick={() => setActiveTab("new")}
-                        className={cn(
-                          "rounded-lg border p-3 text-center transition-all",
-                          activeTab === "new"
-                            ? "border-emerald-400 ring-1 ring-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/20"
-                            : "hover:bg-muted/40",
-                        )}
-                      >
-                        <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-400 tabular-nums">
-                          {results.newEntries.length}
-                        </p>
-                        <p className="text-xs text-muted-foreground font-medium">
-                          New Entries
-                        </p>
-                      </button>
-                      <button
-                        onClick={() => setActiveTab("rescheduled")}
-                        className={cn(
-                          "rounded-lg border p-3 text-center transition-all",
-                          activeTab === "rescheduled"
-                            ? "border-blue-400 ring-1 ring-blue-400 bg-blue-50/50 dark:bg-blue-950/20"
-                            : "hover:bg-muted/40",
-                        )}
-                      >
-                        <p className="text-2xl font-bold text-blue-700 dark:text-blue-400 tabular-nums">
-                          {results.rescheduled.length}
-                        </p>
-                        <p className="text-xs text-muted-foreground font-medium">
-                          Rescheduled
-                        </p>
-                      </button>
-                      <button
-                        onClick={() => setActiveTab("duplicate")}
-                        className={cn(
-                          "rounded-lg border p-3 text-center transition-all",
-                          activeTab === "duplicate"
-                            ? "border-amber-400 ring-1 ring-amber-400 bg-amber-50/50 dark:bg-amber-950/20"
-                            : "hover:bg-muted/40",
-                        )}
-                      >
-                        <p className="text-2xl font-bold text-amber-700 dark:text-amber-400 tabular-nums">
-                          {results.duplicates.length}
-                        </p>
-                        <p className="text-xs text-muted-foreground font-medium">
-                          Duplicates
-                        </p>
-                      </button>
-                    </div>
+                    {(() => {
+                      const visibleNew = results.newEntries.filter(
+                        (e) => !isArchived(e),
+                      ).length;
+                      const visibleResched = results.rescheduled.filter(
+                        (e) => !isArchived(e),
+                      ).length;
+                      const visibleDupes = results.duplicates.length;
+                      return (
+                        <div className="grid grid-cols-3 gap-3">
+                          <button
+                            onClick={() => setActiveTab("new")}
+                            className={cn(
+                              "rounded-lg border p-3 text-center transition-all",
+                              activeTab === "new"
+                                ? "border-emerald-400 ring-1 ring-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/20"
+                                : "hover:bg-muted/40",
+                            )}
+                          >
+                            <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-400 tabular-nums">
+                              {visibleNew}
+                            </p>
+                            <p className="text-xs text-muted-foreground font-medium">
+                              New Entries
+                            </p>
+                          </button>
+                          <button
+                            onClick={() => setActiveTab("rescheduled")}
+                            className={cn(
+                              "rounded-lg border p-3 text-center transition-all",
+                              activeTab === "rescheduled"
+                                ? "border-blue-400 ring-1 ring-blue-400 bg-blue-50/50 dark:bg-blue-950/20"
+                                : "hover:bg-muted/40",
+                            )}
+                          >
+                            <p className="text-2xl font-bold text-blue-700 dark:text-blue-400 tabular-nums">
+                              {visibleResched}
+                            </p>
+                            <p className="text-xs text-muted-foreground font-medium">
+                              Rescheduled
+                            </p>
+                          </button>
+                          <button
+                            onClick={() => setActiveTab("duplicate")}
+                            className={cn(
+                              "rounded-lg border p-3 text-center transition-all",
+                              activeTab === "duplicate"
+                                ? "border-amber-400 ring-1 ring-amber-400 bg-amber-50/50 dark:bg-amber-950/20"
+                                : "hover:bg-muted/40",
+                            )}
+                          >
+                            <p className="text-2xl font-bold text-amber-700 dark:text-amber-400 tabular-nums">
+                              {visibleDupes}
+                            </p>
+                            <p className="text-xs text-muted-foreground font-medium">
+                              Duplicates
+                            </p>
+                          </button>
+                        </div>
+                      );
+                    })()}
 
                     {/* New Entries */}
                     {(activeTab === "new" || activeTab === null) &&
@@ -1582,13 +1605,13 @@ export function CsvCompareModal({
                                           Claimant
                                         </th>
                                         <th className="px-2 py-1 text-left font-semibold">
+                                          SSN
+                                        </th>
+                                        <th className="px-2 py-1 text-left font-semibold">
                                           Date
                                         </th>
                                         <th className="px-2 py-1 text-left font-semibold">
                                           Time
-                                        </th>
-                                        <th className="px-2 py-1 text-left font-semibold">
-                                          SSN
                                         </th>
                                         <th className="px-2 py-1 text-left font-semibold">
                                           ALJ
@@ -1613,14 +1636,14 @@ export function CsvCompareModal({
                                             <td className="px-2 py-1 font-medium">
                                               {r.claimant}
                                             </td>
+                                            <td className="px-2 py-1 text-muted-foreground tabular-nums">
+                                              {r.ssn || "—"}
+                                            </td>
                                             <td className="px-2 py-1 tabular-nums">
                                               {r.hearing_date || "—"}
                                             </td>
                                             <td className="px-2 py-1 tabular-nums">
                                               {row?.[mp.hearing_time] || "—"}
-                                            </td>
-                                            <td className="px-2 py-1 text-muted-foreground tabular-nums">
-                                              {r.ssn || "—"}
                                             </td>
                                             <td className="px-2 py-1">
                                               {row?.[mp.alj] || "—"}
@@ -1664,6 +1687,9 @@ export function CsvCompareModal({
                                           Claimant
                                         </th>
                                         <th className="px-2 py-1 text-left font-semibold">
+                                          SSN
+                                        </th>
+                                        <th className="px-2 py-1 text-left font-semibold">
                                           New Date
                                         </th>
                                         <th className="px-2 py-1 text-left font-semibold">
@@ -1703,6 +1729,9 @@ export function CsvCompareModal({
                                               </td>
                                               <td className="px-2 py-1 font-medium">
                                                 {r.claimant}
+                                              </td>
+                                              <td className="px-2 py-1 text-muted-foreground tabular-nums">
+                                                {r.ssn || "—"}
                                               </td>
                                               <td className="px-2 py-1 tabular-nums">
                                                 {r.hearing_date || "—"}
@@ -1757,10 +1786,10 @@ export function CsvCompareModal({
                                           Claimant
                                         </th>
                                         <th className="px-2 py-1 text-left font-semibold">
-                                          Date
+                                          SSN
                                         </th>
                                         <th className="px-2 py-1 text-left font-semibold">
-                                          SSN
+                                          Date
                                         </th>
                                       </tr>
                                     </thead>
@@ -1778,11 +1807,11 @@ export function CsvCompareModal({
                                             <td className="px-2 py-1">
                                               {r.claimant}
                                             </td>
-                                            <td className="px-2 py-1 tabular-nums">
-                                              {r.hearing_date || "—"}
-                                            </td>
                                             <td className="px-2 py-1 text-muted-foreground tabular-nums">
                                               {r.ssn || "—"}
+                                            </td>
+                                            <td className="px-2 py-1 tabular-nums">
+                                              {r.hearing_date || "—"}
                                             </td>
                                           </tr>
                                         ))}
@@ -1973,7 +2002,7 @@ export function CsvCompareModal({
                           size="sm"
                           className="gap-1.5"
                           disabled={importing}
-                          onClick={handleCheckHearings}
+                          onClick={() => handleCheckHearings()}
                         >
                           {importing ? (
                             <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
