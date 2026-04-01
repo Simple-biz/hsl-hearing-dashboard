@@ -1041,14 +1041,16 @@ function ResetPasswordModal({
 
 // ═══════════ ACTIVITY LOG TAB ═══════════
 const LOG_CATEGORIES = [
-  { key: "all", label: "All", icon: "📋" },
+  { key: "logins", label: "User Logins", icon: "🔑" },
   { key: "assignments", label: "Assignments", icon: "👤" },
   { key: "emails", label: "Emails", icon: "📧" },
   { key: "fields", label: "Fields", icon: "✏️" },
   { key: "hearings", label: "Hearings", icon: "📅" },
   { key: "schedule", label: "Schedule", icon: "🗓️" },
   { key: "reps", label: "Reps", icon: "👥" },
-  { key: "users", label: "Users", icon: "🔑" },
+  { key: "users", label: "Users", icon: "👤" },
+  { key: "archived", label: "Archived", icon: "📦" },
+  { key: "all", label: "All", icon: "📋" },
 ];
 
 const ACTION_COLORS: Record<string, string> = {
@@ -1110,6 +1112,11 @@ const ACTION_COLORS: Record<string, string> = {
   rep_deleted: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
   token_revoked:
     "bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300",
+  // Archived
+  archive_chronicles:
+    "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300",
+  unarchive_chronicles:
+    "bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-900/40 dark:text-fuchsia-300",
   // Admin
   user_created:
     "bg-emerald-100 text-emerald-800 dark:bg-emerald-800/40 dark:text-emerald-300",
@@ -1123,7 +1130,7 @@ const ACTION_COLORS: Record<string, string> = {
 };
 
 function ActivityTab() {
-  const [category, setCategory] = useState("all");
+  const [category, setCategory] = useState("logins");
   const [dateRange, setDateRange] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
