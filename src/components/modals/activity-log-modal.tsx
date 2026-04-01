@@ -9,13 +9,14 @@ import { fetchActivityLog } from "@/app/(dashboard)/actions";
 import type { ActivityLogEntry } from "@/app/(dashboard)/actions";
 
 const CATEGORIES = [
-  { key: "all", label: "📋 All" },
   { key: "assignments", label: "👤 Assignments" },
   { key: "emails", label: "📧 Emails" },
   { key: "fields", label: "✏️ Field Updates" },
   { key: "hearings", label: "📅 Hearings" },
   { key: "schedule", label: "🗓️ Schedule" },
   { key: "reps", label: "👥 Reps" },
+  { key: "archived", label: "📦 Archived" },
+  { key: "all", label: "📋 All" },
 ];
 
 const ACTION_COLORS: Record<string, string> = {
@@ -53,6 +54,10 @@ const ACTION_COLORS: Record<string, string> = {
   rep_updated: "bg-blue-100 text-blue-700 dark:bg-blue-900/30",
   rep_deleted: "bg-red-100 text-red-700 dark:bg-red-900/30",
   token_revoked: "bg-orange-100 text-orange-700 dark:bg-orange-900/30",
+  // Archived
+  archive_chronicles: "bg-violet-100 text-violet-700 dark:bg-violet-900/30",
+  unarchive_chronicles:
+    "bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-900/30",
 };
 
 export function ActivityLogModal({
@@ -62,7 +67,7 @@ export function ActivityLogModal({
   onClose: () => void;
   excludeSystemAdmin?: boolean;
 }) {
-  const [category, setCategory] = useState("all");
+  const [category, setCategory] = useState("assignments");
   const [dateRange, setDateRange] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
