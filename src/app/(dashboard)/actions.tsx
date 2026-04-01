@@ -1286,6 +1286,8 @@ export async function fetchActivityLog(params: {
       ],
       schedule: ["schedule_updated", "schedule_lock_override"],
       reps: ["rep_created", "rep_updated", "rep_deleted", "token_revoked"],
+      logins: ["user_login", "user_logout"],
+      archived: ["archive_chronicles", "unarchive_chronicles"],
       users: [
         "user_created",
         "user_updated",
