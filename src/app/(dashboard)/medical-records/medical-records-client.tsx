@@ -1437,7 +1437,7 @@ function HearingRow({
       {/* MR Specialist — colored pill select */}
       {permissions.canEditMrTeam ? (
         <select
-          className="w-full text-[9px] px-1.5 py-1 rounded border-0 cursor-pointer font-medium"
+          className="w-full text-[9px] px-1.5 py-1 rounded border-0 cursor-pointer font-medium [&>option]:bg-white [&>option]:text-black dark:[&>option]:bg-zinc-800 dark:[&>option]:text-zinc-100"
           style={{
             backgroundColor: !h.mr_team_id
               ? "#9ca3af"
@@ -1543,7 +1543,7 @@ function HearingRow({
         <select
           value={h.medical_record_status ?? ""}
           className={cn(
-            "w-full text-[9px] px-1.5 py-1 rounded border cursor-pointer bg-card",
+            "w-full text-[9px] px-1.5 py-1 rounded border cursor-pointer bg-card [&>option]:bg-white [&>option]:text-black dark:[&>option]:bg-zinc-800 dark:[&>option]:text-zinc-100",
             h.medical_record_status
               ? cn("border-current", mrTextCls)
               : "text-muted-foreground border-transparent hover:border-border",
@@ -1585,7 +1585,7 @@ function HearingRow({
         <select
           value={h.hearing_decision_status ?? ""}
           className={cn(
-            "w-full text-[9px] px-1.5 py-1 rounded border cursor-pointer bg-card",
+            "w-full text-[9px] px-1.5 py-1 rounded border cursor-pointer bg-card [&>option]:bg-white [&>option]:text-black dark:[&>option]:bg-zinc-800 dark:[&>option]:text-zinc-100",
             h.hearing_decision_status
               ? cn("border-current", hrgTextCls)
               : "text-muted-foreground border-transparent hover:border-border",

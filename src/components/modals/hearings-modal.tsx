@@ -188,7 +188,7 @@ function HearingRow({
       <div className="text-center">
         {permissions.canEditMrTeam ? (
           <select
-            className="w-full text-[10px] px-1.5 py-1 rounded border border-border bg-card cursor-pointer"
+            className="w-full text-[10px] px-1.5 py-1 rounded border border-border bg-card cursor-pointer [&>option]:bg-white [&>option]:text-black dark:[&>option]:bg-zinc-800 dark:[&>option]:text-zinc-100"
             value={h.mr_team_id ?? ""}
             style={{
               backgroundColor: h.mr_team_id
@@ -261,7 +261,7 @@ function HearingRow({
         {permissions.canEditMrStatus ? (
           <select
             className={cn(
-              "w-full text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer",
+              "w-full text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer [&>option]:bg-white [&>option]:text-black dark:[&>option]:bg-zinc-800 dark:[&>option]:text-zinc-100",
               mrStatusCls(h.medical_record_status),
             )}
             value={h.medical_record_status ?? ""}
@@ -315,7 +315,7 @@ function HearingRow({
         {permissions.canEditDecisionStatus ? (
           <select
             className={cn(
-              "w-full text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer",
+              "w-full text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer [&>option]:bg-white [&>option]:text-black dark:[&>option]:bg-zinc-800 dark:[&>option]:text-zinc-100",
               hrgStatusCls(h.hearing_decision_status),
             )}
             value={h.hearing_decision_status ?? ""}
@@ -738,10 +738,9 @@ export function HearingsModal({
 
           {Object.entries(grouped).map(([monthKey, rows]) => {
             const expanded = expandedMonths.has(monthKey);
-            const label = new Date(monthKey + "-01").toLocaleDateString(
-              "en-US",
-              { month: "long", year: "numeric" },
-            );
+            const label = new Date(
+              monthKey + "-01T00:00:00",
+            ).toLocaleDateString("en-US", { month: "long", year: "numeric" });
             return (
               <div key={`hm-${monthKey}`}>
                 <div
@@ -820,14 +819,34 @@ export function HearingsModal({
               <option value="all">Show All</option>
             </select>
             <button
+              onClick={() => goPage(1)}
+              disabled={(filters.page ?? 1) <= 1}
+              className="flex items-center text-xs px-2 py-1.5 rounded-lg bg-zinc-200 hover:bg-zinc-300 text-zinc-700 dark:bg-zinc-700 dark:hover:bg-zinc-600 dark:text-zinc-200 font-semibold disabled:opacity-40 transition-colors"
+              title="First page"
+            >
+              <ChevronLeft size={12} />
+              <ChevronLeft size={12} className="-ml-1.5" />
+            </button>
+            <button
               onClick={() => goPage((filters.page ?? 1) - 1)}
               disabled={(filters.page ?? 1) <= 1}
               className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg bg-zinc-200 hover:bg-zinc-300 text-zinc-700 dark:bg-zinc-700 dark:hover:bg-zinc-600 dark:text-zinc-200 font-semibold disabled:opacity-40 transition-colors"
             >
               <ChevronLeft size={12} /> Prev
             </button>
+            <select
+              value={filters.page ?? 1}
+              onChange={(e) => goPage(Number(e.target.value))}
+              className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer tabular-nums"
+            >
+              {Array.from({ length: totalPages }, (_, i) => (
+                <option key={i + 1} value={i + 1}>
+                  Page {i + 1}
+                </option>
+              ))}
+            </select>
             <span className="text-xs text-muted-foreground">
-              Page {filters.page} of {totalPages}
+              of {totalPages}
             </span>
             <button
               onClick={() => goPage((filters.page ?? 1) + 1)}
@@ -835,6 +854,15 @@ export function HearingsModal({
               className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold disabled:opacity-40 transition-colors"
             >
               Next <ChevronRight size={12} />
+            </button>
+            <button
+              onClick={() => goPage(totalPages)}
+              disabled={(filters.page ?? 1) >= totalPages}
+              className="flex items-center text-xs px-2 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold disabled:opacity-40 transition-colors"
+              title="Last page"
+            >
+              <ChevronRight size={12} />
+              <ChevronRight size={12} className="-ml-1.5" />
             </button>
           </div>
         </div>
