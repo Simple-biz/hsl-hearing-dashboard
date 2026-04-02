@@ -28,6 +28,19 @@ const ALL_ROLES = [
   { value: "manager", label: "Manager", group: "Administration" },
   { value: "hearings_admin", label: "Hearings Admin", group: "Hearings" },
   { value: "hearings_agent", label: "Hearings Agent", group: "Hearings" },
+  {
+    value: "hearings_status_moa",
+    label: "Hearings Status/MOA",
+    group: "Hearings",
+  },
+  {
+    value: "hearings_docs_fee",
+    label: "Hearings Docs & Fee",
+    group: "Hearings",
+  },
+  { value: "hearings_docs", label: "Hearings Docs", group: "Hearings" },
+  { value: "hearings_mc", label: "Hearings MC", group: "Hearings" },
+  { value: "hearings_brief", label: "Hearings Brief", group: "Hearings" },
   { value: "mr_admin", label: "MR Admin", group: "Medical Records" },
   { value: "mr_lead", label: "MR Lead", group: "Medical Records" },
   { value: "mr_agent", label: "MR Agent", group: "Medical Records" },
@@ -324,7 +337,7 @@ export function BulkCreateModal({
                 </div>
                 <textarea
                   className="w-full h-40 rounded-md border bg-background px-3 py-2 text-xs font-mono resize-none focus:outline-none focus:ring-2 focus:ring-ring"
-                  placeholder={`John Doe, john@hogansmith.com, hearings_agent
+                  placeholder={`John Doe, john@hogansmith.com, hearings_status_moa
 Jane Smith, jane@hogansmith.com, mr_agent
 Test User, testuser@hogansmith.com, staff, customP@ss123
 Test Rep, testrep@hogansmith.com, rep, , in-house`}
@@ -348,11 +361,133 @@ Test Rep, testrep@hogansmith.com, rep, , in-house`}
                 </div>
               </div>
 
-              <div className="rounded-lg bg-muted/50 border p-3 text-xs text-muted-foreground space-y-1">
+              <div className="rounded-lg bg-muted/50 border p-3 text-xs text-muted-foreground space-y-2">
                 <p className="font-medium">Available roles:</p>
-                <p className="leading-relaxed">
-                  {ALL_ROLES.map((r) => r.value).join(", ")}
-                </p>
+                <div className="grid gap-0.5 leading-relaxed">
+                  <p>
+                    <span className="font-semibold text-foreground">admin</span>{" "}
+                    — Full access to all features and settings
+                  </p>
+                  <p>
+                    <span className="font-semibold text-foreground">
+                      manager
+                    </span>{" "}
+                    — Full access, similar to admin
+                  </p>
+                  <p className="mt-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
+                    Hearings Team
+                  </p>
+                  <p>
+                    <span className="font-semibold text-foreground">
+                      hearings_admin
+                    </span>{" "}
+                    — Full hearings management (assign reps, edit all hearing
+                    fields, reports)
+                  </p>
+                  <p>
+                    <span className="font-semibold text-foreground">
+                      hearings_agent
+                    </span>{" "}
+                    — View-only access to hearing dashboard &amp; schedule
+                  </p>
+                  <p>
+                    <span className="font-semibold text-foreground">
+                      hearings_status_moa
+                    </span>{" "}
+                    — Can update hearing status &amp; MOA only, rest is
+                    view-only
+                  </p>
+                  <p>
+                    <span className="font-semibold text-foreground">
+                      hearings_docs_fee
+                    </span>{" "}
+                    — Can update docs assigned, rep docs &amp; fee agreement
+                    only
+                  </p>
+                  <p>
+                    <span className="font-semibold text-foreground">
+                      hearings_docs
+                    </span>{" "}
+                    — Can update docs assigned, rep docs &amp; fee agreement
+                    only
+                  </p>
+                  <p>
+                    <span className="font-semibold text-foreground">
+                      hearings_mc
+                    </span>{" "}
+                    — Can add/update claimant link only, rest is view-only
+                  </p>
+                  <p>
+                    <span className="font-semibold text-foreground">
+                      hearings_brief
+                    </span>{" "}
+                    — Can add/update brief only, rest is view-only
+                  </p>
+                  <p className="mt-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
+                    Medical Records
+                  </p>
+                  <p>
+                    <span className="font-semibold text-foreground">
+                      mr_admin
+                    </span>{" "}
+                    — Full MR management: edit MR team, task, MR status,
+                    worksheet link, 5-day notice, decision status. View MOA,
+                    credited, claimant link. Access: Dashboard, MR Pivot,
+                    Patient Portal, RFC, Settings
+                  </p>
+                  <p>
+                    <span className="font-semibold text-foreground">
+                      mr_lead
+                    </span>{" "}
+                    — MR lead: edit MR status, worksheet link, 5-day notice.
+                    View MR team, task, MOA, decision status, credited, claimant
+                    link. Access: Dashboard, MR Pivot, Patient Portal, RFC,
+                    Settings
+                  </p>
+                  <p>
+                    <span className="font-semibold text-foreground">
+                      mr_agent
+                    </span>{" "}
+                    — MR agent: edit MR status, worksheet link, 5-day notice.
+                    View MR team, task, MOA, decision status, credited, claimant
+                    link. Access: Dashboard, MR Pivot, Patient Portal, RFC
+                  </p>
+                  <p className="mt-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
+                    Staff
+                  </p>
+                  <p>
+                    <span className="font-semibold text-foreground">
+                      pre_hearing_staff
+                    </span>{" "}
+                    — Rep docs &amp; fee agreement fields
+                  </p>
+                  <p>
+                    <span className="font-semibold text-foreground">
+                      brief_agent
+                    </span>{" "}
+                    — Brief assignment, rep docs &amp; fee agreement
+                  </p>
+                  <p>
+                    <span className="font-semibold text-foreground">
+                      post_hearing_admin
+                    </span>{" "}
+                    — Post-hearing review, decision status &amp; notes
+                  </p>
+                  <p>
+                    <span className="font-semibold text-foreground">
+                      post_hearing_staff
+                    </span>{" "}
+                    — Post-hearing review &amp; notes
+                  </p>
+                  <p>
+                    <span className="font-semibold text-foreground">staff</span>{" "}
+                    — View-only dashboard access
+                  </p>
+                  <p>
+                    <span className="font-semibold text-foreground">rep</span> —
+                    Representative (limited view, own hearings only)
+                  </p>
+                </div>
                 <p className="mt-2 font-medium">Notes:</p>
                 <p>
                   If password is omitted, a random 12-character password is

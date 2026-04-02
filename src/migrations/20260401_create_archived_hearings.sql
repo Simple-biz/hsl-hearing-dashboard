@@ -1,0 +1,49 @@
+-- Archive table for dashboard hearings
+-- Uses TEXT for date/time fields to match hearings table types exactly
+CREATE TABLE IF NOT EXISTS archived_hearings (
+  id              SERIAL PRIMARY KEY,
+  hearing_id      INT NOT NULL,                     -- original hearings.id
+  claimant        TEXT,
+  ssn_last_4      TEXT,
+  claim_type      TEXT,
+  hearing_date    TEXT NOT NULL,
+  hearing_time    TEXT,
+  time_zone       TEXT DEFAULT 'ET',
+  converted_time_est TEXT,
+  city            TEXT,
+  state           TEXT,
+  alj             TEXT,
+  manner_of_appearance TEXT,
+  hearing_decision_status TEXT,
+  assigned_rep_id INT,
+  mr_team_id      INT,
+  brief_assigned_to TEXT,
+  medical_record_status TEXT,
+  medical_record_link TEXT,
+  claimant_link   TEXT,
+  assignment_status TEXT,
+  task_assigned   BOOLEAN DEFAULT FALSE,
+  rep_docs_complete BOOLEAN DEFAULT FALSE,
+  rep_docs_assigned_to TEXT,
+  fee_agreement_complete BOOLEAN DEFAULT FALSE,
+  five_day_notice BOOLEAN DEFAULT FALSE,
+  rfc_status      TEXT,
+  phi_sheet_complete BOOLEAN DEFAULT FALSE,
+  post_hrg_review BOOLEAN DEFAULT FALSE,
+  post_hrg_notes  JSONB,
+  post_hrg_deadline TEXT,
+  claimant_location TEXT,
+  representative_location TEXT,
+  medical_expert  TEXT,
+  vocational_expert TEXT,
+  status_date     TEXT,
+  entered_hearing_level_date TEXT,
+  download_type   TEXT,
+  archived_by     TEXT NOT NULL,
+  archived_at     TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (hearing_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_archived_hearings_claimant ON archived_hearings (claimant);
+CREATE INDEX IF NOT EXISTS idx_archived_hearings_date ON archived_hearings (hearing_date);
+CREATE INDEX IF NOT EXISTS idx_archived_hearings_at ON archived_hearings (archived_at DESC);

@@ -31,6 +31,8 @@ import {
   ClipboardList,
   BarChart3,
   Link2,
+  Archive,
+  ArchiveRestore,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatCard, StatCardGrid } from "@/components/stat-card";
@@ -71,7 +73,13 @@ import {
   bulkAutoAssignSelected,
   bulkEmailSelected,
   exportHearingsCsv,
+  archiveHearings,
+  getArchivedHearings,
+  getArchivedHearingsCount,
+  unarchiveHearing,
+  fetchDashboardStats,
 } from "./actions";
+import type { ArchivedHearingRow } from "./actions";
 import type {
   HearingRow,
   RepRow,
@@ -80,6 +88,7 @@ import type {
   RepDocsAssigneeRow,
   NextUnassignedRow,
   RepWithCount,
+  DashboardStats,
 } from "./actions";
 
 // ── Types ──
@@ -2561,7 +2570,7 @@ export function DashboardClient({
   initialHearings = [],
   initialTotalFiltered = 0,
   totalCount = 0,
-  stats,
+  stats: initialStats,
   representatives = [],
   mrTeams = [],
   configOptions = [],
@@ -2580,6 +2589,12 @@ export function DashboardClient({
   const [sortKey, setSortKey] = useState("");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [loading, setLoading] = useState(false);
+  const [stats, setStats] = useState<DashboardStats>(initialStats);
+
+  const refreshStats = useCallback(async () => {
+    const s = await fetchDashboardStats(userRole, userEmail);
+    setStats(s);
+  }, [userRole, userEmail]);
   const [isMobile, setIsMobile] = useState(() =>
     typeof window !== "undefined"
       ? window.matchMedia("(max-width: 767px)").matches
@@ -2589,6 +2604,11 @@ export function DashboardClient({
   useEffect(() => {
     requestAnimationFrame(() => setMounted(true));
   }, []);
+  useEffect(() => {
+    if (canSeeAdminButtons(userRole)) {
+      getArchivedHearingsCount().then(setArchivedCount);
+    }
+  }, [userRole]);
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 767px)");
     const handler = () => setIsMobile(mq.matches);
@@ -2604,6 +2624,12 @@ export function DashboardClient({
   const [showActivityLog, setShowActivityLog] = useState(false);
   const [showRepStats, setShowRepStats] = useState(false);
   const [showCsvCompare, setShowCsvCompare] = useState(false);
+  const [showArchivedSheet, setShowArchivedSheet] = useState(false);
+  const [archivedHearings, setArchivedHearings] = useState<
+    ArchivedHearingRow[]
+  >([]);
+  const [archivedCount, setArchivedCount] = useState(0);
+  const [archiveLoading, setArchiveLoading] = useState(false);
   // Selection is 100% DOM-based — no React state at all for checkbox clicks
   // The bulk action bar reads from the ref only when the user clicks an action
   const selectedIdsRef = useRef<Set<number>>(new Set());
@@ -2656,12 +2682,13 @@ export function DashboardClient({
         });
         setHearings(res.hearings);
         setTotalFiltered(res.totalFiltered);
+        refreshStats();
       } catch (e) {
         console.error("Fetch failed:", e);
       }
       setLoading(false);
     },
-    [userRole, userEmail],
+    [userRole, userEmail, refreshStats],
   );
 
   // Debounced filter change
@@ -3029,6 +3056,62 @@ export function DashboardClient({
     fetchPage(filters, page, pageSize, sortKey, sortDir);
   }, [filters, page, pageSize, sortKey, sortDir, fetchPage, clearSelection]);
 
+  const handleBulkArchive = useCallback(async () => {
+    const count = selectedIdsRef.current.size;
+    if (!confirm(`Archive ${count} selected hearing${count > 1 ? "s" : ""}?`))
+      return;
+    const ids = Array.from(selectedIdsRef.current);
+    const result = await archiveHearings(ids, userName);
+    alert(
+      `Archived ${result.archived} hearing${result.archived > 1 ? "s" : ""}${result.failed > 0 ? ` (${result.failed} failed)` : ""}`,
+    );
+    setArchivedCount((c) => c + result.archived);
+    clearSelection();
+    fetchPage(filters, page, pageSize, sortKey, sortDir);
+  }, [
+    filters,
+    page,
+    pageSize,
+    sortKey,
+    sortDir,
+    fetchPage,
+    clearSelection,
+    userName,
+  ]);
+
+  const loadArchivedHearings = useCallback(async () => {
+    setArchiveLoading(true);
+    try {
+      const rows = await getArchivedHearings();
+      setArchivedHearings(rows);
+      setArchivedCount(rows.length);
+    } finally {
+      setArchiveLoading(false);
+    }
+  }, []);
+
+  const handleUnarchive = useCallback(
+    async (archiveId: number) => {
+      if (!confirm("Restore this hearing back to the dashboard?")) return;
+      console.log(
+        "[client-unarchive] calling unarchiveHearing with id:",
+        archiveId,
+      );
+      const result = await unarchiveHearing(archiveId);
+      console.log("[client-unarchive] result:", JSON.stringify(result));
+      if (!result.success) {
+        alert(
+          `Restore failed: ${"error" in result ? result.error : "unknown error"}`,
+        );
+        return;
+      }
+      setArchivedHearings((prev) => prev.filter((h) => h.id !== archiveId));
+      setArchivedCount((c) => Math.max(0, c - 1));
+      fetchPage(filters, page, pageSize, sortKey, sortDir);
+    },
+    [filters, page, pageSize, sortKey, sortDir, fetchPage],
+  );
+
   return (
     <div suppressHydrationWarning>
       <AppHeader
@@ -3174,6 +3257,27 @@ export function DashboardClient({
                 onClick={() => setShowRepStats(true)}
               >
                 <BarChart3 className="h-3.5 w-3.5" /> Rep Stats
+              </Button>
+            )}
+            {canSeeAdminButtons(userRole) && (
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn(
+                  "h-7 gap-1.5 text-xs text-amber-600 border-amber-300 hover:bg-amber-50 dark:text-amber-400 dark:border-amber-800 dark:hover:bg-amber-950",
+                  BTN_PRESS,
+                )}
+                onClick={() => {
+                  setShowArchivedSheet(true);
+                  loadArchivedHearings();
+                }}
+              >
+                <Archive className="h-3.5 w-3.5" /> Archived
+                {archivedCount > 0 && (
+                  <span className="ml-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">
+                    {archivedCount}
+                  </span>
+                )}
               </Button>
             )}
             <Button
@@ -3835,6 +3939,17 @@ export function DashboardClient({
                 🔄 Unassign
               </Button>
               <Button
+                variant="outline"
+                size="sm"
+                className={cn(
+                  "h-7 gap-1.5 text-[11px] text-amber-600 border-amber-300 hover:bg-amber-50 dark:text-amber-400 dark:border-amber-800 dark:hover:bg-amber-950",
+                  BTN_PRESS,
+                )}
+                onClick={handleBulkArchive}
+              >
+                <Archive className="h-3 w-3" /> Archive
+              </Button>
+              <Button
                 variant="destructive"
                 size="sm"
                 className={cn("h-7 gap-1.5 text-[11px]", BTN_PRESS)}
@@ -3876,6 +3991,142 @@ export function DashboardClient({
             >
               ✕ Clear
             </Button>
+          </div>,
+          document.body,
+        )}
+
+      {/* Archived hearings sheet */}
+      {showArchivedSheet &&
+        mounted &&
+        createPortal(
+          <div className="fixed inset-0 z-100">
+            <div
+              className="absolute inset-0 bg-black/50"
+              onClick={() => setShowArchivedSheet(false)}
+            />
+            <div className="absolute right-0 top-0 bottom-0 w-full max-w-2xl bg-card border-l shadow-xl flex flex-col animate-in slide-in-from-right duration-200">
+              <div className="flex items-center justify-between border-b px-6 py-4">
+                <div>
+                  <h2 className="text-lg font-semibold flex items-center gap-2">
+                    <Archive className="h-5 w-5 text-amber-500" /> Archived
+                    Hearings
+                  </h2>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {archivedHearings.length} archived hearing
+                    {archivedHearings.length !== 1 ? "s" : ""}
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() => setShowArchivedSheet(false)}
+                >
+                  <XIcon className="h-4 w-4" />
+                </Button>
+              </div>
+              <div className="px-4 pt-3 pb-2">
+                <input
+                  type="text"
+                  placeholder="Search archived hearings…"
+                  className="w-full rounded-md border bg-background px-3 py-1.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-amber-500/40"
+                  onChange={(e) => {
+                    const q = e.target.value.toLowerCase();
+                    const panel = e.target
+                      .closest(".flex.flex-col")
+                      ?.querySelector("[data-archive-panel]");
+                    if (!panel) return;
+                    panel
+                      .querySelectorAll<HTMLElement>("[data-archive-row]")
+                      .forEach((row) => {
+                        const text = row.dataset.archiveRow || "";
+                        row.style.display = text.includes(q) ? "" : "none";
+                      });
+                  }}
+                />
+              </div>
+              <div
+                className="flex-1 overflow-y-auto p-4 pt-0"
+                data-archive-panel
+              >
+                {archiveLoading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <div className="h-6 w-6 animate-spin rounded-full border-2 border-amber-500 border-t-transparent" />
+                  </div>
+                ) : archivedHearings.length === 0 ? (
+                  <p className="text-center text-sm text-muted-foreground py-12">
+                    No archived hearings
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {archivedHearings.map((ah) => (
+                      <div
+                        key={ah.id}
+                        data-archive-row={[
+                          ah.claimant,
+                          ah.ssn_last_4,
+                          ah.hearing_date,
+                          ah.alj,
+                          ah.rep_name,
+                          ah.hearing_decision_status,
+                          ah.archived_by,
+                        ]
+                          .filter(Boolean)
+                          .join(" ")
+                          .toLowerCase()}
+                        className="flex items-center justify-between rounded-lg border bg-card p-3 hover:bg-muted/50 transition-colors"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium truncate">
+                            {ah.claimant}
+                            {ah.ssn_last_4 && (
+                              <span className="ml-1.5 text-xs text-muted-foreground">
+                                (***-**-{ah.ssn_last_4})
+                              </span>
+                            )}
+                          </p>
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-0.5">
+                            <span className="text-xs text-muted-foreground">
+                              {ah.hearing_date}
+                            </span>
+                            {ah.alj && (
+                              <span className="text-xs text-muted-foreground">
+                                ALJ: {ah.alj}
+                              </span>
+                            )}
+                            {ah.rep_name && (
+                              <span className="text-xs text-muted-foreground">
+                                Rep: {ah.rep_name}
+                              </span>
+                            )}
+                            {ah.hearing_decision_status && (
+                              <span className="text-xs text-muted-foreground">
+                                {ah.hearing_decision_status}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-muted-foreground/70 mt-0.5">
+                            Archived by {ah.archived_by} on{" "}
+                            {new Date(ah.archived_at).toLocaleDateString()}
+                          </p>
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className={cn(
+                            "h-7 gap-1.5 text-[11px] ml-3 shrink-0",
+                            BTN_PRESS,
+                          )}
+                          onClick={() => handleUnarchive(ah.id)}
+                        >
+                          <ArchiveRestore className="h-3 w-3" /> Restore
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>,
           document.body,
         )}
