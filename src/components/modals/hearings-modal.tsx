@@ -104,6 +104,25 @@ function hrgStatusCls(s: string | null): string {
   return HRG_STATUS_COLOURS[s ?? ""] ?? "bg-red-500 text-white";
 }
 
+const MOA_COLOURS: Record<string, string> = {
+  "Get Phone Permission":
+    "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400",
+  "Case is Ready":
+    "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400",
+  "In Person Florida":
+    "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
+  Phone:
+    "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400",
+  OVH: "bg-cyan-100 text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-400",
+};
+
+function moaCls(s: string | null): string {
+  return (
+    MOA_COLOURS[s ?? ""] ??
+    "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+  );
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -346,7 +365,10 @@ function HearingRow({
       <div className="text-center">
         {permissions.canEditMoa ? (
           <select
-            className="w-full text-[10px] px-1.5 py-1 rounded border border-border bg-card text-foreground cursor-pointer"
+            className={cn(
+              "w-full text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer [&>option]:bg-white [&>option]:text-black dark:[&>option]:bg-zinc-800 dark:[&>option]:text-zinc-100",
+              moaCls(h.manner_of_appearance),
+            )}
             value={h.manner_of_appearance ?? ""}
             onChange={(e) =>
               onUpdate(h.id, "manner_of_appearance", e.target.value)

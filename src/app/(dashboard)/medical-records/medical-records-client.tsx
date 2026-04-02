@@ -159,6 +159,18 @@ const HRG_STATUS_CLS: Record<string, string> = {
   Dismissal: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
 };
 
+const MOA_CLS: Record<string, string> = {
+  "Get Phone Permission":
+    "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400",
+  "Case is Ready":
+    "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400",
+  "In Person Florida":
+    "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
+  Phone:
+    "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400",
+  OVH: "bg-cyan-100 text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-400",
+};
+
 // ─── CSV helpers ──────────────────────────────────────────────────────────────
 
 function exportToCsv(filename: string, rows: string[][]) {
@@ -1421,6 +1433,9 @@ function HearingRow({
   const hrgCls =
     HRG_STATUS_CLS[h.hearing_decision_status ?? ""] ??
     "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300";
+  const moaCls =
+    MOA_CLS[h.manner_of_appearance ?? ""] ??
+    "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300";
 
   return (
     <div
@@ -1543,10 +1558,8 @@ function HearingRow({
         <select
           value={h.medical_record_status ?? ""}
           className={cn(
-            "w-full text-[9px] px-1.5 py-1 rounded border cursor-pointer bg-card [&>option]:bg-white [&>option]:text-black dark:[&>option]:bg-zinc-800 dark:[&>option]:text-zinc-100",
-            h.medical_record_status
-              ? cn("border-current", mrTextCls)
-              : "text-muted-foreground border-transparent hover:border-border",
+            "w-full text-[9px] px-1.5 py-1 rounded border-0 cursor-pointer [&>option]:bg-white [&>option]:text-black dark:[&>option]:bg-zinc-800 dark:[&>option]:text-zinc-100",
+            h.medical_record_status ? mrCls : "bg-card text-muted-foreground",
           )}
           onChange={(e) =>
             onUpdate(h.id, "medical_record_status", e.target.value)
@@ -1585,10 +1598,10 @@ function HearingRow({
         <select
           value={h.hearing_decision_status ?? ""}
           className={cn(
-            "w-full text-[9px] px-1.5 py-1 rounded border cursor-pointer bg-card [&>option]:bg-white [&>option]:text-black dark:[&>option]:bg-zinc-800 dark:[&>option]:text-zinc-100",
+            "w-full text-[9px] px-1.5 py-1 rounded border-0 cursor-pointer [&>option]:bg-white [&>option]:text-black dark:[&>option]:bg-zinc-800 dark:[&>option]:text-zinc-100",
             h.hearing_decision_status
-              ? cn("border-current", hrgTextCls)
-              : "text-muted-foreground border-transparent hover:border-border",
+              ? hrgCls
+              : "bg-card text-muted-foreground",
           )}
           onChange={(e) =>
             onUpdate(h.id, "hearing_decision_status", e.target.value)
@@ -1618,7 +1631,10 @@ function HearingRow({
       {permissions.canEditMoa ? (
         <select
           value={h.manner_of_appearance ?? ""}
-          className="w-full text-[9px] px-1.5 py-1 rounded border border-border bg-card text-foreground cursor-pointer"
+          className={cn(
+            "w-full text-[9px] px-1.5 py-1 rounded border-0 cursor-pointer [&>option]:bg-white [&>option]:text-black dark:[&>option]:bg-zinc-800 dark:[&>option]:text-zinc-100",
+            h.manner_of_appearance ? moaCls : "bg-card text-muted-foreground",
+          )}
           onChange={(e) =>
             onUpdate(h.id, "manner_of_appearance", e.target.value)
           }
