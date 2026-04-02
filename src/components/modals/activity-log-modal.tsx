@@ -58,6 +58,8 @@ const ACTION_COLORS: Record<string, string> = {
   archive_chronicles: "bg-violet-100 text-violet-700 dark:bg-violet-900/30",
   unarchive_chronicles:
     "bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-900/30",
+  hearing_archived: "bg-amber-100 text-amber-700 dark:bg-amber-900/30",
+  hearing_unarchived: "bg-teal-100 text-teal-700 dark:bg-teal-900/30",
 };
 
 export function ActivityLogModal({

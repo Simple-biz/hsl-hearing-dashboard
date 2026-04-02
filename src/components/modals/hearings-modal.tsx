@@ -258,7 +258,7 @@ function HearingRow({
 
       {/* MR Status */}
       <div className="text-center">
-        {permissions.canManage ? (
+        {permissions.canEditMrStatus ? (
           <select
             className={cn(
               "w-full text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer",
@@ -312,7 +312,7 @@ function HearingRow({
 
       {/* Hearing Decision */}
       <div className="text-center">
-        {permissions.canManage ? (
+        {permissions.canEditDecisionStatus ? (
           <select
             className={cn(
               "w-full text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer",
@@ -368,7 +368,7 @@ function HearingRow({
 
       {/* 5-Day — interactive checkbox matching MR page */}
       <div className="flex justify-center">
-        {permissions.canManage ? (
+        {permissions.canEditFiveDay ? (
           <input
             type="checkbox"
             checked={h.five_day_notice}
