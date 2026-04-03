@@ -89,6 +89,12 @@ const NAV_GROUPS: NavGroup[] = [
         page: "patient_portal",
       },
       { label: "RFC Tracker", href: "/rfc", icon: ClipboardList, page: "rfc" },
+      {
+        label: "Import RFC",
+        href: "/import-rfc",
+        icon: FileUp,
+        page: "import_rfc",
+      },
     ],
   },
   {
