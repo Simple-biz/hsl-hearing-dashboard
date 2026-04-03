@@ -62,25 +62,33 @@ function parseExcelDate(
     const num = Number(value);
     const ms = (num - 25569) * 86400 * 1000;
     const d = new Date(ms);
-    return d.toISOString().slice(0, 10);
+    return validateDate(d.toISOString().slice(0, 10));
   }
 
   const s = String(value).trim();
 
   // YYYY.MM.DD
   let m = s.match(/^(\d{4})\.(\d{1,2})\.(\d{1,2})$/);
-  if (m) return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+  if (m)
+    return validateDate(
+      `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`,
+    );
 
   // YYYY-MM-DD or YYYY/MM/DD
   m = s.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
-  if (m) return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+  if (m)
+    return validateDate(
+      `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`,
+    );
 
   // MM/DD/YYYY or MM-DD-YYYY
   m = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
   if (m) {
     let yr = parseInt(m[3], 10);
     if (yr < 100) yr = yr > 50 ? 1900 + yr : 2000 + yr;
-    return `${yr}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`;
+    return validateDate(
+      `${yr}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`,
+    );
   }
 
   // MM DD YYYY with spaces
@@ -88,14 +96,29 @@ function parseExcelDate(
   if (m) {
     let yr = parseInt(m[3], 10);
     if (yr < 100) yr = yr > 50 ? 1900 + yr : 2000 + yr;
-    return `${yr}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`;
+    return validateDate(
+      `${yr}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`,
+    );
   }
 
   // Fallback
   const ts = Date.parse(s);
-  if (!isNaN(ts)) return new Date(ts).toISOString().slice(0, 10);
+  if (!isNaN(ts)) return validateDate(new Date(ts).toISOString().slice(0, 10));
 
   return null;
+}
+
+/** Reject dates with invalid month/day or unreasonable year */
+function validateDate(d: string | null): string | null {
+  if (!d) return null;
+  const m = d.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const yr = parseInt(m[1], 10);
+  const mo = parseInt(m[2], 10);
+  const dy = parseInt(m[3], 10);
+  if (yr < 1900 || yr > 2100 || mo < 1 || mo > 12 || dy < 1 || dy > 31)
+    return null;
+  return d;
 }
 
 function parseBool(v: string | number | null | undefined): boolean {
