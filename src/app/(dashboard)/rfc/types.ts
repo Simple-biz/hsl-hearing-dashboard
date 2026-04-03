@@ -102,6 +102,7 @@ export interface RfcEntry {
   date_received: string | null;
   filed_to_oho: boolean;
   approved_by_tl: boolean;
+  comments: string | null;
   created_at: string;
   updated_at: string;
   created_by: number | null;
@@ -177,6 +178,13 @@ export interface RfcAddEntryInput {
   date_received?: string | null;
   filed_to_oho?: boolean;
   approved_by_tl?: boolean;
+  comments?: string;
+}
+
+export interface RfcComment {
+  author: string;
+  date: string;
+  content: string;
 }
 
 export interface RfcActivityLogEntry {
