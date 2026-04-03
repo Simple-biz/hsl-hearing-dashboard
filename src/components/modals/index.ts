@@ -7,3 +7,4 @@ export { RevokeAllModal } from "./revoke-all-modal";
 export { BulkLinksModal } from "./bulk-links-modal";
 export { ActivityLogModal } from "./activity-log-modal";
 export { RepStatsModal } from "./rep-stats-modal";
+export { RfcCommentModal } from "./rfc-comment-modal";

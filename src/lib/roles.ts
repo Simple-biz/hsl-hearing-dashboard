@@ -64,6 +64,13 @@ export const PAGE_ACCESS: Record<string, UserRole[]> = {
     "mr_lead",
   ],
   rfc: ["system_admin", "admin", "manager", "mr_admin", "mr_agent", "mr_lead"],
+  import_rfc: [
+    "system_admin",
+    "admin",
+    "manager",
+    "mr_admin",
+    "hearings_admin",
+  ],
   reports: ["system_admin", "admin", "manager", "hearings_admin"],
   mr_reports: [
     "system_admin",
@@ -292,6 +299,7 @@ export const VISIBLE_COLUMNS: Record<UserRole, string[]> = {
 // User-level page restrictions (by user ID)
 export const PAGE_USER_IDS: Record<string, number[]> = {
   mr_reports: [1, 7], // admin@hogansmith.com, vicky@hogansmith.com
+  import_rfc: [1], // admin@hogansmith.com only
 };
 
 // Helper functions
