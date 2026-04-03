@@ -109,26 +109,6 @@ function fmtTime(raw: string | null | undefined): string {
 
 // Theme-safe status badge classes (no hardcoded light-only colours)
 // Text-only color maps — bg is always bg-card; only text + border-current changes
-const MR_STATUS_TEXT: Record<string, string> = {
-  Complete: "text-purple-700 dark:text-purple-300",
-  "In Progress": "text-pink-700 dark:text-pink-300",
-  Ready: "text-green-700 dark:text-green-300",
-  "Not Started": "text-red-700 dark:text-red-300",
-  "URGENT! NEEDS ATTENTION": "text-red-700 dark:text-red-400 font-semibold",
-  WITHDRAWAL: "text-zinc-400 line-through",
-  Overpayment: "text-amber-700 dark:text-amber-300",
-};
-
-const HRG_STATUS_TEXT: Record<string, string> = {
-  Scheduled: "text-violet-700 dark:text-violet-300",
-  Favorable: "text-emerald-700 dark:text-emerald-300",
-  Unfavorable: "text-orange-700 dark:text-orange-300",
-  "Post HRG Review/ Dev": "text-yellow-700 dark:text-yellow-300",
-  Continued: "text-zinc-600 dark:text-zinc-400",
-  "Pending Decision": "text-yellow-700 dark:text-yellow-300",
-  "OTR at Hrg": "text-green-700 dark:text-green-400",
-  Dismissal: "text-red-700 dark:text-red-300",
-};
 
 // Badge maps (read-only display — keeps bg+text for spans)
 const MR_STATUS_CLS: Record<string, string> = {
@@ -1423,10 +1403,7 @@ function HearingRow({
     "en-US",
     { month: "short", day: "numeric" },
   );
-  const mrTextCls =
-    MR_STATUS_TEXT[h.medical_record_status ?? ""] ?? "text-muted-foreground";
-  const hrgTextCls =
-    HRG_STATUS_TEXT[h.hearing_decision_status ?? ""] ?? "text-muted-foreground";
+
   const mrCls =
     MR_STATUS_CLS[h.medical_record_status ?? ""] ??
     "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300";
@@ -2041,9 +2018,8 @@ export function MrPivotClient({ userRole, ...data }: Props) {
         title="Medical Records"
         subtitle="MR Status Tracking &amp; Analytics"
       />
-      <DashboardNav userRole={userRole} />
-
-      <div className="w-full max-w-450 mx-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-5">
+      <div className="flex min-w-0 flex-col gap-3 p-3 sm:gap-4 sm:p-4 lg:p-6">
+        <DashboardNav userRole={userRole} />
         {/* ── Summary Section ──────────────────────────────────────────────── */}
         {/* Admin view  → 4 columns:
               Col 1: Total Hearings / In Progress / Ready   (compact)
