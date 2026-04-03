@@ -65,6 +65,14 @@ export const PAGE_ACCESS: Record<string, UserRole[]> = {
   ],
   rfc: ["system_admin", "admin", "manager", "mr_admin", "mr_agent", "mr_lead"],
   reports: ["system_admin", "admin", "manager", "hearings_admin"],
+  mr_reports: [
+    "system_admin",
+    "admin",
+    "manager",
+    "mr_admin",
+    "mr_agent",
+    "mr_lead",
+  ],
   representatives: ["system_admin", "admin", "manager", "hearings_admin"],
   schedule: [
     "system_admin",
@@ -281,10 +289,23 @@ export const VISIBLE_COLUMNS: Record<UserRole, string[]> = {
   ],
 };
 
+// User-level page restrictions (by user ID)
+export const PAGE_USER_IDS: Record<string, number[]> = {
+  mr_reports: [1, 7], // admin@hogansmith.com, vicky@hogansmith.com
+};
+
 // Helper functions
-export function canAccessPage(role: UserRole, page: string): boolean {
+export function canAccessPage(
+  role: UserRole,
+  page: string,
+  userId?: number,
+): boolean {
   const allowed = PAGE_ACCESS[page];
-  return allowed ? allowed.includes(role) : false;
+  if (!allowed || !allowed.includes(role)) return false;
+  const userIds = PAGE_USER_IDS[page];
+  if (userIds && userId !== undefined) return userIds.includes(userId);
+  if (userIds && userId === undefined) return false;
+  return true;
 }
 
 export function canEditField(role: UserRole, field: string): boolean {
