@@ -160,7 +160,6 @@ function NotesModal({
 }: {
   open: boolean;
   entryId: number;
-  // field: "username" | "password" | "approved";
   field: "username" | "password" | "approved" | "got_mr";
   clientName: string;
   provider: string | null;
@@ -1130,7 +1129,6 @@ function PortalMobileCard({
   onDelete: (id: number) => void;
   onOpenNotes: (
     id: number,
-    // field: "username" | "password" | "approved",
     field: "username" | "password" | "approved" | "got_mr",
     clientName: string,
     provider: string | null,
@@ -1412,7 +1410,6 @@ function PortalRow({
   onViewDetails: (e: PortalEntry) => void;
   onOpenNotes: (
     id: number,
-    // field: "username" | "password" | "approved",
     field: "username" | "password" | "approved" | "got_mr",
     clientName: string,
     provider: string | null,
@@ -1843,7 +1840,6 @@ export function PatientPortalClient(data: PortalPageData) {
   const [notesState, setNotesState] = useState<{
     open: boolean;
     id: number;
-    // field: "username" | "password" | "approved";
     field: "username" | "password" | "approved" | "got_mr";
     clientName: string;
     provider: string | null;

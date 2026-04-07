@@ -403,7 +403,6 @@ export async function deletePortalEntry(
 
 export async function getPortalNotes(
   id: number,
-  // field: "username" | "password" | "approved",
   field: "username" | "password" | "approved" | "got_mr",
 ): Promise<{
   success: boolean;
@@ -430,7 +429,6 @@ export async function getPortalNotes(
 
 export async function addPortalNote(
   id: number,
-  // field: "username" | "password" | "approved",
   field: "username" | "password" | "approved" | "got_mr",
   note: string,
 ): Promise<{ success: boolean; message?: string }> {
