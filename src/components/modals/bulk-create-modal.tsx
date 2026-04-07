@@ -257,7 +257,13 @@ export function BulkCreateModal({
             if (sendVideo) {
               await sendVideoTutorialEmail(user.id, pw);
             } else if (sendWelcome) {
-              await sendWelcomeEmail(user.id, pw);
+              // If rep, pass to_cc from env
+              const repWelcomeCC = process.env.REP_WELCOME_CC;
+              if (user.role === "rep" && repWelcomeCC) {
+                await sendWelcomeEmail(user.id, pw, repWelcomeCC);
+              } else {
+                await sendWelcomeEmail(user.id, pw);
+              }
             }
           } catch {
             // Email send failed — user was still created

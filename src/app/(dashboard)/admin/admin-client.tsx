@@ -701,7 +701,13 @@ function AddUserModal({
           } catch {}
         } else if (sendWelcome) {
           try {
-            await sendWelcomeEmail(id, password);
+            // If rep, pass to_cc from env
+            const repWelcomeCC = process.env.REP_WELCOME_CC;
+            if (role === "rep" && repWelcomeCC) {
+              await sendWelcomeEmail(id, password, repWelcomeCC);
+            } else {
+              await sendWelcomeEmail(id, password, undefined);
+            }
           } catch {}
         }
         onSaved({

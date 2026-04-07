@@ -1,4 +1,39 @@
-"use server";
+export async function sendPasswordResetEmail(userId: number, password: string) {
+  const { rows } = await db.query(
+    "SELECT full_name, email FROM users WHERE id=$1",
+    [userId],
+  );
+  if (!rows[0]) throw new Error("User not found");
+  const { full_name, email } = rows[0];
+  const appUrl =
+    process.env.NEXT_PUBLIC_APP_URL || "https://hearings.hogansmith.com";
+  const webhookUrl = process.env.N8N_WEBHOOK_URL;
+  const webhookSecret = process.env.N8N_WEBHOOK_SECRET;
+  if (!webhookUrl || !webhookSecret)
+    throw new Error("N8N webhook not configured");
+
+  await fetch(webhookUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Webhook-Secret": webhookSecret,
+    },
+    body: JSON.stringify({
+      email_type: "password_reset",
+      to_email: email,
+      to_name: full_name,
+      password,
+      subject: "Your HSL Password Has Been Reset",
+      login_url: appUrl,
+      body: `Hello ${full_name},\n\nYour password has been reset.\n\nLogin URL: ${appUrl}\nEmail: ${email}\nNew Password: ${password}\n\nPlease log in and change your password.\n\nHogan Smith Law`,
+    }),
+  });
+  await logAction(
+    "email_sent",
+    `Password reset email sent to ${full_name} (${email})`,
+  );
+}
+("use server");
 
 import { db } from "@/lib/db";
 import { logAction } from "@/lib/activity-log";
@@ -475,73 +510,59 @@ export async function deleteMrSpecialist(id: number) {
 
 // ═══════════ SEND CREDENTIAL EMAILS ═══════════
 
-export async function sendWelcomeEmail(userId: number, password: string) {
+export async function sendWelcomeEmail(
+  userId: number,
+  password: string,
+  to_cc?: string,
+) {
   const { rows } = await db.query(
     "SELECT full_name, email, role FROM users WHERE id=$1",
     [userId],
   );
   if (!rows[0]) throw new Error("User not found");
   const { full_name, email, role } = rows[0];
+  const appUrl =
+    process.env.NEXT_PUBLIC_APP_URL || "https://hearings.hogansmith.com";
+  const repWelcomeCC = process.env.REP_WELCOME_CC;
   const webhookUrl = process.env.N8N_WEBHOOK_URL;
   const webhookSecret = process.env.N8N_WEBHOOK_SECRET;
   if (!webhookUrl || !webhookSecret)
     throw new Error("N8N webhook not configured");
 
+  const payload: {
+    email_type: string;
+    to_email: string;
+    to_name: string;
+    password: string;
+    role: string;
+    login_url: string;
+    to_cc?: string;
+  } = {
+    email_type: "new_user_welcome",
+    to_email: email,
+    to_name: full_name,
+    password,
+    role: role.replace(/_/g, " "),
+    login_url: appUrl,
+  };
+  // Add to_cc if user is rep and repWelcomeCC is set
+  if (role === "rep" && repWelcomeCC) {
+    payload.to_cc = repWelcomeCC;
+  }
+  if (to_cc) {
+    payload.to_cc = to_cc;
+  }
   await fetch(webhookUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "X-Webhook-Secret": webhookSecret,
     },
-    body: JSON.stringify({
-      email_type: "new_user_welcome",
-      to_email: email,
-      to_name: full_name,
-      password,
-      role: role.replace(/_/g, " "),
-      login_url:
-        process.env.NEXT_PUBLIC_APP_URL || "https://hearings.hogansmith.com",
-    }),
+    body: JSON.stringify(payload),
   });
   await logAction(
     "email_sent",
     `Welcome email sent to ${full_name} (${email})`,
-  );
-}
-
-export async function sendPasswordResetEmail(userId: number, password: string) {
-  const { rows } = await db.query(
-    "SELECT full_name, email FROM users WHERE id=$1",
-    [userId],
-  );
-  if (!rows[0]) throw new Error("User not found");
-  const { full_name, email } = rows[0];
-  const appUrl =
-    process.env.NEXT_PUBLIC_APP_URL || "https://hearings.hogansmith.com";
-  const webhookUrl = process.env.N8N_WEBHOOK_URL;
-  const webhookSecret = process.env.N8N_WEBHOOK_SECRET;
-  if (!webhookUrl || !webhookSecret)
-    throw new Error("N8N webhook not configured");
-
-  await fetch(webhookUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Webhook-Secret": webhookSecret,
-    },
-    body: JSON.stringify({
-      email_type: "password_reset",
-      to_email: email,
-      to_name: full_name,
-      password,
-      subject: "Your HSL Password Has Been Reset",
-      login_url: appUrl,
-      body: `Hello ${full_name},\n\nYour password has been reset.\n\nLogin URL: ${appUrl}\nEmail: ${email}\nNew Password: ${password}\n\nPlease log in and change your password.\n\nHogan Smith Law`,
-    }),
-  });
-  await logAction(
-    "email_sent",
-    `Password reset email sent to ${full_name} (${email})`,
   );
 }
 
