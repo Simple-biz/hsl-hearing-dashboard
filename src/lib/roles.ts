@@ -658,3 +658,19 @@ export const REP_DASHBOARD_ACTIONS: Record<string, UserRole[]> = {
   // Export rep data
   export: ["system_admin", "admin", "manager", "hearings_admin"],
 };
+
+// ── Google Sheets Sync (MR Pivot page) ──
+// Controls visibility of the "Sync to Google Sheets" button and access to
+// the /api/mr-sync route. Restricted to admin-tier only
+// this action overwrites live client data in Google Sheets.
+// Source: HSL Role Permissions Matrix
+
+export const GOOGLE_SHEETS_SYNC_ROLES: UserRole[] = [
+  "system_admin",
+  "admin",
+  "mr_admin",
+];
+
+export function canSyncGoogleSheets(role: string): boolean {
+  return (GOOGLE_SHEETS_SYNC_ROLES as string[]).includes(role);
+}
