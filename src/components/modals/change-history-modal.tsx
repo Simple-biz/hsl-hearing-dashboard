@@ -21,7 +21,7 @@ import { canSyncGoogleSheets } from "@/lib/roles";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 // These mirror the exact JSON shape returned by the N8N webhook.
-// Keep in sync with /api/sync/google-sheets and the N8N "Respond to Webhook"
+// Keep in sync with /api/mr-sync/ and the N8N "Respond to Webhook"
 // node output.
 
 export type ChangeType = "created" | "updated" | "deleted";
