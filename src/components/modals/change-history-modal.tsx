@@ -387,11 +387,9 @@ function ChangeHistoryModal({ result, onClose }: ChangeHistoryModalProps) {
 
 interface SyncButtonProps {
   userRole: string;
-  /** Display name of the logged-in user, forwarded to the modal header */
-  userName: string;
 }
 
-export function GoogleSheetsSyncButton({ userRole, userName }: SyncButtonProps) {
+export function GoogleSheetsSyncButton({ userRole }: SyncButtonProps) {
   const [phase, setPhase] = useState<"idle" | "syncing" | "done">("idle");
   const [stepIndex, setStepIndex] = useState(0);
   const [result, setResult] = useState<SyncResult | null>(null);
@@ -414,10 +412,10 @@ export function GoogleSheetsSyncButton({ userRole, userName }: SyncButtonProps) 
     }, STEP_INTERVAL_MS);
 
     try {
-      const res = await fetch("/api/mr-sync/", {
+      const res = await fetch("/api/mr-sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ triggeredBy: userName }),
+        cache: "no-store",
       });
 
       if (!res.ok) {
@@ -435,7 +433,7 @@ export function GoogleSheetsSyncButton({ userRole, userName }: SyncButtonProps) 
     } finally {
       clearInterval(stepTimer);
     }
-  }, [userName]);
+    }, []);
 
   // Permission gate — render nothing for unauthorized roles.
   // Placed here (after all hooks) to satisfy the Rules of Hooks.

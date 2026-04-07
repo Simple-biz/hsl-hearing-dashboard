@@ -1170,11 +1170,11 @@ function HearingRow({
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
-type Props = MrPivotPageData & { userRole: UserRole; userName: string };
+type Props = MrPivotPageData & { userRole: UserRole };
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export function MrPivotClient({ userRole, userName, ...data }: Props) {
+export function MrPivotClient({ userRole, ...data }: Props) {
   const router = useRouter();
 
   // Only sys admin, mr_admin, and mr_lead may see No Specialist / No Task Assigned cards
@@ -1678,7 +1678,7 @@ export function MrPivotClient({ userRole, userName, ...data }: Props) {
               </button>
 
               {/* Sync to Google Sheets — visible to system_admin, admin, mr_admin only */}
-              <GoogleSheetsSyncButton userRole={userRole} userName={userName} />
+              <GoogleSheetsSyncButton userRole={userRole} />
 
               <button onClick={() => setShowHearings(true)}
                 className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold transition-colors">
