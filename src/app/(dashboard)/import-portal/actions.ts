@@ -75,8 +75,11 @@ export async function importPortalRecords(
     const {
       rows: [{ count }],
     } = await db.query("SELECT COUNT(*)::int as count FROM mr_patient_portal");
+
     deleted = count;
-    await db.query("DELETE FROM mr_patient_portal");
+
+    // Use TRUNCATE instead of DELETE to reset IDs
+    await db.query("TRUNCATE TABLE mr_patient_portal RESTART IDENTITY");
   }
 
   // Pre-load MR Specialists for name lookup

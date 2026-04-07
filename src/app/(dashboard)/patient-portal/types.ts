@@ -2,18 +2,41 @@
 // Kept separate from action.ts so "use server" only exports async functions.
 
 export type PortalUserRole =
-  | "system_admin" | "admin" | "manager" | "mr_admin" | "mr_lead" | "mr_agent" | "hearings_admin";
+  | "system_admin"
+  | "admin"
+  | "manager"
+  | "mr_admin"
+  | "mr_lead"
+  | "mr_agent"
+  | "hearings_admin";
 
 export interface PortalPermissions {
-  canManage: boolean;           // system_admin | admin | manager | mr_admin | mr_lead | hearings_admin
-  canEdit: boolean;             // system_admin | admin | manager | mr_admin | mr_lead | mr_agent | hearings_admin
+  canManage: boolean; // system_admin | admin | manager | mr_admin | mr_lead | hearings_admin
+  canEdit: boolean; // system_admin | admin | manager | mr_admin | mr_lead | mr_agent | hearings_admin
   canAssignSpecialist: boolean; // system_admin | admin | mr_admin only
 }
 
-export function derivePortalPermissions(role: PortalUserRole): PortalPermissions {
+export function derivePortalPermissions(
+  role: PortalUserRole,
+): PortalPermissions {
   return {
-    canManage: ["system_admin", "admin", "manager", "mr_admin", "mr_lead", "hearings_admin"].includes(role),
-    canEdit: ["system_admin", "admin", "manager", "mr_admin", "mr_lead", "mr_agent", "hearings_admin"].includes(role),
+    canManage: [
+      "system_admin",
+      "admin",
+      "manager",
+      "mr_admin",
+      "mr_lead",
+      "hearings_admin",
+    ].includes(role),
+    canEdit: [
+      "system_admin",
+      "admin",
+      "manager",
+      "mr_admin",
+      "mr_lead",
+      "mr_agent",
+      "hearings_admin",
+    ].includes(role),
     canAssignSpecialist: ["system_admin", "admin", "mr_admin"].includes(role),
   };
 }
@@ -30,7 +53,7 @@ export interface MrSpecialist {
 
 export interface PortalNote {
   user: string;
-  date: string;   // ISO datetime
+  date: string; // ISO datetime
   note: string;
 }
 
@@ -56,6 +79,7 @@ export interface PortalEntry {
   // Joined
   specialist_name: string | null;
   specialist_color: string | null;
+  got_mr_notes: PortalNote[];
 }
 
 export interface PortalStats {

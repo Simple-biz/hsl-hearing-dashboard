@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
@@ -17,6 +17,9 @@ import {
   Users,
   Calendar,
   ClipboardCheck,
+  Pencil,
+  Check,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 import * as XLSX from "xlsx";
@@ -92,15 +95,17 @@ const INITIAL_MALFORMED_SHOW = 5;
 // ═══════════════════════════════════════════════════════════
 
 interface MalformedDate {
-  row: number;
-  col: string;
+  row: number; // 1-indexed display row (row 2 = first data row)
+  dataIdx: number; // 0-indexed index into parsedData.rows
+  colField: string; // "entry_date" or "hearing_date"
+  colLabel: string; // "A (Entry Date)" or "C (Hearing Date)"
   value: string;
   client: string;
 }
 
 interface ParsedRow {
   cells: string[];
-  comments: Record<number, string>; // colIndex → comment text
+  comments: Record<number, string>;
 }
 
 interface ParsedData {
@@ -145,7 +150,6 @@ function formatExcelDate(value: unknown): string {
     return `${y}-${m}-${d}`;
   }
   const s = String(value).trim();
-  // Excel serial number
   const num = Number(s);
   if (!isNaN(num) && num > 25000 && num < 60000) {
     const date = new Date((num - 25569) * 86400 * 1000);
@@ -162,10 +166,8 @@ function parseDate(value: string): string | null {
   value = value.trim();
   if (value.length < 6) return null;
 
-  // Already YYYY-MM-DD
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
 
-  // Excel serial
   const num = Number(value);
   if (!isNaN(num) && num > 25000 && num < 60000) {
     const date = new Date((num - 25569) * 86400 * 1000);
@@ -250,7 +252,6 @@ function autoMapFromHeaders(headers: string[]): Record<string, number> {
     if (dbField && !autoMap[dbField]) autoMap[dbField] = idx;
   });
 
-  // Fallback: positional mapping if no headers matched
   if (Object.keys(autoMap).length === 0 && headers.length >= 4) {
     COLUMN_DEFS.forEach((def, idx) => {
       if (idx < headers.length) {
@@ -260,6 +261,42 @@ function autoMapFromHeaders(headers: string[]): Record<string, number> {
   }
 
   return autoMap;
+}
+
+/** Try to guess the intended date from common typos */
+function suggestCorrection(value: string): string | null {
+  if (!value) return null;
+  const v = value.trim();
+
+  // "03/17/0206" → probably "03/17/2026"
+  const m1 = v.match(/^(\d{1,2})\/(\d{1,2})\/0(\d{3})$/);
+  if (m1) {
+    const suggested = `${m1[1]}/${m1[2]}/${m1[3]}`;
+    if (parseDate(suggested)) return suggested;
+  }
+
+  // "1/202026" → probably "1/20/2026"
+  const m2 = v.match(/^(\d{1,2})\/(\d{2})(\d{4})$/);
+  if (m2) {
+    const suggested = `${m2[1]}/${m2[2]}/${m2[3]}`;
+    if (parseDate(suggested)) return suggested;
+  }
+
+  // "1202026" → probably "1/20/2026"
+  const m3 = v.match(/^(\d{1})(\d{2})(\d{4})$/);
+  if (m3) {
+    const suggested = `${m3[1]}/${m3[2]}/${m3[3]}`;
+    if (parseDate(suggested)) return suggested;
+  }
+
+  // "12202026" → probably "12/20/2026"
+  const m4 = v.match(/^(\d{2})(\d{2})(\d{4})$/);
+  if (m4) {
+    const suggested = `${m4[1]}/${m4[2]}/${m4[3]}`;
+    if (parseDate(suggested)) return suggested;
+  }
+
+  return null;
 }
 
 function detectMalformed(
@@ -280,7 +317,9 @@ function detectMalformed(
       if (val && !parseDate(val)) {
         malformed.push({
           row: rowIdx + 2,
-          col: "A (Entry Date)",
+          dataIdx: rowIdx,
+          colField: "entry_date",
+          colLabel: "A (Entry Date)",
           value: val,
           client: clientName,
         });
@@ -292,7 +331,9 @@ function detectMalformed(
       if (val && !parseDate(val)) {
         malformed.push({
           row: rowIdx + 2,
-          col: "C (Hearing Date)",
+          dataIdx: rowIdx,
+          colField: "hearing_date",
+          colLabel: "C (Hearing Date)",
           value: val,
           client: clientName,
         });
@@ -318,14 +359,12 @@ function readWorkbook(
   const headers: string[] = [];
   const rows: ParsedRow[] = [];
 
-  // Read headers (row 0)
   for (let c = range.s.c; c <= range.e.c; c++) {
     const addr = XLSX.utils.encode_cell({ r: range.s.r, c });
     const cell = ws[addr];
     headers.push(cell ? String(cell.v ?? "").trim() : "");
   }
 
-  // Read data rows
   for (let r = range.s.r + 1; r <= range.e.r; r++) {
     const cells: string[] = [];
     const comments: Record<number, string> = {};
@@ -336,7 +375,6 @@ function readWorkbook(
       const cell = ws[addr];
 
       if (cell) {
-        // Format value
         let val: string;
         if (cell.t === "d" || cell.v instanceof Date) {
           val = formatExcelDate(cell.v);
@@ -349,12 +387,10 @@ function readWorkbook(
               : "";
         }
 
-        // Clean leading newlines/whitespace from values
         val = val.replace(/^[\n\r\s\\n]+/, "").trim();
         cells.push(val);
         if (val) hasData = true;
 
-        // Extract comment
         if (cell.c && cell.c.length > 0) {
           const commentText = cell.c
             .map((c: { t?: string }) => c.t || "")
@@ -400,6 +436,10 @@ export function ImportPortalClient({
   const [mapping, setMapping] = useState<Record<string, number>>({});
   const [malformedDates, setMalformedDates] = useState<MalformedDate[]>([]);
   const [showAllMalformed, setShowAllMalformed] = useState(false);
+  // Date corrections: key = "dataIdx-colField", value = corrected date string
+  const [dateCorrections, setDateCorrections] = useState<
+    Record<string, string>
+  >({});
   const [mode, setMode] = useState<"skip" | "update" | "replace">("skip");
   const [step, setStep] = useState<
     "upload" | "sheet-select" | "preview" | "importing" | "done"
@@ -409,12 +449,26 @@ export function ImportPortalClient({
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // Count how many malformed dates have been corrected
+  const correctedCount = useMemo(() => {
+    let count = 0;
+    for (const d of malformedDates) {
+      const key = `${d.dataIdx}-${d.colField}`;
+      const correction = dateCorrections[key];
+      if (correction && parseDate(correction)) count++;
+    }
+    return count;
+  }, [malformedDates, dateCorrections]);
+
+  const uncorrectedCount = malformedDates.length - correctedCount;
+
   // ── Handle file ──
   const handleFile = useCallback((f: File) => {
     setFile(f);
     setError(null);
     setMalformedDates([]);
     setParsedData(null);
+    setDateCorrections({});
 
     const ext = f.name.split(".").pop()?.toLowerCase();
     if (!ext || !["csv", "xlsx", "xls"].includes(ext)) {
@@ -433,14 +487,12 @@ export function ImportPortalClient({
         return;
       }
 
-      // If multiple sheets, show sheet selection
       if (data.sheetNames.length > 1) {
         setParsedData(data);
         setStep("sheet-select");
         return;
       }
 
-      // Single sheet — go to preview
       const autoMap = autoMapFromHeaders(data.headers);
       setMapping(autoMap);
       setMalformedDates(detectMalformed(data.rows, autoMap));
@@ -462,10 +514,29 @@ export function ImportPortalClient({
       const autoMap = autoMapFromHeaders(data.headers);
       setMapping(autoMap);
       setMalformedDates(detectMalformed(data.rows, autoMap));
+      setDateCorrections({});
       setParsedData(data);
       setStep("preview");
     },
     [fileBuffer],
+  );
+
+  // ── Resolve date value: use correction if available, else original ──
+  const resolveDate = useCallback(
+    (
+      dataIdx: number,
+      colField: string,
+      originalValue: string,
+    ): string | null => {
+      const key = `${dataIdx}-${colField}`;
+      const correction = dateCorrections[key];
+      if (correction) {
+        const parsed = parseDate(correction);
+        if (parsed) return parsed;
+      }
+      return parseDate(originalValue);
+    },
+    [dateCorrections],
   );
 
   // ── Import ──
@@ -501,11 +572,14 @@ export function ImportPortalClient({
 
     try {
       const records: PortalRecord[] = [];
-
-      // Reverse rows so bottom of file gets lower IDs (matching PHP behavior)
       const reversedRows = [...parsedData.rows].reverse();
+      const totalRows = parsedData.rows.length;
 
-      for (const row of reversedRows) {
+      for (let i = 0; i < reversedRows.length; i++) {
+        const row = reversedRows[i];
+        // Original data index (since we reversed)
+        const originalIdx = totalRows - 1 - i;
+
         const get = (field: string) =>
           mapping[field] !== undefined
             ? (row.cells[mapping[field]] || "").trim()
@@ -524,9 +598,13 @@ export function ImportPortalClient({
         const hearingDateRaw = get("hearing_date");
 
         records.push({
-          entry_date: entryDateRaw ? parseDate(entryDateRaw) : null,
+          entry_date: entryDateRaw
+            ? resolveDate(originalIdx, "entry_date", entryDateRaw)
+            : null,
           mr_specialist: get("mr_specialist") || null,
-          hearing_date: hearingDateRaw ? parseDate(hearingDateRaw) : null,
+          hearing_date: hearingDateRaw
+            ? resolveDate(originalIdx, "hearing_date", hearingDateRaw)
+            : null,
           client_name: clientName,
           provider: get("provider") || null,
           mycase_link: get("mycase_link") || null,
@@ -585,7 +663,7 @@ export function ImportPortalClient({
       setError((e as Error).message);
       setStep("preview");
     }
-  }, [parsedData, mapping, mode]);
+  }, [parsedData, mapping, mode, resolveDate]);
 
   // ── Clear ──
   const handleClear = useCallback(async () => {
@@ -607,16 +685,32 @@ export function ImportPortalClient({
     setMapping({});
     setMalformedDates([]);
     setShowAllMalformed(false);
+    setDateCorrections({});
     setStep("upload");
     setResult(null);
     setError(null);
     if (fileRef.current) fileRef.current.value = "";
   }, []);
 
+  // ── Apply suggestion to all similar values ──
+  const applySuggestionToAll = useCallback(
+    (originalValue: string, suggestion: string) => {
+      setDateCorrections((prev) => {
+        const next = { ...prev };
+        for (const d of malformedDates) {
+          if (d.value === originalValue) {
+            next[`${d.dataIdx}-${d.colField}`] = suggestion;
+          }
+        }
+        return next;
+      });
+    },
+    [malformedDates],
+  );
+
   const mappedCount = Object.keys(mapping).length;
   const previewRows = parsedData?.rows.slice(0, 10) || [];
 
-  // Count total comments in data
   const totalComments = parsedData
     ? parsedData.rows.reduce(
         (sum, row) => sum + Object.keys(row.comments).length,
@@ -695,12 +789,13 @@ export function ImportPortalClient({
               "done",
             ];
             const currentIdx = stepOrder.indexOf(step);
-            const thisIdx = s.num === 1 ? 0 : s.num === 2 ? 2 : 4;
             const isActive =
               (s.num === 1 && currentIdx <= 1) ||
               (s.num === 2 && currentIdx === 2) ||
               (s.num === 3 && currentIdx >= 3);
-            const isCompleted = currentIdx > thisIdx;
+            const isCompleted =
+              (s.num === 1 && currentIdx >= 2) ||
+              (s.num === 2 && currentIdx >= 3);
             return (
               <div
                 key={s.num}
@@ -852,21 +947,18 @@ export function ImportPortalClient({
               <div>
                 <p className="text-sm font-medium">{file?.name}</p>
                 <p className="text-xs text-muted-foreground">
-                  {parsedData.sheetNames.length} sheets found — select one to
-                  import
+                  {parsedData.sheetNames.length} sheets found — select one
                 </p>
               </div>
             </div>
-
             <div className="space-y-2">
               <label className="text-sm font-medium">Select Sheet:</label>
               <select
                 className="w-full h-10 rounded-md border border-input bg-card px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
                 defaultValue=""
                 onChange={(e) => {
-                  if (e.target.value !== "") {
+                  if (e.target.value !== "")
                     handleSheetSelect(parseInt(e.target.value));
-                  }
                 }}
               >
                 <option value="">— Select a sheet —</option>
@@ -877,7 +969,6 @@ export function ImportPortalClient({
                 ))}
               </select>
             </div>
-
             <div className="flex justify-end">
               <Button variant="outline" size="sm" onClick={handleReset}>
                 ← Back
@@ -911,53 +1002,149 @@ export function ImportPortalClient({
               </Button>
             </div>
 
-            {/* Malformed dates warning */}
+            {/* ── Malformed dates editor ── */}
             {malformedDates.length > 0 && (
               <div className="rounded-lg border border-red-300 bg-red-50 dark:bg-red-950/30 p-4 space-y-3">
                 <div className="flex items-center justify-between">
-                  <p className="text-sm font-semibold text-red-800 dark:text-red-300">
-                    ⚠️ Malformed Dates Detected ({malformedDates.length})
-                  </p>
-                  {malformedDates.length > INITIAL_MALFORMED_SHOW && (
-                    <button
-                      className="text-xs px-3 py-1 rounded border border-red-300 bg-red-100 dark:bg-red-900/50 text-red-800 dark:text-red-300 hover:bg-red-200 transition-colors"
-                      onClick={() => setShowAllMalformed(!showAllMalformed)}
-                    >
-                      {showAllMalformed ? "Show Less ▲" : "Show All ▼"}
-                    </button>
-                  )}
+                  <div>
+                    <p className="text-sm font-semibold text-red-800 dark:text-red-300 flex items-center gap-2">
+                      <Pencil className="h-3.5 w-3.5" />
+                      Malformed Dates — Fix Before Import (
+                      {malformedDates.length})
+                    </p>
+                    <p className="text-[11px] text-red-600 dark:text-red-400 mt-0.5">
+                      {correctedCount > 0 && (
+                        <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                          ✓ {correctedCount} corrected
+                        </span>
+                      )}
+                      {correctedCount > 0 && uncorrectedCount > 0 && " • "}
+                      {uncorrectedCount > 0 && (
+                        <span>
+                          {uncorrectedCount} remaining (will import as NULL)
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    {malformedDates.length > INITIAL_MALFORMED_SHOW && (
+                      <button
+                        className="text-xs px-3 py-1 rounded border border-red-300 bg-red-100 dark:bg-red-900/50 text-red-800 dark:text-red-300 hover:bg-red-200 transition-colors"
+                        onClick={() => setShowAllMalformed(!showAllMalformed)}
+                      >
+                        {showAllMalformed ? "Show Less ▲" : "Show All ▼"}
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <div className="max-h-50 overflow-y-auto rounded border border-red-200 dark:border-red-800 bg-red-50/50 dark:bg-red-950/20">
+
+                <div className="max-h-100 overflow-y-auto rounded border border-red-200 dark:border-red-800 bg-white dark:bg-red-950/30">
                   {malformedDates
                     .slice(
                       0,
                       showAllMalformed ? undefined : INITIAL_MALFORMED_SHOW,
                     )
-                    .map((d, idx) => (
-                      <div
-                        key={idx}
-                        className="flex items-center gap-2 px-3 py-2 border-b border-red-200 dark:border-red-800 last:border-b-0 flex-wrap text-xs"
-                      >
-                        <span className="bg-red-600 text-white px-2 py-0.5 rounded text-[11px] font-semibold whitespace-nowrap">
-                          Row {d.row}
-                        </span>
-                        {d.client && (
-                          <span className="font-semibold text-red-900 dark:text-red-200">
-                            {d.client} —
+                    .map((d) => {
+                      const key = `${d.dataIdx}-${d.colField}`;
+                      const correction = dateCorrections[key] ?? "";
+                      const isValid = correction
+                        ? !!parseDate(correction)
+                        : false;
+                      const suggestion = suggestCorrection(d.value);
+                      // Count how many rows have the same original value
+                      const sameValueCount = malformedDates.filter(
+                        (m) => m.value === d.value,
+                      ).length;
+
+                      return (
+                        <div
+                          key={key}
+                          className={cn(
+                            "flex items-center gap-2 px-3 py-2.5 border-b border-red-200 dark:border-red-800 last:border-b-0 flex-wrap",
+                            isValid && "bg-emerald-50 dark:bg-emerald-950/20",
+                          )}
+                        >
+                          <span className="bg-red-600 text-white px-2 py-0.5 rounded text-[11px] font-semibold whitespace-nowrap shrink-0">
+                            Row {d.row}
                           </span>
-                        )}
-                        <span className="text-red-700 dark:text-red-400">
-                          {d.col}:
-                        </span>
-                        <span className="font-mono bg-red-200 dark:bg-red-900 px-1.5 py-0.5 rounded text-red-800 dark:text-red-200">
-                          &quot;{d.value}&quot;
-                        </span>
-                      </div>
-                    ))}
+
+                          <span className="text-xs font-medium text-red-900 dark:text-red-200 shrink-0 min-w-25 truncate max-w-40">
+                            {d.client || "—"}
+                          </span>
+
+                          <span className="text-[11px] text-red-600 dark:text-red-400 shrink-0">
+                            {d.colLabel}:
+                          </span>
+
+                          <span className="font-mono text-[11px] bg-red-200 dark:bg-red-900 px-1.5 py-0.5 rounded text-red-800 dark:text-red-200 shrink-0 line-through">
+                            {d.value}
+                          </span>
+
+                          <span className="text-[11px] text-muted-foreground shrink-0">
+                            →
+                          </span>
+
+                          <div className="flex items-center gap-1.5 flex-1 min-w-45">
+                            <input
+                              type="text"
+                              placeholder="MM/DD/YYYY"
+                              className={cn(
+                                "h-7 w-full max-w-35 rounded border px-2 text-xs font-mono focus:outline-none focus:ring-1",
+                                isValid
+                                  ? "border-emerald-400 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-200 focus:ring-emerald-400"
+                                  : correction
+                                    ? "border-red-400 bg-white dark:bg-red-950/30 text-red-800 focus:ring-red-400"
+                                    : "border-red-300 bg-white dark:bg-red-950/30 text-foreground focus:ring-red-400",
+                              )}
+                              value={correction}
+                              onChange={(e) =>
+                                setDateCorrections((prev) => ({
+                                  ...prev,
+                                  [key]: e.target.value,
+                                }))
+                              }
+                            />
+
+                            {isValid && (
+                              <Check className="h-4 w-4 text-emerald-600 shrink-0" />
+                            )}
+                            {correction && !isValid && (
+                              <X className="h-4 w-4 text-red-500 shrink-0" />
+                            )}
+
+                            {/* Suggestion button */}
+                            {suggestion && !isValid && (
+                              <button
+                                className="text-[10px] px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 hover:bg-blue-200 transition-colors whitespace-nowrap shrink-0"
+                                onClick={() => {
+                                  if (sameValueCount > 1) {
+                                    applySuggestionToAll(d.value, suggestion);
+                                  } else {
+                                    setDateCorrections((prev) => ({
+                                      ...prev,
+                                      [key]: suggestion,
+                                    }));
+                                  }
+                                }}
+                                title={
+                                  sameValueCount > 1
+                                    ? `Apply "${suggestion}" to all ${sameValueCount} rows with "${d.value}"`
+                                    : `Suggest: ${suggestion}`
+                                }
+                              >
+                                {suggestion}
+                                {sameValueCount > 1 && ` (×${sameValueCount})`}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
                 </div>
+
                 <p className="text-[11px] text-red-600 dark:text-red-400">
-                  These will be imported as NULL. Expected formats: MM/DD/YYYY
-                  or YYYY-MM-DD
+                  Accepted formats: MM/DD/YYYY, YYYY-MM-DD, or MM/DD/YY.
+                  Uncorrected dates will be imported as NULL.
                 </p>
               </div>
             )}
@@ -1041,9 +1228,9 @@ export function ImportPortalClient({
                           const isMalformed = malformedDates.some(
                             (d) =>
                               d.row === ri + 2 &&
-                              ((d.col.startsWith("A") &&
+                              ((d.colField === "entry_date" &&
                                 ci === mapping.entry_date) ||
-                                (d.col.startsWith("C") &&
+                                (d.colField === "hearing_date" &&
                                   ci === mapping.hearing_date)),
                           );
                           return (
