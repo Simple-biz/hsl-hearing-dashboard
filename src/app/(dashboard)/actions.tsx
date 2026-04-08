@@ -33,6 +33,10 @@ export interface HearingRow {
   post_hrg_review: boolean;
   post_hrg_notes: string | null;
   post_hrg_deadline: string | null;
+  post_hrg_dev_status: string | null;
+  post_hrg_requirements: string | null;
+  post_hrg_deadline_prev: string | null;
+  post_hrg_deadline_changed_by: string | null;
   rep_name: string | null;
   rep_type: string | null;
   mr_team_name: string | null;
@@ -455,6 +459,8 @@ export async function fetchHearingsPage(
         h.task_assigned, h.rep_docs_complete, h.rep_docs_assigned_to,
         h.fee_agreement_complete, h.five_day_notice, h.rfc_status, h.phi_sheet_complete,
         h.post_hrg_review, h.post_hrg_notes, h.post_hrg_deadline::text,
+        h.post_hrg_dev_status, h.post_hrg_requirements,
+        h.post_hrg_deadline_prev::text, h.post_hrg_deadline_changed_by,
         h.claimant_location, h.representative_location,
         h.medical_expert, h.vocational_expert,
         h.status_date::text, h.entered_hearing_level_date::text, h.download_type,
@@ -480,9 +486,13 @@ export async function fetchPostHrgNotes(hearingId: number): Promise<{
   post_hrg_notes: string | null;
   post_hrg_deadline: string | null;
   post_hrg_review: boolean;
+  post_hrg_dev_status: string | null;
+  post_hrg_requirements: string | null;
+  post_hrg_deadline_prev: string | null;
+  post_hrg_deadline_changed_by: string | null;
 }> {
   const { rows } = await db.query(
-    "SELECT post_hrg_notes, post_hrg_deadline::text, post_hrg_review FROM hearings WHERE id = $1",
+    "SELECT post_hrg_notes, post_hrg_deadline::text, post_hrg_review, post_hrg_dev_status, post_hrg_requirements, post_hrg_deadline_prev::text, post_hrg_deadline_changed_by FROM hearings WHERE id = $1",
     [hearingId],
   );
   return (
@@ -490,6 +500,10 @@ export async function fetchPostHrgNotes(hearingId: number): Promise<{
       post_hrg_notes: null,
       post_hrg_deadline: null,
       post_hrg_review: false,
+      post_hrg_dev_status: null,
+      post_hrg_requirements: null,
+      post_hrg_deadline_prev: null,
+      post_hrg_deadline_changed_by: null,
     }
   );
 }
@@ -518,6 +532,8 @@ export async function updateHearing(
     "post_hrg_review",
     "post_hrg_notes",
     "post_hrg_deadline",
+    "post_hrg_dev_status",
+    "post_hrg_requirements",
     // Edit modal fields
     "claimant",
     "ssn_last_4",
@@ -564,6 +580,8 @@ export async function updateHearing(
     post_hrg_review: "Post HRG Review",
     post_hrg_notes: "Post HRG Notes",
     post_hrg_deadline: "Post HRG Deadline",
+    post_hrg_dev_status: "Post HRG Dev Status",
+    post_hrg_requirements: "Post HRG Requirements",
     claimant: "Claimant",
     ssn_last_4: "SSN",
     claim_type: "Claim Type",
@@ -592,11 +610,27 @@ export async function updateHearing(
   const oldValue = oldRows[0]?.[field];
   const claimant = oldRows[0]?.claimant || `Hearing #${hearingId}`;
 
-  // Perform the update
-  await db.query(`UPDATE hearings SET ${field} = $1 WHERE id = $2`, [
-    value,
-    hearingId,
-  ]);
+  // When deadline changes, track the previous date and who changed it
+  if (field === "post_hrg_deadline" && oldValue !== value) {
+    let changedBy = "Unknown";
+    try {
+      const { requireAuth } = await import("@/lib/session");
+      const session = await requireAuth();
+      changedBy = session.user.name || session.user.email || "Unknown";
+    } catch {
+      /* fallback to Unknown */
+    }
+    await db.query(
+      `UPDATE hearings SET post_hrg_deadline = $1, post_hrg_deadline_prev = $2, post_hrg_deadline_changed_by = $3 WHERE id = $4`,
+      [value, oldValue || null, changedBy, hearingId],
+    );
+  } else {
+    // Perform the standard update
+    await db.query(`UPDATE hearings SET ${field} = $1 WHERE id = $2`, [
+      value,
+      hearingId,
+    ]);
+  }
 
   // Resolve display values for ID fields
   const fieldLabel =
