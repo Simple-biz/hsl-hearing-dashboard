@@ -302,6 +302,8 @@ const FIELD_LABELS: Record<string, string> = {
   post_hrg_review: "Post HRG Review",
   post_hrg_notes: "Post HRG Notes",
   post_hrg_deadline: "Post HRG Deadline",
+  post_hrg_dev_status: "Post Hrg Dev Status",
+  post_hrg_requirements: "Post HRG Requirements",
   claimant: "Claimant",
   hearing_date: "Hearing Date",
   hearing_time: "Hearing Time",
@@ -1083,46 +1085,104 @@ function PostHrgModal({
   const [notes, setNotes] = useState<PostHrgNote[]>(() =>
     parseNotes(hearing.post_hrg_notes),
   );
-  // Hide system-generated notes (automated entries) but NOT notes written by human admins.
-  // System-generated notes would have author "System" (no real user). Notes written by
-  // a user whose full_name happens to be "System Administrator" are real user notes.
-  const visibleNotes = notes.filter(
-    (n) =>
-      noteAuthor(n) !== "System" && noteAuthor(n) !== "System Administrator",
-  );
+
+  // Hide only true system-generated notes
+  const visibleNotes = notes.filter((n) => noteAuthor(n) !== "System");
+
   const [newNote, setNewNote] = useState("");
   const [deadline, setDeadline] = useState(hearing.post_hrg_deadline || "");
+  const [deadlinePrev, setDeadlinePrev] = useState(
+    hearing.post_hrg_deadline_prev || "",
+  );
+  const [deadlineChangedBy, setDeadlineChangedBy] = useState(
+    hearing.post_hrg_deadline_changed_by || "",
+  );
+
+  const [requirements, setRequirements] = useState(
+    hearing.post_hrg_requirements || "",
+  );
   const [saving, setSaving] = useState(false);
 
+  const [isEditingRequirements, setIsEditingRequirements] = useState(
+    !hearing.post_hrg_requirements,
+  );
+  const isEditingRequirementsRef = useRef(isEditingRequirements);
+
+  useEffect(() => {
+    isEditingRequirementsRef.current = isEditingRequirements;
+  }, [isEditingRequirements]);
+
+  const [hasSavedRequirements, setHasSavedRequirements] = useState(
+    !!hearing.post_hrg_requirements,
+  );
+
+  // Keep local requirements in sync with parent hearing updates,
+  // but never overwrite while user is actively editing
+  useEffect(() => {
+    if (!isEditingRequirements) {
+      setRequirements(hearing.post_hrg_requirements || "");
+      setHasSavedRequirements(!!hearing.post_hrg_requirements);
+    }
+  }, [hearing.post_hrg_requirements, isEditingRequirements]);
+
   // Poll for fresh notes every 8s while modal is open.
-  // Uses a ref to avoid stale closure issues with the saving flag.
   const savingRef = useRef(false);
   useEffect(() => {
     savingRef.current = saving;
   }, [saving]);
+
   useEffect(() => {
     let active = true;
+
     const poll = async () => {
       if (!active || savingRef.current) return;
+
       try {
         const { fetchPostHrgNotes } = await import("@/app/(dashboard)/actions");
         const data = (await fetchPostHrgNotes(hearing.id)) as
           | string
-          | { post_hrg_notes: string | null; post_hrg_deadline: string | null }
+          | {
+              post_hrg_notes: string | null;
+              post_hrg_deadline: string | null;
+              post_hrg_dev_status: string | null;
+              post_hrg_requirements: string | null;
+              post_hrg_deadline_prev: string | null;
+              post_hrg_deadline_changed_by: string | null;
+            }
           | null;
+
         if (active && !savingRef.current && data) {
           if (typeof data === "string") {
             setNotes(parseNotes(data));
           } else {
             setNotes(parseNotes(data.post_hrg_notes));
-            if (data.post_hrg_deadline !== null)
+
+            if (
+              !isEditingRequirementsRef.current &&
+              data.post_hrg_requirements !== undefined
+            ) {
+              setRequirements(data.post_hrg_requirements || "");
+              setHasSavedRequirements(!!data.post_hrg_requirements);
+            }
+
+            if (data.post_hrg_deadline !== null) {
               setDeadline(data.post_hrg_deadline);
+            }
+
+            if (data.post_hrg_deadline_prev !== undefined) {
+              setDeadlinePrev(data.post_hrg_deadline_prev || "");
+            }
+
+            if (data.post_hrg_deadline_changed_by !== undefined) {
+              setDeadlineChangedBy(data.post_hrg_deadline_changed_by || "");
+            }
           }
         }
       } catch {
-        /* network blip — skip this cycle */
+        // ignore transient polling errors
       }
     };
+
     const id = setInterval(poll, 8000);
     return () => {
       active = false;
@@ -1130,9 +1190,6 @@ function PostHrgModal({
     };
   }, [hearing.id]);
 
-  // Permission: who can add/edit notes (per PDF matrix)
-  // Post HRG Notes: Edit = admin, manager, mr_admin, mr_lead, mr_agent, post_admin, post_staff
-  // sys_admin can do anything
   const canEditNotes = [
     "system_admin",
     "admin",
@@ -1144,32 +1201,41 @@ function PostHrgModal({
     "post_hearing_staff",
   ].includes(userRole);
 
+  const canEditRequirements = [
+    "system_admin",
+    "admin",
+    "post_hearing_admin",
+  ].includes(userRole);
+
   const handleAddNote = async () => {
     if (!newNote.trim() || !canEditNotes) return;
+
     setSaving(true);
-    const { addDashboardPostHrgNote } =
-      await import("@/app/(dashboard)/actions");
-    const r = await addDashboardPostHrgNote(
-      hearing.id,
-      newNote.trim(),
-      userName,
-    );
-    if (r.success) {
-      // Optimistic: prepend to local state so UI updates instantly
-      const added: PostHrgNote = {
-        user: userName,
-        date: new Date().toISOString(),
-        note: newNote.trim(),
-      };
-      setNotes((prev) => [added, ...prev]);
-      // Also update the parent's hearing state so the badge refreshes
-      onSave(hearing.id, "post_hrg_review", true);
+    try {
+      const { addDashboardPostHrgNote } =
+        await import("@/app/(dashboard)/actions");
+
+      const trimmed = newNote.trim();
+      const r = await addDashboardPostHrgNote(hearing.id, trimmed, userName);
+
+      if (r.success) {
+        const added: PostHrgNote = {
+          user: userName,
+          date: new Date().toISOString(),
+          note: trimmed,
+        };
+        setNotes((prev) => [added, ...prev]);
+        onSave(hearing.id, "post_hrg_review", true);
+      }
+
+      if (deadline && deadline !== hearing.post_hrg_deadline) {
+        await onSave(hearing.id, "post_hrg_deadline", deadline);
+      }
+
+      setNewNote("");
+    } finally {
+      setSaving(false);
     }
-    if (deadline && deadline !== hearing.post_hrg_deadline) {
-      await onSave(hearing.id, "post_hrg_deadline", deadline);
-    }
-    setNewNote("");
-    setSaving(false);
   };
 
   const handleUpdateDeadline = async () => {
@@ -1183,19 +1249,29 @@ function PostHrgModal({
 
   const handleDeleteNote = async (visibleIndex: number) => {
     if (!canEditNotes) return;
-    // Map visible index back to the full notes array index
+
     const noteToDelete = visibleNotes[visibleIndex];
     const fullIndex = notes.findIndex((n) => n === noteToDelete);
     if (fullIndex === -1) return;
+
     const { deleteDashboardPostHrgNote } =
       await import("@/app/(dashboard)/actions");
     const r = await deleteDashboardPostHrgNote(hearing.id, fullIndex);
+
     if (r.success) {
       setNotes((prev) => prev.filter((_, i) => i !== fullIndex));
       if (r.updatedNotes === null) {
         onSave(hearing.id, "post_hrg_review", false);
       }
     }
+  };
+
+  const handleSaveRequirements = async () => {
+    const trimmed = requirements.trim();
+    await onSave(hearing.id, "post_hrg_requirements", trimmed || null);
+    setRequirements(trimmed);
+    setHasSavedRequirements(!!trimmed);
+    setIsEditingRequirements(false);
   };
 
   return (
@@ -1207,7 +1283,6 @@ function PostHrgModal({
         className="w-full max-w-lg rounded-xl border bg-card shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
         <div className="flex items-center justify-between border-b px-5 py-4">
           <h2 className="text-sm font-semibold">Post HRG Review</h2>
           <button onClick={onClose} className="rounded-md p-1 hover:bg-muted">
@@ -1216,7 +1291,6 @@ function PostHrgModal({
         </div>
 
         <div className="max-h-[70vh] overflow-y-auto px-5 py-4 space-y-4">
-          {/* Hearing info */}
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <span>
               Claimant:{" "}
@@ -1236,7 +1310,6 @@ function PostHrgModal({
             </span>
           </div>
 
-          {/* Deadline */}
           <div className="space-y-1.5">
             <label className="text-xs font-medium">Deadline Date</label>
             <div className="flex items-center gap-2">
@@ -1263,9 +1336,81 @@ function PostHrgModal({
                 Clear
               </Button>
             </div>
+
+            {(deadlinePrev || deadlineChangedBy) && (
+              <div className="rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20 px-3 py-1.5 text-[11px] text-amber-800 dark:text-amber-300 space-y-0.5">
+                {deadlinePrev && (
+                  <p>
+                    <span className="font-medium">Previous date:</span>{" "}
+                    <span className="font-semibold">
+                      {fmtDate(deadlinePrev, {
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
+                      })}
+                    </span>
+                  </p>
+                )}
+                {deadlineChangedBy && (
+                  <p>
+                    <span className="font-medium">Changed by:</span>{" "}
+                    <span className="font-semibold">{deadlineChangedBy}</span>
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
-          {/* Add note */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-red-700 dark:text-red-400">
+              Requirements
+            </label>
+
+            {canEditRequirements ? (
+              <>
+                <textarea
+                  value={requirements}
+                  onChange={(e) => setRequirements(e.target.value)}
+                  rows={3}
+                  placeholder="Enter requirements..."
+                  disabled={!isEditingRequirements}
+                  className="w-full rounded-md border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/20 px-3 py-2 text-xs text-red-700 dark:text-red-300 placeholder:text-red-400 dark:placeholder:text-red-600 focus:border-red-400 focus:outline-none focus:ring-1 focus:ring-red-400 disabled:opacity-80 disabled:cursor-not-allowed"
+                />
+
+                <div className="flex gap-2">
+                  {isEditingRequirements ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs border-red-300 text-red-700 hover:bg-red-100 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30"
+                      onClick={handleSaveRequirements}
+                      disabled={saving}
+                    >
+                      {hasSavedRequirements ? "Update" : "Save Requirements"}
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs border-red-300 text-red-700 hover:bg-red-100 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30"
+                      onClick={() => setIsEditingRequirements(true)}
+                    >
+                      Edit
+                    </Button>
+                  )}
+                </div>
+              </>
+            ) : requirements ? (
+              <div className="w-full rounded-md border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/20 px-3 py-2 text-xs text-red-700 dark:text-red-300 whitespace-pre-wrap min-h-15">
+                {requirements}
+              </div>
+            ) : (
+              <p className="text-xs text-red-400 dark:text-red-600 italic py-1">
+                No requirements set.
+              </p>
+            )}
+          </div>
+
           {canEditNotes ? (
             <div className="space-y-1.5">
               <label className="text-xs font-medium">Add New Note</label>
@@ -1291,7 +1436,6 @@ function PostHrgModal({
             </p>
           )}
 
-          {/* Notes history */}
           <div className="space-y-1.5">
             <label className="text-xs font-medium">
               Notes History{" "}
@@ -1299,6 +1443,7 @@ function PostHrgModal({
                 ({visibleNotes.length})
               </span>
             </label>
+
             {visibleNotes.length === 0 ? (
               <p className="py-4 text-center text-xs text-muted-foreground">
                 No notes yet
@@ -1803,6 +1948,7 @@ const ALL_COLUMNS: ColumnDef[] = [
   { key: "task_assigned", label: "Task Assigned", w: 95 },
   { key: "phi_sheet_complete", label: "PHI", w: 55 },
   { key: "post_hrg_review", label: "Post Hrg Review", w: 130 },
+  { key: "post_hrg_dev_status", label: "Post Hrg Dev", w: 120 },
 ];
 
 // ── Mobile card ──
@@ -2070,6 +2216,26 @@ const HearingTable = memo(function HearingTable({
   const briefOptions = configOptions
     .filter((o) => o.option_type === "brief_assignment")
     .map((o) => ({ value: o.option_value, label: o.option_value }));
+  const postHrgDevOptions = configOptions
+    .filter((o) => o.option_type === "post_hrg_dev_status")
+    .map((o) => ({ value: o.option_value, label: o.option_value }));
+  const postHrgDevHexColors: Record<string, { bg: string; color: string }> = {};
+  for (const o of configOptions.filter(
+    (o) => o.option_type === "post_hrg_dev_status",
+  )) {
+    if (o.option_color) {
+      // Determine text color based on brightness
+      const hex = o.option_color.replace("#", "");
+      const r = parseInt(hex.slice(0, 2), 16);
+      const g = parseInt(hex.slice(2, 4), 16);
+      const b = parseInt(hex.slice(4, 6), 16);
+      const isLight = (r * 299 + g * 587 + b * 114) / 1000 > 128;
+      postHrgDevHexColors[o.option_value] = {
+        bg: o.option_color,
+        color: isLight ? "#1f2937" : "#ffffff",
+      };
+    }
+  }
   const docsAssigneeOptions = repDocsAssignees.map((d) => ({
     value: d.name,
     label: d.name,
@@ -2352,6 +2518,16 @@ const HearingTable = memo(function HearingTable({
           <PostHrgCell
             hearing={hearing}
             onClick={() => onOpenPostHrg(hearing)}
+          />
+        );
+      case "post_hrg_dev_status":
+        return (
+          <InlineDropdown
+            value={hearing.post_hrg_dev_status}
+            options={postHrgDevOptions}
+            onSave={(v) => onUpdate(hearing.id, "post_hrg_dev_status", v)}
+            editable={editable}
+            hexColorMap={postHrgDevHexColors}
           />
         );
       case "medical_record_link":
@@ -2806,7 +2982,12 @@ export function DashboardClient({
       );
       if (
         postHrgHearing?.id === hearingId &&
-        (field === "post_hrg_notes" || field === "post_hrg_deadline")
+        (field === "post_hrg_notes" ||
+          field === "post_hrg_deadline" ||
+          field === "post_hrg_dev_status" ||
+          field === "post_hrg_requirements" ||
+          field === "post_hrg_deadline_prev" ||
+          field === "post_hrg_deadline_changed_by")
       ) {
         setPostHrgHearing((prev) =>
           prev ? { ...prev, [field]: value } : null,
@@ -3110,6 +3291,12 @@ export function DashboardClient({
       fetchPage(filters, page, pageSize, sortKey, sortDir);
     },
     [filters, page, pageSize, sortKey, sortDir, fetchPage],
+  );
+
+  console.log("userRole", userRole);
+  console.log(
+    "can edit post_hrg_dev_status?",
+    canEditField(userRole, "post_hrg_dev_status"),
   );
 
   return (

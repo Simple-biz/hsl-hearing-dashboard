@@ -261,6 +261,16 @@ export const EDITABLE_FIELDS: Record<string, UserRole[]> = {
     "post_hearing_admin",
     "post_hearing_staff",
   ],
+  post_hrg_dev_status: [
+    "system_admin",
+    "admin",
+    "manager",
+    "mr_admin",
+    "mr_lead",
+    "mr_agent",
+    "post_hearing_admin",
+    "post_hearing_staff",
+  ],
 };
 // Columns visible per role on the main dashboard
 // PHP: $canViewAllColumns = !$isRep — everyone except rep sees ALL columns
