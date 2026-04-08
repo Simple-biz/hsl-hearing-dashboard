@@ -17,29 +17,72 @@ export type RfcUserRole =
   | "mr_lead"
   | "hearings_admin"
   | "hearings_agent"
+  | "hearings_status_moa"
+  | "hearings_docs_fee"
+  | "hearings_docs"
+  | "hearings_mc"
+  | "hearings_brief"
   | "post_hearing_admin"
   | "post_hearing_staff";
 
 // RFC page permissions (see PDF Part 3 / roles.ts RFC_PAGE_ACTIONS)
 export interface RfcPermissions {
-  canView: boolean;       // system_admin | admin | manager | mr_admin | mr_lead | mr_agent
-  canCreate: boolean;     // system_admin | admin | manager | mr_admin | mr_lead
-  canEdit: boolean;       // system_admin | admin | manager | mr_admin | mr_lead | mr_agent
-  canDelete: boolean;     // system_admin | admin | manager
-  canExport: boolean;     // system_admin | admin | manager | mr_admin | mr_lead
-  canManage: boolean;     // system_admin | admin | manager | mr_admin | mr_lead (bulk/assign)
+  canView: boolean; // system_admin | admin | manager | mr_admin | mr_lead | mr_agent
+  canCreate: boolean; // system_admin | admin | manager | mr_admin | mr_lead
+  canEdit: boolean; // system_admin | admin | manager | mr_admin | mr_lead | mr_agent
+  canDelete: boolean; // system_admin | admin | manager
+  canExport: boolean; // system_admin | admin | manager | mr_admin | mr_lead
+  canManage: boolean; // system_admin | admin | manager | mr_admin | mr_lead (bulk/assign)
   canAssignTeam: boolean; // system_admin | admin | manager | mr_admin | mr_lead
 }
 
 export function deriveRfcPermissions(role: RfcUserRole): RfcPermissions {
   return {
-    canView:       ["system_admin","admin","manager","mr_admin","mr_lead","mr_agent"].includes(role),
-    canCreate:     ["system_admin","admin","manager","mr_admin","mr_lead"].includes(role),
-    canEdit:       ["system_admin","admin","manager","mr_admin","mr_lead","mr_agent"].includes(role),
-    canDelete:     ["system_admin","admin","manager"].includes(role),
-    canExport:     ["system_admin","admin","manager","mr_admin","mr_lead"].includes(role),
-    canManage:     ["system_admin","admin","manager","mr_admin","mr_lead"].includes(role),
-    canAssignTeam: ["system_admin","admin","manager","mr_admin","mr_lead"].includes(role),
+    canView: [
+      "system_admin",
+      "admin",
+      "manager",
+      "mr_admin",
+      "mr_lead",
+      "mr_agent",
+    ].includes(role),
+    canCreate: [
+      "system_admin",
+      "admin",
+      "manager",
+      "mr_admin",
+      "mr_lead",
+    ].includes(role),
+    canEdit: [
+      "system_admin",
+      "admin",
+      "manager",
+      "mr_admin",
+      "mr_lead",
+      "mr_agent",
+    ].includes(role),
+    canDelete: ["system_admin", "admin", "manager"].includes(role),
+    canExport: [
+      "system_admin",
+      "admin",
+      "manager",
+      "mr_admin",
+      "mr_lead",
+    ].includes(role),
+    canManage: [
+      "system_admin",
+      "admin",
+      "manager",
+      "mr_admin",
+      "mr_lead",
+    ].includes(role),
+    canAssignTeam: [
+      "system_admin",
+      "admin",
+      "manager",
+      "mr_admin",
+      "mr_lead",
+    ].includes(role),
   };
 }
 
@@ -59,6 +102,7 @@ export interface RfcEntry {
   date_received: string | null;
   filed_to_oho: boolean;
   approved_by_tl: boolean;
+  comments: string | null;
   created_at: string;
   updated_at: string;
   created_by: number | null;
@@ -134,6 +178,13 @@ export interface RfcAddEntryInput {
   date_received?: string | null;
   filed_to_oho?: boolean;
   approved_by_tl?: boolean;
+  comments?: string;
+}
+
+export interface RfcComment {
+  author: string;
+  date: string;
+  content: string;
 }
 
 export interface RfcActivityLogEntry {

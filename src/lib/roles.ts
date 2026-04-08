@@ -1,5 +1,5 @@
 // HSL Hearing Dashboard - Role Permission Matrix
-// Maps all 13 roles to their allowed actions and visible columns
+// Maps all roles to their allowed actions and visible columns
 
 export type UserRole =
   | "system_admin"
@@ -14,6 +14,11 @@ export type UserRole =
   | "mr_lead"
   | "hearings_admin"
   | "hearings_agent"
+  | "hearings_status_moa"
+  | "hearings_docs_fee"
+  | "hearings_docs"
+  | "hearings_mc"
+  | "hearings_brief"
   | "post_hearing_admin"
   | "post_hearing_staff";
 
@@ -27,6 +32,11 @@ export const PAGE_ACCESS: Record<string, UserRole[]> = {
     "rep",
     "hearings_admin",
     "hearings_agent",
+    "hearings_status_moa",
+    "hearings_docs_fee",
+    "hearings_docs",
+    "hearings_mc",
+    "hearings_brief",
     "pre_hearing_staff",
     "brief_agent",
     "mr_admin",
@@ -54,7 +64,22 @@ export const PAGE_ACCESS: Record<string, UserRole[]> = {
     "mr_lead",
   ],
   rfc: ["system_admin", "admin", "manager", "mr_admin", "mr_agent", "mr_lead"],
+  import_rfc: [
+    "system_admin",
+    "admin",
+    "manager",
+    "mr_admin",
+    "hearings_admin",
+  ],
   reports: ["system_admin", "admin", "manager", "hearings_admin"],
+  mr_reports: [
+    "system_admin",
+    "admin",
+    "manager",
+    "mr_admin",
+    "mr_agent",
+    "mr_lead",
+  ],
   representatives: ["system_admin", "admin", "manager", "hearings_admin"],
   schedule: [
     "system_admin",
@@ -82,33 +107,28 @@ export const PAGE_ACCESS: Record<string, UserRole[]> = {
 // Source: dashboard.php lines 72-128
 export const EDITABLE_FIELDS: Record<string, UserRole[]> = {
   // Representative assignment — hearings team
-  assigned_rep_id: [
-    "system_admin",
-    "admin",
-    "manager",
-    "hearings_admin",
-    "hearings_agent",
-  ],
-  assignment_status: [
-    "system_admin",
-    "admin",
-    "manager",
-    "hearings_admin",
-    "hearings_agent",
-  ],
+  assigned_rep_id: ["system_admin", "admin", "manager", "hearings_admin"],
+  assignment_status: ["system_admin", "admin", "manager", "hearings_admin"],
 
   // PHI Sheet, MOA, Decision Status — core hearings admin fields
   phi_sheet_complete: ["system_admin", "admin", "manager", "hearings_admin"],
-  manner_of_appearance: ["system_admin", "admin", "manager", "hearings_admin"],
+  manner_of_appearance: [
+    "system_admin",
+    "admin",
+    "manager",
+    "hearings_admin",
+    "hearings_status_moa",
+  ],
   hearing_decision_status: [
     "system_admin",
     "admin",
     "manager",
     "hearings_admin",
+    "hearings_status_moa",
     "post_hearing_admin",
   ],
 
-  // Rep Docs & Fee Agreement — pre-hearing staff + brief agent
+  // Rep Docs & Fee Agreement — pre-hearing staff + brief agent + hearings docs roles
   rep_docs_complete: [
     "system_admin",
     "admin",
@@ -116,6 +136,8 @@ export const EDITABLE_FIELDS: Record<string, UserRole[]> = {
     "hearings_admin",
     "pre_hearing_staff",
     "brief_agent",
+    "hearings_docs_fee",
+    "hearings_docs",
   ],
   rep_docs_assigned_to: [
     "system_admin",
@@ -123,6 +145,8 @@ export const EDITABLE_FIELDS: Record<string, UserRole[]> = {
     "manager",
     "hearings_admin",
     "pre_hearing_staff",
+    "hearings_docs_fee",
+    "hearings_docs",
   ],
   fee_agreement_complete: [
     "system_admin",
@@ -131,15 +155,18 @@ export const EDITABLE_FIELDS: Record<string, UserRole[]> = {
     "hearings_admin",
     "pre_hearing_staff",
     "brief_agent",
+    "hearings_docs_fee",
+    "hearings_docs",
   ],
 
-  // Brief — brief agent
+  // Brief — brief agent + hearings brief role
   brief_assigned_to: [
     "system_admin",
     "admin",
     "manager",
     "hearings_admin",
     "brief_agent",
+    "hearings_brief",
   ],
 
   // Medical Team, MR Status, MR Link, RFC — MR team
@@ -194,8 +221,14 @@ export const EDITABLE_FIELDS: Record<string, UserRole[]> = {
     "mr_agent",
   ],
 
-  // Claimant Link — hearings admin
-  claimant_link: ["system_admin", "admin", "manager", "hearings_admin"],
+  // Claimant Link — hearings admin + hearings mc role
+  claimant_link: [
+    "system_admin",
+    "admin",
+    "manager",
+    "hearings_admin",
+    "hearings_mc",
+  ],
 
   // Post HRG — MR team + post hearing team
   post_hrg_review: [
@@ -238,6 +271,11 @@ export const VISIBLE_COLUMNS: Record<UserRole, string[]> = {
   manager: ["ALL"],
   hearings_admin: ["ALL"],
   hearings_agent: ["ALL"],
+  hearings_status_moa: ["ALL"],
+  hearings_docs_fee: ["ALL"],
+  hearings_docs: ["ALL"],
+  hearings_mc: ["ALL"],
+  hearings_brief: ["ALL"],
   pre_hearing_staff: ["ALL"],
   brief_agent: ["ALL"],
   mr_admin: ["ALL"],
@@ -258,10 +296,24 @@ export const VISIBLE_COLUMNS: Record<UserRole, string[]> = {
   ],
 };
 
+// User-level page restrictions (by user ID)
+export const PAGE_USER_IDS: Record<string, number[]> = {
+  mr_reports: [1, 7], // admin@hogansmith.com, vicky@hogansmith.com
+  import_rfc: [1], // admin@hogansmith.com only
+};
+
 // Helper functions
-export function canAccessPage(role: UserRole, page: string): boolean {
+export function canAccessPage(
+  role: UserRole,
+  page: string,
+  userId?: number,
+): boolean {
   const allowed = PAGE_ACCESS[page];
-  return allowed ? allowed.includes(role) : false;
+  if (!allowed || !allowed.includes(role)) return false;
+  const userIds = PAGE_USER_IDS[page];
+  if (userIds && userId !== undefined) return userIds.includes(userId);
+  if (userIds && userId === undefined) return false;
+  return true;
 }
 
 export function canEditField(role: UserRole, field: string): boolean {
@@ -408,14 +460,8 @@ export const MR_PIVOT_EDITABLE: Record<string, UserRole[]> = {
     "mr_agent",
   ],
 
-  // Decision Status (on pivot)
-  hearing_decision_status: [
-    "system_admin",
-    "admin",
-    "manager",
-    "mr_admin",
-    "mr_lead",
-  ],
+  // Decision Status (on pivot) — mr_lead & mr_agent are view-only
+  hearing_decision_status: ["system_admin", "admin", "manager", "mr_admin"],
 
   // MOA — restricted on pivot page
   // PHP: $canEditMoa = in_array($userRole, ['admin', 'manager'])

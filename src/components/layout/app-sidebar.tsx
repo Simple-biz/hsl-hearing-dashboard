@@ -19,6 +19,7 @@ import {
   KeyRound,
   ChevronsUpDown,
 } from "lucide-react";
+import { useSession } from "next-auth/react";
 import { canAccessPage, type UserRole } from "@/lib/roles";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -88,12 +89,24 @@ const NAV_GROUPS: NavGroup[] = [
         page: "patient_portal",
       },
       { label: "RFC Tracker", href: "/rfc", icon: ClipboardList, page: "rfc" },
+      {
+        label: "Import RFC",
+        href: "/import-rfc",
+        icon: FileUp,
+        page: "import_rfc",
+      },
     ],
   },
   {
     label: "Analytics",
     items: [
       { label: "Reports", href: "/reports", icon: BarChart3, page: "reports" },
+      {
+        label: "MR Reports",
+        href: "/mr-reports",
+        icon: BarChart3,
+        page: "mr_reports",
+      },
     ],
   },
   {
@@ -145,6 +158,8 @@ export function AppSidebar({
 }: AppSidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const { data: session } = useSession();
+  const userId = session?.user?.id as number | undefined;
 
   const initials = userName
     .split(" ")
@@ -181,7 +196,7 @@ export function AppSidebar({
         {NAV_GROUPS.map((group) => {
           // Filter items by role
           const visibleItems = group.items.filter((item) =>
-            canAccessPage(userRole, item.page),
+            canAccessPage(userRole, item.page, userId),
           );
           if (visibleItems.length === 0) return null;
 

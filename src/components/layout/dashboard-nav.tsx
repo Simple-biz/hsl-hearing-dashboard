@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useSession } from "next-auth/react";
 import { cn } from "@/lib/utils";
 import { canAccessPage, type UserRole } from "@/lib/roles";
 
@@ -17,6 +18,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Rep Schedule", href: "/schedule", page: "schedule" },
   { label: "Reports", href: "/reports", page: "reports" },
   { label: "MR Pivot", href: "/medical-records", page: "medical_records" },
+  { label: "MR Reports", href: "/mr-reports", page: "mr_reports" },
   { label: "Settings", href: "/settings", page: "settings" },
   { label: "Admin", href: "/admin", page: "admin" },
 ];
@@ -28,9 +30,11 @@ interface DashboardNavProps {
 
 export function DashboardNav({ userRole, children }: DashboardNavProps) {
   const pathname = usePathname();
+  const { data: session } = useSession();
+  const userId = session?.user?.id as number | undefined;
 
   const visibleItems = NAV_ITEMS.filter((item) =>
-    canAccessPage(userRole, item.page),
+    canAccessPage(userRole, item.page, userId),
   );
 
   // Deduplicate by href (Settings and Admin both go to /admin)

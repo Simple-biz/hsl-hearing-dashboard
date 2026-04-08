@@ -95,6 +95,50 @@ export interface DashboardStats {
   thisMonth: number;
 }
 
+export async function fetchDashboardStats(
+  userRole?: string,
+  userEmail?: string,
+): Promise<DashboardStats> {
+  let repFilter = "";
+  if (userRole === "rep" && userEmail) {
+    const { rows: repRows } = await db.query(
+      "SELECT id FROM representatives WHERE email = $1 AND is_active = true LIMIT 1",
+      [userEmail],
+    );
+    if (repRows.length > 0) {
+      repFilter = ` WHERE h.assigned_rep_id = ${repRows[0].id} AND (h.assignment_status IS NULL OR h.assignment_status NOT IN ('withdrawal', 'wd_never_assigned')) AND (h.hearing_decision_status IS NULL OR h.hearing_decision_status = '' OR h.hearing_decision_status NOT LIKE 'Withdrawal%')`;
+    } else {
+      return {
+        total: 0,
+        assigned: 0,
+        unassigned: 0,
+        wdStatus: 0,
+        next7Days: 0,
+        thisMonth: 0,
+      };
+    }
+  }
+  const { rows } = await db.query(`
+    SELECT
+      COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE assigned_rep_id IS NOT NULL)::int AS assigned,
+      COUNT(*) FILTER (WHERE assigned_rep_id IS NULL AND (assignment_status IS NULL OR assignment_status = ''))::int AS unassigned,
+      COUNT(*) FILTER (WHERE assignment_status IS NOT NULL AND assignment_status != '')::int AS wd_status,
+      COUNT(*) FILTER (WHERE hearing_date >= CURRENT_DATE AND hearing_date <= CURRENT_DATE + 7)::int AS next_7_days,
+      COUNT(*) FILTER (WHERE to_char(hearing_date, 'YYYY-MM') = to_char(CURRENT_DATE, 'YYYY-MM'))::int AS this_month
+    FROM hearings h ${repFilter}
+  `);
+  const s = rows[0];
+  return {
+    total: s.total,
+    assigned: s.assigned,
+    unassigned: s.unassigned,
+    wdStatus: s.wd_status,
+    next7Days: s.next_7_days,
+    thisMonth: s.this_month,
+  };
+}
+
 export async function fetchDashboardData(
   userRole?: string,
   userEmail?: string,
@@ -1287,7 +1331,12 @@ export async function fetchActivityLog(params: {
       schedule: ["schedule_updated", "schedule_lock_override"],
       reps: ["rep_created", "rep_updated", "rep_deleted", "token_revoked"],
       logins: ["user_login", "user_logout"],
-      archived: ["archive_chronicles", "unarchive_chronicles"],
+      archived: [
+        "archive_chronicles",
+        "unarchive_chronicles",
+        "hearing_archived",
+        "hearing_unarchived",
+      ],
       users: [
         "user_created",
         "user_updated",
@@ -1779,4 +1828,208 @@ export async function exportHearingsCsv(params: FetchPageParams) {
   }));
 
   return csvRows;
+}
+
+// ── Hearing Archiving ──
+
+export async function archiveHearings(
+  hearingIds: number[],
+  archivedBy: string,
+) {
+  const { logAction } = await import("@/lib/activity-log");
+  let archived = 0;
+  let failed = 0;
+
+  for (const hid of hearingIds) {
+    try {
+      console.log("[archive] Attempting hearing ID:", hid, "by:", archivedBy);
+
+      // First verify the hearing exists
+      const check = await db.query(
+        "SELECT id, claimant FROM hearings WHERE id = $1",
+        [hid],
+      );
+      console.log("[archive] Hearing lookup result:", check.rows);
+
+      if (check.rows.length === 0) {
+        console.log("[archive] Hearing not found, skipping");
+        failed++;
+        continue;
+      }
+
+      // Single atomic query: copy row to archive then delete from hearings
+      const result = await db.query(
+        `WITH archived AS (
+          INSERT INTO archived_hearings (
+            hearing_id, claimant, ssn_last_4, claim_type,
+            hearing_date, hearing_time, time_zone, converted_time_est,
+            city, state, alj, manner_of_appearance, hearing_decision_status,
+            assigned_rep_id, mr_team_id, brief_assigned_to, medical_record_status,
+            medical_record_link, claimant_link, assignment_status,
+            task_assigned, rep_docs_complete, rep_docs_assigned_to,
+            fee_agreement_complete, five_day_notice, rfc_status, phi_sheet_complete,
+            post_hrg_review, post_hrg_notes, post_hrg_deadline,
+            claimant_location, representative_location,
+            medical_expert, vocational_expert,
+            status_date, entered_hearing_level_date, download_type,
+            archived_by
+          )
+          SELECT
+            id, claimant, ssn_last_4, claim_type,
+            hearing_date, hearing_time, time_zone, converted_time_est,
+            city, state, alj, manner_of_appearance, hearing_decision_status,
+            assigned_rep_id, mr_team_id, brief_assigned_to, medical_record_status,
+            medical_record_link, claimant_link, assignment_status,
+            task_assigned, rep_docs_complete, rep_docs_assigned_to,
+            fee_agreement_complete, five_day_notice, rfc_status, phi_sheet_complete,
+            post_hrg_review, post_hrg_notes::jsonb, post_hrg_deadline,
+            claimant_location, representative_location,
+            medical_expert, vocational_expert,
+            status_date, entered_hearing_level_date, download_type,
+            $2
+          FROM hearings WHERE id = $1
+          ON CONFLICT (hearing_id) DO NOTHING
+          RETURNING hearing_id
+        )
+        DELETE FROM hearings WHERE id IN (SELECT hearing_id FROM archived)`,
+        [hid, archivedBy],
+      );
+      console.log(
+        "[archive] CTE result - rowCount:",
+        result.rowCount,
+        "rows:",
+        result.rows,
+      );
+      if (result.rowCount && result.rowCount > 0) archived++;
+      else failed++;
+    } catch (err) {
+      console.error("[archive] CAUGHT ERROR for hearing", hid, ":", err);
+      failed++;
+    }
+  }
+
+  if (archived > 0) {
+    await logAction(
+      "hearing_archived",
+      `Archived ${archived} hearing${archived > 1 ? "s" : ""}`,
+    );
+  }
+  return { archived, failed };
+}
+
+export interface ArchivedHearingRow {
+  id: number;
+  hearing_id: number;
+  claimant: string | null;
+  ssn_last_4: string | null;
+  hearing_date: string;
+  hearing_time: string | null;
+  alj: string | null;
+  hearing_decision_status: string | null;
+  rep_name: string | null;
+  archived_by: string;
+  archived_at: string;
+}
+
+export async function getArchivedHearings(): Promise<ArchivedHearingRow[]> {
+  const { rows } = await db.query(
+    `SELECT a.id, a.hearing_id, a.claimant, a.ssn_last_4,
+            a.hearing_date::text, a.hearing_time::text,
+            a.alj, a.hearing_decision_status,
+            r.name AS rep_name,
+            a.archived_by, a.archived_at::text
+     FROM archived_hearings a
+     LEFT JOIN representatives r ON r.id = a.assigned_rep_id
+     ORDER BY a.archived_at DESC`,
+  );
+  return rows as ArchivedHearingRow[];
+}
+
+export async function getArchivedHearingsCount(): Promise<number> {
+  const { rows } = await db.query(
+    "SELECT COUNT(*)::int AS count FROM archived_hearings",
+  );
+  return rows[0].count as number;
+}
+
+export async function unarchiveHearing(archiveId: number) {
+  console.log("[unarchive] START — archiveId:", archiveId);
+  const { logAction } = await import("@/lib/activity-log");
+
+  const { rows } = await db.query(
+    "SELECT * FROM archived_hearings WHERE id = $1",
+    [archiveId],
+  );
+  console.log(
+    "[unarchive] Fetched archived row:",
+    rows[0]
+      ? `hearing_id=${rows[0].hearing_id}, claimant=${rows[0].claimant}`
+      : "NOT FOUND",
+  );
+  if (!rows[0]) return { success: false, error: "Archive row not found" };
+
+  try {
+    // Step 1: Copy back to hearings
+    console.log(
+      "[unarchive] Step 1: INSERT INTO hearings from archive id",
+      archiveId,
+    );
+    const insertResult = await db.query(
+      `INSERT INTO hearings (
+        id, claimant, ssn_last_4, claim_type,
+        hearing_date, hearing_time, time_zone, converted_time_est,
+        city, state, alj, manner_of_appearance, hearing_decision_status,
+        assigned_rep_id, mr_team_id, brief_assigned_to, medical_record_status,
+        medical_record_link, claimant_link, assignment_status,
+        task_assigned, rep_docs_complete, rep_docs_assigned_to,
+        fee_agreement_complete, five_day_notice, rfc_status, phi_sheet_complete,
+        post_hrg_review, post_hrg_notes, post_hrg_deadline,
+        claimant_location, representative_location,
+        medical_expert, vocational_expert,
+        status_date, entered_hearing_level_date, download_type
+      )
+      SELECT
+        hearing_id, claimant, ssn_last_4, claim_type,
+        hearing_date::date, hearing_time::time, time_zone, converted_time_est::time,
+        city, state, alj, manner_of_appearance, hearing_decision_status,
+        assigned_rep_id, mr_team_id, brief_assigned_to, medical_record_status,
+        medical_record_link, claimant_link, assignment_status,
+        task_assigned, rep_docs_complete, rep_docs_assigned_to,
+        fee_agreement_complete, five_day_notice, rfc_status, phi_sheet_complete,
+        post_hrg_review, post_hrg_notes, post_hrg_deadline::date,
+        claimant_location, representative_location,
+        medical_expert, vocational_expert,
+        status_date::date, entered_hearing_level_date::date, download_type
+      FROM archived_hearings WHERE id = $1`,
+      [archiveId],
+    );
+    console.log(
+      "[unarchive] Step 1 INSERT result — rowCount:",
+      insertResult.rowCount,
+    );
+
+    // Step 2: Delete from archive
+    console.log(
+      "[unarchive] Step 2: DELETE FROM archived_hearings id",
+      archiveId,
+    );
+    const deleteResult = await db.query(
+      "DELETE FROM archived_hearings WHERE id = $1",
+      [archiveId],
+    );
+    console.log(
+      "[unarchive] Step 2 DELETE result — rowCount:",
+      deleteResult.rowCount,
+    );
+  } catch (err) {
+    console.error("[unarchive] CAUGHT ERROR:", err);
+    return { success: false, error: String(err) };
+  }
+
+  console.log("[unarchive] SUCCESS — restored hearing_id:", rows[0].hearing_id);
+  await logAction(
+    "hearing_unarchived",
+    `Unarchived hearing: ${rows[0].claimant}`,
+  );
+  return { success: true };
 }

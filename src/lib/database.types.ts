@@ -22,6 +22,11 @@ export type UserRole =
   | "mr_lead"
   | "hearings_admin"
   | "hearings_agent"
+  | "hearings_status_moa"
+  | "hearings_docs_fee"
+  | "hearings_docs"
+  | "hearings_mc"
+  | "hearings_brief"
   | "post_hearing_admin"
   | "post_hearing_staff";
 

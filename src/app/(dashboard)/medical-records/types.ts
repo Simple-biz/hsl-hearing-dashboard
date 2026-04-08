@@ -17,23 +17,70 @@ export type UserRole =
   | "mr_lead"
   | "hearings_admin"
   | "hearings_agent"
+  | "hearings_status_moa"
+  | "hearings_docs_fee"
+  | "hearings_docs"
+  | "hearings_mc"
+  | "hearings_brief"
   | "post_hearing_admin"
   | "post_hearing_staff";
 
 // MR Pivot field-level permissions (see PDF Part 2.2 — differ from dashboard)
 export interface Permissions {
-  canManage: boolean;       // sys_admin | admin | manager | mr_admin | mr_lead
-  canEditMrTeam: boolean;   // sys_admin | admin | manager | mr_admin  (mr_lead = view only on pivot)
-  canEditMoa: boolean;      // sys_admin | admin | manager  (most restricted)
-  canEditTask: boolean;     // sys_admin | admin | mr_admin  (no manager on pivot)
+  canManage: boolean; // sys_admin | admin | manager | mr_admin | mr_lead
+  canEditMrTeam: boolean; // sys_admin | admin | manager | mr_admin  (mr_lead = view only on pivot)
+  canEditMrStatus: boolean; // sys_admin | admin | manager | mr_admin | mr_lead | mr_agent
+  canEditWorksheet: boolean; // sys_admin | admin | manager | mr_admin | mr_lead | mr_agent
+  canEditFiveDay: boolean; // sys_admin | admin | manager | mr_admin | mr_lead | mr_agent
+  canEditDecisionStatus: boolean; // sys_admin | admin | manager | mr_admin
+  canEditMoa: boolean; // sys_admin | admin | manager  (most restricted)
+  canEditTask: boolean; // sys_admin | admin | mr_admin  (no manager on pivot)
   canEditCredited: boolean; // sys_admin | admin only
 }
 
 /** Synchronous helper — lives here, NOT in action.ts */
 export function derivePermissions(role: UserRole): Permissions {
   return {
-    canManage: ["system_admin", "admin", "manager", "mr_admin", "mr_lead"].includes(role),
-    canEditMrTeam: ["system_admin", "admin", "manager", "mr_admin"].includes(role),
+    canManage: [
+      "system_admin",
+      "admin",
+      "manager",
+      "mr_admin",
+      "mr_lead",
+    ].includes(role),
+    canEditMrTeam: ["system_admin", "admin", "manager", "mr_admin"].includes(
+      role,
+    ),
+    canEditMrStatus: [
+      "system_admin",
+      "admin",
+      "manager",
+      "mr_admin",
+      "mr_lead",
+      "mr_agent",
+    ].includes(role),
+    canEditWorksheet: [
+      "system_admin",
+      "admin",
+      "manager",
+      "mr_admin",
+      "mr_lead",
+      "mr_agent",
+    ].includes(role),
+    canEditFiveDay: [
+      "system_admin",
+      "admin",
+      "manager",
+      "mr_admin",
+      "mr_lead",
+      "mr_agent",
+    ].includes(role),
+    canEditDecisionStatus: [
+      "system_admin",
+      "admin",
+      "manager",
+      "mr_admin",
+    ].includes(role),
     canEditMoa: ["system_admin", "admin", "manager"].includes(role),
     canEditTask: ["system_admin", "admin", "mr_admin"].includes(role),
     canEditCredited: ["system_admin", "admin"].includes(role),
@@ -114,7 +161,11 @@ export interface MonthlyTeamStat {
 export interface AssignedByMonthRow {
   month_key: string;
   month_label: string;
-  teams: Array<{ team_name: string; team_color: string | null; case_count: number }>;
+  teams: Array<{
+    team_name: string;
+    team_color: string | null;
+    case_count: number;
+  }>;
   total: number;
 }
 
@@ -124,7 +175,11 @@ export interface RoundRobinState {
   nextColor: string;
   nextTeamName: string;
   rotationOrder: string[];
-  nextUnassignedHearing: { id: number; claimant: string; hearing_date: string } | null;
+  nextUnassignedHearing: {
+    id: number;
+    claimant: string;
+    hearing_date: string;
+  } | null;
   urgentUnassignedCount: number;
 }
 
@@ -167,8 +222,16 @@ export interface MrPivotStatCards {
   urgent: number;
   noSpecialistCount: number;
   noTaskCount: number;
-  nextUnassignedHearing: { id: number; claimant: string; hearing_date: string } | null;
-  nextUnassignedTask: { id: number; claimant: string; hearing_date: string } | null;
+  nextUnassignedHearing: {
+    id: number;
+    claimant: string;
+    hearing_date: string;
+  } | null;
+  nextUnassignedTask: {
+    id: number;
+    claimant: string;
+    hearing_date: string;
+  } | null;
 }
 
 export interface MrPivotPageData {

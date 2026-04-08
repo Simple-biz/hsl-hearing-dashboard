@@ -1,24 +1,52 @@
 "use client";
 
 import {
-  useState, useEffect, useTransition, useCallback, useRef, type ReactNode,
+  useState,
+  useEffect,
+  useTransition,
+  useCallback,
+  useRef,
+  type ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
 import { AppHeader } from "@/components/layout/app-header";
 import {
-  Download, Plus, Trash2, ExternalLink, ClipboardList, Loader2,
-  X, ChevronLeft, ChevronRight, Copy, Eye, Check, StickyNote, FileText,
+  Download,
+  Plus,
+  Trash2,
+  ExternalLink,
+  ClipboardList,
+  Loader2,
+  X,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
+  Eye,
+  Check,
+  StickyNote,
+  FileText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 import {
-  getPortalEntries, addPortalEntry, updatePortalEntry, updatePortalField,
-  deletePortalEntry, getPortalNotes, addPortalNote,
-  getPortalActivityLog, getPortalActivityUsers,
+  getPortalEntries,
+  addPortalEntry,
+  updatePortalEntry,
+  updatePortalField,
+  deletePortalEntry,
+  getPortalNotes,
+  addPortalNote,
+  getPortalActivityLog,
+  getPortalActivityUsers,
 } from "./action";
 import type {
-  PortalPageData, PortalEntry, PortalFilters, PortalStats,
-  PortalNote, PortalActivityEntry, MrSpecialist,
+  PortalPageData,
+  PortalEntry,
+  PortalFilters,
+  PortalStats,
+  PortalNote,
+  PortalActivityEntry,
+  MrSpecialist,
 } from "./action";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -28,7 +56,9 @@ function fmtDate(d: string | null | undefined) {
   // Postgres DATE columns may come back as full ISO timestamp — take only the date part
   const datePart = d.slice(0, 10);
   return new Date(datePart + "T00:00:00").toLocaleDateString("en-US", {
-    month: "short", day: "numeric", year: "2-digit",
+    month: "short",
+    day: "numeric",
+    year: "2-digit",
   });
 }
 
@@ -47,14 +77,32 @@ function specStyle(color: string | null | undefined): React.CSSProperties {
 
 function exportPortalCsv(entries: PortalEntry[]) {
   const headers = [
-    "ID","Date","Hearing Date","Specialist","Client","Provider",
-    "MyCase","Portal Link","Username","Password","Got MR","Approved TL",
+    "ID",
+    "Date",
+    "Hearing Date",
+    "Specialist",
+    "Client",
+    "Provider",
+    "MyCase",
+    "Portal Link",
+    "Username",
+    "Password",
+    "Got MR",
+    "Approved TL",
   ];
   const rows = entries.map((e) => [
-    e.id, e.entry_date ?? "", e.hearing_date ?? "", e.specialist_name ?? "",
-    e.client_name, e.provider ?? "", e.mycase_link ?? "", e.portal_link ?? "",
-    e.portal_username ?? "", e.portal_password ?? "",
-    e.got_mr ? "Yes" : "No", e.approved_by_tl ? "Yes" : "No",
+    e.id,
+    e.entry_date ?? "",
+    e.hearing_date ?? "",
+    e.specialist_name ?? "",
+    e.client_name,
+    e.provider ?? "",
+    e.mycase_link ?? "",
+    e.portal_link ?? "",
+    e.portal_username ?? "",
+    e.portal_password ?? "",
+    e.got_mr ? "Yes" : "No",
+    e.approved_by_tl ? "Yes" : "No",
   ]);
   const csv = [headers, ...rows]
     .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(","))
@@ -70,13 +118,30 @@ function exportPortalCsv(entries: PortalEntry[]) {
 
 // ─── Stat Card ────────────────────────────────────────────────────────────────
 
-function StatCard({ label, value, bg }: { label: string; value: number; bg: string }) {
+function StatCard({
+  label,
+  value,
+  bg,
+}: {
+  label: string;
+  value: number;
+  bg: string;
+}) {
   return (
-    <div className={cn("relative overflow-hidden rounded-xl px-4 py-3 text-white flex flex-col gap-1", bg)}>
+    <div
+      className={cn(
+        "relative overflow-hidden rounded-xl px-4 py-3 text-white flex flex-col gap-1",
+        bg,
+      )}
+    >
       <div className="pointer-events-none absolute -right-4 -top-4 w-20 h-20 rounded-full bg-white/10" />
       <div className="pointer-events-none absolute -right-2 bottom-3 w-14 h-14 rounded-full bg-white/10" />
-      <p className="relative text-[10px] font-semibold uppercase tracking-widest opacity-80">{label}</p>
-      <p className="relative text-2xl font-bold tabular-nums leading-none">{value}</p>
+      <p className="relative text-[10px] font-semibold uppercase tracking-widest opacity-80">
+        {label}
+      </p>
+      <p className="relative text-2xl font-bold tabular-nums leading-none">
+        {value}
+      </p>
     </div>
   );
 }
@@ -84,11 +149,18 @@ function StatCard({ label, value, bg }: { label: string; value: number; bg: stri
 // ─── Notes Modal ─────────────────────────────────────────────────────────────
 
 function NotesModal({
-  open, entryId, field, clientName, provider, canEdit, onClose, onNoteAdded,
+  open,
+  entryId,
+  field,
+  clientName,
+  provider,
+  canEdit,
+  onClose,
+  onNoteAdded,
 }: {
   open: boolean;
   entryId: number;
-  field: "username" | "password" | "approved";
+  field: "username" | "password" | "approved" | "got_mr";
   clientName: string;
   provider: string | null;
   canEdit: boolean;
@@ -104,6 +176,7 @@ function NotesModal({
     username: "Username Notes",
     password: "Password Notes",
     approved: "Approval Notes",
+    got_mr: "Got MR Notes",
   };
 
   useEffect(() => {
@@ -182,28 +255,40 @@ function NotesModal({
 
           <div>
             <p className="text-[11px] font-semibold text-muted-foreground mb-2">
-              Notes History <span className="font-normal">({notes.length})</span>
+              Notes History{" "}
+              <span className="font-normal">({notes.length})</span>
             </p>
             {notesLoading ? (
               <div className="flex items-center justify-center py-8">
-                <Loader2 size={20} className="animate-spin text-muted-foreground" />
+                <Loader2
+                  size={20}
+                  className="animate-spin text-muted-foreground"
+                />
               </div>
             ) : notes.length === 0 ? (
-              <p className="text-xs text-center text-muted-foreground py-6 italic">No notes yet.</p>
+              <p className="text-xs text-center text-muted-foreground py-6 italic">
+                No notes yet.
+              </p>
             ) : (
               <div className="border border-border rounded-lg divide-y divide-border">
                 {notes.map((n, i) => (
                   <div key={i} className="px-3 py-2.5">
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-[11px] font-semibold text-primary">{n.user}</span>
+                      <span className="text-[11px] font-semibold text-primary">
+                        {n.user}
+                      </span>
                       <span className="text-[10px] text-muted-foreground">
                         {new Date(n.date).toLocaleString("en-US", {
-                          month: "short", day: "numeric",
-                          hour: "numeric", minute: "2-digit",
+                          month: "short",
+                          day: "numeric",
+                          hour: "numeric",
+                          minute: "2-digit",
                         })}
                       </span>
                     </div>
-                    <p className="text-xs text-foreground whitespace-pre-wrap wrap-break-word">{n.note}</p>
+                    <p className="text-xs text-foreground whitespace-pre-wrap wrap-break-word">
+                      {n.note}
+                    </p>
                   </div>
                 ))}
               </div>
@@ -228,7 +313,13 @@ function NotesModal({
 // ─── Link Edit Modal ──────────────────────────────────────────────────────────
 
 function LinkModal({
-  open, id, field, title, currentUrl, onClose, onSaved,
+  open,
+  id,
+  field,
+  title,
+  currentUrl,
+  onClose,
+  onSaved,
 }: {
   open: boolean;
   id: number;
@@ -248,7 +339,10 @@ function LinkModal({
     setSaving(true);
     const r = await updatePortalField(id, field, url);
     setSaving(false);
-    if (r.success) { onSaved(id, field, url); onClose(); }
+    if (r.success) {
+      onSaved(id, field, url);
+      onClose();
+    }
   };
 
   if (!open) return null;
@@ -280,7 +374,9 @@ function LinkModal({
               placeholder="https://…"
               className="w-full text-xs rounded-lg border border-border bg-muted px-3 py-2 text-foreground focus:outline-none focus:border-primary"
             />
-            <p className="text-[10px] text-muted-foreground mt-1">Enter the full URL</p>
+            <p className="text-[10px] text-muted-foreground mt-1">
+              Enter the full URL
+            </p>
           </div>
         </div>
         <div className="flex items-center justify-end gap-2 border-t px-4 py-2.5">
@@ -307,13 +403,22 @@ function LinkModal({
 // ─── Add / Edit Entry Modal ───────────────────────────────────────────────────
 
 type EntryForm = {
-  entry_date: string; hearing_date: string; client_name: string; provider: string;
-  mycase_link: string; portal_link: string; portal_username: string;
-  portal_password: string; got_mr: boolean; approved_by_tl: boolean;
+  entry_date: string;
+  hearing_date: string;
+  client_name: string;
+  provider: string;
+  mycase_link: string;
+  portal_link: string;
+  portal_username: string;
+  portal_password: string;
+  got_mr: boolean;
+  approved_by_tl: boolean;
 };
 
 function AddEditModal({
-  entry, onClose, onSaved,
+  entry,
+  onClose,
+  onSaved,
 }: {
   entry: PortalEntry | null; // null = add mode
   onClose: () => void;
@@ -339,7 +444,10 @@ function AddEditModal({
     setForm((p) => ({ ...p, [k]: v }));
 
   async function handleSave() {
-    if (!form.client_name.trim()) { setError("Client name is required."); return; }
+    if (!form.client_name.trim()) {
+      setError("Client name is required.");
+      return;
+    }
     setSaving(true);
     setError("");
     const input = {
@@ -351,12 +459,16 @@ function AddEditModal({
       ? await updatePortalEntry(entry!.id, input)
       : await addPortalEntry(input);
     setSaving(false);
-    if (r.success) { onSaved(); onClose(); }
-    else setError(r.message ?? "Save failed");
+    if (r.success) {
+      onSaved();
+      onClose();
+    } else setError(r.message ?? "Save failed");
   }
 
-  const inp = "w-full rounded-lg border border-border bg-muted px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary";
-  const lbl = "text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-1 block";
+  const inp =
+    "w-full rounded-lg border border-border bg-muted px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary";
+  const lbl =
+    "text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-1 block";
   const gotMrColor = form.got_mr
     ? "bg-emerald-100 text-emerald-800 border-emerald-300"
     : "bg-red-50 text-red-700 border-red-200";
@@ -396,22 +508,34 @@ function AddEditModal({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
               <div>
                 <label className={lbl}>Date</label>
-                <input type="date" className={inp} value={form.entry_date}
-                  onChange={(e) => set("entry_date", e.target.value)} />
+                <input
+                  type="date"
+                  className={inp}
+                  value={form.entry_date}
+                  onChange={(e) => set("entry_date", e.target.value)}
+                />
               </div>
               <div>
                 <label className={lbl}>Hearing Date</label>
-                <input type="date" className={inp} value={form.hearing_date}
-                  onChange={(e) => set("hearing_date", e.target.value)} />
+                <input
+                  type="date"
+                  className={inp}
+                  value={form.hearing_date}
+                  onChange={(e) => set("hearing_date", e.target.value)}
+                />
               </div>
             </div>
             <div>
               <label className={lbl}>
                 Client Name <span className="text-red-500">*</span>
               </label>
-              <input type="text" className={inp} value={form.client_name}
+              <input
+                type="text"
+                className={inp}
+                value={form.client_name}
                 onChange={(e) => set("client_name", e.target.value)}
-                placeholder="Last, First" />
+                placeholder="Last, First"
+              />
             </div>
           </div>
 
@@ -422,20 +546,34 @@ function AddEditModal({
             </p>
             <div className="mb-3">
               <label className={lbl}>Provider Name</label>
-              <input type="text" className={inp} value={form.provider}
+              <input
+                type="text"
+                className={inp}
+                value={form.provider}
                 onChange={(e) => set("provider", e.target.value)}
-                placeholder="e.g., Quest Diagnostics" />
+                placeholder="e.g., Quest Diagnostics"
+              />
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className={lbl}>MyCase Link</label>
-                <input type="url" className={inp} value={form.mycase_link}
-                  onChange={(e) => set("mycase_link", e.target.value)} placeholder="https://…" />
+                <input
+                  type="url"
+                  className={inp}
+                  value={form.mycase_link}
+                  onChange={(e) => set("mycase_link", e.target.value)}
+                  placeholder="https://…"
+                />
               </div>
               <div>
                 <label className={lbl}>Patient Portal Link</label>
-                <input type="url" className={inp} value={form.portal_link}
-                  onChange={(e) => set("portal_link", e.target.value)} placeholder="https://…" />
+                <input
+                  type="url"
+                  className={inp}
+                  value={form.portal_link}
+                  onChange={(e) => set("portal_link", e.target.value)}
+                  placeholder="https://…"
+                />
               </div>
             </div>
           </div>
@@ -448,15 +586,23 @@ function AddEditModal({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className={lbl}>Username</label>
-                <input type="text" className={inp} value={form.portal_username}
+                <input
+                  type="text"
+                  className={inp}
+                  value={form.portal_username}
                   onChange={(e) => set("portal_username", e.target.value)}
-                  placeholder="Portal username or email" />
+                  placeholder="Portal username or email"
+                />
               </div>
               <div>
                 <label className={lbl}>Password</label>
-                <input type="text" className={inp} value={form.portal_password}
+                <input
+                  type="text"
+                  className={inp}
+                  value={form.portal_password}
                   onChange={(e) => set("portal_password", e.target.value)}
-                  placeholder="Portal password" />
+                  placeholder="Portal password"
+                />
               </div>
             </div>
           </div>
@@ -483,7 +629,9 @@ function AddEditModal({
                 <select
                   className={inp}
                   value={form.approved_by_tl ? "1" : "0"}
-                  onChange={(e) => set("approved_by_tl", e.target.value === "1")}
+                  onChange={(e) =>
+                    set("approved_by_tl", e.target.value === "1")
+                  }
                 >
                   <option value="0">No</option>
                   <option value="1">Yes</option>
@@ -517,14 +665,24 @@ function AddEditModal({
 
 // ─── Activity Log Modal ───────────────────────────────────────────────────────
 
-function ActivityLogModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+function ActivityLogModal({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
   const [entries, setEntries] = useState<PortalActivityEntry[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [actLoading, startActTransition] = useTransition();
-  const [dateRange, setDateRange] = useState<"all" | "today" | "week" | "month">("all");
+  const [dateRange, setDateRange] = useState<
+    "all" | "today" | "week" | "month"
+  >("all");
   const [userId, setUserId] = useState("");
-  const [users, setUsers] = useState<Array<{ id: number; full_name: string }>>([]);
+  const [users, setUsers] = useState<Array<{ id: number; full_name: string }>>(
+    [],
+  );
   const totalPages = Math.max(1, Math.ceil(total / 50));
 
   const load = useCallback((p: number, dr: string, uid: string) => {
@@ -558,7 +716,9 @@ function ActivityLogModal({ open, onClose }: { open: boolean; onClose: () => voi
       >
         {/* Header */}
         <div className="flex items-center justify-between border-b bg-muted/50 px-5 py-4 shrink-0">
-          <h2 className="text-sm font-semibold">📋 Patient Portal Activity Log</h2>
+          <h2 className="text-sm font-semibold">
+            📋 Patient Portal Activity Log
+          </h2>
           <button onClick={onClose} aria-label="Close activity log">
             <X className="h-5 w-5 text-muted-foreground" />
           </button>
@@ -592,10 +752,14 @@ function ActivityLogModal({ open, onClose }: { open: boolean; onClose: () => voi
           >
             <option value="">All Users</option>
             {users.map((u) => (
-              <option key={u.id} value={u.id}>{u.full_name}</option>
+              <option key={u.id} value={u.id}>
+                {u.full_name}
+              </option>
             ))}
           </select>
-          <span className="ml-auto text-xs text-muted-foreground">{total} entries</span>
+          <span className="ml-auto text-xs text-muted-foreground">
+            {total} entries
+          </span>
         </div>
 
         {/* Body */}
@@ -605,11 +769,16 @@ function ActivityLogModal({ open, onClose }: { open: boolean; onClose: () => voi
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
           ) : entries.length === 0 ? (
-            <p className="text-center text-sm text-muted-foreground py-12">No activity found.</p>
+            <p className="text-center text-sm text-muted-foreground py-12">
+              No activity found.
+            </p>
           ) : (
             <div className="space-y-0.5">
               {entries.map((e) => (
-                <div key={e.id} className="flex items-start gap-3 rounded px-2 py-2 hover:bg-muted/30">
+                <div
+                  key={e.id}
+                  className="flex items-start gap-3 rounded px-2 py-2 hover:bg-muted/30"
+                >
                   <span className="shrink-0 text-[9px] font-bold uppercase bg-blue-100 text-blue-700 rounded px-1.5 py-0.5 mt-0.5">
                     {e.action.replace(/^portal_/, "").replace(/_/g, " ")}
                   </span>
@@ -618,13 +787,18 @@ function ActivityLogModal({ open, onClose }: { open: boolean; onClose: () => voi
                     <div className="flex gap-2 text-[10px] text-muted-foreground mt-0.5">
                       <span>
                         {new Date(e.created_at).toLocaleString("en-US", {
-                          month: "short", day: "numeric",
-                          hour: "numeric", minute: "2-digit",
+                          month: "short",
+                          day: "numeric",
+                          hour: "numeric",
+                          minute: "2-digit",
                         })}
                       </span>
                       {e.user_name && (
                         <span>
-                          by <span className="font-medium text-foreground">{e.user_name}</span>
+                          by{" "}
+                          <span className="font-medium text-foreground">
+                            {e.user_name}
+                          </span>
                         </span>
                       )}
                     </div>
@@ -637,11 +811,17 @@ function ActivityLogModal({ open, onClose }: { open: boolean; onClose: () => voi
 
         {/* Pagination footer */}
         <div className="flex items-center justify-between border-t px-5 py-2.5 shrink-0">
-          <span className="text-xs text-muted-foreground">Page {page} of {totalPages}</span>
+          <span className="text-xs text-muted-foreground">
+            Page {page} of {totalPages}
+          </span>
           <div className="flex gap-1">
             <button
               disabled={page <= 1 || actLoading}
-              onClick={() => { const p = page - 1; setPage(p); load(p, dateRange, userId); }}
+              onClick={() => {
+                const p = page - 1;
+                setPage(p);
+                load(p, dateRange, userId);
+              }}
               className="h-7 w-7 flex items-center justify-center rounded border disabled:opacity-40 hover:bg-muted"
               aria-label="Previous page"
             >
@@ -649,7 +829,11 @@ function ActivityLogModal({ open, onClose }: { open: boolean; onClose: () => voi
             </button>
             <button
               disabled={page >= totalPages || actLoading}
-              onClick={() => { const p = page + 1; setPage(p); load(p, dateRange, userId); }}
+              onClick={() => {
+                const p = page + 1;
+                setPage(p);
+                load(p, dateRange, userId);
+              }}
               className="h-7 w-7 flex items-center justify-center rounded border disabled:opacity-40 hover:bg-muted"
               aria-label="Next page"
             >
@@ -664,13 +848,22 @@ function ActivityLogModal({ open, onClose }: { open: boolean; onClose: () => voi
 
 // ─── Detail Row (module-level — must NOT be defined inside a component) ───────
 
-const DETAIL_LABEL_CLS = "text-[10px] uppercase font-semibold text-muted-foreground tracking-wider";
+const DETAIL_LABEL_CLS =
+  "text-[10px] uppercase font-semibold text-muted-foreground tracking-wider";
 const DETAIL_VALUE_CLS = "text-xs font-medium text-foreground";
 
-function DetailRow({ label, children }: { label: string; children: ReactNode }) {
+function DetailRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
   return (
     <div className="flex items-start gap-4 py-1.5 border-b border-border/40 last:border-0">
-      <span className={cn(DETAIL_LABEL_CLS, "w-32 shrink-0 pt-0.5")}>{label}</span>
+      <span className={cn(DETAIL_LABEL_CLS, "w-32 shrink-0 pt-0.5")}>
+        {label}
+      </span>
       <span className={DETAIL_VALUE_CLS}>{children}</span>
     </div>
   );
@@ -679,7 +872,9 @@ function DetailRow({ label, children }: { label: string; children: ReactNode }) 
 // ─── View Details Modal ───────────────────────────────────────────────────────
 
 function ViewDetailsModal({
-  entry, onClose, onEdit,
+  entry,
+  onClose,
+  onEdit,
 }: {
   entry: PortalEntry | null;
   onClose: () => void;
@@ -739,37 +934,76 @@ function ViewDetailsModal({
           {tab === "info" && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">📅 Dates</p>
-                <DetailRow label="Entry Date">{fmtDate(entry.entry_date)}</DetailRow>
-                <DetailRow label="Hearing Date">{fmtDate(entry.hearing_date)}</DetailRow>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
+                  📅 Dates
+                </p>
+                <DetailRow label="Entry Date">
+                  {fmtDate(entry.entry_date)}
+                </DetailRow>
+                <DetailRow label="Hearing Date">
+                  {fmtDate(entry.hearing_date)}
+                </DetailRow>
                 <DetailRow label="Specialist">
-                  {entry.specialist_name
-                    ? <span className="px-2 py-0.5 rounded text-[10px] font-medium" style={specStyle(entry.specialist_color)}>{entry.specialist_name}</span>
-                    : "—"}
+                  {entry.specialist_name ? (
+                    <span
+                      className="px-2 py-0.5 rounded text-[10px] font-medium"
+                      style={specStyle(entry.specialist_color)}
+                    >
+                      {entry.specialist_name}
+                    </span>
+                  ) : (
+                    "—"
+                  )}
                 </DetailRow>
               </div>
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">🏥 Provider</p>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
+                  🏥 Provider
+                </p>
                 <DetailRow label="Provider">{entry.provider ?? "—"}</DetailRow>
                 <DetailRow label="MyCase Link">
-                  {entry.mycase_link
-                    ? <a href={entry.mycase_link} target="_blank" rel="noreferrer" className="text-primary hover:underline flex items-center gap-1"><ExternalLink size={10} />Open Link</a>
-                    : "—"}
+                  {entry.mycase_link ? (
+                    <a
+                      href={entry.mycase_link}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-primary hover:underline flex items-center gap-1"
+                    >
+                      <ExternalLink size={10} />
+                      Open Link
+                    </a>
+                  ) : (
+                    "—"
+                  )}
                 </DetailRow>
                 <DetailRow label="Portal Link">
-                  {entry.portal_link
-                    ? <a href={entry.portal_link} target="_blank" rel="noreferrer" className="text-primary hover:underline flex items-center gap-1"><ExternalLink size={10} />Open Link</a>
-                    : "—"}
+                  {entry.portal_link ? (
+                    <a
+                      href={entry.portal_link}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-primary hover:underline flex items-center gap-1"
+                    >
+                      <ExternalLink size={10} />
+                      Open Link
+                    </a>
+                  ) : (
+                    "—"
+                  )}
                 </DetailRow>
               </div>
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">🔐 Credentials</p>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
+                  🔐 Credentials
+                </p>
                 <DetailRow label="Username">
                   <span className="flex items-center gap-1.5">
                     {entry.portal_username ?? "—"}
                     {entry.portal_username && (
                       <button
-                        onClick={() => navigator.clipboard.writeText(entry.portal_username!)}
+                        onClick={() =>
+                          navigator.clipboard.writeText(entry.portal_username!)
+                        }
                         className="text-muted-foreground hover:text-primary"
                         aria-label="Copy username"
                       >
@@ -783,7 +1017,9 @@ function ViewDetailsModal({
                     {entry.portal_password ?? "—"}
                     {entry.portal_password && (
                       <button
-                        onClick={() => navigator.clipboard.writeText(entry.portal_password!)}
+                        onClick={() =>
+                          navigator.clipboard.writeText(entry.portal_password!)
+                        }
                         className="text-muted-foreground hover:text-primary"
                         aria-label="Copy password"
                       >
@@ -794,26 +1030,34 @@ function ViewDetailsModal({
                 </DetailRow>
               </div>
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">✅ Status</p>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
+                  ✅ Status
+                </p>
                 <DetailRow label="Got MR?">
-                  <span className={cn(
-                    "px-2 py-0.5 rounded text-[10px] font-medium",
-                    entry.got_mr ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700",
-                  )}>
+                  <span
+                    className={cn(
+                      "px-2 py-0.5 rounded text-[10px] font-medium",
+                      entry.got_mr
+                        ? "bg-emerald-100 text-emerald-700"
+                        : "bg-amber-100 text-amber-700",
+                    )}
+                  >
                     {entry.got_mr ? "✅ Yes" : "⏳ No"}
                   </span>
                 </DetailRow>
                 <DetailRow label="Approved by TL">
-                  {entry.approved_by_tl
-                    ? <span className="text-blue-500 font-bold">✓ Yes</span>
-                    : <span className="text-muted-foreground">No</span>}
+                  {entry.approved_by_tl ? (
+                    <span className="text-blue-500 font-bold">✓ Yes</span>
+                  ) : (
+                    <span className="text-muted-foreground">No</span>
+                  )}
                 </DetailRow>
               </div>
             </div>
           )}
 
-          {tab === "activity" && (
-            loadingAct ? (
+          {tab === "activity" &&
+            (loadingAct ? (
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
               </div>
@@ -824,7 +1068,10 @@ function ViewDetailsModal({
             ) : (
               <div className="space-y-0.5">
                 {activities.map((a) => (
-                  <div key={a.id} className="flex gap-3 px-2 py-2 hover:bg-muted/30 rounded">
+                  <div
+                    key={a.id}
+                    className="flex gap-3 px-2 py-2 hover:bg-muted/30 rounded"
+                  >
                     <span className="text-[9px] font-bold uppercase bg-blue-100 text-blue-700 rounded px-1.5 py-0.5 h-fit mt-0.5 shrink-0">
                       {a.action.replace(/^portal_/, "").replace(/_/g, " ")}
                     </span>
@@ -837,8 +1084,7 @@ function ViewDetailsModal({
                   </div>
                 ))}
               </div>
-            )
-          )}
+            ))}
         </div>
 
         {/* Footer */}
@@ -850,7 +1096,10 @@ function ViewDetailsModal({
             Close
           </button>
           <button
-            onClick={() => { onEdit(entry); onClose(); }}
+            onClick={() => {
+              onEdit(entry);
+              onClose();
+            }}
             className="text-xs px-4 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90"
           >
             ✏️ Edit Entry
@@ -865,16 +1114,31 @@ function ViewDetailsModal({
 // Shown on small screens instead of the wide data grid.
 
 function PortalMobileCard({
-  entry, permissions,
-  onViewDetails, onEdit, onDelete, onOpenNotes, onOpenLink,
+  entry,
+  permissions,
+  onViewDetails,
+  onEdit,
+  onDelete,
+  onOpenNotes,
+  onOpenLink,
 }: {
   entry: PortalEntry;
   permissions: PortalPageData["permissions"];
   onViewDetails: (e: PortalEntry) => void;
   onEdit: (e: PortalEntry) => void;
   onDelete: (id: number) => void;
-  onOpenNotes: (id: number, field: "username" | "password" | "approved", clientName: string, provider: string | null) => void;
-  onOpenLink: (id: number, field: "mycase_link" | "portal_link", title: string, url: string) => void;
+  onOpenNotes: (
+    id: number,
+    field: "username" | "password" | "approved" | "got_mr",
+    clientName: string,
+    provider: string | null,
+  ) => void;
+  onOpenLink: (
+    id: number,
+    field: "mycase_link" | "portal_link",
+    title: string,
+    url: string,
+  ) => void;
 }) {
   const { canEdit, canManage } = permissions;
   const specColor = entry.specialist_color;
@@ -884,25 +1148,38 @@ function PortalMobileCard({
       {/* Header row: client + actions */}
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="font-semibold text-sm text-primary truncate">{entry.client_name}</p>
+          <p className="font-semibold text-sm text-primary truncate">
+            {entry.client_name}
+          </p>
           {entry.provider && (
-            <p className="text-[11px] text-muted-foreground truncate">{entry.provider}</p>
+            <p className="text-[11px] text-muted-foreground truncate">
+              {entry.provider}
+            </p>
           )}
         </div>
         <div className="flex items-center gap-1 shrink-0">
-          <button onClick={() => onViewDetails(entry)}
-            className="p-1.5 rounded hover:bg-muted text-muted-foreground" aria-label="View details">
+          <button
+            onClick={() => onViewDetails(entry)}
+            className="p-1.5 rounded hover:bg-muted text-muted-foreground"
+            aria-label="View details"
+          >
             <Eye size={14} />
           </button>
           {canEdit && (
-            <button onClick={() => onEdit(entry)}
-              className="p-1.5 rounded hover:bg-muted text-muted-foreground" aria-label="Edit entry">
+            <button
+              onClick={() => onEdit(entry)}
+              className="p-1.5 rounded hover:bg-muted text-muted-foreground"
+              aria-label="Edit entry"
+            >
               <FileText size={14} />
             </button>
           )}
           {canManage && (
-            <button onClick={() => onDelete(entry.id)}
-              className="p-1.5 rounded hover:bg-red-50 text-red-500" aria-label="Delete">
+            <button
+              onClick={() => onDelete(entry.id)}
+              className="p-1.5 rounded hover:bg-red-50 text-red-500"
+              aria-label="Delete"
+            >
               <Trash2 size={14} />
             </button>
           )}
@@ -911,10 +1188,25 @@ function PortalMobileCard({
 
       {/* Dates + Specialist */}
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-        {entry.entry_date && <span>📅 Entry: <span className="text-foreground">{fmtDate(entry.entry_date)}</span></span>}
-        {entry.hearing_date && <span>🎧 Hearing: <span className="text-foreground">{fmtDate(entry.hearing_date)}</span></span>}
+        {entry.entry_date && (
+          <span>
+            📅 Entry:{" "}
+            <span className="text-foreground">{fmtDate(entry.entry_date)}</span>
+          </span>
+        )}
+        {entry.hearing_date && (
+          <span>
+            🎧 Hearing:{" "}
+            <span className="text-foreground">
+              {fmtDate(entry.hearing_date)}
+            </span>
+          </span>
+        )}
         {entry.specialist_name && (
-          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium" style={specStyle(specColor ?? null)}>
+          <span
+            className="px-1.5 py-0.5 rounded text-[10px] font-medium"
+            style={specStyle(specColor ?? null)}
+          >
             {entry.specialist_name}
           </span>
         )}
@@ -922,30 +1214,50 @@ function PortalMobileCard({
 
       {/* Links row */}
       <div className="flex items-center gap-2 flex-wrap">
-        {entry.mycase_link
-          ? <a href={entry.mycase_link} target="_blank" rel="noreferrer"
-              className="inline-flex items-center gap-1 text-[10px] bg-primary text-primary-foreground px-2 py-0.5 rounded">
-              <ExternalLink size={9} />MyCase
-            </a>
-          : canEdit && (
-              <button onClick={() => onOpenLink(entry.id, "mycase_link", "📄 MyCase Link", "")}
-                className="text-[10px] border border-dashed border-border rounded px-2 py-0.5 text-muted-foreground">
-                + MyCase
-              </button>
-            )
-        }
-        {entry.portal_link
-          ? <a href={entry.portal_link} target="_blank" rel="noreferrer"
-              className="inline-flex items-center gap-1 text-[10px] bg-emerald-600 text-white px-2 py-0.5 rounded">
-              <ExternalLink size={9} />Portal
-            </a>
-          : canEdit && (
-              <button onClick={() => onOpenLink(entry.id, "portal_link", "🔗 Portal Link", "")}
-                className="text-[10px] border border-dashed border-border rounded px-2 py-0.5 text-muted-foreground">
-                + Portal
-              </button>
-            )
-        }
+        {entry.mycase_link ? (
+          <a
+            href={entry.mycase_link}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-[10px] bg-primary text-primary-foreground px-2 py-0.5 rounded"
+          >
+            <ExternalLink size={9} />
+            MyCase
+          </a>
+        ) : (
+          canEdit && (
+            <button
+              onClick={() =>
+                onOpenLink(entry.id, "mycase_link", "📄 MyCase Link", "")
+              }
+              className="text-[10px] border border-dashed border-border rounded px-2 py-0.5 text-muted-foreground"
+            >
+              + MyCase
+            </button>
+          )
+        )}
+        {entry.portal_link ? (
+          <a
+            href={entry.portal_link}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-[10px] bg-emerald-600 text-white px-2 py-0.5 rounded"
+          >
+            <ExternalLink size={9} />
+            Portal
+          </a>
+        ) : (
+          canEdit && (
+            <button
+              onClick={() =>
+                onOpenLink(entry.id, "portal_link", "🔗 Portal Link", "")
+              }
+              className="text-[10px] border border-dashed border-border rounded px-2 py-0.5 text-muted-foreground"
+            >
+              + Portal
+            </button>
+          )
+        )}
       </div>
 
       {/* Credentials */}
@@ -955,10 +1267,26 @@ function PortalMobileCard({
             <span className="flex items-center gap-1">
               <span className="text-muted-foreground">User:</span>
               <span className="font-mono">{entry.portal_username}</span>
-              <button onClick={() => onOpenNotes(entry.id, "username", entry.client_name, entry.provider)}
-                className={cn("text-[9px] px-1 py-0.5 rounded border",
-                  entry.username_notes.length > 0 ? "bg-blue-100 border-blue-300 text-blue-700" : "border-border text-muted-foreground")}>
-                <StickyNote size={8} className="inline" />{entry.username_notes.length > 0 ? entry.username_notes.length : ""}
+              <button
+                onClick={() =>
+                  onOpenNotes(
+                    entry.id,
+                    "username",
+                    entry.client_name,
+                    entry.provider,
+                  )
+                }
+                className={cn(
+                  "text-[9px] px-1 py-0.5 rounded border",
+                  entry.username_notes.length > 0
+                    ? "bg-blue-100 border-blue-300 text-blue-700"
+                    : "border-border text-muted-foreground",
+                )}
+              >
+                <StickyNote size={8} className="inline" />
+                {entry.username_notes.length > 0
+                  ? entry.username_notes.length
+                  : ""}
               </button>
             </span>
           )}
@@ -966,14 +1294,35 @@ function PortalMobileCard({
             <span className="flex items-center gap-1">
               <span className="text-muted-foreground">Pass:</span>
               <span>••••••</span>
-              <button onClick={() => navigator.clipboard.writeText(entry.portal_password!)}
-                className="text-muted-foreground hover:text-primary" aria-label="Copy password">
+              <button
+                onClick={() =>
+                  navigator.clipboard.writeText(entry.portal_password!)
+                }
+                className="text-muted-foreground hover:text-primary"
+                aria-label="Copy password"
+              >
                 <Copy size={10} />
               </button>
-              <button onClick={() => onOpenNotes(entry.id, "password", entry.client_name, entry.provider)}
-                className={cn("text-[9px] px-1 py-0.5 rounded border",
-                  entry.password_notes.length > 0 ? "bg-blue-100 border-blue-300 text-blue-700" : "border-border text-muted-foreground")}>
-                <StickyNote size={8} className="inline" />{entry.password_notes.length > 0 ? entry.password_notes.length : ""}
+              <button
+                onClick={() =>
+                  onOpenNotes(
+                    entry.id,
+                    "password",
+                    entry.client_name,
+                    entry.provider,
+                  )
+                }
+                className={cn(
+                  "text-[9px] px-1 py-0.5 rounded border",
+                  entry.password_notes.length > 0
+                    ? "bg-blue-100 border-blue-300 text-blue-700"
+                    : "border-border text-muted-foreground",
+                )}
+              >
+                <StickyNote size={8} className="inline" />
+                {entry.password_notes.length > 0
+                  ? entry.password_notes.length
+                  : ""}
               </button>
             </span>
           )}
@@ -982,19 +1331,53 @@ function PortalMobileCard({
 
       {/* Status badges */}
       <div className="flex items-center gap-2 flex-wrap">
-        <span className={cn("px-2 py-0.5 rounded text-[10px] font-medium",
-          entry.got_mr ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-600")}>
+        <span
+          className={cn(
+            "px-2 py-0.5 rounded text-[10px] font-medium",
+            entry.got_mr
+              ? "bg-emerald-100 text-emerald-700"
+              : "bg-amber-100 text-amber-600",
+          )}
+        >
           {entry.got_mr ? "✅ Got MR" : "⏳ Pending MR"}
         </span>
+        <button
+          onClick={() =>
+            onOpenNotes(entry.id, "got_mr", entry.client_name, entry.provider)
+          }
+          className={cn(
+            "text-[9px] px-1.5 py-0.5 rounded border",
+            entry.got_mr_notes.length > 0
+              ? "bg-blue-100 border-blue-300 text-blue-700"
+              : "border-border text-muted-foreground",
+          )}
+        >
+          <StickyNote size={8} className="inline" />
+          MR Notes{" "}
+          {entry.got_mr_notes.length > 0
+            ? `(${entry.got_mr_notes.length})`
+            : ""}
+        </button>
         {entry.approved_by_tl && (
           <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-700">
             ✓ Approved TL
           </span>
         )}
-        <button onClick={() => onOpenNotes(entry.id, "approved", entry.client_name, entry.provider)}
-          className={cn("text-[9px] px-1.5 py-0.5 rounded border",
-            entry.approved_notes.length > 0 ? "bg-blue-100 border-blue-300 text-blue-700" : "border-border text-muted-foreground")}>
-          <StickyNote size={8} className="inline" /> Approval Notes {entry.approved_notes.length > 0 ? `(${entry.approved_notes.length})` : ""}
+        <button
+          onClick={() =>
+            onOpenNotes(entry.id, "approved", entry.client_name, entry.provider)
+          }
+          className={cn(
+            "text-[9px] px-1.5 py-0.5 rounded border",
+            entry.approved_notes.length > 0
+              ? "bg-blue-100 border-blue-300 text-blue-700"
+              : "border-border text-muted-foreground",
+          )}
+        >
+          <StickyNote size={8} className="inline" /> Approval Notes{" "}
+          {entry.approved_notes.length > 0
+            ? `(${entry.approved_notes.length})`
+            : ""}
         </button>
       </div>
     </div>
@@ -1005,12 +1388,19 @@ function PortalMobileCard({
 // Shared grid — header and rows must use identical values.
 // Date(90) | HearingDate(90) | Specialist(130) | ClientName(160) | Provider(130) |
 // MyCase(75) | PortalLink(75) | Username(160) | Password(140) | GotMR(70) | ApprovedTL(95) | Actions(70)
-const PORTAL_GRID = "90px 90px 130px 160px 130px 75px 75px 160px 140px 70px 95px 70px";
+const PORTAL_GRID =
+  "90px 90px 130px 160px 130px 75px 75px 160px 140px 70px 95px 70px";
 const PORTAL_MIN_W = "1335px";
 
 function PortalRow({
-  entry, specialists, permissions,
-  onUpdate, onDelete, onViewDetails, onOpenNotes, onOpenLink,
+  entry,
+  specialists,
+  permissions,
+  onUpdate,
+  onDelete,
+  onViewDetails,
+  onOpenNotes,
+  onOpenLink,
 }: {
   entry: PortalEntry;
   specialists: MrSpecialist[];
@@ -1020,7 +1410,7 @@ function PortalRow({
   onViewDetails: (e: PortalEntry) => void;
   onOpenNotes: (
     id: number,
-    field: "username" | "password" | "approved",
+    field: "username" | "password" | "approved" | "got_mr",
     clientName: string,
     provider: string | null,
   ) => void;
@@ -1032,10 +1422,11 @@ function PortalRow({
   ) => void;
 }) {
   const { canEdit, canManage, canAssignSpecialist } = permissions;
-  const spec      = specialists.find((s) => s.id === entry.mr_specialist_id);
+  const spec = specialists.find((s) => s.id === entry.mr_specialist_id);
   const specColor = entry.specialist_color ?? spec?.bg_color;
 
-  const inp = "text-[10px] border border-border rounded px-1.5 py-0.5 bg-card text-foreground focus:outline-none focus:border-primary";
+  const inp =
+    "text-[10px] border border-border rounded px-1.5 py-0.5 bg-card text-foreground focus:outline-none focus:border-primary";
 
   return (
     <div
@@ -1044,118 +1435,226 @@ function PortalRow({
     >
       {/* Date */}
       <div className="px-1">
-        {canEdit
-          ? <input type="date" value={entry.entry_date ?? ""} className={cn(inp, "w-full")}
-              onChange={(e) => onUpdate(entry.id, "entry_date", e.target.value)} />
-          : <span>{fmtDate(entry.entry_date)}</span>}
+        {canEdit ? (
+          <input
+            type="date"
+            value={entry.entry_date ?? ""}
+            className={cn(inp, "w-full")}
+            onChange={(e) => onUpdate(entry.id, "entry_date", e.target.value)}
+          />
+        ) : (
+          <span>{fmtDate(entry.entry_date)}</span>
+        )}
       </div>
 
       {/* Hearing Date */}
       <div className="px-1 text-center">
-        {canEdit
-          ? <input type="date" value={entry.hearing_date ?? ""} className={cn(inp, "w-full")}
-              onChange={(e) => onUpdate(entry.id, "hearing_date", e.target.value)} />
-          : <span>{fmtDate(entry.hearing_date)}</span>}
+        {canEdit ? (
+          <input
+            type="date"
+            value={entry.hearing_date ?? ""}
+            className={cn(inp, "w-full")}
+            onChange={(e) => onUpdate(entry.id, "hearing_date", e.target.value)}
+          />
+        ) : (
+          <span>{fmtDate(entry.hearing_date)}</span>
+        )}
       </div>
 
       {/* Specialist */}
       <div className="px-1">
-        {canEdit
-          ? <select
-              value={entry.mr_specialist_id ?? ""}
-              className="w-full text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer font-medium"
-              style={specColor ? specStyle(specColor) : { backgroundColor: "#f3f4f6", color: "#374151" }}
-              onChange={(e) => onUpdate(entry.id, "mr_specialist_id", e.target.value ? Number(e.target.value) : null)}
-              disabled={!canAssignSpecialist}
-              title={!canAssignSpecialist ? "Only Admin, Manager, MR Admin, or MR Lead can assign specialists" : undefined}
-            >
-              <option value="">— Select —</option>
-              {specialists.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-          : entry.specialist_name
-            ? <span className="px-1.5 py-0.5 rounded text-[10px] font-medium" style={specStyle(specColor ?? null)}>
-                {entry.specialist_name}
-              </span>
-            : <span className="text-muted-foreground/40">—</span>
-        }
+        {canEdit ? (
+          <select
+            value={entry.mr_specialist_id ?? ""}
+            className="w-full text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer font-medium"
+            style={
+              specColor
+                ? specStyle(specColor)
+                : { backgroundColor: "#f3f4f6", color: "#374151" }
+            }
+            onChange={(e) =>
+              onUpdate(
+                entry.id,
+                "mr_specialist_id",
+                e.target.value ? Number(e.target.value) : null,
+              )
+            }
+            disabled={!canAssignSpecialist}
+            title={
+              !canAssignSpecialist
+                ? "Only Admin, Manager, MR Admin, or MR Lead can assign specialists"
+                : undefined
+            }
+          >
+            <option value="">— Select —</option>
+            {specialists.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        ) : entry.specialist_name ? (
+          <span
+            className="px-1.5 py-0.5 rounded text-[10px] font-medium"
+            style={specStyle(specColor ?? null)}
+          >
+            {entry.specialist_name}
+          </span>
+        ) : (
+          <span className="text-muted-foreground/40">—</span>
+        )}
       </div>
 
       {/* Client Name */}
       <div className="px-1 min-w-0">
-        {canEdit
-          ? <input type="text" value={entry.client_name} className={cn(inp, "w-full")}
-              onChange={(e) => onUpdate(entry.id, "client_name", e.target.value)} />
-          : <strong className="text-foreground truncate block">{entry.client_name}</strong>}
+        {canEdit ? (
+          <input
+            type="text"
+            value={entry.client_name}
+            className={cn(inp, "w-full")}
+            onChange={(e) => onUpdate(entry.id, "client_name", e.target.value)}
+          />
+        ) : (
+          <strong className="text-foreground truncate block">
+            {entry.client_name}
+          </strong>
+        )}
       </div>
 
       {/* Provider */}
       <div className="px-1 min-w-0">
-        {canEdit
-          ? <input type="text" value={entry.provider ?? ""} className={cn(inp, "w-full")}
-              placeholder="Add provider…"
-              onChange={(e) => onUpdate(entry.id, "provider", e.target.value)} />
-          : <span className="text-[11px] leading-tight wrap-break-word line-clamp-2">{entry.provider ?? "—"}</span>}
+        {canEdit ? (
+          <input
+            type="text"
+            value={entry.provider ?? ""}
+            className={cn(inp, "w-full")}
+            placeholder="Add provider…"
+            onChange={(e) => onUpdate(entry.id, "provider", e.target.value)}
+          />
+        ) : (
+          <span className="text-[11px] leading-tight wrap-break-word line-clamp-2">
+            {entry.provider ?? "—"}
+          </span>
+        )}
       </div>
 
       {/* MyCase Link */}
       <div className="px-1 flex justify-center items-center gap-1 whitespace-nowrap">
-        {entry.mycase_link
-          ? <>
-              <a href={entry.mycase_link} target="_blank" rel="noreferrer"
-                className="inline-flex items-center text-[9px] bg-primary text-primary-foreground px-1.5 py-0.5 rounded hover:bg-primary/80">
-                <ExternalLink size={8} className="mr-0.5" />📄
-              </a>
-              {canEdit && (
-                <button onClick={() => onOpenLink(entry.id, "mycase_link", "📄 MyCase Link", entry.mycase_link!)}
-                  className="text-[9px] border border-border px-1 py-0.5 rounded hover:bg-muted" aria-label="Edit MyCase link">
-                  ✏️
-                </button>
-              )}
-            </>
-          : canEdit
-            ? <button onClick={() => onOpenLink(entry.id, "mycase_link", "📄 MyCase Link", "")}
-                className="text-[10px] text-muted-foreground hover:text-foreground border border-dashed border-border rounded px-1.5 py-0.5">
-                + Link
+        {entry.mycase_link ? (
+          <>
+            <a
+              href={entry.mycase_link}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center text-[9px] bg-primary text-primary-foreground px-1.5 py-0.5 rounded hover:bg-primary/80"
+            >
+              <ExternalLink size={8} className="mr-0.5" />
+              📄
+            </a>
+            {canEdit && (
+              <button
+                onClick={() =>
+                  onOpenLink(
+                    entry.id,
+                    "mycase_link",
+                    "📄 MyCase Link",
+                    entry.mycase_link!,
+                  )
+                }
+                className="text-[9px] border border-border px-1 py-0.5 rounded hover:bg-muted"
+                aria-label="Edit MyCase link"
+              >
+                ✏️
               </button>
-            : <span className="text-muted-foreground/30">—</span>
-        }
+            )}
+          </>
+        ) : canEdit ? (
+          <button
+            onClick={() =>
+              onOpenLink(entry.id, "mycase_link", "📄 MyCase Link", "")
+            }
+            className="text-[10px] text-muted-foreground hover:text-foreground border border-dashed border-border rounded px-1.5 py-0.5"
+          >
+            + Link
+          </button>
+        ) : (
+          <span className="text-muted-foreground/30">—</span>
+        )}
       </div>
 
       {/* Portal Link */}
       <div className="px-1 flex justify-center items-center gap-1 whitespace-nowrap">
-        {entry.portal_link
-          ? <>
-              <a href={entry.portal_link} target="_blank" rel="noreferrer"
-                className="inline-flex items-center text-[9px] bg-emerald-600 text-white px-1.5 py-0.5 rounded hover:bg-emerald-700">
-                <ExternalLink size={8} className="mr-0.5" />🔗
-              </a>
-              {canEdit && (
-                <button onClick={() => onOpenLink(entry.id, "portal_link", "🔗 Portal Link", entry.portal_link!)}
-                  className="text-[9px] border border-border px-1 py-0.5 rounded hover:bg-muted" aria-label="Edit portal link">
-                  ✏️
-                </button>
-              )}
-            </>
-          : canEdit
-            ? <button onClick={() => onOpenLink(entry.id, "portal_link", "🔗 Portal Link", "")}
-                className="text-[10px] text-muted-foreground hover:text-foreground border border-dashed border-border rounded px-1.5 py-0.5">
-                + Link
+        {entry.portal_link ? (
+          <>
+            <a
+              href={entry.portal_link}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center text-[9px] bg-emerald-600 text-white px-1.5 py-0.5 rounded hover:bg-emerald-700"
+            >
+              <ExternalLink size={8} className="mr-0.5" />
+              🔗
+            </a>
+            {canEdit && (
+              <button
+                onClick={() =>
+                  onOpenLink(
+                    entry.id,
+                    "portal_link",
+                    "🔗 Portal Link",
+                    entry.portal_link!,
+                  )
+                }
+                className="text-[9px] border border-border px-1 py-0.5 rounded hover:bg-muted"
+                aria-label="Edit portal link"
+              >
+                ✏️
               </button>
-            : <span className="text-muted-foreground/30">—</span>
-        }
+            )}
+          </>
+        ) : canEdit ? (
+          <button
+            onClick={() =>
+              onOpenLink(entry.id, "portal_link", "🔗 Portal Link", "")
+            }
+            className="text-[10px] text-muted-foreground hover:text-foreground border border-dashed border-border rounded px-1.5 py-0.5"
+          >
+            + Link
+          </button>
+        ) : (
+          <span className="text-muted-foreground/30">—</span>
+        )}
       </div>
 
       {/* Username */}
       <div className="px-1 flex items-center gap-1 min-w-0">
-        {canEdit
-          ? <input type="text" value={entry.portal_username ?? ""} className={cn(inp, "flex-1 min-w-0")}
-              placeholder="Username"
-              onChange={(e) => onUpdate(entry.id, "portal_username", e.target.value)} />
-          : <span className="flex-1 text-[10px] truncate">{entry.portal_username ?? "—"}</span>}
-        <button onClick={() => onOpenNotes(entry.id, "username", entry.client_name, entry.provider)}
-          className={cn("shrink-0 text-[9px] px-1 py-0.5 rounded border transition-colors",
-            entry.username_notes.length > 0 ? "bg-blue-100 border-blue-300 text-blue-700" : "border-border text-muted-foreground hover:bg-muted")}
-          aria-label={`Username notes (${entry.username_notes.length})`}>
+        {canEdit ? (
+          <input
+            type="text"
+            value={entry.portal_username ?? ""}
+            className={cn(inp, "flex-1 min-w-0")}
+            placeholder="Username"
+            onChange={(e) =>
+              onUpdate(entry.id, "portal_username", e.target.value)
+            }
+          />
+        ) : (
+          <span className="flex-1 text-[10px] truncate">
+            {entry.portal_username ?? "—"}
+          </span>
+        )}
+        <button
+          onClick={() =>
+            onOpenNotes(entry.id, "username", entry.client_name, entry.provider)
+          }
+          className={cn(
+            "shrink-0 text-[9px] px-1 py-0.5 rounded border transition-colors",
+            entry.username_notes.length > 0
+              ? "bg-blue-100 border-blue-300 text-blue-700"
+              : "border-border text-muted-foreground hover:bg-muted",
+          )}
+          aria-label={`Username notes (${entry.username_notes.length})`}
+        >
           <StickyNote size={9} className="inline" />
           {entry.username_notes.length > 0 ? entry.username_notes.length : ""}
         </button>
@@ -1163,58 +1662,126 @@ function PortalRow({
 
       {/* Password */}
       <div className="px-1 flex items-center gap-1 min-w-0">
-        {canEdit
-          ? <input type="text" value={entry.portal_password ?? ""} className={cn(inp, "flex-1 min-w-0")}
-              placeholder="Password"
-              onChange={(e) => onUpdate(entry.id, "portal_password", e.target.value)} />
-          : <span className="flex-1 text-[10px]">{entry.portal_password ? "••••••" : "—"}</span>}
+        {canEdit ? (
+          <input
+            type="text"
+            value={entry.portal_password ?? ""}
+            className={cn(inp, "flex-1 min-w-0")}
+            placeholder="Password"
+            onChange={(e) =>
+              onUpdate(entry.id, "portal_password", e.target.value)
+            }
+          />
+        ) : (
+          <span className="flex-1 text-[10px]">
+            {entry.portal_password ? "••••••" : "—"}
+          </span>
+        )}
         {entry.portal_password && (
-          <button onClick={() => navigator.clipboard.writeText(entry.portal_password!)}
-            className="shrink-0 text-muted-foreground hover:text-primary p-0.5 rounded" aria-label="Copy password">
+          <button
+            onClick={() =>
+              navigator.clipboard.writeText(entry.portal_password!)
+            }
+            className="shrink-0 text-muted-foreground hover:text-primary p-0.5 rounded"
+            aria-label="Copy password"
+          >
             <Copy size={10} />
           </button>
         )}
-        <button onClick={() => onOpenNotes(entry.id, "password", entry.client_name, entry.provider)}
-          className={cn("shrink-0 text-[9px] px-1 py-0.5 rounded border transition-colors",
-            entry.password_notes.length > 0 ? "bg-blue-100 border-blue-300 text-blue-700" : "border-border text-muted-foreground hover:bg-muted")}
-          aria-label={`Password notes (${entry.password_notes.length})`}>
+        <button
+          onClick={() =>
+            onOpenNotes(entry.id, "password", entry.client_name, entry.provider)
+          }
+          className={cn(
+            "shrink-0 text-[9px] px-1 py-0.5 rounded border transition-colors",
+            entry.password_notes.length > 0
+              ? "bg-blue-100 border-blue-300 text-blue-700"
+              : "border-border text-muted-foreground hover:bg-muted",
+          )}
+          aria-label={`Password notes (${entry.password_notes.length})`}
+        >
           <StickyNote size={9} className="inline" />
           {entry.password_notes.length > 0 ? entry.password_notes.length : ""}
         </button>
       </div>
 
       {/* Got MR? */}
-      <div className="px-1">
-        {canEdit
-          ? <select value={entry.got_mr ? "1" : "0"}
-              className={cn("w-full text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer font-medium",
-                entry.got_mr ? "bg-emerald-100 text-emerald-700" : "bg-red-50 text-red-600")}
-              onChange={(e) => onUpdate(entry.id, "got_mr", e.target.value === "1")}>
-              <option value="0">No</option>
-              <option value="1">Yes</option>
-            </select>
-          : <span className={cn("px-1.5 py-0.5 rounded text-[10px] font-medium",
-              entry.got_mr ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-600")}>
-              {entry.got_mr ? "✅ Yes" : "⏳ No"}
-            </span>
-        }
+      <div className="px-1 flex items-center gap-1">
+        {canEdit ? (
+          <select
+            value={entry.got_mr ? "1" : "0"}
+            className={cn(
+              "w-full text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer font-medium",
+              entry.got_mr
+                ? "bg-emerald-100 text-emerald-700"
+                : "bg-red-50 text-red-600",
+            )}
+            onChange={(e) =>
+              onUpdate(entry.id, "got_mr", e.target.value === "1")
+            }
+          >
+            <option value="0">No</option>
+            <option value="1">Yes</option>
+          </select>
+        ) : (
+          <span
+            className={cn(
+              "px-1.5 py-0.5 rounded text-[10px] font-medium",
+              entry.got_mr
+                ? "bg-emerald-100 text-emerald-700"
+                : "bg-amber-100 text-amber-600",
+            )}
+          >
+            {entry.got_mr ? "✅ Yes" : "⏳ No"}
+          </span>
+        )}
+
+        {/* ✅ NEW NOTES BUTTON */}
+        <button
+          onClick={() =>
+            onOpenNotes(entry.id, "got_mr", entry.client_name, entry.provider)
+          }
+          className={cn(
+            "text-[9px] px-1 py-0.5 rounded border",
+            entry.got_mr_notes.length > 0
+              ? "bg-blue-100 border-blue-300 text-blue-700"
+              : "border-border text-muted-foreground hover:bg-muted",
+          )}
+        >
+          <StickyNote size={9} className="inline" />
+          {entry.got_mr_notes.length > 0 ? entry.got_mr_notes.length : ""}
+        </button>
       </div>
 
       {/* Approved by TL */}
       <div className="px-1 flex items-center justify-center gap-1">
-        {canEdit
-          ? <input type="checkbox" checked={entry.approved_by_tl}
-              className="w-4 h-4 cursor-pointer accent-blue-500"
-              onChange={(e) => onUpdate(entry.id, "approved_by_tl", e.target.checked)}
-              aria-label="Approved by TL" />
-          : entry.approved_by_tl
-            ? <Check size={14} className="text-blue-500" />
-            : <span className="text-muted-foreground/30 text-xs">—</span>
-        }
-        <button onClick={() => onOpenNotes(entry.id, "approved", entry.client_name, entry.provider)}
-          className={cn("text-[9px] px-1 py-0.5 rounded border transition-colors",
-            entry.approved_notes.length > 0 ? "bg-blue-100 border-blue-300 text-blue-700" : "border-border text-muted-foreground hover:bg-muted")}
-          aria-label={`Approval notes (${entry.approved_notes.length})`}>
+        {canEdit ? (
+          <input
+            type="checkbox"
+            checked={entry.approved_by_tl}
+            className="w-4 h-4 cursor-pointer accent-blue-500"
+            onChange={(e) =>
+              onUpdate(entry.id, "approved_by_tl", e.target.checked)
+            }
+            aria-label="Approved by TL"
+          />
+        ) : entry.approved_by_tl ? (
+          <Check size={14} className="text-blue-500" />
+        ) : (
+          <span className="text-muted-foreground/30 text-xs">—</span>
+        )}
+        <button
+          onClick={() =>
+            onOpenNotes(entry.id, "approved", entry.client_name, entry.provider)
+          }
+          className={cn(
+            "text-[9px] px-1 py-0.5 rounded border transition-colors",
+            entry.approved_notes.length > 0
+              ? "bg-blue-100 border-blue-300 text-blue-700"
+              : "border-border text-muted-foreground hover:bg-muted",
+          )}
+          aria-label={`Approval notes (${entry.approved_notes.length})`}
+        >
           <StickyNote size={9} className="inline" />
           {entry.approved_notes.length > 0 ? entry.approved_notes.length : ""}
         </button>
@@ -1222,15 +1789,21 @@ function PortalRow({
 
       {/* Actions */}
       <div className="px-1 flex items-center justify-center gap-0.5">
-        <button onClick={() => onViewDetails(entry)}
+        <button
+          onClick={() => onViewDetails(entry)}
           className="text-[10px] p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
-          title="View Details" aria-label="View details">
+          title="View Details"
+          aria-label="View details"
+        >
           <Eye size={13} />
         </button>
         {canManage && (
-          <button onClick={() => onDelete(entry.id)}
+          <button
+            onClick={() => onDelete(entry.id)}
             className="text-[10px] p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 hover:text-red-700"
-            title="Delete" aria-label="Delete entry">
+            title="Delete"
+            aria-label="Delete entry"
+          >
             <Trash2 size={13} />
           </button>
         )}
@@ -1241,33 +1814,42 @@ function PortalRow({
 
 // ─── Main Client Component ────────────────────────────────────────────────────
 export function PatientPortalClient(data: PortalPageData) {
-  const router                        = useRouter();
-  const [isPending, startTransition]  = useTransition();
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
 
-  const [entries, setEntries]       = useState<PortalEntry[]>([]);
-  const [stats, setStats]           = useState<PortalStats>(data.stats);
-  const [total, setTotal]           = useState(data.stats.total);
+  const [entries, setEntries] = useState<PortalEntry[]>([]);
+  const [stats, setStats] = useState<PortalStats>(data.stats);
+  const [total, setTotal] = useState(data.stats.total);
   const [totalPages, setTotalPages] = useState(1);
 
   const [filters, setFilters] = useState<PortalFilters>({
-    search: "", mr_status: "", month: "", specialist: "",
-    sort_order: "desc", page: 1, per_page: 50,
+    search: "",
+    mr_status: "",
+    month: "",
+    specialist: "",
+    sort_order: "desc",
+    page: 1,
+    per_page: 50,
   });
 
   // Modal state
-  const [showAdd,      setShowAdd]      = useState(false);
-  const [editEntry,    setEditEntry]    = useState<PortalEntry | null>(null);
-  const [viewEntry,    setViewEntry]    = useState<PortalEntry | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [editEntry, setEditEntry] = useState<PortalEntry | null>(null);
+  const [viewEntry, setViewEntry] = useState<PortalEntry | null>(null);
   const [showActivity, setShowActivity] = useState(false);
-  const [notesState, setNotesState]     = useState<{
-    open: boolean; id: number;
-    field: "username" | "password" | "approved";
-    clientName: string; provider: string | null;
+  const [notesState, setNotesState] = useState<{
+    open: boolean;
+    id: number;
+    field: "username" | "password" | "approved" | "got_mr";
+    clientName: string;
+    provider: string | null;
   }>({ open: false, id: 0, field: "username", clientName: "", provider: null });
   const [linkState, setLinkState] = useState<{
-    open: boolean; id: number;
+    open: boolean;
+    id: number;
     field: "mycase_link" | "portal_link";
-    title: string; currentUrl: string;
+    title: string;
+    currentUrl: string;
   }>({ open: false, id: 0, field: "mycase_link", title: "", currentUrl: "" });
 
   const searchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1282,7 +1864,9 @@ export function PatientPortalClient(data: PortalPageData) {
   }, []);
 
   // Initial load
-  useEffect(() => { load(filters); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    load(filters);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const applyFilter = (patch: Partial<PortalFilters>) => {
     const next = { ...filters, ...patch, page: 1 };
@@ -1299,7 +1883,9 @@ export function PatientPortalClient(data: PortalPageData) {
   // Optimistic field update — fire-and-forget server action
   const handleUpdate = (id: number, field: string, value: unknown) => {
     updatePortalField(id, field, value as string | number | boolean | null);
-    setEntries((prev) => prev.map((e) => e.id === id ? { ...e, [field]: value } : e));
+    setEntries((prev) =>
+      prev.map((e) => (e.id === id ? { ...e, [field]: value } : e)),
+    );
   };
 
   const handleDelete = async (id: number) => {
@@ -1313,7 +1899,9 @@ export function PatientPortalClient(data: PortalPageData) {
   };
 
   const handleLinkSaved = (id: number, field: string, url: string) => {
-    setEntries((prev) => prev.map((e) => e.id === id ? { ...e, [field]: url || null } : e));
+    setEntries((prev) =>
+      prev.map((e) => (e.id === id ? { ...e, [field]: url || null } : e)),
+    );
   };
 
   const curPage = filters.page ?? 1;
@@ -1321,10 +1909,12 @@ export function PatientPortalClient(data: PortalPageData) {
 
   return (
     <>
-      <AppHeader title="Patient Portal" subtitle="Medical Records Patient Portal Tracking" />
+      <AppHeader
+        title="Patient Portal"
+        subtitle="Medical Records Patient Portal Tracking"
+      />
 
       <div className="max-w-475 mx-auto px-3 sm:px-6 py-6 space-y-5">
-
         {/* ── Back navigation ──────────────────────────────────────────────── */}
         <button
           onClick={() => router.push("/medical-records")}
@@ -1335,10 +1925,22 @@ export function PatientPortalClient(data: PortalPageData) {
 
         {/* ── Stat Cards ──────────────────────────────────────────────────── */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <StatCard label="Total Entries"    value={stats.total}       bg="bg-blue-600" />
-          <StatCard label="With Portal Link" value={stats.with_portal} bg="bg-violet-600" />
-          <StatCard label="Got MR"           value={stats.got_mr}      bg="bg-emerald-600" />
-          <StatCard label="Approved by TL"   value={stats.approved}    bg="bg-teal-600" />
+          <StatCard
+            label="Total Entries"
+            value={stats.total}
+            bg="bg-blue-600"
+          />
+          <StatCard
+            label="With Portal Link"
+            value={stats.with_portal}
+            bg="bg-violet-600"
+          />
+          <StatCard label="Got MR" value={stats.got_mr} bg="bg-emerald-600" />
+          <StatCard
+            label="Approved by TL"
+            value={stats.approved}
+            bg="bg-teal-600"
+          />
         </div>
 
         {/* ── Main Card ───────────────────────────────────────────────────── */}
@@ -1358,14 +1960,19 @@ export function PatientPortalClient(data: PortalPageData) {
                 const v = e.target.value;
                 setFilters((p) => ({ ...p, search: v }));
                 if (searchRef.current) clearTimeout(searchRef.current);
-                searchRef.current = setTimeout(() => applyFilter({ search: v }), 300);
+                searchRef.current = setTimeout(
+                  () => applyFilter({ search: v }),
+                  300,
+                );
               }}
             />
 
             {/* Sort */}
             <select
               value={filters.sort_order}
-              onChange={(e) => applyFilter({ sort_order: e.target.value as "asc" | "desc" })}
+              onChange={(e) =>
+                applyFilter({ sort_order: e.target.value as "asc" | "desc" })
+              }
               className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer"
             >
               <option value="desc">🆕 Newest First</option>
@@ -1375,7 +1982,11 @@ export function PatientPortalClient(data: PortalPageData) {
             {/* MR Status */}
             <select
               value={filters.mr_status}
-              onChange={(e) => applyFilter({ mr_status: e.target.value as PortalFilters["mr_status"] })}
+              onChange={(e) =>
+                applyFilter({
+                  mr_status: e.target.value as PortalFilters["mr_status"],
+                })
+              }
               className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer"
             >
               <option value="">All Status</option>
@@ -1391,7 +2002,9 @@ export function PatientPortalClient(data: PortalPageData) {
             >
               <option value="">All Months</option>
               {data.availableMonths.map((m) => (
-                <option key={m.val} value={m.val}>{m.label}</option>
+                <option key={m.val} value={m.val}>
+                  {m.label}
+                </option>
               ))}
             </select>
 
@@ -1404,13 +2017,22 @@ export function PatientPortalClient(data: PortalPageData) {
               <option value="">All Specialists</option>
               <option value="unassigned">— Unassigned —</option>
               {data.specialists.map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
               ))}
             </select>
 
             {/* Clear */}
             <button
-              onClick={() => applyFilter({ search: "", mr_status: "", month: "", specialist: "" })}
+              onClick={() =>
+                applyFilter({
+                  search: "",
+                  mr_status: "",
+                  month: "",
+                  specialist: "",
+                })
+              }
               className="text-xs px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-muted-foreground"
             >
               Clear
@@ -1443,7 +2065,6 @@ export function PatientPortalClient(data: PortalPageData) {
               )}
             </div>
           </div>
-
           {/* ── Mobile: card list (hidden on sm+) ─────────────────────────── */}
           <div className="block sm:hidden flex-1 overflow-y-auto min-h-0">
             {isPending && (
@@ -1451,84 +2072,114 @@ export function PatientPortalClient(data: PortalPageData) {
                 <Loader2 size={24} className="animate-spin text-primary" />
               </div>
             )}
-            {!isPending && entries.length === 0
-              ? <div className="text-center py-16 text-sm text-muted-foreground">No entries found.</div>
-              : entries.map((e) => (
-                  <PortalMobileCard
-                    key={e.id}
-                    entry={e}
-                    permissions={data.permissions}
-                    onViewDetails={(entry) => setViewEntry(entry)}
-                    onEdit={(entry) => setEditEntry(entry)}
-                    onDelete={handleDelete}
-                    onOpenNotes={(id, field, cn, prov) =>
-                      setNotesState({ open: true, id, field, clientName: cn, provider: prov })
-                    }
-                    onOpenLink={(id, field, title, url) =>
-                      setLinkState({ open: true, id, field, title, currentUrl: url })
-                    }
-                  />
-                ))
-            }
+            {!isPending && entries.length === 0 ? (
+              <div className="text-center py-16 text-sm text-muted-foreground">
+                No entries found.
+              </div>
+            ) : (
+              entries.map((e) => (
+                <PortalMobileCard
+                  key={e.id}
+                  entry={e}
+                  permissions={data.permissions}
+                  onViewDetails={(entry) => setViewEntry(entry)}
+                  onEdit={(entry) => setEditEntry(entry)}
+                  onDelete={handleDelete}
+                  onOpenNotes={(id, field, cn, prov) =>
+                    setNotesState({
+                      open: true,
+                      id,
+                      field,
+                      clientName: cn,
+                      provider: prov,
+                    })
+                  }
+                  onOpenLink={(id, field, title, url) =>
+                    setLinkState({
+                      open: true,
+                      id,
+                      field,
+                      title,
+                      currentUrl: url,
+                    })
+                  }
+                />
+              ))
+            )}
           </div>
-
           {/* ── Desktop: fixed-width grid (hidden on mobile) ───────────────── */}
           <div className="hidden sm:contents">
-
-          {/* Column headers */}
-          <div className="overflow-x-auto shrink-0">
-            <div
-              className="grid px-2 py-2.5 bg-muted text-foreground text-[10px] font-extrabold uppercase tracking-wider border-b border-border items-center"
-              style={{ gridTemplateColumns: PORTAL_GRID, minWidth: PORTAL_MIN_W }}
-            >
-              <div className="px-1 text-left">Date</div>
-              <div className="px-1 text-center">Hearing Date</div>
-              <div className="px-1 text-left">MR Specialist</div>
-              <div className="px-1">Client Name</div>
-              <div className="px-1">Provider</div>
-              <div className="px-1 text-center">MyCase</div>
-              <div className="px-1 text-center">Portal Link</div>
-              <div className="px-1">Username</div>
-              <div className="px-1">Password</div>
-              <div className="px-1 text-center">Got MR?</div>
-              <div className="px-1 text-center">Approved TL</div>
-              <div className="px-1 text-center">Actions</div>
+            {/* Column headers */}
+            <div className="overflow-x-auto shrink-0">
+              <div
+                className="grid px-2 py-2.5 bg-muted text-foreground text-[10px] font-extrabold uppercase tracking-wider border-b border-border items-center"
+                style={{
+                  gridTemplateColumns: PORTAL_GRID,
+                  minWidth: PORTAL_MIN_W,
+                }}
+              >
+                <div className="px-1 text-left">Date</div>
+                <div className="px-1 text-center">Hearing Date</div>
+                <div className="px-1 text-left">MR Specialist</div>
+                <div className="px-1">Client Name</div>
+                <div className="px-1">Provider</div>
+                <div className="px-1 text-center">MyCase</div>
+                <div className="px-1 text-center">Portal Link</div>
+                <div className="px-1">Username</div>
+                <div className="px-1">Password</div>
+                <div className="px-1 text-center">Got MR?</div>
+                <div className="px-1 text-center">Approved TL</div>
+                <div className="px-1 text-center">Actions</div>
+              </div>
             </div>
-          </div>
 
-          {/* Scrollable body */}
-          <div className="flex-1 overflow-y-auto overflow-x-auto min-h-0 relative">
-            {isPending && (
-              <div className="absolute inset-0 bg-background/70 flex items-center justify-center z-10">
-                <Loader2 size={28} className="animate-spin text-primary" />
-              </div>
-            )}
-            <div style={{ minWidth: PORTAL_MIN_W }}>
-              {!isPending && entries.length === 0
-                ? <div className="text-center py-16 text-sm text-muted-foreground">No entries found.</div>
-                : entries.map((e) => (
+            {/* Scrollable body */}
+            <div className="flex-1 overflow-y-auto overflow-x-auto min-h-0 relative">
+              {isPending && (
+                <div className="absolute inset-0 bg-background/70 flex items-center justify-center z-10">
+                  <Loader2 size={28} className="animate-spin text-primary" />
+                </div>
+              )}
+              <div style={{ minWidth: PORTAL_MIN_W }}>
+                {!isPending && entries.length === 0 ? (
+                  <div className="text-center py-16 text-sm text-muted-foreground">
+                    No entries found.
+                  </div>
+                ) : (
+                  entries.map((e) => (
                     <PortalRow
-                        key={e.id}
-                        entry={e}
-                        specialists={data.specialists}
-                        permissions={data.permissions}
-                        onUpdate={handleUpdate}
-                        onDelete={handleDelete}
-                        onViewDetails={(entry) => setViewEntry(entry)}
-                        onOpenNotes={(id, field, cn, prov) =>
-                          setNotesState({ open: true, id, field, clientName: cn, provider: prov })
-                        }
-                        onOpenLink={(id, field, title, url) =>
-                          setLinkState({ open: true, id, field, title, currentUrl: url })
-                        }
-                      />
-                    ))
-                }
+                      key={e.id}
+                      entry={e}
+                      specialists={data.specialists}
+                      permissions={data.permissions}
+                      onUpdate={handleUpdate}
+                      onDelete={handleDelete}
+                      onViewDetails={(entry) => setViewEntry(entry)}
+                      onOpenNotes={(id, field, cn, prov) =>
+                        setNotesState({
+                          open: true,
+                          id,
+                          field,
+                          clientName: cn,
+                          provider: prov,
+                        })
+                      }
+                      onOpenLink={(id, field, title, url) =>
+                        setLinkState({
+                          open: true,
+                          id,
+                          field,
+                          title,
+                          currentUrl: url,
+                        })
+                      }
+                    />
+                  ))
+                )}
               </div>
-          </div>
-
-          </div> {/* end sm:contents */}
-
+            </div>
+          </div>{" "}
+          {/* end sm:contents */}
           {/* Pagination */}
           <div className="flex items-center justify-between gap-3 px-5 py-2.5 border-t bg-muted/20 shrink-0 flex-wrap">
             <span className="text-[11px] text-muted-foreground">
@@ -1539,7 +2190,9 @@ export function PatientPortalClient(data: PortalPageData) {
             <div className="flex items-center gap-2">
               <select
                 value={filters.per_page}
-                onChange={(e) => applyFilter({ per_page: Number(e.target.value), page: 1 })}
+                onChange={(e) =>
+                  applyFilter({ per_page: Number(e.target.value), page: 1 })
+                }
                 className="text-xs px-2 py-1 rounded-lg border border-border bg-card text-foreground cursor-pointer"
               >
                 <option value={25}>25/page</option>
@@ -1573,7 +2226,10 @@ export function PatientPortalClient(data: PortalPageData) {
       {(showAdd || editEntry) && (
         <AddEditModal
           entry={editEntry}
-          onClose={() => { setShowAdd(false); setEditEntry(null); }}
+          onClose={() => {
+            setShowAdd(false);
+            setEditEntry(null);
+          }}
           onSaved={() => {
             load(filters);
             setStats((s) => ({ ...s, total: s.total + (editEntry ? 0 : 1) }));
@@ -1606,7 +2262,10 @@ export function PatientPortalClient(data: PortalPageData) {
       <ViewDetailsModal
         entry={viewEntry}
         onClose={() => setViewEntry(null)}
-        onEdit={(e) => { setEditEntry(e); setViewEntry(null); }}
+        onEdit={(e) => {
+          setEditEntry(e);
+          setViewEntry(null);
+        }}
       />
 
       <ActivityLogModal
