@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import {
   RefreshCw,
   X,
@@ -12,6 +13,7 @@ import {
   Trash2,
   Download,
   Loader2,
+  AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -52,6 +54,16 @@ export interface SyncResult {
     deleted: number;
   };
   changes: ChangeEntry[];
+}
+
+interface SyncApiError {
+  message?: string;
+  code?: string;
+}
+
+interface SyncToastState {
+  title: string;
+  message: string;
 }
 
 // ─── Loading steps ────────────────────────────────────────────────────────────
@@ -157,6 +169,81 @@ function ChangeRow({ entry }: { entry: ChangeEntry }) {
           <span className="mx-0.5 opacity-40">·</span>
           <span>Sheet row {entry.sheetRow}</span>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function mapSyncErrorToToast(error: SyncApiError): SyncToastState {
+  switch (error.code) {
+    case "SYNC_UNAUTHORIZED":
+      return {
+        title: "Session expired",
+        message: error.message ?? "Please sign in again before running the sync.",
+      };
+    case "SYNC_FORBIDDEN":
+      return {
+        title: "Sync unavailable",
+        message:
+          error.message ??
+          "You do not have permission to run the Google Sheets sync.",
+      };
+    case "SYNC_TIMEOUT":
+      return {
+        title: "Sync still running",
+        message:
+          error.message ??
+          "The sync is taking longer than expected. The sheet may still be updating.",
+      };
+    case "SYNC_CONFIG_ERROR":
+    case "SYNC_SERVICE_UNAVAILABLE":
+      return {
+        title: "Sync unavailable",
+        message:
+          error.message ??
+          "Google Sheets sync is temporarily unavailable. Please try again later.",
+      };
+    default:
+      return {
+        title: "Sync failed",
+        message:
+          error.message ??
+          "We could not complete the Google Sheets sync. Please try again.",
+      };
+  }
+}
+
+function SyncErrorToast({
+  toast,
+  onClose,
+}: {
+  toast: SyncToastState;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed top-4 right-4 z-[70] w-full max-w-sm rounded-xl border border-red-200 bg-red-50 p-4 shadow-2xl dark:border-red-900/70 dark:bg-zinc-950/95">
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5 rounded-full bg-red-100 p-1.5 text-red-600 dark:bg-red-900/40 dark:text-red-300">
+          <AlertTriangle size={14} />
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-red-900 dark:text-red-100">
+            {toast.title}
+          </p>
+          <p className="mt-1 text-xs leading-5 text-red-800 dark:text-red-200">
+            {toast.message}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-md p-1 text-red-700 transition-colors hover:bg-red-100 hover:text-red-900 dark:text-red-300 dark:hover:bg-red-900/30 dark:hover:text-red-100"
+          aria-label="Dismiss sync error"
+        >
+          <X size={14} />
+        </button>
       </div>
     </div>
   );
@@ -393,18 +480,39 @@ export function GoogleSheetsSyncButton({ userRole }: SyncButtonProps) {
   const [phase, setPhase] = useState<"idle" | "syncing" | "done">("idle");
   const [stepIndex, setStepIndex] = useState(0);
   const [result, setResult] = useState<SyncResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<SyncToastState | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // NOTE: all hooks must be declared before any conditional return (Rules of Hooks).
-  // The permission gate is enforced at the top of the return below.
+  useEffect(() => {
+    setMounted(true);
+
+    return () => {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+    };
+  }, []);
+
+  const showErrorToast = useCallback((error: SyncApiError) => {
+    const nextToast = mapSyncErrorToToast(error);
+
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+
+    setToast(nextToast);
+    toastTimer.current = setTimeout(() => setToast(null), 8000);
+  }, []);
+
+  const dismissToast = useCallback(() => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast(null);
+  }, []);
+
   const handleSync = useCallback(async () => {
     setPhase("syncing");
     setStepIndex(0);
-    setError(null);
+    dismissToast();
     setModalOpen(true);
 
-    // Advance loading steps in parallel with the real fetch
     let step = 0;
     const stepTimer = setInterval(() => {
       step = Math.min(step + 1, LOADING_STEPS.length - 1);
@@ -418,70 +526,70 @@ export function GoogleSheetsSyncButton({ userRole }: SyncButtonProps) {
         cache: "no-store",
       });
 
+      const payload = (await res.json().catch(() => ({
+        message: "We could not complete the Google Sheets sync. Please try again.",
+      }))) as SyncApiError & Partial<SyncResult> & { ok?: boolean };
+
       if (!res.ok) {
-        const { message } = await res.json().catch(() => ({ message: "Sync failed." }));
-        throw new Error(message);
+        throw payload;
       }
 
-      const data: SyncResult = await res.json();
-      setResult(data);
+      const { ok: _ok, ...syncResult } = payload as SyncResult & { ok?: boolean };
+      setResult(syncResult);
       setPhase("done");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "An unexpected error occurred.");
+      const error =
+        err && typeof err === "object"
+          ? (err as SyncApiError)
+          : {
+              message:
+                "We could not complete the Google Sheets sync. Please try again.",
+            };
+
+      showErrorToast(error);
       setPhase("idle");
       setModalOpen(false);
     } finally {
       clearInterval(stepTimer);
     }
-    }, []);
+  }, [dismissToast, showErrorToast]);
 
-  // Permission gate — render nothing for unauthorized roles.
-  // Placed here (after all hooks) to satisfy the Rules of Hooks.
   if (!canSyncGoogleSheets(userRole)) return null;
 
   return (
     <>
-      {/* Sync trigger button */}
-      <button
-        onClick={handleSync}
-        disabled={phase === "syncing"}
-        className={cn(
-          "flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-all",
-          phase === "syncing"
-            ? "bg-blue-500/80 text-white cursor-not-allowed opacity-70"
-            : "bg-blue-600 hover:bg-blue-700 text-white"
-        )}
-      >
-        {phase === "syncing" ? (
-          <Loader2 size={12} className="animate-spin" />
-        ) : (
-          <RefreshCw size={12} />
-        )}
-        {phase === "syncing" ? "Syncing…" : "Sync to Google Sheets"}
-      </button>
-
-      {/* Re-open history button — appears after a successful sync */}
-      {phase === "done" && result && !modalOpen && (
+      <div className="flex flex-wrap items-center gap-2">
         <button
-          onClick={() => setModalOpen(true)}
-          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors relative"
+          onClick={handleSync}
+          disabled={phase === "syncing"}
+          className={cn(
+            "flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-all",
+            phase === "syncing"
+              ? "bg-blue-500/80 text-white cursor-not-allowed opacity-70"
+              : "bg-blue-600 hover:bg-blue-700 text-white"
+          )}
         >
-          <Clock size={12} />
-          Change History
-          <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-blue-500" />
+          {phase === "syncing" ? (
+            <Loader2 size={12} className="animate-spin" />
+          ) : (
+            <RefreshCw size={12} />
+          )}
+          {phase === "syncing" ? "Syncing…" : "Sync to Google Sheets"}
         </button>
-      )}
 
-      {/* Error toast — inline, no extra library needed */}
-      {error && (
-        <span className="text-xs text-red-500 flex items-center gap-1">
-          ⚠ {error}
-        </span>
-      )}
+        {phase === "done" && result && !modalOpen && (
+          <button
+            onClick={() => setModalOpen(true)}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors relative"
+          >
+            <Clock size={12} />
+            Change History
+            <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-blue-500" />
+          </button>
+        )}
+      </div>
 
-      {/* Modal */}
       {modalOpen && phase === "syncing" && (
-        // Show loading state modal while sync is running
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-120 rounded-xl border bg-card shadow-2xl">
             <div className="flex items-center justify-between px-5 py-4 border-b">
@@ -498,6 +606,12 @@ export function GoogleSheetsSyncButton({ userRole }: SyncButtonProps) {
           onClose={() => setModalOpen(false)}
         />
       )}
+
+      {mounted && toast &&
+        createPortal(
+          <SyncErrorToast toast={toast} onClose={dismissToast} />,
+          document.body,
+        )}
     </>
   );
 }

@@ -2020,7 +2020,9 @@ export function MrPivotClient({ userRole, ...data }: Props) {
         subtitle="MR Status Tracking &amp; Analytics"
       />
       <div className="flex min-w-0 flex-col gap-3 p-3 sm:gap-4 sm:p-4 lg:p-6">
-        <DashboardNav userRole={userRole} />
+        <DashboardNav userRole={userRole}>
+          <GoogleSheetsSyncButton userRole={userRole} />
+        </DashboardNav>
         {/* ── Summary Section ──────────────────────────────────────────────── */}
         {/* Admin view  → 4 columns:
               Col 1: Total Hearings / In Progress / Ready   (compact)
@@ -2406,9 +2408,6 @@ export function MrPivotClient({ userRole, ...data }: Props) {
               >
                 <Download size={12} /> Export
               </button>
-
-              {/* Sync to Google Sheets — visible to system_admin, admin, mr_admin only */}
-              <GoogleSheetsSyncButton userRole={userRole} />
 
               <button
                 onClick={() => setShowHearings(true)}

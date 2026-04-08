@@ -19,10 +19,26 @@ const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_SYNC_URL;
 const N8N_WEBHOOK_SECRET = process.env.N8N_WEBHOOK_SECRET;
 const SYNC_TIMEOUT_MS = 25_000;
 
+type SyncErrorCode =
+  | "SYNC_CONFIG_ERROR"
+  | "SYNC_UNAUTHORIZED"
+  | "SYNC_FORBIDDEN"
+  | "SYNC_TIMEOUT"
+  | "SYNC_SERVICE_UNAVAILABLE"
+  | "SYNC_UPSTREAM_ERROR"
+  | "SYNC_INVALID_RESPONSE";
+
+function errorResponse(status: number, code: SyncErrorCode, message: string) {
+  return NextResponse.json({ ok: false, code, message }, { status });
+}
+
 function missingEnvResponse(name: string) {
-  return NextResponse.json(
-    { message: `Server misconfiguration: missing ${name}.` },
-    { status: 500 },
+  console.error(`[api/mr-sync] Missing required env var: ${name}`);
+
+  return errorResponse(
+    500,
+    "SYNC_CONFIG_ERROR",
+    "Google Sheets sync is temporarily unavailable. Please try again later.",
   );
 }
 
@@ -45,13 +61,18 @@ export async function POST(request: Request) {
   const session = await getSession();
 
   if (!session?.user) {
-    return NextResponse.json({ message: "Unauthorized." }, { status: 401 });
+    return errorResponse(
+      401,
+      "SYNC_UNAUTHORIZED",
+      "Please sign in again before running the Google Sheets sync.",
+    );
   }
 
   if (!canSyncGoogleSheets(session.user.role)) {
-    return NextResponse.json(
-      { message: "Your role does not have permission to run this sync." },
-      { status: 403 },
+    return errorResponse(
+      403,
+      "SYNC_FORBIDDEN",
+      "You do not have permission to run the Google Sheets sync.",
     );
   }
 
@@ -79,13 +100,12 @@ export async function POST(request: Request) {
     clearTimeout(timeoutId);
     const isTimeout = err instanceof Error && err.name === "AbortError";
 
-    return NextResponse.json(
-      {
-        message: isTimeout
-          ? "Sync timed out — the sheet may still be updating. Check it directly."
-          : "Could not reach the N8N automation service. Ensure the webhook is active.",
-      },
-      { status: 502 },
+    return errorResponse(
+      isTimeout ? 504 : 502,
+      isTimeout ? "SYNC_TIMEOUT" : "SYNC_SERVICE_UNAVAILABLE",
+      isTimeout
+        ? "Sync is taking longer than expected. The sheet may still finish updating in the background."
+        : "The sync service is temporarily unavailable. Please try again in a moment.",
     );
   } finally {
     clearTimeout(timeoutId);
@@ -95,12 +115,23 @@ export async function POST(request: Request) {
     const text = await n8nRes.text().catch(() => "");
     console.error("[api/mr-sync] N8N error →", n8nRes.status, text);
 
-    return NextResponse.json(
-      { message: "The N8N workflow returned an error. Check the N8N execution log." },
-      { status: 502 },
+    return errorResponse(
+      502,
+      "SYNC_UPSTREAM_ERROR",
+      "The sync could not be completed right now. Please try again shortly.",
     );
   }
 
-  const data = await n8nRes.json();
-  return NextResponse.json(data);
+  try {
+    const data = await n8nRes.json();
+    return NextResponse.json({ ok: true, ...data });
+  } catch (error) {
+    console.error("[api/mr-sync] Invalid JSON response from N8N →", error);
+
+    return errorResponse(
+      502,
+      "SYNC_INVALID_RESPONSE",
+      "The sync finished with an unreadable response. Please try again shortly.",
+    );
+  }
 }

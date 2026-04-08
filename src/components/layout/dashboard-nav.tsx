@@ -45,7 +45,7 @@ export function DashboardNav({ userRole, children }: DashboardNavProps) {
 
   return (
     <nav className="flex flex-wrap items-center gap-2 rounded-lg border bg-card px-3 py-2">
-      <div className="flex flex-wrap items-center gap-1">
+      <div className="flex flex-wrap items-center gap-1 min-w-0">
         {dedupedItems.map((item) => {
           const isActive =
             pathname === item.href ||
@@ -67,7 +67,7 @@ export function DashboardNav({ userRole, children }: DashboardNavProps) {
         })}
       </div>
       {children && (
-        <div className="ml-auto flex flex-wrap items-center gap-1.5">
+        <div className="ml-auto flex w-full flex-wrap items-center justify-end gap-1.5 pt-2 sm:w-auto sm:pt-0 sm:pl-3 sm:border-l sm:border-border/60">
           {children}
         </div>
       )}
