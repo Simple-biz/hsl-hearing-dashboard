@@ -1087,7 +1087,9 @@ function PostHrgModal({
   );
 
   // Hide only true system-generated notes
-  const visibleNotes = notes.filter((n) => noteAuthor(n) !== "System");
+  const visibleNotes = notes.filter(
+    (n) => noteAuthor(n) !== "System Administrator",
+  );
 
   const [newNote, setNewNote] = useState("");
   const [deadline, setDeadline] = useState(hearing.post_hrg_deadline || "");
