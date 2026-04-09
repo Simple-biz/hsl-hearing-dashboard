@@ -1,0 +1,2407 @@
+"use client";
+
+import { useState, useEffect, useCallback, useMemo, useRef, memo } from "react";
+import { cn } from "@/lib/utils";
+import { AppHeader } from "@/components/layout";
+import { DashboardNav } from "@/components/layout/dashboard-nav";
+import { StatCard, StatCardGrid } from "@/components/stat-card";
+import type { UserRole } from "@/lib/roles";
+import * as XLSX from "xlsx";
+import {
+  fetchPostHrgDevPage,
+  fetchPostHrgDevStats,
+  createPostHrgDevRecord,
+  updatePostHrgDevField,
+  deletePostHrgDevRecord,
+  importPostHrgDevRecords,
+  addPostHrgDevNote,
+  deletePostHrgDevNote,
+  fetchPostHrgDevNotes,
+  type PostHrgDevRow,
+  type PostHrgDevStats,
+  type ConfigOption,
+  type RepOption,
+} from "./actions";
+
+// ─── Types ──────────────────────────────────────────────────────────────────
+
+interface SheetData {
+  name: string;
+  headers: string[];
+  rows: unknown[][];
+  comments?: Record<string, string>;
+}
+
+interface PostHrgNote {
+  user: string;
+  date: string;
+  note: string;
+}
+
+type ViewMode = "dashboard" | "import";
+type SortDir = "asc" | "desc";
+
+// ─── Note helpers ───────────────────────────────────────────────────────────
+
+function parseNotes(raw: string | null): PostHrgNote[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return raw ? [{ user: "System", date: "", note: raw }] : [];
+    }
+    return parsed.map((item: Record<string, unknown>) => ({
+      user: String(item.user ?? item.author ?? item.author_name ?? "Unknown"),
+      date: String(item.date ?? item.created_at ?? ""),
+      note: String(item.note ?? item.content ?? ""),
+    }));
+  } catch {
+    return raw ? [{ user: "System", date: "", note: raw }] : [];
+  }
+}
+
+// ─── Constants ──────────────────────────────────────────────────────────────
+
+const STATUS_OPTIONS = [
+  { value: "Pending", label: "Pending" },
+  { value: "In Progress", label: "In Progress" },
+  { value: "Completed", label: "Completed" },
+  { value: "On Hold", label: "On Hold" },
+  { value: "Cancelled", label: "Cancelled" },
+];
+
+const DOCS_NEEDED_OPTIONS = [
+  { value: "Medical Records", label: "Medical Records" },
+  { value: "Vocational Report", label: "Vocational Report" },
+  { value: "RFC Form", label: "RFC Form" },
+  { value: "Brief", label: "Brief" },
+  { value: "Other", label: "Other" },
+];
+
+const STATUS_HEX: Record<string, { bg: string; color: string }> = {
+  Pending: { bg: "#FEF3C7", color: "#92400E" },
+  "In Progress": { bg: "#DBEAFE", color: "#1E40AF" },
+  Completed: { bg: "#D1FAE5", color: "#065F46" },
+  "On Hold": { bg: "#F3F4F6", color: "#374151" },
+  Cancelled: { bg: "#FEE2E2", color: "#991B1B" },
+};
+
+const PH_STATUS_HEX: Record<string, { bg: string; color: string }> = {
+  "Pending Decision": { bg: "#FEF3C7", color: "#92400E" },
+  Favorable: { bg: "#D1FAE5", color: "#065F46" },
+  "Partially Favorable": { bg: "#DBEAFE", color: "#1E40AF" },
+  Unfavorable: { bg: "#FEE2E2", color: "#991B1B" },
+  Remand: { bg: "#EDE9FE", color: "#5B21B6" },
+  Dismissed: { bg: "#F3F4F6", color: "#374151" },
+};
+
+const IMPORT_FIELD_MAP: Record<string, string[]> = {
+  claimant: ["claimant's name", "claimant name", "claimant", "name", "client"],
+  hearing_date: ["hearing date", "date", "hearing_date", "hrg date"],
+  post_hearing_status: [
+    "post hearing status",
+    "post_hearing_status",
+    "ph status",
+    "decision",
+  ],
+  type_of_docs_needed: [
+    "type of documents needed",
+    "type_of_docs_needed",
+    "docs needed",
+    "documents needed",
+  ],
+  details: ["details", "detail"],
+  assigned_rep: [
+    "assigned rep",
+    "assigned_rep",
+    "rep",
+    "representative",
+    "attorney",
+  ],
+  person_responsible: [
+    "person responsible for phi",
+    "person responsible",
+    "person_responsible",
+    "phi person",
+    "responsible",
+  ],
+  em_sent_task_created: [
+    "em sent/task created",
+    "em sent",
+    "em_sent_task_created",
+    "task created",
+  ],
+  ext_letter_sent: [
+    "ext letter sent",
+    "ext_letter_sent",
+    "ext letter",
+    "extension letter",
+  ],
+  status: ["status"],
+  deadline: ["deadline", "due date"],
+  new_due_date: ["new due date", "new_due_date", "new deadline"],
+  remarks: ["remarks", "notes", "comment", "comments"],
+};
+
+function autoMapImport(headers: string[]): Record<string, number> {
+  const mapping: Record<string, number> = {};
+  const norm = headers.map((h) => h.toLowerCase().trim());
+  for (const [field, aliases] of Object.entries(IMPORT_FIELD_MAP)) {
+    for (const alias of aliases) {
+      const idx = norm.indexOf(alias);
+      if (idx !== -1 && !Object.values(mapping).includes(idx)) {
+        mapping[field] = idx;
+        break;
+      }
+    }
+  }
+  return mapping;
+}
+
+// ─── Styling ────────────────────────────────────────────────────────────────
+
+const BTN =
+  "inline-flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium rounded-lg border-none cursor-pointer transition-all duration-150";
+const BTN_PRIMARY = cn(
+  BTN,
+  "bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed",
+);
+const BTN_SECONDARY = cn(BTN, "bg-muted text-foreground hover:bg-muted/80");
+const BTN_SUCCESS = cn(
+  BTN,
+  "bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed",
+);
+const BTN_OUTLINE = cn(
+  BTN,
+  "bg-transparent border border-border text-foreground hover:bg-muted",
+);
+const CARD = "rounded-xl border bg-card p-6 shadow-sm";
+const INPUT =
+  "w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary";
+const SELECT_CLS = INPUT;
+
+// ─── Inline components ─────────────────────────────────────────────────────
+
+function InlineDropdown({
+  value,
+  options,
+  onSave,
+  hexColorMap,
+  placeholder = "-",
+}: {
+  value: string | null;
+  options: { value: string; label: string }[];
+  onSave: (v: string | null) => void;
+  hexColorMap?: Record<string, { bg: string; color: string }>;
+  placeholder?: string;
+}) {
+  const currentLabel =
+    options.find((o) => o.value === String(value ?? ""))?.label || null;
+  const currentHex =
+    hexColorMap && currentLabel ? hexColorMap[currentLabel] : null;
+
+  return (
+    <select
+      value={value ?? ""}
+      onChange={(e) => onSave(e.target.value || null)}
+      style={
+        currentHex
+          ? { backgroundColor: currentHex.bg, color: currentHex.color }
+          : undefined
+      }
+      className={cn(
+        "h-6 w-full rounded border px-1 text-[11px] font-semibold cursor-pointer transition-colors",
+        "focus:outline-none focus:ring-1 focus:ring-blue-400",
+        currentHex
+          ? "border-current"
+          : "border-transparent hover:border-border text-foreground bg-card",
+      )}
+    >
+      <option value="" style={{ backgroundColor: "white", color: "#333" }}>
+        {placeholder}
+      </option>
+      {options.map((o) => (
+        <option
+          key={o.value}
+          value={o.value}
+          style={{ backgroundColor: "white", color: "#333" }}
+        >
+          {o.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function InlineCheck({
+  checked,
+  onToggle,
+}: {
+  checked: boolean;
+  onToggle: (v: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-center">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onToggle(e.target.checked)}
+        className="h-4 w-4 rounded accent-green-600 cursor-pointer"
+      />
+    </div>
+  );
+}
+
+function InlineDate({
+  value,
+  onSave,
+  isOverdue,
+}: {
+  value: string | null;
+  onSave: (v: string | null) => void;
+  isOverdue?: boolean;
+}) {
+  return (
+    <input
+      type="date"
+      value={value || ""}
+      onChange={(e) => onSave(e.target.value || null)}
+      className={cn(
+        "h-6 w-full rounded border border-transparent px-1 text-[11px] tabular-nums bg-card cursor-pointer",
+        "hover:border-border focus:outline-none focus:ring-1 focus:ring-blue-400",
+        isOverdue && "text-red-600 font-bold",
+      )}
+    />
+  );
+}
+
+// ─── Inline Editable Text ───────────────────────────────────────────────────
+
+function InlineEditableText({
+  value,
+  onSave,
+  placeholder = "—",
+  maxWidth,
+}: {
+  value: string | null;
+  onSave: (v: string | null) => void;
+  placeholder?: string;
+  maxWidth?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value || "");
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [editing]);
+
+  const commit = () => {
+    setEditing(false);
+    const trimmed = draft.trim();
+    if (trimmed !== (value || "")) {
+      onSave(trimmed || null);
+    }
+  };
+
+  if (editing) {
+    return (
+      <textarea
+        ref={inputRef}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            commit();
+          }
+          if (e.key === "Escape") {
+            setDraft(value || "");
+            setEditing(false);
+          }
+        }}
+        className={cn(
+          "w-full min-h-7 max-h-24 rounded border border-primary/50 bg-background px-1.5 py-0.5 text-[11px] resize-y",
+          "focus:outline-none focus:ring-1 focus:ring-primary/40",
+        )}
+        rows={2}
+      />
+    );
+  }
+
+  return (
+    <div className="group relative">
+      <span
+        onClick={() => {
+          setDraft(value || "");
+          setEditing(true);
+        }}
+        className={cn(
+          "text-xs block truncate cursor-pointer rounded px-1 py-0.5 transition-colors",
+          "hover:bg-muted/60 hover:ring-1 hover:ring-border",
+          !value && "text-muted-foreground italic",
+        )}
+        style={{ maxWidth: maxWidth || "100%" }}
+        title={value || "Click to edit"}
+      >
+        {value || placeholder}
+      </span>
+      {value && value.length > 30 && (
+        <div
+          className={cn(
+            "absolute left-0 top-full z-50 mt-1 hidden group-hover:block",
+            "max-w-xs w-max rounded-lg border bg-popover p-3 shadow-lg",
+            "text-xs text-popover-foreground whitespace-pre-wrap wrap-break-word",
+          )}
+        >
+          {value}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Note Modal ─────────────────────────────────────────────────────────────
+
+function NoteModal({
+  record,
+  field,
+  fieldLabel,
+  userName,
+  onClose,
+  onRecordUpdate,
+}: {
+  record: PostHrgDevRow;
+  field: string;
+  fieldLabel: string;
+  userName: string;
+  onClose: () => void;
+  onRecordUpdate: (r: PostHrgDevRow) => void;
+}) {
+  const notesKey = `${field}_notes` as keyof PostHrgDevRow;
+  const [notes, setNotes] = useState<PostHrgNote[]>(() =>
+    parseNotes(record[notesKey] as string | null),
+  );
+  const [newNote, setNewNote] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const poll = async () => {
+      if (!active) return;
+      try {
+        const raw = await fetchPostHrgDevNotes(record.id, field);
+        if (active) setNotes(parseNotes(raw));
+      } catch {
+        /* ignore */
+      }
+    };
+    const id = setInterval(poll, 8000);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, [record.id, field]);
+
+  const addNote = async () => {
+    if (!newNote.trim()) return;
+    setSaving(true);
+    try {
+      const result = await addPostHrgDevNote(
+        record.id,
+        field,
+        newNote.trim(),
+        userName,
+      );
+      if (result.success && result.updatedNotes) {
+        setNotes(parseNotes(result.updatedNotes));
+        setNewNote("");
+        onRecordUpdate({
+          ...record,
+          [notesKey]: result.updatedNotes,
+        } as PostHrgDevRow);
+      }
+    } catch {
+      /* ignore */
+    }
+    setSaving(false);
+  };
+
+  const removeNote = async (idx: number) => {
+    try {
+      const result = await deletePostHrgDevNote(record.id, field, idx);
+      if (result.success) {
+        setNotes(parseNotes(result.updatedNotes));
+        onRecordUpdate({
+          ...record,
+          [notesKey]: result.updatedNotes,
+        } as PostHrgDevRow);
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-lg max-h-[70vh] flex flex-col rounded-xl border bg-card shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b px-5 py-3 shrink-0">
+          <div>
+            <h3 className="text-sm font-semibold">
+              {fieldLabel} Notes — {record.claimant}
+            </h3>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-muted-foreground hover:text-foreground text-lg"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          {notes.length === 0 && (
+            <p className="text-sm text-muted-foreground text-center py-6">
+              No notes yet
+            </p>
+          )}
+          {notes.map((n, i) => (
+            <div
+              key={i}
+              className="rounded-lg border bg-muted/30 p-3 text-sm space-y-1"
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-medium text-xs">
+                  {n.user}
+                  {n.date && (
+                    <span className="text-muted-foreground ml-2">
+                      {new Date(n.date).toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
+                      })}
+                    </span>
+                  )}
+                </span>
+                <button
+                  onClick={() => removeNote(i)}
+                  className="text-xs text-muted-foreground hover:text-red-600"
+                >
+                  ✕
+                </button>
+              </div>
+              <p className="text-xs whitespace-pre-wrap">{n.note}</p>
+            </div>
+          ))}
+        </div>
+        <div className="border-t p-4 shrink-0">
+          <div className="flex gap-2">
+            <textarea
+              className={cn(INPUT, "min-h-12 resize-none text-xs flex-1")}
+              placeholder="Add a note..."
+              value={newNote}
+              onChange={(e) => setNewNote(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  addNote();
+                }
+              }}
+            />
+            <button
+              className={cn(
+                BTN,
+                "px-3 py-1 text-xs bg-primary text-primary-foreground hover:bg-primary/90",
+              )}
+              onClick={addNote}
+              disabled={saving || !newNote.trim()}
+            >
+              {saving ? "..." : "Add"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Note Cell Badge ────────────────────────────────────────────────────────
+
+function NoteCellBadge({
+  record,
+  field,
+  onClick,
+}: {
+  record: PostHrgDevRow;
+  field: string;
+  onClick: () => void;
+}) {
+  const notesKey = `${field}_notes` as keyof PostHrgDevRow;
+  const raw = record[notesKey] as string | null;
+  const count = parseNotes(raw).length;
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      className={cn(
+        "shrink-0 rounded px-1 py-0.5 text-[9px] font-medium transition-colors cursor-pointer",
+        count > 0
+          ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 hover:bg-amber-200"
+          : "bg-muted/50 text-muted-foreground hover:bg-muted",
+      )}
+      title={
+        count > 0 ? `${count} note(s) - Click to view` : "Click to add note"
+      }
+    >
+      💬 {count > 0 ? `${count}` : "+ Add"}
+    </button>
+  );
+}
+
+// ─── Stats Row ──────────────────────────────────────────────────────────────
+
+const StatsRow = memo(function StatsRow({ stats }: { stats: PostHrgDevStats }) {
+  const cards = [
+    {
+      label: "Total",
+      value: stats.total,
+      gradient: "from-indigo-500 to-purple-600",
+    },
+    {
+      label: "Pending",
+      value: stats.pending,
+      gradient: "from-amber-500 to-amber-600",
+    },
+    {
+      label: "In Progress",
+      value: stats.inProgress,
+      gradient: "from-blue-400 to-cyan-400",
+    },
+    {
+      label: "Completed",
+      value: stats.completed,
+      gradient: "from-emerald-500 to-green-400",
+    },
+    {
+      label: "Overdue",
+      value: stats.overdue,
+      gradient: "from-pink-400 to-rose-500",
+    },
+  ];
+  return (
+    <StatCardGrid className="grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
+      {cards.map((c) => (
+        <StatCard
+          key={c.label}
+          label={c.label}
+          value={c.value}
+          gradient={c.gradient}
+        />
+      ))}
+    </StatCardGrid>
+  );
+});
+
+// ─── Column Definitions ─────────────────────────────────────────────────────
+
+const COLUMNS: {
+  key: string;
+  label: string;
+  w: number;
+  sortable?: boolean;
+  frozen?: boolean;
+}[] = [
+  { key: "claimant", label: "Claimant", w: 160, sortable: true, frozen: true },
+  { key: "hearing_date", label: "Hearing Date", w: 100, sortable: true },
+  { key: "post_hearing_status", label: "PH Status", w: 130, sortable: true },
+  { key: "type_of_docs_needed", label: "Docs Needed", w: 120 },
+  { key: "details", label: "Details", w: 220 },
+  { key: "assigned_rep", label: "Rep", w: 120, sortable: true },
+  { key: "person_responsible", label: "Responsible", w: 100, sortable: true },
+  { key: "em_sent_task_created", label: "EM/Task", w: 65 },
+  { key: "ext_letter_sent", label: "EXT", w: 55 },
+  { key: "status", label: "Status", w: 110, sortable: true },
+  { key: "deadline", label: "Deadline", w: 110, sortable: true },
+  { key: "new_due_date", label: "New Due", w: 100, sortable: true },
+  { key: "remarks", label: "Remarks", w: 200 },
+  { key: "actions", label: "", w: 70 },
+];
+
+const lastFrozenKey = COLUMNS.filter((c) => c.frozen).at(-1)?.key ?? "";
+
+function getLeftPos(key: string): number | undefined {
+  let left = 0;
+  for (const col of COLUMNS) {
+    if (col.key === key) return col.frozen ? left : undefined;
+    if (col.frozen) left += col.w;
+  }
+  return undefined;
+}
+
+const fmtDate = (d: string | null) => {
+  if (!d) return "—";
+  try {
+    return new Date(d + "T12:00:00").toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  } catch {
+    return d;
+  }
+};
+
+const isOverdueCheck = (r: PostHrgDevRow) => {
+  if (!r.deadline || r.status?.toLowerCase() === "completed") return false;
+  return new Date(r.deadline) < new Date();
+};
+
+// ─── Component ──────────────────────────────────────────────────────────────
+
+export function PostHrgClient({
+  userRole,
+  userId,
+  userName,
+  initialRecords,
+  initialTotalFiltered,
+  initialStats,
+  initialPhStatusOptions,
+  initialRepresentatives,
+}: {
+  userRole: string;
+  userId: number;
+  userName: string;
+  initialRecords: PostHrgDevRow[];
+  initialTotalFiltered: number;
+  initialStats: PostHrgDevStats;
+  initialPhStatusOptions: ConfigOption[];
+  initialRepresentatives: RepOption[];
+}) {
+  const [viewMode, setViewMode] = useState<ViewMode>("dashboard");
+  const [records, setRecords] = useState<PostHrgDevRow[]>(initialRecords);
+  const [totalFiltered, setTotalFiltered] = useState(initialTotalFiltered);
+  const [loading, setLoading] = useState(false);
+  const [stats, setStats] = useState<PostHrgDevStats>(initialStats);
+
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [phStatusFilter, setPhStatusFilter] = useState<string>("all");
+
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(100);
+
+  const [sortKey, setSortKey] = useState("deadline");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  const phStatusOptions = initialPhStatusOptions;
+  const representatives = initialRepresentatives;
+
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [addData, setAddData] = useState<Partial<PostHrgDevRow>>({});
+  const [saving, setSaving] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
+
+  const [noteModal, setNoteModal] = useState<{
+    record: PostHrgDevRow;
+    field: string;
+    label: string;
+  } | null>(null);
+
+  const [importStep, setImportStep] = useState(1);
+  const [file, setFile] = useState<File | null>(null);
+  const [sheets, setSheets] = useState<SheetData[]>([]);
+  const [selectedSheet, setSelectedSheet] = useState<number>(-1);
+  const [parsing, setParsing] = useState(false);
+  const [importMapping, setImportMapping] = useState<Record<string, number>>(
+    {},
+  );
+  const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState(0);
+  const [importResult, setImportResult] = useState<{
+    imported: number;
+    matched: number;
+    errors: string[];
+  } | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const isAdmin = ["system_admin", "admin", "post_hearing_admin"].includes(
+    userRole,
+  );
+
+  const toast = useCallback(
+    (msg: string, type: "success" | "error" = "error") => {
+      const el = document.createElement("div");
+      el.className = `fixed top-4 right-4 z-[9999] px-4 py-3 rounded-lg shadow-lg text-sm font-medium text-white transition-opacity ${type === "error" ? "bg-red-600" : "bg-emerald-600"}`;
+      el.textContent = msg;
+      document.body.appendChild(el);
+      setTimeout(() => {
+        el.style.opacity = "0";
+        setTimeout(() => el.remove(), 300);
+      }, 3000);
+    },
+    [],
+  );
+
+  const PH_STATUS_OPTIONS = useMemo(
+    () => phStatusOptions.map((o) => ({ value: o.value, label: o.value })),
+    [phStatusOptions],
+  );
+  const phStatusHexMap = useMemo(() => {
+    const map: Record<string, { bg: string; color: string }> = {};
+    for (const o of phStatusOptions) {
+      if (o.color) {
+        map[o.value] = { bg: o.color + "22", color: o.color };
+      } else if (PH_STATUS_HEX[o.value]) {
+        map[o.value] = PH_STATUS_HEX[o.value];
+      }
+    }
+    return map;
+  }, [phStatusOptions]);
+  const REP_OPTIONS = useMemo(
+    () => representatives.map((r) => ({ value: r.name, label: r.name })),
+    [representatives],
+  );
+
+  const refreshStats = useCallback(async () => {
+    try {
+      setStats(await fetchPostHrgDevStats());
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const fetchPage = useCallback(
+    async (
+      p: number,
+      ps: number,
+      sk: string,
+      sd: SortDir,
+      search?: string,
+      status?: string,
+      phStatus?: string,
+    ) => {
+      setLoading(true);
+      try {
+        const res = await fetchPostHrgDevPage({
+          page: p,
+          pageSize: ps,
+          search: search?.trim() || undefined,
+          status: status !== "all" ? status : undefined,
+          phStatus: phStatus !== "all" ? phStatus : undefined,
+          sortKey: sk,
+          sortDir: sd,
+        });
+        setRecords(res.records);
+        setTotalFiltered(res.totalFiltered);
+        refreshStats();
+      } catch {
+        toast("Failed to load records");
+      }
+      setLoading(false);
+    },
+    [toast, refreshStats],
+  );
+
+  const handleFilterChange = useCallback(
+    (newSearch: string, newStatus: string, newPhStatus: string) => {
+      setSearchTerm(newSearch);
+      setStatusFilter(newStatus);
+      setPhStatusFilter(newPhStatus);
+      setPage(1);
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        fetchPage(
+          1,
+          pageSize,
+          sortKey,
+          sortDir,
+          newSearch,
+          newStatus,
+          newPhStatus,
+        );
+      }, 300);
+    },
+    [fetchPage, pageSize, sortKey, sortDir],
+  );
+
+  const handlePageChange = useCallback(
+    (p: number) => {
+      setPage(p);
+      fetchPage(
+        p,
+        pageSize,
+        sortKey,
+        sortDir,
+        searchTerm,
+        statusFilter,
+        phStatusFilter,
+      );
+    },
+    [
+      fetchPage,
+      pageSize,
+      sortKey,
+      sortDir,
+      searchTerm,
+      statusFilter,
+      phStatusFilter,
+    ],
+  );
+
+  const handlePageSizeChange = useCallback(
+    (ps: number) => {
+      setPageSize(ps);
+      setPage(1);
+      fetchPage(
+        1,
+        ps,
+        sortKey,
+        sortDir,
+        searchTerm,
+        statusFilter,
+        phStatusFilter,
+      );
+    },
+    [fetchPage, sortKey, sortDir, searchTerm, statusFilter, phStatusFilter],
+  );
+
+  const handleSort = useCallback(
+    (key: string) => {
+      const newDir =
+        sortKey === key ? (sortDir === "asc" ? "desc" : "asc") : "asc";
+      setSortKey(key);
+      setSortDir(newDir as SortDir);
+      fetchPage(
+        page,
+        pageSize,
+        key,
+        newDir as SortDir,
+        searchTerm,
+        statusFilter,
+        phStatusFilter,
+      );
+    },
+    [
+      sortKey,
+      sortDir,
+      fetchPage,
+      page,
+      pageSize,
+      searchTerm,
+      statusFilter,
+      phStatusFilter,
+    ],
+  );
+
+  const totalPages = Math.max(1, Math.ceil(totalFiltered / pageSize));
+
+  const handleFieldUpdate = useCallback(
+    async (id: number, field: string, value: string | boolean | null) => {
+      setRecords((prev) =>
+        prev.map((r) =>
+          r.id === id ? ({ ...r, [field]: value } as PostHrgDevRow) : r,
+        ),
+      );
+      try {
+        await updatePostHrgDevField(id, field, value);
+        refreshStats();
+      } catch {
+        toast("Update failed");
+        fetchPage(
+          page,
+          pageSize,
+          sortKey,
+          sortDir,
+          searchTerm,
+          statusFilter,
+          phStatusFilter,
+        );
+      }
+    },
+    [
+      toast,
+      refreshStats,
+      fetchPage,
+      page,
+      pageSize,
+      sortKey,
+      sortDir,
+      searchTerm,
+      statusFilter,
+      phStatusFilter,
+    ],
+  );
+
+  const handleRecordUpdate = useCallback((updated: PostHrgDevRow) => {
+    setRecords((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+  }, []);
+
+  const saveNewRecord = useCallback(async () => {
+    if (!addData.claimant?.trim()) {
+      toast("Claimant name is required");
+      return;
+    }
+    setSaving(true);
+    try {
+      const result = await createPostHrgDevRecord({
+        ...addData,
+        claimant: addData.claimant!,
+        created_by: userId,
+      });
+      if (result.success) {
+        setShowAddModal(false);
+        setAddData({});
+        toast("Record created", "success");
+        fetchPage(
+          page,
+          pageSize,
+          sortKey,
+          sortDir,
+          searchTerm,
+          statusFilter,
+          phStatusFilter,
+        );
+      } else toast("Create failed: " + (result.message || ""));
+    } catch {
+      toast("Create failed");
+    }
+    setSaving(false);
+  }, [
+    addData,
+    userId,
+    toast,
+    fetchPage,
+    page,
+    pageSize,
+    sortKey,
+    sortDir,
+    searchTerm,
+    statusFilter,
+    phStatusFilter,
+  ]);
+
+  const deleteRecord = useCallback(
+    async (id: number) => {
+      try {
+        const result = await deletePostHrgDevRecord(id);
+        if (result.success) {
+          setRecords((prev) => prev.filter((r) => r.id !== id));
+          setDeleteConfirm(null);
+          toast("Record deleted", "success");
+          refreshStats();
+        }
+      } catch {
+        toast("Delete failed");
+      }
+    },
+    [toast, refreshStats],
+  );
+
+  // ── Import (unchanged from your version) ──
+  const handleFile = useCallback(
+    (f: File) => {
+      const ext = f.name.split(".").pop()?.toLowerCase();
+      if (!["xlsx", "xls", "csv"].includes(ext || "")) {
+        toast("Only .xlsx, .xls, and .csv supported");
+        return;
+      }
+      setFile(f);
+      setParsing(true);
+      setSheets([]);
+      setSelectedSheet(-1);
+      const reader = new FileReader();
+      reader.onload = async (e: ProgressEvent<FileReader>) => {
+        try {
+          const data = new Uint8Array(e.target!.result as ArrayBuffer);
+          const wb = XLSX.read(data, { type: "array", cellStyles: true });
+          const threadedComments: Record<number, Record<string, string>> = {};
+          try {
+            const JSZip = (await import("jszip")).default;
+            const zip = await JSZip.loadAsync(data);
+            const personLookup: Record<string, string> = {};
+            const personFile = zip.file("xl/persons/person.xml");
+            if (personFile) {
+              const pXml = await personFile.async("text");
+              const pDoc = new DOMParser().parseFromString(pXml, "text/xml");
+              const ns =
+                "http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments";
+              let persons = pDoc.getElementsByTagNameNS(ns, "person");
+              if (persons.length === 0)
+                persons = pDoc.getElementsByTagName("person");
+              for (const p of Array.from(persons)) {
+                const pid = p.getAttribute("id") || "";
+                const name = p.getAttribute("displayName") || "";
+                if (pid && name) personLookup[pid] = name;
+              }
+            }
+            for (let si = 0; si < wb.SheetNames.length; si++) {
+              const relsPath = `xl/worksheets/_rels/sheet${si + 1}.xml.rels`;
+              const relsFile = zip.file(relsPath);
+              if (!relsFile) continue;
+              const relsXml = await relsFile.async("text");
+              const relsDoc = new DOMParser().parseFromString(
+                relsXml,
+                "text/xml",
+              );
+              for (const rel of Array.from(
+                relsDoc.getElementsByTagName("Relationship"),
+              )) {
+                const type = rel.getAttribute("Type") || "";
+                const target = rel.getAttribute("Target") || "";
+                if (type.includes("threadedComment")) {
+                  const filePath = target.replace(/^\.\.\//, "xl/");
+                  const tcFile = zip.file(filePath);
+                  if (!tcFile) continue;
+                  const tcXml = await tcFile.async("text");
+                  const tcDoc = new DOMParser().parseFromString(
+                    tcXml,
+                    "text/xml",
+                  );
+                  const ns2 =
+                    "http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments";
+                  let tcEls = tcDoc.getElementsByTagNameNS(
+                    ns2,
+                    "threadedComment",
+                  );
+                  if (tcEls.length === 0)
+                    tcEls = tcDoc.getElementsByTagName("threadedComment");
+                  const sheetComments: Record<string, string[]> = {};
+                  for (const tc of Array.from(tcEls)) {
+                    const ref = tc.getAttribute("ref");
+                    if (!ref) continue;
+                    const personId = tc.getAttribute("personId") || "";
+                    const author = personLookup[personId] || "";
+                    const dateStr = tc.getAttribute("dT") || "";
+                    let datePart = "";
+                    if (dateStr)
+                      try {
+                        datePart = new Date(dateStr).toLocaleDateString(
+                          "en-US",
+                          { month: "short", day: "numeric", year: "numeric" },
+                        );
+                      } catch {
+                        /* */
+                      }
+                    let text = "";
+                    const textEls = tc.getElementsByTagNameNS(ns2, "text");
+                    if (textEls.length > 0) text = textEls[0].textContent || "";
+                    else {
+                      const fb = tc.getElementsByTagName("text");
+                      if (fb.length > 0) text = fb[0].textContent || "";
+                    }
+                    if (text.trim()) {
+                      if (!sheetComments[ref]) sheetComments[ref] = [];
+                      const prefix =
+                        author && datePart
+                          ? `[${author} - ${datePart}] `
+                          : author
+                            ? `[${author}] `
+                            : datePart
+                              ? `[${datePart}] `
+                              : "";
+                      sheetComments[ref].push(prefix + text.trim());
+                    }
+                  }
+                  const merged: Record<string, string> = {};
+                  for (const [ref, texts] of Object.entries(sheetComments))
+                    merged[ref] = texts.join("\n");
+                  if (!threadedComments[si]) threadedComments[si] = {};
+                  Object.assign(threadedComments[si], merged);
+                }
+              }
+            }
+          } catch {
+            /* JSZip not available */
+          }
+          const parsed: SheetData[] = wb.SheetNames.map((name, sheetIdx) => {
+            const ws = wb.Sheets[name];
+            const json = XLSX.utils.sheet_to_json<unknown[]>(ws, {
+              header: 1,
+              defval: "",
+              raw: false,
+            });
+            const headers = (json[0] as string[]) || [];
+            const rows = json
+              .slice(1)
+              .filter((r: unknown[]) => r.some((c: unknown) => c !== ""));
+            const comments: Record<string, string> = {};
+            for (const [cell, val] of Object.entries(ws) as [
+              string,
+              unknown,
+            ][]) {
+              if (cell.startsWith("!")) continue;
+              const v = val as { c?: { t?: string; a?: string }[] };
+              if (v.c && Array.isArray(v.c) && v.c.length > 0) {
+                const parts = v.c
+                  .map((c: { t?: string; a?: string }) => {
+                    const author = c.a || "";
+                    const text = (c.t || "").trim();
+                    if (!text) return "";
+                    return author ? `[${author}] ${text}` : text;
+                  })
+                  .filter(Boolean);
+                if (parts.length > 0) comments[cell] = parts.join("\n");
+              }
+            }
+            if (threadedComments[sheetIdx]) {
+              for (const [ref, text] of Object.entries(
+                threadedComments[sheetIdx],
+              )) {
+                comments[ref] = text;
+              }
+            }
+            return { name, headers, rows, comments };
+          });
+          setSheets(parsed);
+          if (parsed.length === 1) {
+            setSelectedSheet(0);
+            setImportMapping(autoMapImport(parsed[0].headers));
+          }
+          setParsing(false);
+        } catch {
+          toast("Failed to parse file");
+          setParsing(false);
+        }
+      };
+      reader.readAsArrayBuffer(f);
+    },
+    [toast],
+  );
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+    },
+    [handleFile],
+  );
+  const selectSheet = useCallback(
+    (idx: number) => {
+      setSelectedSheet(idx);
+      if (sheets[idx]) setImportMapping(autoMapImport(sheets[idx].headers));
+    },
+    [sheets],
+  );
+  const currentSheet = selectedSheet >= 0 ? sheets[selectedSheet] : null;
+
+  const runImport = useCallback(async () => {
+    if (!currentSheet || importMapping.claimant === undefined) {
+      toast("Map the Claimant column");
+      return;
+    }
+    setImportStep(4);
+    setImporting(true);
+    setImportProgress(0);
+    setImportResult(null);
+    const BATCH = 250;
+    let imported = 0;
+    let matchedTotal = 0;
+    const errors: string[] = [];
+    for (let i = 0; i < currentSheet.rows.length; i += BATCH) {
+      const batch = currentSheet.rows.slice(i, i + BATCH);
+      try {
+        const result = await importPostHrgDevRecords({
+          mapping: importMapping,
+          headers: currentSheet.headers,
+          rows: batch,
+          rowOffset: i,
+          created_by: userId,
+          comments: currentSheet.comments || {},
+        });
+        if (result.success) {
+          imported += result.imported || 0;
+          matchedTotal += result.matched || 0;
+          if (result.errors?.length) errors.push(...result.errors);
+        } else errors.push(`Batch ${Math.floor(i / BATCH) + 1}: error`);
+      } catch {
+        errors.push(`Batch ${Math.floor(i / BATCH) + 1}: Network error`);
+      }
+      setImportProgress(
+        Math.min(
+          100,
+          Math.round(((i + batch.length) / currentSheet.rows.length) * 100),
+        ),
+      );
+    }
+    setImporting(false);
+    setImportResult({ imported, matched: matchedTotal, errors });
+    toast(
+      `Imported ${imported} records (${matchedTotal} linked)`,
+      errors.length > 0 ? "error" : "success",
+    );
+  }, [currentSheet, importMapping, userId, toast]);
+
+  const resetImport = useCallback(() => {
+    setImportStep(1);
+    setFile(null);
+    setSheets([]);
+    setSelectedSheet(-1);
+    setImportMapping({});
+    setImportResult(null);
+    setImportProgress(0);
+    if (fileRef.current) fileRef.current.value = "";
+  }, []);
+
+  const SortIcon = ({ field }: { field: string }) => (
+    <span className="ml-1 text-[10px] opacity-50">
+      {sortKey === field ? (sortDir === "asc" ? "▲" : "▼") : "⇅"}
+    </span>
+  );
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // RENDER CELL
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const renderCell = useCallback(
+    (r: PostHrgDevRow, col: { key: string }) => {
+      switch (col.key) {
+        case "claimant": {
+          const link = r.claimant_link;
+          return (
+            <div className="min-w-0">
+              <div className="flex items-center gap-1 min-w-0">
+                {link ? (
+                  <a
+                    href={link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="truncate text-xs font-medium text-blue-600 underline underline-offset-2 decoration-blue-400/60 hover:text-blue-800 hover:decoration-blue-600 dark:text-blue-400 dark:hover:text-blue-300 transition-colors"
+                    title={`${r.claimant} — Open case link`}
+                  >
+                    {r.claimant}
+                  </a>
+                ) : (
+                  <span
+                    className="truncate text-xs font-medium"
+                    title={r.claimant}
+                  >
+                    {r.claimant}
+                  </span>
+                )}
+                {r.hearing_id && (
+                  <span
+                    className="shrink-0 text-[9px] text-blue-500 dark:text-blue-400"
+                    title="Linked to hearing"
+                  >
+                    🔗
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        }
+        case "hearing_date":
+          return (
+            <span className="text-xs tabular-nums whitespace-nowrap">
+              {fmtDate(r.hearing_date)}
+            </span>
+          );
+        case "post_hearing_status":
+          return (
+            <InlineDropdown
+              value={r.post_hearing_status}
+              options={PH_STATUS_OPTIONS}
+              onSave={(v) => handleFieldUpdate(r.id, "post_hearing_status", v)}
+              hexColorMap={phStatusHexMap}
+            />
+          );
+        case "type_of_docs_needed":
+          return (
+            <InlineDropdown
+              value={r.type_of_docs_needed}
+              options={DOCS_NEEDED_OPTIONS}
+              onSave={(v) => handleFieldUpdate(r.id, "type_of_docs_needed", v)}
+            />
+          );
+        case "details":
+          return (
+            <div className="flex items-start gap-1">
+              <div className="flex-1 min-w-0">
+                <InlineEditableText
+                  value={r.details}
+                  onSave={(v) => handleFieldUpdate(r.id, "details", v)}
+                  placeholder="Click to add..."
+                  maxWidth="180px"
+                />
+              </div>
+              <NoteCellBadge
+                record={r}
+                field="details"
+                onClick={() =>
+                  setNoteModal({
+                    record: r,
+                    field: "details",
+                    label: "Details",
+                  })
+                }
+              />
+            </div>
+          );
+        case "assigned_rep":
+          return (
+            <InlineDropdown
+              value={r.assigned_rep}
+              options={REP_OPTIONS}
+              onSave={(v) => handleFieldUpdate(r.id, "assigned_rep", v)}
+              placeholder="—"
+            />
+          );
+        case "person_responsible":
+          return (
+            <div className="flex items-center gap-1">
+              <span
+                className="text-xs truncate max-w-12"
+                title={r.person_responsible || ""}
+              >
+                {r.person_responsible || "—"}
+              </span>
+              <NoteCellBadge
+                record={r}
+                field="person_responsible"
+                onClick={() =>
+                  setNoteModal({
+                    record: r,
+                    field: "person_responsible",
+                    label: "Responsible",
+                  })
+                }
+              />
+            </div>
+          );
+        case "em_sent_task_created":
+          return (
+            <div className="flex items-center gap-1">
+              <InlineCheck
+                checked={r.em_sent_task_created}
+                onToggle={(v) =>
+                  handleFieldUpdate(r.id, "em_sent_task_created", v)
+                }
+              />
+              <NoteCellBadge
+                record={r}
+                field="em_sent_task_created"
+                onClick={() =>
+                  setNoteModal({
+                    record: r,
+                    field: "em_sent_task_created",
+                    label: "EM/Task",
+                  })
+                }
+              />
+            </div>
+          );
+        case "ext_letter_sent":
+          return (
+            <div className="flex items-center gap-1">
+              <InlineCheck
+                checked={r.ext_letter_sent}
+                onToggle={(v) => handleFieldUpdate(r.id, "ext_letter_sent", v)}
+              />
+              <NoteCellBadge
+                record={r}
+                field="ext_letter_sent"
+                onClick={() =>
+                  setNoteModal({
+                    record: r,
+                    field: "ext_letter_sent",
+                    label: "EXT Letter",
+                  })
+                }
+              />
+            </div>
+          );
+        case "status":
+          return (
+            <div className="flex items-center gap-1">
+              <InlineDropdown
+                value={r.status}
+                options={STATUS_OPTIONS}
+                onSave={(v) => handleFieldUpdate(r.id, "status", v)}
+                hexColorMap={STATUS_HEX}
+              />
+              <NoteCellBadge
+                record={r}
+                field="status"
+                onClick={() =>
+                  setNoteModal({ record: r, field: "status", label: "Status" })
+                }
+              />
+            </div>
+          );
+        case "deadline":
+          return (
+            <InlineDate
+              value={r.deadline}
+              onSave={(v) => handleFieldUpdate(r.id, "deadline", v)}
+              isOverdue={isOverdueCheck(r)}
+            />
+          );
+        case "new_due_date":
+          return (
+            <InlineDate
+              value={r.new_due_date}
+              onSave={(v) => handleFieldUpdate(r.id, "new_due_date", v)}
+            />
+          );
+        case "remarks":
+          return (
+            <InlineEditableText
+              value={r.remarks}
+              onSave={(v) => handleFieldUpdate(r.id, "remarks", v)}
+              placeholder="Click to add..."
+              maxWidth="180px"
+            />
+          );
+        case "actions":
+          return isAdmin ? (
+            deleteConfirm === r.id ? (
+              <div className="flex gap-1">
+                <button
+                  className={cn(
+                    BTN,
+                    "px-2 py-0.5 text-[10px] bg-red-600 text-white hover:bg-red-700",
+                  )}
+                  onClick={() => deleteRecord(r.id)}
+                >
+                  Yes
+                </button>
+                <button
+                  className={cn(
+                    BTN,
+                    "px-2 py-0.5 text-[10px] bg-muted text-foreground",
+                  )}
+                  onClick={() => setDeleteConfirm(null)}
+                >
+                  No
+                </button>
+              </div>
+            ) : (
+              <button
+                className={cn(
+                  BTN,
+                  "px-2 py-0.5 text-[10px] text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30",
+                )}
+                onClick={() => setDeleteConfirm(r.id)}
+              >
+                ✕
+              </button>
+            )
+          ) : null;
+        default:
+          return <span className="text-xs">—</span>;
+      }
+    },
+    [
+      PH_STATUS_OPTIONS,
+      phStatusHexMap,
+      REP_OPTIONS,
+      handleFieldUpdate,
+      isAdmin,
+      deleteConfirm,
+      deleteRecord,
+    ],
+  );
+
+  const headerBg = "bg-muted/90 backdrop-blur-sm";
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // JSX — identical to your document index 4 version from here down
+  // (Dashboard view, Import view, Add Modal, Note Modal)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  return (
+    <>
+      <AppHeader
+        title="Post Hearing Development"
+        subtitle="Track and manage post-hearing tasks and document follow-ups"
+      />
+      <div className="flex flex-col gap-3 p-2 sm:p-3 lg:p-4 xl:p-6 max-w-full overflow-hidden">
+        <DashboardNav userRole={userRole as UserRole} />
+
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-3">
+          <div className="flex gap-1.5 flex-wrap">
+            <button
+              className={cn(
+                "px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors",
+                viewMode === "dashboard"
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted text-muted-foreground hover:bg-muted/80",
+              )}
+              onClick={() => setViewMode("dashboard")}
+            >
+              📋 Dashboard
+            </button>
+            {isAdmin && (
+              <button
+                className={cn(
+                  "px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors",
+                  viewMode === "import"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted text-muted-foreground hover:bg-muted/80",
+                )}
+                onClick={() => {
+                  setViewMode("import");
+                  resetImport();
+                }}
+              >
+                📥 Import
+              </button>
+            )}
+          </div>
+          {viewMode === "dashboard" && (
+            <button
+              className={cn(BTN_SUCCESS, "text-xs sm:text-sm")}
+              onClick={() => setShowAddModal(true)}
+            >
+              + Add Record
+            </button>
+          )}
+        </div>
+
+        {viewMode === "dashboard" && (
+          <>
+            <StatsRow stats={stats} />
+            <div className={cn(CARD, "p-3 sm:p-4")}>
+              <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2 sm:gap-3">
+                <input
+                  type="text"
+                  placeholder="Search claimant, rep, details..."
+                  className={cn(INPUT, "flex-1 min-w-0 sm:min-w-48")}
+                  value={searchTerm}
+                  onChange={(e) =>
+                    handleFilterChange(
+                      e.target.value,
+                      statusFilter,
+                      phStatusFilter,
+                    )
+                  }
+                />
+                <div className="flex gap-2 flex-1 sm:flex-none">
+                  <select
+                    className={cn(SELECT_CLS, "flex-1 sm:w-40")}
+                    value={statusFilter}
+                    onChange={(e) =>
+                      handleFilterChange(
+                        searchTerm,
+                        e.target.value,
+                        phStatusFilter,
+                      )
+                    }
+                  >
+                    <option value="all">All Status</option>
+                    {STATUS_OPTIONS.map((s) => (
+                      <option key={s.value} value={s.value}>
+                        {s.label}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    className={cn(SELECT_CLS, "flex-1 sm:w-48")}
+                    value={phStatusFilter}
+                    onChange={(e) =>
+                      handleFilterChange(
+                        searchTerm,
+                        statusFilter,
+                        e.target.value,
+                      )
+                    }
+                  >
+                    <option value="all">All PH Status</option>
+                    {PH_STATUS_OPTIONS.map((s) => (
+                      <option key={s.value} value={s.value}>
+                        {s.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <span className="text-xs text-muted-foreground self-center">
+                  {totalFiltered} records
+                </span>
+              </div>
+            </div>
+
+            {loading && (
+              <div className="flex items-center justify-center gap-3 py-12">
+                <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                <span className="text-sm text-muted-foreground">
+                  Loading...
+                </span>
+              </div>
+            )}
+
+            {!loading && (
+              <div className="w-full overflow-hidden rounded-lg border bg-card shadow-sm">
+                <div
+                  ref={scrollRef}
+                  className="overflow-x-auto overflow-y-auto"
+                  style={{ maxHeight: "calc(100vh - 340px)" }}
+                  onWheel={(e) => {
+                    if (e.shiftKey) {
+                      e.currentTarget.scrollLeft += e.deltaY;
+                      e.preventDefault();
+                    }
+                  }}
+                >
+                  <table
+                    className="w-full border-collapse text-sm"
+                    style={{ minWidth: COLUMNS.reduce((s, c) => s + c.w, 0) }}
+                  >
+                    <thead className="sticky top-0 z-30">
+                      <tr>
+                        {COLUMNS.map((col) => {
+                          const leftPos = getLeftPos(col.key);
+                          const isLF = col.key === lastFrozenKey;
+                          return (
+                            <th
+                              key={col.key}
+                              className={cn(
+                                "h-10 whitespace-nowrap border-b-2 border-border px-2 text-left text-[11px] font-bold uppercase tracking-wide text-foreground/80",
+                                headerBg,
+                                col.sortable &&
+                                  "cursor-pointer select-none hover:text-foreground",
+                                col.frozen && "sticky z-20 overflow-hidden",
+                                isLF &&
+                                  "border-r-2 border-r-blue-400/40 dark:border-r-blue-500/40",
+                              )}
+                              style={{
+                                width: col.w,
+                                minWidth: col.w,
+                                maxWidth: col.frozen ? col.w : undefined,
+                                ...(leftPos !== undefined
+                                  ? { left: leftPos }
+                                  : {}),
+                              }}
+                              onClick={() =>
+                                col.sortable && handleSort(col.key)
+                              }
+                            >
+                              {col.label}
+                              {col.sortable && <SortIcon field={col.key} />}
+                            </th>
+                          );
+                        })}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {records.map((r) => (
+                        <tr
+                          key={r.id}
+                          className={cn(
+                            "hover:bg-muted/30 transition-colors",
+                            isOverdueCheck(r) &&
+                              "bg-red-50/50 dark:bg-red-950/10",
+                          )}
+                        >
+                          {COLUMNS.map((col) => {
+                            const leftPos = getLeftPos(col.key);
+                            const isLF = col.key === lastFrozenKey;
+                            return (
+                              <td
+                                key={col.key}
+                                className={cn(
+                                  "px-2 py-1.5",
+                                  col.frozen &&
+                                    "sticky z-10 overflow-hidden bg-card",
+                                  isLF &&
+                                    "border-r-2 border-r-blue-400/40 dark:border-r-blue-500/40",
+                                )}
+                                style={{
+                                  width: col.w,
+                                  minWidth: col.w,
+                                  maxWidth: col.frozen ? col.w : undefined,
+                                  ...(leftPos !== undefined
+                                    ? { left: leftPos }
+                                    : {}),
+                                }}
+                              >
+                                {renderCell(r, col)}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                      {records.length === 0 && !loading && (
+                        <tr>
+                          <td
+                            colSpan={COLUMNS.length}
+                            className="px-3 py-12 text-center text-muted-foreground"
+                          >
+                            No records found
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-2 border-t px-3 sm:px-4 py-2.5 bg-muted/30">
+                  <span className="text-xs text-muted-foreground">
+                    Showing{" "}
+                    {totalFiltered === 0 ? 0 : (page - 1) * pageSize + 1}–
+                    {Math.min(page * pageSize, totalFiltered)} of{" "}
+                    {totalFiltered}
+                  </span>
+                  <div className="flex items-center gap-2 flex-wrap justify-center">
+                    <button
+                      className={cn(BTN_OUTLINE, "px-2 py-1 text-xs")}
+                      disabled={page <= 1}
+                      onClick={() => handlePageChange(page - 1)}
+                    >
+                      ← Prev
+                    </button>
+                    <span className="text-xs tabular-nums">
+                      Page{" "}
+                      <input
+                        type="number"
+                        min={1}
+                        max={totalPages}
+                        value={page}
+                        onChange={(e) => {
+                          const p = parseInt(e.target.value);
+                          if (p > 0 && p <= totalPages) handlePageChange(p);
+                        }}
+                        className="w-12 rounded border bg-background px-1 py-0.5 text-xs text-center tabular-nums"
+                      />{" "}
+                      of {totalPages}
+                    </span>
+                    <button
+                      className={cn(BTN_OUTLINE, "px-2 py-1 text-xs")}
+                      disabled={page >= totalPages}
+                      onClick={() => handlePageChange(page + 1)}
+                    >
+                      Next →
+                    </button>
+                    <select
+                      className="rounded border bg-background px-1 py-0.5 text-xs"
+                      value={String(pageSize)}
+                      onChange={(e) =>
+                        handlePageSizeChange(parseInt(e.target.value))
+                      }
+                    >
+                      {[25, 50, 100, 250].map((s) => (
+                        <option key={s} value={s}>
+                          {s} / page
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {viewMode === "import" && (
+          <>
+            <div className="flex flex-col sm:flex-row gap-2">
+              {[
+                { num: 1, label: "Upload" },
+                { num: 2, label: "Map Columns" },
+                { num: 3, label: "Preview" },
+                { num: 4, label: "Results" },
+              ].map((s) => (
+                <div
+                  key={s.num}
+                  className={cn(
+                    "flex-1 rounded-lg px-4 py-3 text-center font-medium text-sm transition-all",
+                    importStep === s.num
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : importStep > s.num
+                        ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400"
+                        : "bg-muted text-muted-foreground",
+                  )}
+                >
+                  <span className="font-bold mr-1.5">Step {s.num}</span>
+                  {s.label}
+                </div>
+              ))}
+            </div>
+            {importStep === 1 && (
+              <div className={CARD}>
+                <h2 className="text-lg font-semibold mb-1">
+                  📁 Upload Post-Hearing Spreadsheet
+                </h2>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Rows matched to hearings by Claimant + Date.
+                </p>
+                {!file && (
+                  <div
+                    className="border-2 border-dashed border-border rounded-xl p-12 text-center cursor-pointer hover:border-primary/50 hover:bg-muted/30 transition-all"
+                    onClick={() => fileRef.current?.click()}
+                    onDrop={handleDrop}
+                    onDragOver={(e) => e.preventDefault()}
+                  >
+                    <div className="text-4xl mb-3">📄</div>
+                    <div className="text-base font-medium">
+                      Drag & drop or click to browse
+                    </div>
+                    <div className="text-sm text-muted-foreground mt-1">
+                      .xlsx, .xls, .csv
+                    </div>
+                    <input
+                      ref={fileRef}
+                      type="file"
+                      accept=".xlsx,.xls,.csv"
+                      className="hidden"
+                      onChange={(e) =>
+                        e.target.files?.[0] && handleFile(e.target.files[0])
+                      }
+                    />
+                  </div>
+                )}
+                {file && (
+                  <div className="flex items-center gap-3 rounded-lg bg-muted/50 px-4 py-3 mb-4">
+                    <span className="text-2xl">📊</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-sm truncate">
+                        {file.name}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {(file.size / 1024).toFixed(1)} KB
+                      </div>
+                    </div>
+                    <button
+                      className="text-muted-foreground hover:text-destructive text-lg"
+                      onClick={() => {
+                        setFile(null);
+                        setSheets([]);
+                        setSelectedSheet(-1);
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+                {parsing && (
+                  <div className="flex items-center justify-center gap-3 py-8">
+                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                    <span className="text-sm text-muted-foreground">
+                      Reading...
+                    </span>
+                  </div>
+                )}
+                {sheets.length > 1 && (
+                  <div className="mb-4">
+                    <label className="text-sm font-medium">
+                      📑 Select Sheet:
+                    </label>
+                    <select
+                      className={SELECT_CLS}
+                      value={selectedSheet}
+                      onChange={(e) => selectSheet(Number(e.target.value))}
+                    >
+                      <option value={-1}>-- Select --</option>
+                      {sheets.map((s, i) => (
+                        <option key={i} value={i}>
+                          {s.name} ({s.rows.length} rows)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {currentSheet && (
+                  <div className="mb-4 text-sm text-muted-foreground">
+                    Sheet <strong>&apos;{currentSheet.name}&apos;</strong>:{" "}
+                    {currentSheet.headers.length} cols,{" "}
+                    {currentSheet.rows.length} rows
+                  </div>
+                )}
+                <div className="mt-6 flex items-center justify-between gap-3">
+                  <button
+                    className={BTN_SECONDARY}
+                    onClick={() => setViewMode("dashboard")}
+                  >
+                    ← Dashboard
+                  </button>
+                  <button
+                    className={BTN_PRIMARY}
+                    disabled={!currentSheet}
+                    onClick={() => setImportStep(2)}
+                  >
+                    Next →
+                  </button>
+                </div>
+              </div>
+            )}
+            {importStep === 2 && currentSheet && (
+              <div className={CARD}>
+                <h2 className="text-lg font-semibold mb-1">🔗 Map Columns</h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-4">
+                  {Object.entries(IMPORT_FIELD_MAP).map(([field]) => {
+                    const labels: Record<string, string> = {
+                      claimant: "Claimant *",
+                      hearing_date: "Hearing Date",
+                      post_hearing_status: "PH Status",
+                      type_of_docs_needed: "Docs Needed",
+                      details: "Details",
+                      assigned_rep: "Rep",
+                      person_responsible: "Responsible",
+                      em_sent_task_created: "EM/Task",
+                      ext_letter_sent: "EXT Letter",
+                      status: "Status",
+                      deadline: "Deadline",
+                      new_due_date: "New Due Date",
+                      remarks: "Remarks",
+                    };
+                    return (
+                      <div key={field} className="space-y-1">
+                        <label
+                          className={cn(
+                            "text-sm font-medium",
+                            labels[field]?.includes("*") && "text-destructive",
+                          )}
+                        >
+                          {labels[field] || field}
+                        </label>
+                        <select
+                          className={cn(
+                            SELECT_CLS,
+                            importMapping[field] !== undefined &&
+                              "border-emerald-500 bg-emerald-50/50 dark:bg-emerald-950/20",
+                          )}
+                          value={importMapping[field] ?? ""}
+                          onChange={(e) =>
+                            setImportMapping((p: Record<string, number>) => {
+                              const n = { ...p };
+                              if (e.target.value === "") delete n[field];
+                              else n[field] = Number(e.target.value);
+                              return n;
+                            })
+                          }
+                        >
+                          <option value="">-- Skip --</option>
+                          {currentSheet.headers.map((h, i) => (
+                            <option key={i} value={i}>
+                              {h}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="mt-6 flex items-center justify-between gap-3">
+                  <button
+                    className={BTN_SECONDARY}
+                    onClick={() => setImportStep(1)}
+                  >
+                    ← Back
+                  </button>
+                  <button
+                    className={BTN_PRIMARY}
+                    onClick={() => setImportStep(3)}
+                  >
+                    Preview →
+                  </button>
+                </div>
+              </div>
+            )}
+            {importStep === 3 && currentSheet && (
+              <div className={CARD}>
+                <h2 className="text-lg font-semibold mb-1">👀 Preview</h2>
+                <p className="text-sm text-muted-foreground mb-4">
+                  {currentSheet.rows.length} rows to import
+                </p>
+                <div className="max-h-96 overflow-auto rounded-lg border">
+                  <table className="w-full text-xs">
+                    <thead className="sticky top-0 bg-muted z-10">
+                      <tr>
+                        <th className="px-3 py-2 text-left">#</th>
+                        {(
+                          Object.entries(importMapping) as [string, number][]
+                        ).map(([f, idx]) => (
+                          <th
+                            key={f}
+                            className="px-3 py-2 text-left whitespace-nowrap"
+                          >
+                            {currentSheet.headers[idx]}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {currentSheet.rows.slice(0, 50).map((row, i) => {
+                        const r = row as string[];
+                        return (
+                          <tr key={i} className="border-t hover:bg-muted/30">
+                            <td className="px-3 py-1.5 text-muted-foreground">
+                              {i + 1}
+                            </td>
+                            {(
+                              Object.entries(importMapping) as [
+                                string,
+                                number,
+                              ][]
+                            ).map(([f, idx]) => (
+                              <td
+                                key={f}
+                                className="px-3 py-1.5 max-w-40 truncate"
+                              >
+                                {String(r[idx] ?? "").trim() || "—"}
+                              </td>
+                            ))}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="mt-6 flex items-center justify-between gap-3">
+                  <button
+                    className={BTN_SECONDARY}
+                    onClick={() => setImportStep(2)}
+                  >
+                    ← Back
+                  </button>
+                  <button className={BTN_SUCCESS} onClick={runImport}>
+                    ✅ Import {currentSheet.rows.length} Records
+                  </button>
+                </div>
+              </div>
+            )}
+            {importStep === 4 && (
+              <div className={CARD}>
+                <h2 className="text-lg font-semibold mb-4">📊 Results</h2>
+                {importing && (
+                  <div className="py-8 space-y-4">
+                    <div className="h-4 rounded-full bg-muted overflow-hidden">
+                      <div
+                        className="h-full bg-primary rounded-full transition-all duration-300"
+                        style={{ width: `${importProgress}%` }}
+                      />
+                    </div>
+                    <div className="text-center">
+                      <div className="text-3xl font-bold text-primary">
+                        {importProgress}%
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {importResult && !importing && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="rounded-lg bg-emerald-50 dark:bg-emerald-950/30 p-4 text-center">
+                        <div className="text-3xl font-bold text-emerald-700">
+                          {importResult.imported}
+                        </div>
+                        <div className="text-sm text-emerald-600">Imported</div>
+                      </div>
+                      <div className="rounded-lg bg-blue-50 dark:bg-blue-950/30 p-4 text-center">
+                        <div className="text-3xl font-bold text-blue-700">
+                          {importResult.matched}
+                        </div>
+                        <div className="text-sm text-blue-600">Linked</div>
+                      </div>
+                      <div className="rounded-lg bg-red-50 dark:bg-red-950/30 p-4 text-center">
+                        <div className="text-3xl font-bold text-red-700">
+                          {importResult.errors.length}
+                        </div>
+                        <div className="text-sm text-red-600">Errors</div>
+                      </div>
+                    </div>
+                    <div className="flex gap-3">
+                      <button
+                        className={BTN_PRIMARY}
+                        onClick={() => {
+                          setViewMode("dashboard");
+                          resetImport();
+                          fetchPage(
+                            1,
+                            pageSize,
+                            sortKey,
+                            sortDir,
+                            searchTerm,
+                            statusFilter,
+                            phStatusFilter,
+                          );
+                        }}
+                      >
+                        ← Dashboard
+                      </button>
+                      <button className={BTN_SECONDARY} onClick={resetImport}>
+                        Import Another
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {showAddModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setShowAddModal(false)}
+        >
+          <div
+            className="w-full max-w-2xl max-h-[85vh] flex flex-col rounded-xl border bg-card shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b px-5 py-4 shrink-0">
+              <h2 className="text-sm font-semibold">
+                ➕ Add Post-Hearing Record
+              </h2>
+              <button
+                onClick={() => setShowAddModal(false)}
+                className="text-muted-foreground hover:text-foreground text-lg"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-destructive">
+                    Claimant *
+                  </label>
+                  <input
+                    className={INPUT}
+                    value={addData.claimant || ""}
+                    onChange={(e) =>
+                      setAddData((p: Partial<PostHrgDevRow>) => ({
+                        ...p,
+                        claimant: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">Hearing Date</label>
+                  <input
+                    type="date"
+                    className={INPUT}
+                    value={addData.hearing_date || ""}
+                    onChange={(e) =>
+                      setAddData((p: Partial<PostHrgDevRow>) => ({
+                        ...p,
+                        hearing_date: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">PH Status</label>
+                  <select
+                    className={SELECT_CLS}
+                    value={addData.post_hearing_status || ""}
+                    onChange={(e) =>
+                      setAddData((p: Partial<PostHrgDevRow>) => ({
+                        ...p,
+                        post_hearing_status: e.target.value,
+                      }))
+                    }
+                  >
+                    <option value="">—</option>
+                    {PH_STATUS_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">Rep</label>
+                  <select
+                    className={SELECT_CLS}
+                    value={addData.assigned_rep || ""}
+                    onChange={(e) =>
+                      setAddData((p: Partial<PostHrgDevRow>) => ({
+                        ...p,
+                        assigned_rep: e.target.value,
+                      }))
+                    }
+                  >
+                    <option value="">—</option>
+                    {REP_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">Responsible</label>
+                  <input
+                    className={INPUT}
+                    value={addData.person_responsible || ""}
+                    onChange={(e) =>
+                      setAddData((p: Partial<PostHrgDevRow>) => ({
+                        ...p,
+                        person_responsible: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">Status</label>
+                  <select
+                    className={SELECT_CLS}
+                    value={addData.status || ""}
+                    onChange={(e) =>
+                      setAddData((p: Partial<PostHrgDevRow>) => ({
+                        ...p,
+                        status: e.target.value,
+                      }))
+                    }
+                  >
+                    <option value="">—</option>
+                    {STATUS_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">Deadline</label>
+                  <input
+                    type="date"
+                    className={INPUT}
+                    value={addData.deadline || ""}
+                    onChange={(e) =>
+                      setAddData((p: Partial<PostHrgDevRow>) => ({
+                        ...p,
+                        deadline: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">New Due Date</label>
+                  <input
+                    type="date"
+                    className={INPUT}
+                    value={addData.new_due_date || ""}
+                    onChange={(e) =>
+                      setAddData((p: Partial<PostHrgDevRow>) => ({
+                        ...p,
+                        new_due_date: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Docs Needed</label>
+                <select
+                  className={SELECT_CLS}
+                  value={addData.type_of_docs_needed || ""}
+                  onChange={(e) =>
+                    setAddData((p: Partial<PostHrgDevRow>) => ({
+                      ...p,
+                      type_of_docs_needed: e.target.value,
+                    }))
+                  }
+                >
+                  <option value="">—</option>
+                  {DOCS_NEEDED_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Details</label>
+                <textarea
+                  className={cn(INPUT, "min-h-16 resize-y")}
+                  value={addData.details || ""}
+                  onChange={(e) =>
+                    setAddData((p: Partial<PostHrgDevRow>) => ({
+                      ...p,
+                      details: e.target.value,
+                    }))
+                  }
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Remarks</label>
+                <textarea
+                  className={cn(INPUT, "min-h-16 resize-y")}
+                  value={addData.remarks || ""}
+                  onChange={(e) =>
+                    setAddData((p: Partial<PostHrgDevRow>) => ({
+                      ...p,
+                      remarks: e.target.value,
+                    }))
+                  }
+                />
+              </div>
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={!!addData.em_sent_task_created}
+                    onChange={(e) =>
+                      setAddData((p: Partial<PostHrgDevRow>) => ({
+                        ...p,
+                        em_sent_task_created: e.target.checked,
+                      }))
+                    }
+                    className="accent-primary"
+                  />
+                  EM/Task Created
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={!!addData.ext_letter_sent}
+                    onChange={(e) =>
+                      setAddData((p: Partial<PostHrgDevRow>) => ({
+                        ...p,
+                        ext_letter_sent: e.target.checked,
+                      }))
+                    }
+                    className="accent-primary"
+                  />
+                  EXT Letter Sent
+                </label>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-3 border-t px-5 py-3 shrink-0">
+              <button
+                className={BTN_SECONDARY}
+                onClick={() => setShowAddModal(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className={BTN_SUCCESS}
+                onClick={saveNewRecord}
+                disabled={saving}
+              >
+                {saving ? "Saving..." : "Create"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {noteModal && (
+        <NoteModal
+          record={noteModal.record}
+          field={noteModal.field}
+          fieldLabel={noteModal.label}
+          userName={userName}
+          onClose={() => setNoteModal(null)}
+          onRecordUpdate={handleRecordUpdate}
+        />
+      )}
+    </>
+  );
+}
