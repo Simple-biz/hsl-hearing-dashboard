@@ -50,6 +50,7 @@ import {
   getPostHrgNotes,
   addPostHrgNote,
   updatePostHrgDeadline,
+  toggleFiveDayNotice,
 } from "./action";
 import type {
   MrPivotPageData,
@@ -1853,6 +1854,7 @@ export function MrPivotClient({ userRole, ...data }: Props) {
       credited: (v) => toggleCredited(id, v as boolean),
       manner_of_appearance: (v) => updateMoa(id, v as string),
       medical_record_link: (v) => updateWorksheetLink(id, v as string),
+      five_day_notice: (v) => toggleFiveDayNotice(id, v as boolean),
     };
     await actions[field]?.(value);
 

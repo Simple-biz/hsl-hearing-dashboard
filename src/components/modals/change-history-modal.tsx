@@ -221,7 +221,7 @@ function SyncErrorToast({
   onClose: () => void;
 }) {
   return (
-    <div className="fixed top-4 right-4 z-[70] w-full max-w-sm rounded-xl border border-red-200 bg-red-50 p-4 shadow-2xl dark:border-red-900/70 dark:bg-zinc-950/95">
+    <div className="fixed top-4 right-4 z-70 w-full max-w-sm rounded-xl border border-red-200 bg-red-50 p-4 shadow-2xl dark:border-red-900/70 dark:bg-zinc-950/95">
       <div className="flex items-start gap-3">
         <div className="mt-0.5 rounded-full bg-red-100 p-1.5 text-red-600 dark:bg-red-900/40 dark:text-red-300">
           <AlertTriangle size={14} />

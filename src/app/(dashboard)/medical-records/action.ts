@@ -695,7 +695,7 @@ export async function updateMrStatus(
   status: string,
 ): Promise<{ success: boolean }> {
   await db.query(
-    `UPDATE hearings SET medical_record_status = $1 WHERE id = $2`,
+    `UPDATE hearings SET medical_record_status = $1, updated_at = NOW() WHERE id = $2`,
     [status, hearingId],
   );
   await logActivity("mr_status_updated", `MR status updated to "${status}" for hearing #${hearingId}`);
@@ -707,7 +707,7 @@ export async function updateHearingDecisionStatus(
   status: string,
 ): Promise<{ success: boolean }> {
   await db.query(
-    `UPDATE hearings SET hearing_decision_status = $1 WHERE id = $2`,
+    `UPDATE hearings SET hearing_decision_status = $1, updated_at = NOW() WHERE id = $2`,
     [status, hearingId],
   );
   await logActivity("decision_status_updated", `Decision status updated to "${status}" for hearing #${hearingId}`);
@@ -731,7 +731,7 @@ export async function updateMrTeam(
   teamId: number | null,
 ): Promise<{ success: boolean }> {
   await db.query(
-    `UPDATE hearings SET mr_team_id = $1, mr_team_assigned_at = $2 WHERE id = $3`,
+    `UPDATE hearings SET mr_team_id = $1, mr_team_assigned_at = $2, updated_at = NOW() WHERE id = $3`,
     [teamId, teamId ? new Date().toISOString() : null, hearingId],
   );
   await logActivity("mr_team_assigned", teamId
@@ -745,7 +745,7 @@ export async function toggleTaskAssigned(
   value: boolean,
 ): Promise<{ success: boolean }> {
   await db.query(
-    `UPDATE hearings SET task_assigned = $1 WHERE id = $2`,
+    `UPDATE hearings SET task_assigned = $1, updated_at = NOW() WHERE id = $2`,
     [value, hearingId],
   );
   await logActivity("five_day_notice_updated", `Task assigned set to ${value} for hearing #${hearingId}`);
@@ -757,7 +757,7 @@ export async function toggleCredited(
   value: boolean,
 ): Promise<{ success: boolean }> {
   await db.query(
-    `UPDATE hearings SET credited = $1 WHERE id = $2`,
+    `UPDATE hearings SET credited = $1, updated_at = NOW() WHERE id = $2`,
     [value, hearingId],
   );
   await logActivity("credited_updated", `Credited set to ${value} for hearing #${hearingId}`);
@@ -769,7 +769,7 @@ export async function toggleFiveDayNotice(
   value: boolean,
 ): Promise<{ success: boolean }> {
   await db.query(
-    `UPDATE hearings SET five_day_notice = $1 WHERE id = $2`,
+    `UPDATE hearings SET five_day_notice = $1, updated_at = NOW() WHERE id = $2`,
     [value, hearingId],
   );
   await logActivity("five_day_notice_updated", `5-Day Notice set to ${value} for hearing #${hearingId}`);
@@ -781,7 +781,7 @@ export async function updateMoa(
   manner: string,
 ): Promise<{ success: boolean }> {
   await db.query(
-    `UPDATE hearings SET manner_of_appearance = $1 WHERE id = $2`,
+    `UPDATE hearings SET manner_of_appearance = $1, updated_at = NOW() WHERE id = $2`,
     [manner, hearingId],
   );
   await logActivity("moa_updated", `MOA updated to "${manner}" for hearing #${hearingId}`);
@@ -793,7 +793,7 @@ export async function updateWorksheetLink(
   link: string,
 ): Promise<{ success: boolean }> {
   await db.query(
-    `UPDATE hearings SET medical_record_link = $1 WHERE id = $2`,
+    `UPDATE hearings SET medical_record_link = $1, updated_at = NOW() WHERE id = $2`,
     [link, hearingId],
   );
   await logActivity("mr_link_updated", `Worksheet link updated for hearing #${hearingId}`);
@@ -807,7 +807,7 @@ export async function bulkUpdateMrStatus(
   if (!hearingIds.length) return { success: false, message: "No hearings selected" };
   const placeholders = hearingIds.map((_, i) => `$${i + 2}`).join(", ");
   await db.query(
-    `UPDATE hearings SET medical_record_status = $1 WHERE id IN (${placeholders})`,
+    `UPDATE hearings SET medical_record_status = $1, updated_at = NOW() WHERE id IN (${placeholders})`,
     [status, ...hearingIds],
   );
   await logActivity("bulk_mr_status_updated", `Bulk updated ${hearingIds.length} hearing(s) to "${status}"`);
@@ -827,7 +827,7 @@ export async function assignJeromeUrgent(): Promise<{
 
   const result = await db.query(`
     UPDATE hearings
-    SET mr_team_id = $1, mr_team_assigned_at = NOW()
+    SET mr_team_id = $1, mr_team_assigned_at = NOW(), updated_at = NOW()
     WHERE mr_team_id IS NULL
       AND hearing_date >= CURRENT_DATE
       AND hearing_date <= CURRENT_DATE + INTERVAL '28 days'
@@ -1206,7 +1206,7 @@ export async function updatePostHrgDeadline(
   deadline: string,
 ): Promise<{ success: boolean }> {
   await db.query(
-    `UPDATE hearings SET post_hrg_deadline = $1 WHERE id = $2`,
+    `UPDATE hearings SET post_hrg_deadline = $1, updated_at = NOW() WHERE id = $2`,
     [deadline, hearingId],
   );
   return { success: true };

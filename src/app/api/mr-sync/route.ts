@@ -17,7 +17,12 @@ import { canSyncGoogleSheets } from "@/lib/roles";
 
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_SYNC_URL;
 const N8N_WEBHOOK_SECRET = process.env.N8N_WEBHOOK_SECRET;
-const SYNC_TIMEOUT_MS = 25_000;
+
+// Raised from 25 s → 55 s to accommodate 6000+ row syncs.
+// Stay under the 60 s Vercel Pro hard limit with a 5 s safety buffer.
+// If instance is on Vercel Hobby (10 s limit), switch to 
+// the delta-sync approach in the N8N SQL instead — see fetch-db-rows-delta.sql.
+const SYNC_TIMEOUT_MS = 55_000;
 
 type SyncErrorCode =
   | "SYNC_CONFIG_ERROR"
