@@ -28,6 +28,7 @@ export interface PostHrgDevRow {
   status_notes: string | null;
   // Joined from hearings table
   claimant_link: string | null;
+  ssn_last_4: string | null;
   created_at: string;
   updated_at: string;
   created_by: number | null;
@@ -55,16 +56,20 @@ export interface RepOption {
   name: string;
 }
 
+export interface ResponsibleOption {
+  value: string;
+  color: string;
+}
+
 /**
- * Fetch PH Status options and representatives for the post-hrg page.
- * Includes both 'shared' and 'post_hearing' scoped options.
- * The hearings dashboard should only fetch 'shared' + 'hearings' scoped options.
+ * Fetch PH Status options, representatives, and responsible person options.
  */
 export async function fetchPostHrgOptions(): Promise<{
   phStatusOptions: ConfigOption[];
   representatives: RepOption[];
+  responsibleOptions: ResponsibleOption[];
 }> {
-  const [configRes, repsRes] = await Promise.all([
+  const [configRes, repsRes, mrSpecRes, mrTeamsRes] = await Promise.all([
     db.query(
       `SELECT option_value, option_color, COALESCE(team_scope, 'shared') AS team_scope
        FROM config_options
@@ -76,7 +81,92 @@ export async function fetchPostHrgOptions(): Promise<{
     db.query(
       `SELECT id, name FROM representatives WHERE is_active = true ORDER BY name`,
     ),
+    // MR specialists (individuals)
+    db.query(
+      `SELECT name FROM mr_specialists WHERE is_active = true ORDER BY display_order, name`,
+    ),
+    // MR teams
+    db.query(
+      `SELECT team_name, team_color FROM mr_teams WHERE is_active = true ORDER BY display_order`,
+    ),
   ]);
+
+  // Build responsible options from DB + hardcoded color mapping
+  const PERSON_COLORS: Record<string, string> = {
+    Noah: "#DBEAFE",
+    Maya: "#EDE9FE",
+    Trina: "#EDE9FE",
+    Nina: "#EDE9FE",
+    Van: "#EDE9FE",
+    Jerome: "#DBEAFE",
+    Carol: "#EDE9FE",
+    Rick: "#DBEAFE",
+    Jeff: "#DBEAFE",
+    Vera: "#EDE9FE",
+    Esther: "#EDE9FE",
+    Windell: "#DBEAFE",
+    Jared: "#DBEAFE",
+    Allen: "#EDE9FE",
+    Gail: "#EDE9FE",
+    Vicky: "#EDE9FE",
+    Austin: "#DBEAFE",
+    Kourtney: "#DBEAFE",
+    Glenda: "#EDE9FE",
+    Emerald: "#EDE9FE",
+    Claire: "#EDE9FE",
+    Adele: "#EDE9FE",
+    Milton: "#F3F4F6",
+    Winter: "#DBEAFE",
+    Tracy: "#EDE9FE",
+    Haya: "#EDE9FE",
+    Naomi: "#EDE9FE",
+    Charlotte: "#EDE9FE",
+    Tina: "#EDE9FE",
+    Catherine: "#EDE9FE",
+  };
+  const TEAM_COLORS_MAP: Record<string, string> = {
+    "BLUE TEAM": "#3B82F6",
+    "ORANGE TEAM": "#F97316",
+    "GREEN TEAM": "#22C55E",
+    "YELLOW TEAM": "#EAB308",
+    "PURPLE TEAM": "#A855F7",
+    ALJ: "#FDBA74",
+    "HITMER/ALJ": "#FED7AA",
+  };
+
+  const responsibleSet = new Map<string, string>();
+
+  // Add MR specialists from DB
+  for (const r of mrSpecRes.rows as { name: string }[]) {
+    const color = PERSON_COLORS[r.name] || "#F3F4F6";
+    responsibleSet.set(r.name, color);
+  }
+
+  // Add hardcoded persons not in DB
+  for (const [name, color] of Object.entries(PERSON_COLORS)) {
+    if (!responsibleSet.has(name)) responsibleSet.set(name, color);
+  }
+
+  // Add MR teams from DB
+  for (const t of mrTeamsRes.rows as {
+    team_name: string;
+    team_color: string | null;
+  }[]) {
+    const key = t.team_name.toUpperCase().includes("TEAM")
+      ? t.team_name
+      : t.team_name;
+    const color = TEAM_COLORS_MAP[key] || t.team_color || "#F3F4F6";
+    responsibleSet.set(key, color);
+  }
+
+  // Add hardcoded teams not in DB
+  for (const [name, color] of Object.entries(TEAM_COLORS_MAP)) {
+    if (!responsibleSet.has(name)) responsibleSet.set(name, color);
+  }
+
+  const responsibleOptions: ResponsibleOption[] = Array.from(
+    responsibleSet.entries(),
+  ).map(([value, color]) => ({ value, color }));
 
   return {
     phStatusOptions: configRes.rows.map(
@@ -94,6 +184,7 @@ export async function fetchPostHrgOptions(): Promise<{
       id: r.id,
       name: r.name,
     })),
+    responsibleOptions,
   };
 }
 
@@ -120,7 +211,7 @@ export async function fetchPostHrgDevPage(
     conditions.push(
       `(LOWER(p.claimant) LIKE $${idx} OR LOWER(p.assigned_rep) LIKE $${idx}
         OR LOWER(p.person_responsible) LIKE $${idx} OR LOWER(p.details) LIKE $${idx}
-        OR LOWER(p.remarks) LIKE $${idx})`,
+        OR LOWER(p.remarks) LIKE $${idx} OR COALESCE(h.ssn_last_4, '') LIKE $${idx})`,
     );
     values.push(`%${params.search.trim().toLowerCase()}%`);
     idx++;
@@ -162,7 +253,10 @@ export async function fetchPostHrgDevPage(
 
   const [countRes, dataRes] = await Promise.all([
     db.query(
-      `SELECT COUNT(*)::int AS total FROM post_hrg_development p ${where}`,
+      `SELECT COUNT(*)::int AS total
+       FROM post_hrg_development p
+       LEFT JOIN hearings h ON h.id = p.hearing_id
+       ${where}`,
       values,
     ),
     db.query(
@@ -178,7 +272,8 @@ export async function fetchPostHrgDevPage(
         p.status_notes,
         p.created_at::text, p.updated_at::text,
         p.created_by, p.updated_by,
-        h.claimant_link
+        h.claimant_link,
+        h.ssn_last_4
       FROM post_hrg_development p
       LEFT JOIN hearings h ON h.id = p.hearing_id
       ${where}
@@ -210,7 +305,8 @@ export async function fetchPostHrgDevRecords(): Promise<PostHrgDevRow[]> {
       p.status_notes,
       p.created_at::text, p.updated_at::text,
       p.created_by, p.updated_by,
-      h.claimant_link
+      h.claimant_link,
+      h.ssn_last_4
     FROM post_hrg_development p
     LEFT JOIN hearings h ON h.id = p.hearing_id
     ORDER BY
