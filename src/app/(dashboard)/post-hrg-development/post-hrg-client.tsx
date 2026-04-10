@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef, memo } from "react";
 import { createPortal } from "react-dom";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
 import { AppHeader } from "@/components/layout";
 import { DashboardNav } from "@/components/layout/dashboard-nav";
@@ -1111,6 +1112,81 @@ const isOverdueCheck = (r: PostHrgDevRow) => {
   return new Date(r.deadline) < new Date();
 };
 
+// ─── Memoized Row — only re-renders when its own data changes ──────────────
+
+interface ColumnDef {
+  key: string;
+  label: string;
+  w: number;
+  sortable?: boolean;
+  frozen?: boolean;
+}
+
+interface MemoRowProps {
+  record: PostHrgDevRow;
+  ri: number;
+  evenBg: string;
+  oddBg: string;
+  getLeftPosFn: (key: string) => number | undefined;
+  lastFrozen: string;
+  renderCellFn: (r: PostHrgDevRow, col: ColumnDef) => React.ReactNode;
+  columns: ColumnDef[];
+  overdue: boolean;
+}
+
+const MemoRow = memo(
+  function MemoRow({
+    record,
+    ri,
+    evenBg,
+    oddBg,
+    getLeftPosFn,
+    lastFrozen,
+    renderCellFn,
+    columns,
+    overdue,
+  }: MemoRowProps) {
+    const rb = ri % 2 === 0 ? evenBg : oddBg;
+    return (
+      <tr
+        className={cn(
+          "group border-b border-border/40 last:border-0",
+          rb,
+          overdue && "bg-red-50/50! dark:bg-red-950/10!",
+        )}
+      >
+        {columns.map((col) => {
+          const lp = getLeftPosFn(col.key);
+          const isLF = col.key === lastFrozen;
+          return (
+            <td
+              key={col.key}
+              className={cn(
+                "px-2 py-1.5",
+                col.frozen && cn("sticky z-10 overflow-hidden", rb),
+                isLF &&
+                  "border-r-2 border-r-blue-400/40 dark:border-r-blue-500/40",
+              )}
+              style={{
+                width: col.w,
+                minWidth: col.w,
+                maxWidth: col.frozen ? col.w : undefined,
+                ...(lp !== undefined ? { left: lp } : {}),
+              }}
+            >
+              {renderCellFn(record, col)}
+            </td>
+          );
+        })}
+      </tr>
+    );
+  },
+  (prev, next) =>
+    prev.record === next.record &&
+    prev.ri === next.ri &&
+    prev.overdue === next.overdue,
+);
+
 // ─── Component ──────────────────────────────────────────────────────────────
 
 export function PostHrgClient({
@@ -1965,6 +2041,18 @@ export function PostHrgClient({
   );
 
   const headerBg = "bg-muted/90 backdrop-blur-sm";
+  const evenBg = "bg-white dark:bg-zinc-950";
+  const oddBg = "bg-zinc-50 dark:bg-zinc-900";
+
+  // ── Virtualization — only render visible rows ──
+  const ROW_H = 36;
+  const parentRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count: records.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => ROW_H,
+    overscan: 8,
+  });
 
   // ═══════════════════════════════════════════════════════════════════════════
   // JSX
@@ -2094,7 +2182,16 @@ export function PostHrgClient({
             {!loading && (
               <div className="w-full overflow-hidden rounded-lg border bg-card shadow-sm">
                 <div
-                  ref={scrollRef}
+                  ref={(node) => {
+                    (
+                      parentRef as React.MutableRefObject<HTMLDivElement | null>
+                    ).current = node;
+                    if (typeof scrollRef === "object" && scrollRef !== null) {
+                      (
+                        scrollRef as React.MutableRefObject<HTMLDivElement | null>
+                      ).current = node;
+                    }
+                  }}
                   className="overflow-x-auto overflow-y-auto"
                   style={{ maxHeight: "calc(100vh - 340px)" }}
                   onWheel={(e) => {
@@ -2144,45 +2241,8 @@ export function PostHrgClient({
                         })}
                       </tr>
                     </thead>
-                    <tbody className="divide-y">
-                      {records.map((r) => (
-                        <tr
-                          key={r.id}
-                          className={cn(
-                            "group hover:bg-muted/30 transition-colors",
-                            isOverdueCheck(r) &&
-                              "bg-red-50/50 dark:bg-red-950/10",
-                          )}
-                        >
-                          {COLUMNS.map((col) => {
-                            const leftPos = getLeftPos(col.key);
-                            const isLF = col.key === lastFrozenKey;
-                            return (
-                              <td
-                                key={col.key}
-                                className={cn(
-                                  "px-2 py-1.5",
-                                  col.frozen &&
-                                    "sticky z-10 overflow-hidden bg-card",
-                                  isLF &&
-                                    "border-r-2 border-r-blue-400/40 dark:border-r-blue-500/40",
-                                )}
-                                style={{
-                                  width: col.w,
-                                  minWidth: col.w,
-                                  maxWidth: col.frozen ? col.w : undefined,
-                                  ...(leftPos !== undefined
-                                    ? { left: leftPos }
-                                    : {}),
-                                }}
-                              >
-                                {renderCell(r, col)}
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      ))}
-                      {records.length === 0 && !loading && (
+                    <tbody>
+                      {records.length === 0 ? (
                         <tr>
                           <td
                             colSpan={COLUMNS.length}
@@ -2191,6 +2251,61 @@ export function PostHrgClient({
                             No records found
                           </td>
                         </tr>
+                      ) : (
+                        <>
+                          {/* Top spacer */}
+                          {(virtualizer.getVirtualItems()[0]?.start ?? 0) >
+                            0 && (
+                            <tr>
+                              <td
+                                colSpan={COLUMNS.length}
+                                style={{
+                                  height:
+                                    virtualizer.getVirtualItems()[0]?.start ??
+                                    0,
+                                  padding: 0,
+                                  border: "none",
+                                }}
+                              />
+                            </tr>
+                          )}
+                          {virtualizer.getVirtualItems().map((vRow) => {
+                            const r = records[vRow.index];
+                            return (
+                              <MemoRow
+                                key={r.id}
+                                record={r}
+                                ri={vRow.index}
+                                evenBg={evenBg}
+                                oddBg={oddBg}
+                                getLeftPosFn={getLeftPos}
+                                lastFrozen={lastFrozenKey}
+                                renderCellFn={renderCell}
+                                columns={COLUMNS}
+                                overdue={isOverdueCheck(r)}
+                              />
+                            );
+                          })}
+                          {/* Bottom spacer */}
+                          {(() => {
+                            const items = virtualizer.getVirtualItems();
+                            const lastEnd = items[items.length - 1]?.end ?? 0;
+                            const remaining =
+                              virtualizer.getTotalSize() - lastEnd;
+                            return remaining > 0 ? (
+                              <tr>
+                                <td
+                                  colSpan={COLUMNS.length}
+                                  style={{
+                                    height: remaining,
+                                    padding: 0,
+                                    border: "none",
+                                  }}
+                                />
+                              </tr>
+                            ) : null;
+                          })()}
+                        </>
                       )}
                     </tbody>
                   </table>
