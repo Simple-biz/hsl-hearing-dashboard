@@ -19,6 +19,11 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Reports", href: "/reports", page: "reports" },
   { label: "MR Pivot", href: "/medical-records", page: "medical_records" },
   { label: "MR Reports", href: "/mr-reports", page: "mr_reports" },
+  {
+    label: "Post-HRG Dev",
+    href: "/post-hrg-development",
+    page: "post_hrg_development",
+  }, // ← ADD THIS
   { label: "Settings", href: "/settings", page: "settings" },
   { label: "Admin", href: "/admin", page: "admin" },
 ];
