@@ -89,6 +89,13 @@ export const PAGE_ACCESS: Record<string, UserRole[]> = {
     "hearings_agent",
     "rep",
   ],
+  post_hrg_development: [
+    // ← ADD THIS
+    "system_admin",
+    "admin",
+    "post_hearing_admin",
+    "post_hearing_staff",
+  ],
   admin: ["system_admin", "admin"],
   api_keys: ["system_admin", "admin"],
   settings: [
