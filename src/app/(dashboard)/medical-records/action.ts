@@ -748,7 +748,7 @@ export async function toggleTaskAssigned(
     `UPDATE hearings SET task_assigned = $1, updated_at = NOW() WHERE id = $2`,
     [value, hearingId],
   );
-  await logActivity("five_day_notice_updated", `Task assigned set to ${value} for hearing #${hearingId}`);
+  await logActivity("task_assigned_updated", `Task assigned set to ${value} for hearing #${hearingId}`);
   return { success: true };
 }
 
@@ -1062,7 +1062,14 @@ export async function getActivityLog(params: {
   excludeSystemAdmin?: boolean;
 }): Promise<{ items: ActivityLogItem[]; total: number }> {
   const where: string[] = [
-    `a.action IN ('mr_status_updated','mr_team_assigned','mr_link_updated','decision_status_updated','moa_updated','five_day_notice_updated','credited_updated','bulk_mr_team_assigned','bulk_mr_status_updated','urgent_team_assigned')`,
+    `a.action IN (
+      'mr_status_updated','mr_team_assigned','mr_link_updated',
+      'decision_status_updated','moa_updated','five_day_notice_updated',
+      'credited_updated','bulk_mr_team_assigned','bulk_mr_status_updated',
+      'urgent_team_assigned',
+      'task_assigned_updated',       -- Fix 1: was mislabeled as five_day_notice_updated
+      'post_hrg_deadline_updated'    -- Fix 2: was not logged at all
+    )`
   ];
   const qParams: unknown[] = [];
 
@@ -1208,6 +1215,12 @@ export async function updatePostHrgDeadline(
   await db.query(
     `UPDATE hearings SET post_hrg_deadline = $1, updated_at = NOW() WHERE id = $2`,
     [deadline, hearingId],
+  );
+  await logActivity(
+    "post_hrg_deadline_updated",
+    deadline
+      ? `Post HRG deadline set to "${deadline}" for hearing #${hearingId}`
+      : `Post HRG deadline cleared for hearing #${hearingId}`,
   );
   return { success: true };
 }
