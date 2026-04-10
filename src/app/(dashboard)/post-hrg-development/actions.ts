@@ -33,6 +33,8 @@ export interface PostHrgDevRow {
   updated_at: string;
   created_by: number | null;
   updated_by: number | null;
+  post_hrg_notes: string | null;
+  post_hrg_deadline: string | null;
 }
 
 export interface PostHrgDevStats {
@@ -273,7 +275,9 @@ export async function fetchPostHrgDevPage(
         p.created_at::text, p.updated_at::text,
         p.created_by, p.updated_by,
         h.claimant_link,
-        h.ssn_last_4
+        h.ssn_last_4,
+        h.post_hrg_notes,
+        h.post_hrg_deadline::text AS post_hrg_deadline
       FROM post_hrg_development p
       LEFT JOIN hearings h ON h.id = p.hearing_id
       ${where}
@@ -306,7 +310,9 @@ export async function fetchPostHrgDevRecords(): Promise<PostHrgDevRow[]> {
       p.created_at::text, p.updated_at::text,
       p.created_by, p.updated_by,
       h.claimant_link,
-      h.ssn_last_4
+      h.ssn_last_4,
+      h.post_hrg_notes,
+      h.post_hrg_deadline::text AS post_hrg_deadline
     FROM post_hrg_development p
     LEFT JOIN hearings h ON h.id = p.hearing_id
     ORDER BY
