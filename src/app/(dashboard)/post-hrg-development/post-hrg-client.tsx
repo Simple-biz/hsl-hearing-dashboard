@@ -2080,7 +2080,7 @@ export function PostHrgClient({
             >
               📋 Dashboard
             </button>
-            {isAdmin && (
+            {userRole === "system_admin" && (
               <button
                 className={cn(
                   "px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors",
