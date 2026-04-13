@@ -804,12 +804,14 @@ function ActionMenu({
                   </>
                 )}
               </button>
-              <button
-                onClick={menuAction(() => {})}
-                className="flex w-full items-center px-3 py-1.5 text-xs hover:bg-muted/50"
-              >
-                📝 Activity Log
-              </button>
+              {userRole !== "rep" && (
+                <button
+                  onClick={menuAction(() => {})}
+                  className="flex w-full items-center px-3 py-1.5 text-xs hover:bg-muted/50"
+                >
+                  📝 Activity Log
+                </button>
+              )}
               {isActionAdmin && (
                 <>
                   <div className="my-1 border-t" />
@@ -1666,6 +1668,66 @@ function PostHrgCell({
   );
 }
 
+function RepPreviewBar({
+  representatives,
+  previewRepId,
+  onPreview,
+  onExit,
+}: {
+  representatives: RepRow[];
+  previewRepId: number | null;
+  onPreview: (repId: number, repEmail: string) => void;
+  onExit: () => void;
+}) {
+  const [selected, setSelected] = useState<string>("");
+
+  return (
+    <div className="flex items-center gap-2 rounded-lg border bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800 px-3 py-2">
+      <span className="text-xs font-semibold text-amber-700 dark:text-amber-400 shrink-0">
+        👁 Preview as Rep:
+      </span>
+      <select
+        className="h-7 rounded border bg-background px-2 text-xs flex-1 max-w-48"
+        value={selected}
+        onChange={(e) => setSelected(e.target.value)}
+      >
+        <option value="">Select a rep...</option>
+        {representatives
+          .filter((r) => r.is_active && r.email)
+          .map((r) => (
+            <option key={r.id} value={r.id + "|" + r.email}>
+              {r.name}
+            </option>
+          ))}
+      </select>
+      <Button
+        size="sm"
+        className="h-7 text-xs bg-amber-600 hover:bg-amber-700 text-white"
+        disabled={!selected}
+        onClick={() => {
+          const [id, email] = selected.split("|");
+          onPreview(Number(id), email);
+        }}
+      >
+        View as Rep
+      </Button>
+      {previewRepId && (
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 text-xs border-amber-400 text-amber-700 hover:bg-amber-100"
+          onClick={() => {
+            setSelected("");
+            onExit();
+          }}
+        >
+          ✕ Exit Preview
+        </Button>
+      )}
+    </div>
+  );
+}
+
 // ══════════════════════════════════════════════════════════════
 // STAT CARDS — gradient, matching original
 // ══════════════════════════════════════════════════════════════
@@ -2243,7 +2305,7 @@ function MoaCell({
 
   return (
     <div className="flex items-center gap-1 min-w-0">
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0">
         <InlineDropdown
           value={hearing.manner_of_appearance}
           options={moaOptions}
@@ -2965,6 +3027,13 @@ export function DashboardClient({
   >([]);
   const [archivedCount, setArchivedCount] = useState(0);
   const [archiveLoading, setArchiveLoading] = useState(false);
+
+  const [previewRepId, setPreviewRepId] = useState<number | null>(null);
+  const [previewRepEmail, setPreviewRepEmail] = useState<string | null>(null);
+
+  const effectiveRole: UserRole = previewRepId ? "rep" : userRole;
+  const effectiveEmail: string = previewRepEmail ?? userEmail;
+
   // Selection is 100% DOM-based — no React state at all for checkbox clicks
   // The bulk action bar reads from the ref only when the user clicks an action
   const selectedIdsRef = useRef<Set<number>>(new Set());
@@ -2993,6 +3062,8 @@ export function DashboardClient({
       ps: number,
       sk: string,
       sd: "asc" | "desc",
+      roleOverride?: string,
+      emailOverride?: string,
     ) => {
       setLoading(true);
       try {
@@ -3012,8 +3083,8 @@ export function DashboardClient({
           datePreset: f.datePreset || undefined,
           sortKey: sk || undefined,
           sortDir: sk ? sd : undefined,
-          userRole,
-          userEmail,
+          userRole: roleOverride ?? effectiveRole,
+          userEmail: emailOverride ?? effectiveEmail,
         });
         setHearings(res.hearings);
         setTotalFiltered(res.totalFiltered);
@@ -3023,7 +3094,7 @@ export function DashboardClient({
       }
       setLoading(false);
     },
-    [userRole, userEmail, refreshStats],
+    [refreshStats, effectiveRole, effectiveEmail],
   );
 
   // Debounced filter change
@@ -3294,19 +3365,13 @@ export function DashboardClient({
   );
 
   // Granular permissions matching PHP dashboard
-  const showCheckbox = canSeeCheckbox(userRole);
+
   const showAdminButtons = canSeeAdminButtons(userRole);
   const showActivityLogBtn = canSeeActivityLog(userRole);
   const showRepStatsBtn = canSeeRepStats(userRole);
   const canCsvCompare = canSeeCsvCompare(userRole);
-  const showRepFilter = canSeeRepFilter(userRole);
-  const showNextUnassigned = canSeeNextUnassigned(userRole);
   const showExport = canExport(userRole);
   const hasManageAccess = canManage(userRole);
-
-  // const handleRefresh = () => {
-  //   fetchPage(filters, page, pageSize, sortKey, sortDir);
-  // };
 
   // Scroll sync for sticky horizontal scrollbar
   const tableScrollRef = useRef<HTMLDivElement>(null);
@@ -3567,14 +3632,52 @@ export function DashboardClient({
           )}
         </DashboardNav>
 
-        <StatsRow stats={stats} userRole={userRole} />
+        <StatsRow stats={stats} userRole={effectiveRole} />
+        {(userRole === "admin" || userRole === "system_admin") && (
+          <RepPreviewBar
+            representatives={representatives}
+            previewRepId={previewRepId}
+            onPreview={(id, email) => {
+              setPreviewRepId(id);
+              setPreviewRepEmail(email);
+              fetchPage(EMPTY_FILTERS, 1, pageSize, "", "asc", "rep", email);
+              setFilters(EMPTY_FILTERS);
+              setPage(1);
+            }}
+            onExit={() => {
+              setPreviewRepId(null);
+              setPreviewRepEmail(null);
+              fetchPage(
+                filters,
+                1,
+                pageSize,
+                sortKey,
+                sortDir,
+                userRole,
+                userEmail,
+              );
+            }}
+          />
+        )}
+
+        {previewRepId && (
+          <div className="flex items-center gap-2 rounded-lg bg-amber-100 dark:bg-amber-900/30 px-4 py-2 text-xs font-medium text-amber-800 dark:text-amber-300">
+            <span>👁 Previewing as:</span>
+            <span className="font-bold">
+              {representatives.find((r) => r.id === previewRepId)?.name}
+            </span>
+            <span className="text-amber-600 dark:text-amber-500">
+              — this is exactly what they see
+            </span>
+          </div>
+        )}
         <FilterBar
           filters={filters}
           onFilterChange={handleFilterChange}
           repCounts={repCounts}
           nextUnassigned={nextUnassigned}
-          showRepFilter={showRepFilter}
-          showNextUnassigned={showNextUnassigned}
+          showRepFilter={canSeeRepFilter(effectiveRole)}
+          showNextUnassigned={canSeeNextUnassigned(effectiveRole)}
         />
 
         {/* Pagination bar */}
@@ -3740,7 +3843,7 @@ export function DashboardClient({
           )}
           <HearingTable
             hearings={hearings}
-            userRole={userRole}
+            userRole={effectiveRole}
             onUpdate={handleUpdate}
             onDelete={handleDelete}
             sortKey={sortKey}
@@ -3753,7 +3856,7 @@ export function DashboardClient({
             representatives={representatives}
             mrTeams={mrTeams}
             repDocsAssignees={repDocsAssignees}
-            showCheckbox={showCheckbox}
+            showCheckbox={canSeeCheckbox(effectiveRole)}
             onToggleAll={toggleAll}
             scrollRef={tableScrollRef}
           />
