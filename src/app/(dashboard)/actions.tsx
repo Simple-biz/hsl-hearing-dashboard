@@ -22,6 +22,7 @@ export interface HearingRow {
   medical_record_status: string | null;
   medical_record_link: string | null;
   claimant_link: string | null;
+  chronicle_link: string | null;
   assignment_status: string | null;
   task_assigned: boolean;
   rep_docs_complete: boolean;
@@ -554,6 +555,7 @@ export async function updateHearing(
     "download_type",
     // Link fields
     "claimant_link",
+    "chronicle_link",
     "medical_record_link",
   ];
 

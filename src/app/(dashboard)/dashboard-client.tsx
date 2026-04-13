@@ -307,6 +307,7 @@ const FIELD_LABELS: Record<string, string> = {
   post_hrg_dev_status: "Post Hrg Dev Status",
   post_hrg_requirements: "Post HRG Requirements",
   claimant: "Claimant",
+  chronicle_link: "Chronicle Link",
   hearing_date: "Hearing Date",
   hearing_time: "Hearing Time",
   alj: "ALJ",
@@ -958,7 +959,79 @@ function ActionMenu({
   );
 }
 
-// ── Claimant cell — link if claimant_link exists + edit button ──
+// ── Reusable link edit modal ──
+type ClaimantEditField = "claimant_link" | "chronicle_link";
+
+function LinkEditModal({
+  title,
+  currentUrl,
+  onSave,
+  onRemove,
+  onClose,
+}: {
+  title: string;
+  currentUrl: string;
+  onSave: (url: string) => void;
+  onRemove: () => void;
+  onClose: () => void;
+}) {
+  const [url, setUrl] = useState(currentUrl);
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-lg border bg-card p-4 shadow-lg space-y-3"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-sm font-semibold">{title}</h3>
+        <input
+          type="url"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder="https://..."
+          className="w-full rounded-md border bg-transparent px-3 py-2 text-xs focus:border-ring focus:outline-none"
+          autoFocus
+          onKeyDown={(e) => {
+            if (e.key === "Enter") onSave(url.trim());
+            if (e.key === "Escape") onClose();
+          }}
+        />
+        <div className="flex justify-end gap-2">
+          {currentUrl && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs text-destructive"
+              onClick={onRemove}
+            >
+              Remove Link
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-xs"
+            onClick={onClose}
+          >
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            className="text-xs"
+            onClick={() => onSave(url.trim())}
+          >
+            Save
+          </Button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// ── Claimant cell ──
 function ClaimantCell({
   hearing,
   editable,
@@ -968,33 +1041,59 @@ function ClaimantCell({
   editable?: boolean;
   onSave?: (id: number, field: string, value: UpdateValue) => void;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [url, setUrl] = useState(hearing.claimant_link || "");
-  const handleSave = () => {
-    if (onSave) onSave(hearing.id, "claimant_link", url.trim() || null);
-    setEditing(false);
+  const [editingField, setEditingField] = useState<ClaimantEditField | null>(
+    null,
+  );
+
+  const chronicleLink: string | null = hearing.chronicle_link ?? null;
+
+  let currentEditUrl: string = "";
+  if (editingField === "claimant_link") {
+    currentEditUrl = hearing.claimant_link ?? "";
+  } else if (editingField === "chronicle_link") {
+    currentEditUrl = chronicleLink ?? "";
+  }
+
+  const handleSave = (url: string) => {
+    if (onSave && editingField) {
+      onSave(hearing.id, editingField, url || null);
+    }
+    setEditingField(null);
   };
+
+  const handleRemove = () => {
+    if (onSave && editingField) {
+      onSave(hearing.id, editingField, null);
+    }
+    setEditingField(null);
+  };
+
+  const showChronicleRow: boolean = !!(editable || chronicleLink);
+
   return (
     <div className="min-w-0 pr-1">
       <div className="flex items-center gap-1 min-w-0">
         {hearing.claimant_link ? (
-          <a
-            href={hearing.claimant_link}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="truncate text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+          <button
+            type="button"
+            onClick={() =>
+              window.open(
+                hearing.claimant_link!,
+                "_blank",
+                "noopener,noreferrer",
+              )
+            }
+            className="truncate text-xs font-medium text-blue-600 hover:underline dark:text-blue-400 text-left"
           >
             {hearing.claimant}
-          </a>
+          </button>
         ) : (
           <p className="truncate text-xs font-medium">{hearing.claimant}</p>
         )}
         {editable && (
           <button
-            onClick={() => {
-              setUrl(hearing.claimant_link || "");
-              setEditing(true);
-            }}
+            type="button"
+            onClick={() => setEditingField("claimant_link")}
             className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-blue-600 hover:bg-muted"
             title="Edit claimant link"
           >
@@ -1006,64 +1105,59 @@ function ClaimantCell({
           </button>
         )}
       </div>
-      <p className="truncate text-[10px] text-muted-foreground">
-        {hearing.claim_type}
-      </p>
-      {editing &&
-        createPortal(
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-            onClick={() => setEditing(false)}
-          >
-            <div
-              className="w-full max-w-md rounded-lg border bg-card p-4 shadow-lg space-y-3"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <h3 className="text-sm font-semibold">
-                Claimant Link — {hearing.claimant}
-              </h3>
-              <input
-                type="url"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://..."
-                className="w-full rounded-md border bg-transparent px-3 py-2 text-xs focus:border-ring focus:outline-none"
-                autoFocus
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") handleSave();
-                  if (e.key === "Escape") setEditing(false);
-                }}
-              />
-              <div className="flex justify-end gap-2">
-                {hearing.claimant_link && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-xs text-destructive"
-                    onClick={() => {
-                      if (onSave) onSave(hearing.id, "claimant_link", null);
-                      setEditing(false);
-                    }}
-                  >
-                    Remove Link
-                  </Button>
+
+      <div className="flex items-center gap-1">
+        <p className="truncate text-[10px] text-muted-foreground">
+          {hearing.claim_type}
+        </p>
+        {showChronicleRow && (
+          <>
+            {chronicleLink && (
+              <button
+                type="button"
+                onClick={() =>
+                  window.open(chronicleLink, "_blank", "noopener,noreferrer")
+                }
+                className="text-[10px] font-medium text-violet-600 hover:underline dark:text-violet-400"
+              >
+                Chronicle
+              </button>
+            )}
+            {editable && (
+              <button
+                type="button"
+                onClick={() => setEditingField("chronicle_link")}
+                className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-violet-600 hover:bg-muted"
+                title={
+                  chronicleLink ? "Edit Chronicle link" : "Add Chronicle link"
+                }
+              >
+                {chronicleLink ? (
+                  <Pencil className="h-2.5 w-2.5" />
+                ) : (
+                  <span className="text-[9px] font-semibold leading-none text-muted-foreground/60">
+                    +Ch
+                  </span>
                 )}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="text-xs"
-                  onClick={() => setEditing(false)}
-                >
-                  Cancel
-                </Button>
-                <Button size="sm" className="text-xs" onClick={handleSave}>
-                  Save
-                </Button>
-              </div>
-            </div>
-          </div>,
-          document.body,
+              </button>
+            )}
+          </>
         )}
+      </div>
+
+      {editingField && (
+        <LinkEditModal
+          title={
+            editingField === "claimant_link"
+              ? "Claimant Link \u2014 " + hearing.claimant
+              : "Chronicle Link \u2014 " + hearing.claimant
+          }
+          currentUrl={currentEditUrl}
+          onSave={handleSave}
+          onRemove={handleRemove}
+          onClose={() => setEditingField(null)}
+        />
+      )}
     </div>
   );
 }
