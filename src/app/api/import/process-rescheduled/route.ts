@@ -76,32 +76,6 @@ function convertToEST(time: string | null, tz: string): string | null {
   return `${String(adj).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
-const UPDATABLE = new Set([
-  "claimant",
-  "ssn_last_4",
-  "claim_type",
-  "hearing_date",
-  "hearing_time",
-  "time_zone",
-  "claimant_location",
-  "representative_location",
-  "city",
-  "state",
-  "alj",
-  "medical_expert",
-  "vocational_expert",
-  "status_date",
-  "entered_hearing_level_date",
-  "download_type",
-  "manner_of_appearance",
-  "hearing_decision_status",
-  "medical_record_link",
-  "claimant_link",
-  "assigned_rep_id",
-  "assignment_status",
-  "converted_time_est",
-]);
-
 // ─── POST /api/import/process-rescheduled ───────────────────────────────────
 
 export async function POST(req: NextRequest) {
@@ -113,7 +87,7 @@ export async function POST(req: NextRequest) {
     );
 
   const body = await req.json();
-  const { records, mapping, hyperlinks = {}, preserveExisting = false } = body;
+  const { records, mapping } = body;
 
   if (!records || records.length === 0) {
     return NextResponse.json({
@@ -122,38 +96,7 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // Pre-load lookups
-  const [repsRes, teamsRes] = await Promise.all([
-    db.query("SELECT id, name FROM representatives ORDER BY name"),
-    db.query("SELECT id, team_name FROM mr_teams ORDER BY team_name"),
-  ]);
-  const repLookup: Record<string, number> = {};
-  for (const r of repsRes.rows) repLookup[r.name.toLowerCase().trim()] = r.id;
-  const teamLookup: Record<string, number> = {};
-  for (const t of teamsRes.rows)
-    teamLookup[t.team_name.toLowerCase().trim()] = t.id;
-
-  // Fields that are "assignment" fields — preserved when preserveExisting is on
-  // Note: claimant and hearing_date are NEVER protected — they're the rescheduled data
-  const PROTECTED_FIELDS = new Set([
-    "assigned_rep_id",
-    "assignment_status",
-    "mr_team_id",
-    "medical_record_status",
-    "medical_record_link",
-    "rfc_status",
-    "brief_assigned_to",
-    "hearing_decision_status",
-    "rep_docs_assigned_to",
-    "task_assigned",
-    "rep_docs_complete",
-    "fee_agreement_complete",
-    "phi_sheet_complete",
-    "five_day_notice",
-    "post_hrg_review",
-    "post_hrg_deadline",
-    "post_hrg_notes",
-  ]);
+  const userName = session.user.name || session.user.email || "Unknown";
 
   let updated = 0;
   const errors: string[] = [];
@@ -163,11 +106,15 @@ export async function POST(req: NextRequest) {
     if (!originalId) continue;
 
     try {
-      // Get original record — full row when preserveExisting, minimal otherwise
+      // Fetch original record with rep name and team name
       const { rows: origRows } = await db.query(
-        preserveExisting
-          ? "SELECT * FROM hearings WHERE id = $1"
-          : "SELECT claimant, hearing_date::text, assigned_rep_id FROM hearings WHERE id = $1",
+        `SELECT h.*, 
+                r.name AS rep_name,
+                t.team_name AS mr_team_name
+         FROM hearings h 
+         LEFT JOIN representatives r ON r.id = h.assigned_rep_id 
+         LEFT JOIN mr_teams t ON t.id = h.mr_team_id
+         WHERE h.id = $1`,
         [originalId],
       );
       if (origRows.length === 0) {
@@ -176,157 +123,156 @@ export async function POST(req: NextRequest) {
       }
       const original = origRows[0];
 
-      // Build update data from sheet row using mapping
+      // ── Extract new values from the sheet row ──
       const rowData = rec.data as string[];
-      const updateData: Record<string, unknown> = {};
 
-      for (const [dbField, colIdx] of Object.entries(mapping) as [
-        string,
-        number,
-      ][]) {
-        if (colIdx === null || colIdx === undefined || colIdx < 0) continue;
-        const rawValue = String(rowData[colIdx] ?? "").trim();
-        if (!rawValue) continue;
+      const newClaimant = rec.claimant || original.claimant;
 
-        // Handle representative lookup
-        if (dbField === "representative") {
-          const repName = rawValue.toLowerCase().trim();
-          if (
-            repName === "not assigned" ||
-            repName === "n/a" ||
-            repName === "none"
-          ) {
-            updateData.assigned_rep_id = null;
-            updateData.assignment_status = null;
-          } else if (
-            repName === "wd - never assigned" ||
-            repName === "never assigned"
-          ) {
-            updateData.assigned_rep_id = null;
-            updateData.assignment_status = "wd_never_assigned";
-          } else if (
-            repName === "withdrawal" ||
-            repName === "wd" ||
-            repName === "withdrawn"
-          ) {
-            updateData.assigned_rep_id = null;
-            updateData.assignment_status = "withdrawal";
-          } else if (repLookup[repName]) {
-            updateData.assigned_rep_id = repLookup[repName];
-            updateData.assignment_status = null;
-          }
-          continue;
-        }
-
-        if (dbField === "medical_record_source") {
-          const colLetter = String.fromCharCode(65 + colIdx);
-          const cellRef = `${colLetter}${rec.rowIndex + 2}`;
-          if (hyperlinks[cellRef])
-            updateData.medical_record_link = hyperlinks[cellRef];
-          continue;
-        }
-
-        if (dbField === "mr_team_id" && !/^\d+$/.test(rawValue)) {
-          const tid = teamLookup[rawValue.toLowerCase().trim()];
-          if (tid) updateData.mr_team_id = tid;
-          continue;
-        }
-
-        if (!UPDATABLE.has(dbField)) continue;
-
-        // Parse special field types
-        if (
-          [
-            "hearing_date",
-            "status_date",
-            "entered_hearing_level_date",
-            "post_hrg_deadline",
-          ].includes(dbField)
-        ) {
-          const parsed = parseDate(rawValue);
-          if (parsed) updateData[dbField] = parsed;
-        } else if (dbField === "hearing_time") {
-          const parsed = parseTime(rawValue);
-          if (parsed) updateData[dbField] = parsed;
-        } else if (dbField === "ssn_last_4") {
-          const formatted = formatSSN(rawValue);
-          if (formatted) updateData[dbField] = formatted;
-        } else {
-          updateData[dbField] = rawValue;
+      // Hearing Date
+      let newHearingDate = original.hearing_date;
+      if (mapping.hearing_date !== undefined && mapping.hearing_date !== null) {
+        const raw = String(rowData[mapping.hearing_date] ?? "").trim();
+        if (raw) {
+          const parsed = parseDate(raw);
+          if (parsed) newHearingDate = parsed;
         }
       }
 
-      // Apply cross-sheet lookup overrides
-      if (rec.ssn)
-        updateData.ssn_last_4 = formatSSN(rec.ssn) ?? updateData.ssn_last_4;
-      if (rec.claimantLocation)
-        updateData.claimant_location = rec.claimantLocation;
-      if (rec.repLocation) updateData.representative_location = rec.repLocation;
-      if (rec.downloadType) updateData.download_type = rec.downloadType;
-      if (rec.statusDate) {
-        const d = parseDate(rec.statusDate);
-        if (d) updateData.status_date = d;
+      // Hearing Time
+      let newHearingTime: string | null = null;
+      if (mapping.hearing_time !== undefined && mapping.hearing_time !== null) {
+        const raw = String(rowData[mapping.hearing_time] ?? "").trim();
+        if (raw) newHearingTime = parseTime(raw);
       }
 
-      // ALWAYS set the claimant name to the rescheduled version
-      // e.g. "John Doe (Rescheduled)" or "John Doe (Rescheduled 2)"
-      updateData.claimant = rec.claimant;
-
-      // Compute converted_time_est if time/timezone updated
-      if (updateData.hearing_time) {
-        // Get timezone from update or existing record
-        let tz = updateData.time_zone as string | undefined;
-        if (!tz) {
-          const { rows: tzRows } = await db.query(
-            "SELECT time_zone FROM hearings WHERE id = $1",
-            [originalId],
-          );
-          tz = tzRows[0]?.time_zone;
-        }
-        if (tz) {
-          updateData.converted_time_est = convertToEST(
-            updateData.hearing_time as string,
-            tz,
-          );
-        }
+      // Time Zone
+      let newTimeZone: string | null = null;
+      if (mapping.time_zone !== undefined && mapping.time_zone !== null) {
+        const raw = String(rowData[mapping.time_zone] ?? "").trim();
+        if (raw) newTimeZone = raw;
       }
 
-      // Build UPDATE
-      const keys = Object.keys(updateData).filter((k) => {
-        if (updateData[k] === undefined) return false;
-        // If preserveExisting, skip protected fields that already have values in DB
-        // But ALWAYS allow claimant and hearing_date (these are the rescheduled data)
-        if (preserveExisting && PROTECTED_FIELDS.has(k)) {
-          const existing = original[k];
-          if (
-            existing !== null &&
-            existing !== undefined &&
-            existing !== "" &&
-            existing !== false
-          )
-            return false;
-        }
-        return true;
-      });
-      if (keys.length === 0) {
-        errors.push(`Row ${rec.row}: No data to update`);
-        continue;
+      // ALJ
+      let newAlj: string | null = null;
+      if (mapping.alj !== undefined && mapping.alj !== null) {
+        const raw = String(rowData[mapping.alj] ?? "").trim();
+        if (raw) newAlj = raw;
       }
 
-      const setClauses = keys.map((k, i) => `${k} = $${i + 1}`);
-      const values = keys.map((k) => updateData[k]);
-      values.push(originalId);
+      // SSN (keep existing or update)
+      let newSsn = original.ssn_last_4;
+      if (mapping.ssn_last_4 !== undefined && mapping.ssn_last_4 !== null) {
+        const raw = String(rowData[mapping.ssn_last_4] ?? "").trim();
+        if (raw) {
+          const formatted = formatSSN(raw);
+          if (formatted) newSsn = formatted;
+        }
+      }
+      if (rec.ssn) {
+        const formatted = formatSSN(rec.ssn);
+        if (formatted) newSsn = formatted;
+      }
 
+      // Claim Type (keep existing or update)
+      let newClaimType = original.claim_type;
+      if (mapping.claim_type !== undefined && mapping.claim_type !== null) {
+        const raw = String(rowData[mapping.claim_type] ?? "").trim();
+        if (raw) newClaimType = raw;
+      }
+
+      // Compute converted_time_est
+      let newConvertedTimeEst: string | null = null;
+      if (newHearingTime) {
+        const tz = newTimeZone || original.time_zone || "";
+        newConvertedTimeEst = convertToEST(newHearingTime, tz);
+      }
+
+      // ── Insert into rescheduled_history before clearing ──
       await db.query(
-        `UPDATE hearings SET ${setClauses.join(", ")} WHERE id = $${values.length}`,
-        values,
+        `INSERT INTO rescheduled_history 
+          (hearing_id, original_claimant, original_hearing_date, new_claimant, new_hearing_date,
+           previous_rep_id, previous_rep_name, previous_decision, previous_mr_team, previous_mr_team_id,
+           previous_brief, previous_mr_status, previous_alj, previous_assignment_status, rescheduled_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+        [
+          originalId,
+          original.claimant,
+          original.hearing_date,
+          newClaimant,
+          newHearingDate,
+          original.assigned_rep_id || null,
+          original.rep_name || null,
+          original.hearing_decision_status || null,
+          original.mr_team_name || null,
+          original.mr_team_id || null,
+          original.brief_assigned_to || null,
+          original.medical_record_status || null,
+          original.alj || null,
+          original.assignment_status || null,
+          userName,
+        ],
+      );
+
+      // ── Update the hearing: keep specific fields, clear everything else ──
+      await db.query(
+        `UPDATE hearings SET
+          -- Kept / updated fields
+          claimant = $1,
+          ssn_last_4 = $2,
+          claim_type = $3,
+          hearing_date = $4,
+          hearing_time = $5,
+          time_zone = $6,
+          converted_time_est = $7,
+          alj = $8,
+          -- Clear all other fields
+          city = NULL,
+          state = NULL,
+          claimant_location = NULL,
+          representative_location = NULL,
+          medical_expert = NULL,
+          vocational_expert = NULL,
+          status_date = NULL,
+          entered_hearing_level_date = NULL,
+          download_type = NULL,
+          manner_of_appearance = NULL,
+          hearing_decision_status = NULL,
+          assigned_rep_id = NULL,
+          assignment_status = NULL,
+          mr_team_id = NULL,
+          medical_record_status = NULL,
+          medical_record_link = NULL,
+          brief_assigned_to = NULL,
+          rep_docs_assigned_to = NULL,
+          rfc_status = NULL,
+          task_assigned = false,
+          rep_docs_complete = false,
+          fee_agreement_complete = false,
+          five_day_notice = false,
+          phi_sheet_complete = false,
+          post_hrg_review = false,
+          post_hrg_notes = NULL,
+          post_hrg_deadline = NULL,
+          post_hrg_dev_status = NULL,
+          post_hrg_requirements = NULL
+        WHERE id = $9`,
+        [
+          newClaimant,
+          newSsn,
+          newClaimType,
+          newHearingDate,
+          newHearingTime || original.hearing_time,
+          newTimeZone || original.time_zone,
+          newConvertedTimeEst || original.converted_time_est,
+          newAlj || original.alj,
+          originalId,
+        ],
       );
       updated++;
 
-      const newDate = (updateData.hearing_date as string) || "same date";
       await logAction(
         "hearing_rescheduled",
-        `Updated hearing #${originalId} (${original.claimant} - ${original.hearing_date}) → rescheduled to ${newDate} as "${rec.claimant}"`,
+        `Rescheduled hearing #${originalId}: "${original.claimant}" (${original.hearing_date}) → "${newClaimant}" (${newHearingDate})${original.rep_name ? ` | Prev rep: ${original.rep_name}` : ""}`,
       );
     } catch (e) {
       errors.push(`Row ${rec.row}: ${(e as Error).message}`);
