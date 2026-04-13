@@ -456,7 +456,7 @@ export async function fetchHearingsPage(
         h.hearing_date::text, h.hearing_time::text, h.time_zone, h.converted_time_est::text,
         h.city, h.state, h.alj, h.manner_of_appearance, h.hearing_decision_status,
         h.assigned_rep_id, h.mr_team_id, h.brief_assigned_to, h.medical_record_status,
-        h.medical_record_link, h.claimant_link,
+        h.medical_record_link, h.claimant_link, h.chronicle_link, h.ovh_link,
         NULLIF(h.assignment_status::text, '') AS assignment_status,
         h.task_assigned, h.rep_docs_complete, h.rep_docs_assigned_to,
         h.fee_agreement_complete, h.five_day_notice, h.rfc_status, h.phi_sheet_complete,

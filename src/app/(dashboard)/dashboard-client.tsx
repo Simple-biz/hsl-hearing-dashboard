@@ -2231,12 +2231,13 @@ function MoaCell({
   editable,
   onUpdate,
   moaOptions,
+  isRep,
 }: {
   hearing: HearingRow;
   editable: boolean;
   onUpdate: (id: number, field: string, value: UpdateValue) => void;
   moaOptions: { value: string; label: string }[];
-  canEditOvhLink: boolean;
+  isRep: boolean;
 }) {
   const isOvh = hearing.manner_of_appearance === "OVH";
 
@@ -2252,27 +2253,34 @@ function MoaCell({
         />
       </div>
       {isOvh && (
-        <button
-          type="button"
-          onClick={() => {
-            if (hearing.ovh_link) {
-              window.open(hearing.ovh_link, "_blank", "noopener,noreferrer");
-            } else {
-              const url = prompt("Enter OVH link:", "");
-              if (url && url.trim()) {
-                onUpdate(hearing.id, "ovh_link", url.trim());
-              }
-            }
-          }}
-          className="shrink-0 rounded p-0.5 hover:bg-muted"
-          title={hearing.ovh_link ? "Open OVH link" : "Add OVH link"}
-        >
+        <>
           {hearing.ovh_link ? (
-            <ExternalLink className="h-3 w-3 text-cyan-600" />
-          ) : (
-            <Link2 className="h-3 w-3 text-muted-foreground" />
-          )}
-        </button>
+            <button
+              type="button"
+              onClick={() =>
+                window.open(hearing.ovh_link!, "_blank", "noopener,noreferrer")
+              }
+              className="shrink-0 rounded p-0.5 hover:bg-muted"
+              title="Open OVH link"
+            >
+              <ExternalLink className="h-3 w-3 text-cyan-600" />
+            </button>
+          ) : !isRep ? (
+            <button
+              type="button"
+              onClick={() => {
+                const url = prompt("Enter OVH link:", "");
+                if (url && url.trim()) {
+                  onUpdate(hearing.id, "ovh_link", url.trim());
+                }
+              }}
+              className="shrink-0 rounded p-0.5 hover:bg-muted"
+              title="Add OVH link"
+            >
+              <Link2 className="h-3 w-3 text-muted-foreground" />
+            </button>
+          ) : null}
+        </>
       )}
     </div>
   );
@@ -2507,7 +2515,7 @@ const HearingTable = memo(function HearingTable({
             editable={editable}
             onUpdate={onUpdate}
             moaOptions={moaFallback}
-            canEditOvhLink={canEditField(userRole, "ovh_link")}
+            isRep={userRole === "rep"}
           />
         );
       case "rep_docs_assigned_to":
