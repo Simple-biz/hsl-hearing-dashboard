@@ -23,6 +23,7 @@ export interface HearingRow {
   medical_record_link: string | null;
   claimant_link: string | null;
   chronicle_link: string | null;
+  ovh_link: string | null;
   assignment_status: string | null;
   task_assigned: boolean;
   rep_docs_complete: boolean;
@@ -557,6 +558,7 @@ export async function updateHearing(
     "claimant_link",
     "chronicle_link",
     "medical_record_link",
+    "ovh_link",
   ];
 
   if (!ALLOWED_FIELDS.includes(field)) {

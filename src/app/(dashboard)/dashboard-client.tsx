@@ -2033,7 +2033,7 @@ const ALL_COLUMNS: ColumnDef[] = [
   { key: "alj", label: "ALJ", w: 150, sortable: true },
   { key: "location", label: "Location", w: 120, sortable: true },
   { key: "hearing_decision_status", label: "Decision", w: 125, sortable: true },
-  { key: "manner_of_appearance", label: "MOA", w: 75 },
+  { key: "manner_of_appearance", label: "MOA", w: 95 },
   { key: "rep_docs_assigned_to", label: "Docs Assigned", w: 110 },
   { key: "rep_docs_complete", label: "Rep Docs", w: 65 },
   { key: "fee_agreement_complete", label: "Fee Agmt", w: 65 },
@@ -2225,6 +2225,58 @@ const MemoRow = memo(
   },
   (prev, next) => prev.hearing === next.hearing && prev.ri === next.ri,
 );
+
+function MoaCell({
+  hearing,
+  editable,
+  onUpdate,
+  moaOptions,
+}: {
+  hearing: HearingRow;
+  editable: boolean;
+  onUpdate: (id: number, field: string, value: UpdateValue) => void;
+  moaOptions: { value: string; label: string }[];
+  canEditOvhLink: boolean;
+}) {
+  const isOvh = hearing.manner_of_appearance === "OVH";
+
+  return (
+    <div className="flex items-center gap-1 min-w-0">
+      <div className="min-w-0 flex-1">
+        <InlineDropdown
+          value={hearing.manner_of_appearance}
+          options={moaOptions}
+          onSave={(v) => onUpdate(hearing.id, "manner_of_appearance", v)}
+          editable={editable}
+          colorMap={MOA_COLORS}
+        />
+      </div>
+      {isOvh && (
+        <button
+          type="button"
+          onClick={() => {
+            if (hearing.ovh_link) {
+              window.open(hearing.ovh_link, "_blank", "noopener,noreferrer");
+            } else {
+              const url = prompt("Enter OVH link:", "");
+              if (url && url.trim()) {
+                onUpdate(hearing.id, "ovh_link", url.trim());
+              }
+            }
+          }}
+          className="shrink-0 rounded p-0.5 hover:bg-muted"
+          title={hearing.ovh_link ? "Open OVH link" : "Add OVH link"}
+        >
+          {hearing.ovh_link ? (
+            <ExternalLink className="h-3 w-3 text-cyan-600" />
+          ) : (
+            <Link2 className="h-3 w-3 text-muted-foreground" />
+          )}
+        </button>
+      )}
+    </div>
+  );
+}
 
 const HearingTable = memo(function HearingTable({
   hearings,
@@ -2450,12 +2502,12 @@ const HearingTable = memo(function HearingTable({
         );
       case "manner_of_appearance":
         return (
-          <InlineDropdown
-            value={hearing.manner_of_appearance}
-            options={moaFallback}
-            onSave={(v) => onUpdate(hearing.id, "manner_of_appearance", v)}
+          <MoaCell
+            hearing={hearing}
             editable={editable}
-            colorMap={MOA_COLORS}
+            onUpdate={onUpdate}
+            moaOptions={moaFallback}
+            canEditOvhLink={canEditField(userRole, "ovh_link")}
           />
         );
       case "rep_docs_assigned_to":
