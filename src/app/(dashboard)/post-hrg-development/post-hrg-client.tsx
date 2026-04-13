@@ -141,7 +141,6 @@ const IMPORT_FIELD_MAP: Record<string, string[]> = {
   ],
   status: ["status"],
   deadline: ["deadline", "due date"],
-  new_due_date: ["new due date", "new_due_date", "new deadline"],
   remarks: ["remarks", "notes", "comment", "comments"],
 };
 
@@ -278,89 +277,89 @@ function InlineDate({
 
 // ─── Inline Editable Text ───────────────────────────────────────────────────
 
-function InlineEditableText({
-  value,
-  onSave,
-  placeholder = "—",
-  maxWidth,
-}: {
-  value: string | null;
-  onSave: (v: string | null) => void;
-  placeholder?: string;
-  maxWidth?: string;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(value || "");
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => {
-    if (editing && inputRef.current) {
-      inputRef.current.focus();
-      inputRef.current.select();
-    }
-  }, [editing]);
-  const commit = () => {
-    setEditing(false);
-    const trimmed = draft.trim();
-    if (trimmed !== (value || "")) onSave(trimmed || null);
-  };
-  if (editing) {
-    return (
-      <textarea
-        ref={inputRef}
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            commit();
-          }
-          if (e.key === "Escape") {
-            setDraft(value || "");
-            setEditing(false);
-          }
-        }}
-        className={cn(
-          "w-full min-h-7 max-h-24 rounded border border-primary/50 bg-background px-1.5 py-0.5 text-[11px] resize-y",
-          "focus:outline-none focus:ring-1 focus:ring-primary/40",
-        )}
-        rows={2}
-      />
-    );
-  }
-  return (
-    <div className="group relative">
-      <span
-        onClick={() => {
-          setDraft(value || "");
-          setEditing(true);
-        }}
-        className={cn(
-          "text-xs block truncate cursor-pointer rounded px-1 py-0.5 transition-colors",
-          "hover:bg-muted/60 hover:ring-1 hover:ring-border",
-          !value && "text-muted-foreground italic",
-        )}
-        style={{ maxWidth: maxWidth || "100%" }}
-        title={value || "Click to edit"}
-      >
-        {value || placeholder}
-      </span>
-      {value && value.length > 30 && (
-        <div
-          className={cn(
-            "absolute left-0 top-full z-50 mt-1 hidden group-hover:block",
-            "max-w-xs w-max rounded-lg border bg-popover p-3 shadow-lg",
-            "text-xs text-popover-foreground whitespace-pre-wrap wrap-break-word",
-          )}
-        >
-          {value}
-        </div>
-      )}
-    </div>
-  );
-}
+// function InlineEditableText({
+//   value,
+//   onSave,
+//   placeholder = "—",
+//   maxWidth,
+// }: {
+//   value: string | null;
+//   onSave: (v: string | null) => void;
+//   placeholder?: string;
+//   maxWidth?: string;
+// }) {
+//   const [editing, setEditing] = useState(false);
+//   const [draft, setDraft] = useState(value || "");
+//   const inputRef = useRef<HTMLTextAreaElement>(null);
+//   useEffect(() => {
+//     if (editing && inputRef.current) {
+//       inputRef.current.focus();
+//       inputRef.current.select();
+//     }
+//   }, [editing]);
+//   const commit = () => {
+//     setEditing(false);
+//     const trimmed = draft.trim();
+//     if (trimmed !== (value || "")) onSave(trimmed || null);
+//   };
+//   if (editing) {
+//     return (
+//       <textarea
+//         ref={inputRef}
+//         value={draft}
+//         onChange={(e) => setDraft(e.target.value)}
+//         onBlur={commit}
+//         onKeyDown={(e) => {
+//           if (e.key === "Enter" && !e.shiftKey) {
+//             e.preventDefault();
+//             commit();
+//           }
+//           if (e.key === "Escape") {
+//             setDraft(value || "");
+//             setEditing(false);
+//           }
+//         }}
+//         className={cn(
+//           "w-full min-h-7 max-h-24 rounded border border-primary/50 bg-background px-1.5 py-0.5 text-[11px] resize-y",
+//           "focus:outline-none focus:ring-1 focus:ring-primary/40",
+//         )}
+//         rows={2}
+//       />
+//     );
+//   }
+//   return (
+//     <div className="group relative">
+//       <span
+//         onClick={() => {
+//           setDraft(value || "");
+//           setEditing(true);
+//         }}
+//         className={cn(
+//           "text-xs block truncate cursor-pointer rounded px-1 py-0.5 transition-colors",
+//           "hover:bg-muted/60 hover:ring-1 hover:ring-border",
+//           !value && "text-muted-foreground italic",
+//         )}
+//         style={{ maxWidth: maxWidth || "100%" }}
+//         title={value || "Click to edit"}
+//       >
+//         {value || placeholder}
+//       </span>
+//       {value && value.length > 30 && (
+//         <div
+//           className={cn(
+//             "absolute left-0 top-full z-50 mt-1 hidden group-hover:block",
+//             "max-w-xs w-max rounded-lg border bg-popover p-3 shadow-lg",
+//             "text-xs text-popover-foreground whitespace-pre-wrap wrap-break-word",
+//           )}
+//         >
+//           {value}
+//         </div>
+//       )}
+//     </div>
+//   );
+// }
 
-// ─── Claimant Cell with editable link (matching dashboard ClaimantCell) ─────
+// ─── Claimant Cell ──────────────────────────────────────────────────────────
 
 function ClaimantCell({
   record,
@@ -372,8 +371,6 @@ function ClaimantCell({
   const [editing, setEditing] = useState(false);
   const [url, setUrl] = useState(record.claimant_link || "");
   const handleSave = () => {
-    // Only update the post_hrg_development record's linked hearing's claimant_link
-    // This is handled via a server action that updates hearings.claimant_link
     onSave(record.id, "claimant_link", url.trim() || null);
     setEditing(false);
   };
@@ -512,7 +509,556 @@ function ClaimantCell({
   );
 }
 
-// ─── Details Modal (click cell to open, shows notes + add note) ─────────────
+// ─── Post HRG Cell Badge ────────────────────────────────────────────────────
+
+function PostHrgCell({
+  record,
+  onClick,
+}: {
+  record: PostHrgDevRow;
+  onClick: () => void;
+}) {
+  const notes = parseNotes(record.post_hrg_notes ?? null);
+  const noteCount = notes.length;
+  const deadline = record.post_hrg_deadline ?? null;
+
+  let badgeClass = "bg-muted/50 text-muted-foreground hover:bg-muted";
+  let text = "+ Add";
+  let icon = "💬";
+
+  if (deadline) {
+    const dd = new Date(deadline + "T12:00:00");
+    const today = new Date(
+      new Date().toISOString().split("T")[0] + "T12:00:00",
+    );
+    const fmt = new Date(deadline + "T12:00:00").toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+    });
+    if (dd < today) {
+      badgeClass =
+        "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 hover:bg-red-200";
+      icon = "⚠️";
+      text = fmt;
+    } else {
+      badgeClass =
+        "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 hover:bg-blue-200";
+      icon = "📅";
+      text = fmt;
+    }
+  } else if (noteCount > 0) {
+    badgeClass =
+      "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 hover:bg-amber-200";
+    icon = "💬";
+    text = "Notes";
+  }
+
+  // No linked hearing — show disabled state
+  if (!record.hearing_id) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium bg-muted/30 text-muted-foreground/50 cursor-not-allowed"
+        title="No linked hearing — Post HRG data syncs from hearing record"
+      >
+        🔗 No hearing
+      </span>
+    );
+  }
+
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-semibold transition-colors cursor-pointer",
+        badgeClass,
+      )}
+      title={
+        noteCount > 0
+          ? `${noteCount} note${noteCount > 1 ? "s" : ""} — Click to view`
+          : "Click to add"
+      }
+    >
+      <span>{icon}</span> {text}
+      {noteCount > 0 && (
+        <span className="ml-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-foreground/10 px-1 text-[9px] font-bold">
+          {noteCount}
+        </span>
+      )}
+    </button>
+  );
+}
+
+// ─── Post HRG Modal (syncs with hearings table via hearing_id) ───────────────
+
+function PostHrgDevModal({
+  record,
+  onClose,
+  onRecordUpdate,
+  userName,
+  userRole,
+}: {
+  record: PostHrgDevRow;
+  onClose: () => void;
+  onRecordUpdate: (r: PostHrgDevRow) => void;
+  userName: string;
+  userRole: string;
+}) {
+  const [notes, setNotes] = useState<PostHrgNote[]>(() =>
+    parseNotes(record.post_hrg_notes ?? null),
+  );
+  const [newNote, setNewNote] = useState("");
+  const [deadline, setDeadline] = useState(record.post_hrg_deadline || "");
+  const [saving, setSaving] = useState(false);
+  const [deadlineSaving, setDeadlineSaving] = useState(false);
+
+  // Poll for updates every 8s (reads from hearings table server-side)
+  useEffect(() => {
+    let active = true;
+    const poll = async () => {
+      if (!active || !record.hearing_id) return;
+      try {
+        const { fetchPostHrgNotes } = await import("@/app/(dashboard)/actions");
+        const data = (await fetchPostHrgNotes(record.hearing_id)) as
+          | string
+          | { post_hrg_notes: string | null; post_hrg_deadline: string | null }
+          | null;
+        if (!active || !data) return;
+        if (typeof data === "string") {
+          setNotes(parseNotes(data));
+        } else {
+          setNotes(parseNotes(data.post_hrg_notes));
+          if (data.post_hrg_deadline != null) {
+            setDeadline(data.post_hrg_deadline);
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+    const id = setInterval(poll, 8000);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, [record.hearing_id]);
+
+  const canEditNotes = [
+    "system_admin",
+    "admin",
+    "manager",
+    "mr_admin",
+    "mr_lead",
+    "mr_agent",
+    "post_hearing_admin",
+    "post_hearing_staff",
+  ].includes(userRole);
+
+  const handleAddNote = async () => {
+    if (!newNote.trim() || !canEditNotes || !record.hearing_id) return;
+    setSaving(true);
+    try {
+      // Write to hearings table — same action as dashboard
+      const { addDashboardPostHrgNote } =
+        await import("@/app/(dashboard)/actions");
+      const trimmed = newNote.trim();
+      const r = await addDashboardPostHrgNote(
+        record.hearing_id,
+        trimmed,
+        userName,
+      );
+      if (r.success) {
+        const added: PostHrgNote = {
+          user: userName,
+          date: new Date().toISOString(),
+          note: trimmed,
+        };
+        const updatedNotes = [added, ...notes];
+        setNotes(updatedNotes);
+        setNewNote("");
+        // Sync back to local record state
+        onRecordUpdate({
+          ...record,
+          post_hrg_notes: JSON.stringify(updatedNotes),
+        } as PostHrgDevRow);
+      }
+    } catch {
+      /* */
+    }
+    setSaving(false);
+  };
+
+  const handleDeleteNote = async (idx: number) => {
+    if (!canEditNotes || !record.hearing_id) return;
+    try {
+      const { deleteDashboardPostHrgNote } =
+        await import("@/app/(dashboard)/actions");
+      const r = await deleteDashboardPostHrgNote(record.hearing_id, idx);
+      if (r.success) {
+        const updatedNotes = notes.filter((_, i) => i !== idx);
+        setNotes(updatedNotes);
+        onRecordUpdate({
+          ...record,
+          post_hrg_notes:
+            updatedNotes.length > 0 ? JSON.stringify(updatedNotes) : null,
+        } as PostHrgDevRow);
+      }
+    } catch {
+      /* */
+    }
+  };
+
+  const handleUpdateDeadline = async () => {
+    if (!record.hearing_id) return;
+    setDeadlineSaving(true);
+    try {
+      const { updateHearing } = await import("@/app/(dashboard)/actions");
+      await updateHearing(
+        record.hearing_id,
+        "post_hrg_deadline",
+        deadline || null,
+      );
+      onRecordUpdate({
+        ...record,
+        post_hrg_deadline: deadline || null,
+      } as PostHrgDevRow);
+    } catch {
+      /* */
+    }
+    setDeadlineSaving(false);
+  };
+
+  const handleClearDeadline = async () => {
+    if (!record.hearing_id) return;
+    setDeadlineSaving(true);
+    try {
+      const { updateHearing } = await import("@/app/(dashboard)/actions");
+      await updateHearing(record.hearing_id, "post_hrg_deadline", null);
+      setDeadline("");
+      onRecordUpdate({ ...record, post_hrg_deadline: null } as PostHrgDevRow);
+    } catch {
+      /* */
+    }
+    setDeadlineSaving(false);
+  };
+
+  const fmtD = (d: string) =>
+    new Date(d + "T12:00:00").toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-lg rounded-xl border bg-card shadow-2xl flex flex-col max-h-[85vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between border-b px-5 py-4 shrink-0">
+          <div>
+            <h2 className="text-sm font-semibold">Post HRG Review</h2>
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              {record.claimant}
+              {record.hearing_date &&
+                ` • ${new Date(record.hearing_date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`}
+              {record.assigned_rep && ` • ${record.assigned_rep}`}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-md p-1 hover:bg-muted text-muted-foreground hover:text-foreground text-lg"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+          {/* Sync notice */}
+          <div className="flex items-center gap-2 rounded-lg bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 px-3 py-2">
+            <span className="text-blue-500 text-sm">🔗</span>
+            <p className="text-[11px] text-blue-700 dark:text-blue-400">
+              Synced with hearing record — changes reflect on the main dashboard
+              too.
+            </p>
+          </div>
+
+          {/* Deadline */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium">Deadline Date</label>
+            <div className="flex items-center gap-2 flex-wrap">
+              <input
+                type="date"
+                value={deadline}
+                onChange={(e) => setDeadline(e.target.value)}
+                className="h-8 rounded-lg border bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary w-auto"
+              />
+              <button
+                className={cn(
+                  BTN_OUTLINE,
+                  "px-3 py-1 text-xs h-8 disabled:opacity-50",
+                )}
+                onClick={handleUpdateDeadline}
+                disabled={deadlineSaving}
+              >
+                {deadlineSaving ? "Saving..." : "Update"}
+              </button>
+              {deadline && (
+                <button
+                  className={cn(BTN_SECONDARY, "px-3 py-1 text-xs h-8")}
+                  onClick={handleClearDeadline}
+                  disabled={deadlineSaving}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            {record.post_hrg_deadline &&
+              record.post_hrg_deadline !== deadline && (
+                <p className="text-[10px] text-muted-foreground">
+                  Saved:{" "}
+                  <span className="font-medium">
+                    {fmtD(record.post_hrg_deadline)}
+                  </span>
+                </p>
+              )}
+          </div>
+
+          {/* Add note */}
+          {canEditNotes ? (
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium">Add New Note</label>
+              <textarea
+                value={newNote}
+                onChange={(e) => setNewNote(e.target.value)}
+                rows={3}
+                placeholder="Enter your note..."
+                className={cn(INPUT, "resize-none text-xs")}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleAddNote();
+                  }
+                }}
+              />
+              <button
+                className={cn(BTN_PRIMARY, "px-3 py-1.5 text-xs")}
+                onClick={handleAddNote}
+                disabled={saving || !newNote.trim()}
+              >
+                {saving ? "Saving..." : "Add Note"}
+              </button>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground italic py-2">
+              You do not have permission to add notes.
+            </p>
+          )}
+
+          {/* Notes history */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium">
+              Notes History{" "}
+              <span className="text-muted-foreground">({notes.length})</span>
+            </label>
+            {notes.length === 0 ? (
+              <p className="py-4 text-center text-xs text-muted-foreground">
+                No notes yet
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {notes.map((n, i) => (
+                  <div
+                    key={i}
+                    className="rounded-lg border bg-muted/30 p-3 space-y-1"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                        <span className="font-medium text-foreground">
+                          {n.user || "Unknown"}
+                        </span>
+                        {n.date && (
+                          <span>
+                            {new Date(n.date).toLocaleDateString("en-US", {
+                              month: "short",
+                              day: "numeric",
+                              hour: "numeric",
+                              minute: "2-digit",
+                            })}
+                          </span>
+                        )}
+                      </div>
+                      {canEditNotes && (
+                        <button
+                          onClick={() => handleDeleteNote(i)}
+                          className="text-xs text-muted-foreground hover:text-red-600"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-xs whitespace-pre-wrap">{n.note}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="border-t px-5 py-3 shrink-0">
+          <button
+            className={cn(BTN_SECONDARY, "px-3 py-1.5 text-xs")}
+            onClick={onClose}
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Remarks Modal ───────────────────────────────────────────────────────────
+
+function RemarksCellBadge({
+  record,
+  onClick,
+}: {
+  record: PostHrgDevRow;
+  onClick: () => void;
+}) {
+  const hasRemarks = !!record.remarks;
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "w-full text-left rounded px-1.5 py-1 text-xs cursor-pointer transition-colors",
+        hasRemarks
+          ? "hover:bg-muted/60 text-foreground"
+          : "hover:bg-muted/40 text-muted-foreground italic",
+      )}
+      title={record.remarks || "Click to add remarks"}
+    >
+      <span className="block truncate" style={{ maxWidth: "180px" }}>
+        {record.remarks || "Click to add..."}
+      </span>
+    </button>
+  );
+}
+
+function RemarksModal({
+  record,
+  onClose,
+  onSave,
+}: {
+  record: PostHrgDevRow;
+  onClose: () => void;
+  onSave: (id: number, field: string, value: string | null) => void;
+}) {
+  const [draft, setDraft] = useState(record.remarks || "");
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    setSaving(true);
+    await onSave(record.id, "remarks", draft.trim() || null);
+    setSaving(false);
+    onClose();
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-lg rounded-xl border bg-card shadow-2xl flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b px-5 py-3 shrink-0">
+          <div>
+            <h3 className="text-sm font-semibold">
+              Remarks — {record.claimant}
+            </h3>
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              {record.hearing_date
+                ? new Date(
+                    record.hearing_date + "T12:00:00",
+                  ).toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })
+                : "No date"}
+              {record.assigned_rep && ` • ${record.assigned_rep}`}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-muted-foreground hover:text-foreground text-lg"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="p-5 space-y-3">
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            rows={6}
+            placeholder="Enter remarks..."
+            className={cn(INPUT, "resize-y text-sm")}
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === "Escape") onClose();
+            }}
+          />
+          {draft.length > 0 && (
+            <p className="text-[10px] text-muted-foreground text-right">
+              {draft.length} characters
+            </p>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between border-t px-5 py-3 shrink-0">
+          {record.remarks && (
+            <button
+              className={cn(
+                BTN,
+                "px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30",
+              )}
+              onClick={async () => {
+                await onSave(record.id, "remarks", null);
+                onClose();
+              }}
+            >
+              Clear
+            </button>
+          )}
+          <div className="flex gap-2 ml-auto">
+            <button
+              className={cn(BTN_SECONDARY, "px-3 py-1.5 text-xs")}
+              onClick={onClose}
+            >
+              Cancel
+            </button>
+            <button
+              className={cn(BTN_PRIMARY, "px-3 py-1.5 text-xs")}
+              onClick={handleSave}
+              disabled={saving}
+            >
+              {saving ? "Saving..." : "Save"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Details Modal ──────────────────────────────────────────────────────────
 
 function DetailsModal({
   record,
@@ -625,7 +1171,6 @@ function DetailsModal({
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {/* Editable details text */}
           <div className="space-y-1.5">
             <label className="text-xs font-medium">Details Content</label>
             {editingDetails ? (
@@ -674,8 +1219,6 @@ function DetailsModal({
               </div>
             )}
           </div>
-
-          {/* Add note */}
           <div className="space-y-1.5">
             <label className="text-xs font-medium">Add Note</label>
             <div className="flex gap-2">
@@ -703,8 +1246,6 @@ function DetailsModal({
               </button>
             </div>
           </div>
-
-          {/* Notes history */}
           <div className="space-y-1.5">
             <label className="text-xs font-medium">
               Notes History{" "}
@@ -764,7 +1305,7 @@ function DetailsModal({
   );
 }
 
-// ─── Note Modal (for EM/Task, EXT, Status, Responsible) ─────────────────────
+// ─── Note Modal ─────────────────────────────────────────────────────────────
 
 function NoteModal({
   record,
@@ -931,7 +1472,7 @@ function NoteModal({
   );
 }
 
-// ─── Note Cell Badge (for fields other than Details) ────────────────────────
+// ─── Note Cell Badge ─────────────────────────────────────────────────────────
 
 function NoteCellBadge({
   record,
@@ -965,7 +1506,7 @@ function NoteCellBadge({
   );
 }
 
-// ─── Details Cell Badge (click to open DetailsModal) ────────────────────────
+// ─── Details Cell Badge ───────────────────────────────────────────────────────
 
 function DetailsCellBadge({
   record,
@@ -997,7 +1538,6 @@ function DetailsCellBadge({
           </span>
         )}
       </div>
-      {/* Hover preview */}
       {record.details && record.details.length > 40 && (
         <div
           className={cn(
@@ -1013,7 +1553,7 @@ function DetailsCellBadge({
   );
 }
 
-// ─── Stats Row ──────────────────────────────────────────────────────────────
+// ─── Stats Row ────────────────────────────────────────────────────────────────
 
 const StatsRow = memo(function StatsRow({ stats }: { stats: PostHrgDevStats }) {
   const cards = [
@@ -1057,7 +1597,7 @@ const StatsRow = memo(function StatsRow({ stats }: { stats: PostHrgDevStats }) {
   );
 });
 
-// ─── Column Definitions ─────────────────────────────────────────────────────
+// ─── Column Definitions ───────────────────────────────────────────────────────
 
 const COLUMNS: {
   key: string;
@@ -1078,7 +1618,8 @@ const COLUMNS: {
   { key: "ext_letter_sent", label: "EXT", w: 70 },
   { key: "status", label: "Status", w: 110, sortable: true },
   { key: "deadline", label: "Deadline", w: 110, sortable: true },
-  { key: "new_due_date", label: "New Due", w: 100, sortable: true },
+  // new_due_date REMOVED — replaced with post_hrg_review
+  { key: "post_hrg_review", label: "Post HRG Review", w: 140 },
   { key: "remarks", label: "Remarks", w: 200 },
   { key: "actions", label: "", w: 70 },
 ];
@@ -1112,7 +1653,7 @@ const isOverdueCheck = (r: PostHrgDevRow) => {
   return new Date(r.deadline) < new Date();
 };
 
-// ─── Memoized Row — only re-renders when its own data changes ──────────────
+// ─── Memoized Row ─────────────────────────────────────────────────────────────
 
 interface ColumnDef {
   key: string;
@@ -1187,7 +1728,7 @@ const MemoRow = memo(
     prev.overdue === next.overdue,
 );
 
-// ─── Component ──────────────────────────────────────────────────────────────
+// ─── Main Component ───────────────────────────────────────────────────────────
 
 export function PostHrgClient({
   userRole,
@@ -1240,6 +1781,8 @@ export function PostHrgClient({
     label: string;
   } | null>(null);
   const [detailsModal, setDetailsModal] = useState<PostHrgDevRow | null>(null);
+  const [postHrgModal, setPostHrgModal] = useState<PostHrgDevRow | null>(null);
+  const [remarksModal, setRemarksModal] = useState<PostHrgDevRow | null>(null);
 
   // Import state
   const [importStep, setImportStep] = useState(1);
@@ -1296,8 +1839,6 @@ export function PostHrgClient({
     () => representatives.map((r) => ({ value: r.name, label: r.name })),
     [representatives],
   );
-
-  // Responsible dropdown options + hex color map
   const RESPONSIBLE_OPTIONS = useMemo(
     () => responsibleOptions.map((o) => ({ value: o.value, label: o.value })),
     [responsibleOptions],
@@ -1305,7 +1846,6 @@ export function PostHrgClient({
   const responsibleHexMap = useMemo(() => {
     const map: Record<string, { bg: string; color: string }> = {};
     for (const o of responsibleOptions) {
-      // Use the color as bg with some alpha, and a dark text
       const hex = o.color.replace("#", "");
       const r = parseInt(hex.slice(0, 2), 16);
       const g = parseInt(hex.slice(2, 4), 16);
@@ -1402,6 +1942,7 @@ export function PostHrgClient({
       phStatusFilter,
     ],
   );
+
   const handlePageSizeChange = useCallback(
     (ps: number) => {
       setPageSize(ps);
@@ -1486,7 +2027,6 @@ export function PostHrgClient({
     ],
   );
 
-  // Claimant link update — updates hearings.claimant_link via hearing_id
   const handleClaimantLinkUpdate = useCallback(
     async (recordId: number, _field: string, value: string | null) => {
       const rec = records.find((r) => r.id === recordId);
@@ -1494,7 +2034,6 @@ export function PostHrgClient({
         toast("Cannot edit link — no linked hearing");
         return;
       }
-      // Update hearings table directly
       try {
         const { updateHearing } = await import("@/app/(dashboard)/actions");
         await updateHearing(rec.hearing_id, "claimant_link", value);
@@ -1513,6 +2052,8 @@ export function PostHrgClient({
 
   const handleRecordUpdate = useCallback((updated: PostHrgDevRow) => {
     setRecords((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+    // Keep open modal in sync
+    setPostHrgModal((prev) => (prev?.id === updated.id ? updated : prev));
   }, []);
 
   const saveNewRecord = useCallback(async () => {
@@ -1576,7 +2117,7 @@ export function PostHrgClient({
     [toast, refreshStats],
   );
 
-  // ── Import (same as before — abbreviated for brevity) ──
+  // ── Import ──
   const handleFile = useCallback(
     (f: File) => {
       const ext = f.name.split(".").pop()?.toLowerCase();
@@ -1754,6 +2295,7 @@ export function PostHrgClient({
     },
     [handleFile],
   );
+
   const selectSheet = useCallback(
     (idx: number) => {
       setSelectedSheet(idx);
@@ -1761,6 +2303,7 @@ export function PostHrgClient({
     },
     [sheets],
   );
+
   const currentSheet = selectedSheet >= 0 ? sheets[selectedSheet] : null;
 
   const runImport = useCallback(async () => {
@@ -1827,10 +2370,7 @@ export function PostHrgClient({
     </span>
   );
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // RENDER CELL
-  // ═══════════════════════════════════════════════════════════════════════════
-
+  // ── Render Cell ──
   const renderCell = useCallback(
     (r: PostHrgDevRow, col: { key: string }) => {
       switch (col.key) {
@@ -1971,21 +2511,11 @@ export function PostHrgClient({
               isOverdue={isOverdueCheck(r)}
             />
           );
-        case "new_due_date":
-          return (
-            <InlineDate
-              value={r.new_due_date}
-              onSave={(v) => handleFieldUpdate(r.id, "new_due_date", v)}
-            />
-          );
+        case "post_hrg_review":
+          return <PostHrgCell record={r} onClick={() => setPostHrgModal(r)} />;
         case "remarks":
           return (
-            <InlineEditableText
-              value={r.remarks}
-              onSave={(v) => handleFieldUpdate(r.id, "remarks", v)}
-              placeholder="Click to add..."
-              maxWidth="180px"
-            />
+            <RemarksCellBadge record={r} onClick={() => setRemarksModal(r)} />
           );
         case "actions":
           return isAdmin ? (
@@ -2044,7 +2574,7 @@ export function PostHrgClient({
   const evenBg = "bg-white dark:bg-zinc-950";
   const oddBg = "bg-zinc-50 dark:bg-zinc-900";
 
-  // ── Virtualization — only render visible rows ──
+  // Virtualization
   const ROW_H = 36;
   const parentRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -2054,10 +2584,7 @@ export function PostHrgClient({
     overscan: 8,
   });
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // JSX
-  // ═══════════════════════════════════════════════════════════════════════════
-
+  // ── JSX ──
   return (
     <>
       <AppHeader
@@ -2253,7 +2780,6 @@ export function PostHrgClient({
                         </tr>
                       ) : (
                         <>
-                          {/* Top spacer */}
                           {(virtualizer.getVirtualItems()[0]?.start ?? 0) >
                             0 && (
                             <tr>
@@ -2286,7 +2812,6 @@ export function PostHrgClient({
                               />
                             );
                           })}
-                          {/* Bottom spacer */}
                           {(() => {
                             const items = virtualizer.getVirtualItems();
                             const lastEnd = items[items.length - 1]?.end ?? 0;
@@ -2393,6 +2918,7 @@ export function PostHrgClient({
                 </div>
               ))}
             </div>
+
             {importStep === 1 && (
               <div className={CARD}>
                 <h2 className="text-lg font-semibold mb-1">
@@ -2501,6 +3027,7 @@ export function PostHrgClient({
                 </div>
               </div>
             )}
+
             {importStep === 2 && currentSheet && (
               <div className={CARD}>
                 <h2 className="text-lg font-semibold mb-1">🔗 Map Columns</h2>
@@ -2518,7 +3045,6 @@ export function PostHrgClient({
                       ext_letter_sent: "EXT Letter",
                       status: "Status",
                       deadline: "Deadline",
-                      new_due_date: "New Due Date",
                       remarks: "Remarks",
                     };
                     return (
@@ -2574,6 +3100,7 @@ export function PostHrgClient({
                 </div>
               </div>
             )}
+
             {importStep === 3 && currentSheet && (
               <div className={CARD}>
                 <h2 className="text-lg font-semibold mb-1">👀 Preview</h2>
@@ -2637,6 +3164,7 @@ export function PostHrgClient({
                 </div>
               </div>
             )}
+
             {importStep === 4 && (
               <div className={CARD}>
                 <h2 className="text-lg font-semibold mb-4">📊 Results</h2>
@@ -2707,7 +3235,6 @@ export function PostHrgClient({
           </>
         )}
       </div>
-
       {/* ════════════════ ADD MODAL ════════════════ */}
       {showAddModal && (
         <div
@@ -2854,20 +3381,6 @@ export function PostHrgClient({
                     }
                   />
                 </div>
-                <div className="space-y-1">
-                  <label className="text-sm font-medium">New Due Date</label>
-                  <input
-                    type="date"
-                    className={INPUT}
-                    value={addData.new_due_date || ""}
-                    onChange={(e) =>
-                      setAddData((p: Partial<PostHrgDevRow>) => ({
-                        ...p,
-                        new_due_date: e.target.value,
-                      }))
-                    }
-                  />
-                </div>
               </div>
               <div className="space-y-1">
                 <label className="text-sm font-medium">Docs Needed</label>
@@ -2964,7 +3477,6 @@ export function PostHrgClient({
           </div>
         </div>
       )}
-
       {/* ════════════════ DETAILS MODAL ════════════════ */}
       {detailsModal && (
         <DetailsModal
@@ -2975,7 +3487,6 @@ export function PostHrgClient({
           onFieldUpdate={handleFieldUpdate}
         />
       )}
-
       {/* ════════════════ NOTE MODAL ════════════════ */}
       {noteModal && (
         <NoteModal
@@ -2985,6 +3496,29 @@ export function PostHrgClient({
           userName={userName}
           onClose={() => setNoteModal(null)}
           onRecordUpdate={handleRecordUpdate}
+        />
+      )}
+      {/* ════════════════ POST HRG MODAL ════════════════ */}
+      {postHrgModal && (
+        <PostHrgDevModal
+          record={postHrgModal}
+          onClose={() => setPostHrgModal(null)}
+          onRecordUpdate={handleRecordUpdate}
+          userName={userName}
+          userRole={userRole}
+        />
+      )}
+      {/* ════════════════ REMARKS MODAL ════════════════ */} ← ADD AFTER
+      {remarksModal && (
+        <RemarksModal
+          record={remarksModal}
+          onClose={() => setRemarksModal(null)}
+          onSave={(id, field, value) => {
+            handleFieldUpdate(id, field, value);
+            setRemarksModal((prev) =>
+              prev?.id === id ? { ...prev, remarks: value } : prev,
+            );
+          }}
         />
       )}
     </>
