@@ -70,10 +70,10 @@ export function CsvCompareModal({
 
   const [archiveSelected, setArchiveSelected] = useState<Set<number>>(
     new Set(),
-  ); // indices into results.newEntries
+  );
   const [reschedArchiveSelected, setReschedArchiveSelected] = useState<
     Set<number>
-  >(new Set()); // indices into results.rescheduled
+  >(new Set());
   const [reschedSearch, setReschedSearch] = useState("");
   const [archiving, setArchiving] = useState(false);
   const [showArchiveModal, setShowArchiveModal] = useState(false);
@@ -104,10 +104,9 @@ export function CsvCompareModal({
     newSkipped: number;
     reschedUpdated: number;
     reschedSkipped: number;
+    reschedErrors?: string[];
   } | null>(null);
-  // Editable dates for skipped records (rowIndex → date string)
   const [skippedDates, setSkippedDates] = useState<Record<number, string>>({});
-  // Holds check-duplicates result when importing to hearings
   const [hearingsCheckResult, setHearingsCheckResult] = useState<{
     newRecords: {
       rowIndex: number;
@@ -144,14 +143,12 @@ export function CsvCompareModal({
     mapping: Record<string, number>;
   } | null>(null);
 
-  // Load DB count on mount and when target changes
   useEffect(() => {
     fetchAllHearingsForCompare(compareTarget).then((d) =>
       setDbCount(d.totalCount),
     );
   }, [compareTarget]);
 
-  // Load archived keys for filtering
   useEffect(() => {
     getArchivedChronicleKeys().then((keys) => {
       const set = new Set<string>();
@@ -160,7 +157,6 @@ export function CsvCompareModal({
     });
   }, []);
 
-  // Auto-check against hearings DB when target is "hearings" and compare results exist
   useEffect(() => {
     if (
       compareTarget === "hearings" &&
@@ -204,7 +200,6 @@ export function CsvCompareModal({
         reason: "withdrawn",
       }));
     await archiveChronicleEntries(toArchive, userName);
-    // Refresh archived keys and entries list
     const keys = await getArchivedChronicleKeys();
     const set = new Set<string>();
     for (const k of keys) set.add(`${k.claimant_lower}|${k.ssn}|${k.hdate}`);
@@ -214,7 +209,6 @@ export function CsvCompareModal({
     setArchiveSelected(new Set());
     setReschedArchiveSelected(new Set());
     setArchiving(false);
-    // Re-run hearings check so skipped/new/rescheduled counts update
     setHearingsImportResult(null);
     handleCheckHearings(set);
   };
@@ -228,12 +222,10 @@ export function CsvCompareModal({
   const handleUnarchive = async (id: number) => {
     await unarchiveChronicleEntry(id);
     setArchivedEntries((prev) => prev.filter((e) => e.id !== id));
-    // Refresh keys
     const keys = await getArchivedChronicleKeys();
     const set = new Set<string>();
     for (const k of keys) set.add(`${k.claimant_lower}|${k.ssn}|${k.hdate}`);
     setArchivedKeys(set);
-    // Re-run hearings check so counts update
     setHearingsImportResult(null);
     handleCheckHearings(set);
   };
@@ -254,9 +246,7 @@ export function CsvCompareModal({
 
   const normalizeDate = (d: string) => {
     if (!d) return "";
-    // YYYY-MM-DD
     if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
-    // MM/DD/YYYY
     const m = d.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
     if (m) {
       const y = m[3].length === 2 ? `20${m[3]}` : m[3];
@@ -284,9 +274,8 @@ export function CsvCompareModal({
         await fetchAllHearingsForCompare(compareTarget);
       setDbCount(dbHearings.length);
 
-      // Build lookup maps from DB
       const exactMap = new Map<string, boolean>();
-      const dateMap = new Map<string, boolean>(); // name+ssn+date (ignoring time)
+      const dateMap = new Map<string, boolean>();
       const personMap = new Map<
         string,
         { date: string; time: string; claimant: string }[]
@@ -300,7 +289,7 @@ export function CsvCompareModal({
 
         if (base && ssn) {
           exactMap.set(`${base}|${ssn}|${date}|${time}`, true);
-          dateMap.set(`${base}|${ssn}|${date}`, true); // date-only key
+          dateMap.set(`${base}|${ssn}|${date}`, true);
           const pk = `${base}|${ssn}`;
           if (!personMap.has(pk)) personMap.set(pk, []);
           personMap.get(pk)!.push({ date, time, claimant: h.claimant });
@@ -309,14 +298,12 @@ export function CsvCompareModal({
 
       setStatus({ msg: "Parsing Chronicle CSV...", type: "loading" });
 
-      // Parse CSV
       const text = await file.text();
       const lines = text.split(/\r?\n/);
       const headers = lines[0]
         .split(",")
         .map((h) => h.trim().replace(/^"|"$/g, ""));
 
-      // Proper CSV row parser that handles quoted fields with commas
       const parseCsvRow = (line: string): string[] => {
         const result: string[] = [];
         let current = "";
@@ -395,19 +382,16 @@ export function CsvCompareModal({
         const normTime = normalizeTime(hTime);
         const normDate = normalizeDate(hDate);
 
-        // Exact duplicate? (name + ssn + date + time all match)
         if (exactMap.has(`${nameLower}|${ssn}|${normDate}|${normTime}`)) {
           duplicates.push({ ...entry, _cat: "duplicate" });
           continue;
         }
 
-        // Same date, different time? Still a duplicate (time mismatch in DB, e.g. 11:30 vs 23:30)
         if (dateMap.has(`${nameLower}|${ssn}|${normDate}`)) {
           duplicates.push({ ...entry, _cat: "duplicate" });
           continue;
         }
 
-        // Rescheduled? (same person + SSN, completely different date)
         const pk = `${nameLower}|${ssn}`;
         if (personMap.has(pk)) {
           const prev = personMap
@@ -447,11 +431,8 @@ export function CsvCompareModal({
     }
   };
 
-  // Build synthetic rows from Chronicle entries for the import APIs
   const buildSyntheticData = (keysOverride?: Set<string>) => {
     if (!results) return null;
-    // Send ALL entries to the server for checking — let the server do the matching
-    // Filter out archived entries so they don't appear in hearings check results
     const checkArchived = keysOverride
       ? (entry: ChronicleEntry) => {
           const key = `${entry.claimant.toLowerCase()}|${(entry.ssn || "").padStart(4, "0")}|${entry.hearingDate || ""}`;
@@ -500,7 +481,6 @@ export function CsvCompareModal({
     return { rows, mapping };
   };
 
-  // Check duplicates against hearings table before importing
   const handleCheckHearings = async (keysOverride?: Set<string>) => {
     const data = buildSyntheticData(keysOverride);
     if (!data) return;
@@ -518,7 +498,6 @@ export function CsvCompareModal({
       });
       const result = await res.json();
       if (!result.success) throw new Error(result.message || "Check failed");
-      // Compute correct rescheduled names (Rescheduled 2, 3, etc.)
       const reschedRecords = result.rescheduled_records || [];
       const updatedRows = [...data.rows];
       for (const rec of reschedRecords) {
@@ -526,8 +505,6 @@ export function CsvCompareModal({
         const baseName =
           rec.base_name ||
           origName.replace(/\s*\(Rescheduled(?:\s+\d+)?\)\s*$/i, "").trim();
-        // Check what number we need: if original is "John Doe (Rescheduled)", next is 2
-        // If original is "John Doe (Rescheduled 2)", next is 3, etc.
         const existingMatch = origName.match(
           /\(Rescheduled(?:\s+(\d+))?\)\s*$/i,
         );
@@ -539,7 +516,6 @@ export function CsvCompareModal({
           nextNum === 1
             ? `${baseName} (Rescheduled)`
             : `${baseName} (Rescheduled ${nextNum})`;
-        // Update the synthetic row and the record's claimant
         if (rec.rowIndex !== undefined && updatedRows[rec.rowIndex]) {
           updatedRows[rec.rowIndex][data.mapping.claimant] = newName;
         }
@@ -561,8 +537,6 @@ export function CsvCompareModal({
     setImporting(false);
   };
 
-  // Import new records to hearings
-  // Re-check skipped records that now have dates filled in
   const handleRecheckSkipped = async () => {
     if (!hearingsCheckResult) return;
     const filledEntries = Object.entries(skippedDates).filter(([, date]) =>
@@ -570,7 +544,6 @@ export function CsvCompareModal({
     );
     if (filledEntries.length === 0) return;
 
-    // Build new rows from skipped records with filled dates
     const { mapping } = hearingsCheckResult;
     const dateColIdx = mapping.hearing_date;
     const additionalRows: string[][] = [];
@@ -579,7 +552,6 @@ export function CsvCompareModal({
       const idx = parseInt(idxStr);
       const skipped = hearingsCheckResult.skippedRecords[idx];
       if (!skipped || !skipped.claimant) continue;
-      // Find original synthetic row by matching claimant
       const origRow = hearingsCheckResult.syntheticRows.find(
         (r) =>
           r[mapping.claimant] === skipped.claimant ||
@@ -608,7 +580,6 @@ export function CsvCompareModal({
       const result = await res.json();
       if (!result.success) throw new Error(result.message || "Re-check failed");
 
-      // Merge new results: add to existing new/rescheduled/duplicate, remove from skipped
       const filledIndices = new Set(filledEntries.map(([i]) => parseInt(i)));
       setHearingsCheckResult((prev) => {
         if (!prev) return prev;
@@ -683,15 +654,35 @@ export function CsvCompareModal({
       return;
     setImportingResched(true);
     try {
-      const records = hearingsCheckResult.rescheduledRecords.map((r) => {
-        const row = hearingsCheckResult.syntheticRows[r.rowIndex];
-        const m = hearingsCheckResult.mapping;
+      const { syntheticRows, mapping: m } = hearingsCheckResult;
+
+      // Filter out archived rescheduled records before sending
+      const filteredResched = hearingsCheckResult.rescheduledRecords.filter(
+        (r) => {
+          const row = syntheticRows[r.rowIndex];
+          if (!row) return false;
+          const key = `${(row[m.claimant] || "")
+            .toLowerCase()
+            .replace(/\s*\(rescheduled(?:\s+\d+)?\)\s*$/i, "")
+            .trim()}|${(row[m.ssn_last_4] || "").padStart(4, "0")}|${row[m.hearing_date] || ""}`;
+          return !archivedKeys.has(key);
+        },
+      );
+
+      if (filteredResched.length === 0) {
+        setImportingResched(false);
+        return;
+      }
+
+      const records = filteredResched.map((r) => {
+        const row = syntheticRows[r.rowIndex];
         return {
           data: row,
           rowIndex: r.rowIndex,
           row: r.row,
           original_id: r.original_id,
-          claimant: r.claimant,
+          // Use the (Rescheduled N) name already written into syntheticRows by handleCheckHearings
+          claimant: row?.[m.claimant] || r.claimant,
           ssn: r.ssn,
           claimantLocation: row?.[m.claimant_location] || "",
           repLocation: row?.[m.representative_location] || "",
@@ -699,6 +690,7 @@ export function CsvCompareModal({
           statusDate: row?.[m.status_date] || "",
         };
       });
+
       const res = await fetch("/api/import/process-rescheduled", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -709,24 +701,28 @@ export function CsvCompareModal({
         }),
       });
       const data = await res.json();
+
       setHearingsImportResult((prev) => ({
         newImported: prev?.newImported || 0,
         newSkipped: prev?.newSkipped || 0,
         reschedUpdated: data.success ? data.updated : 0,
-        reschedSkipped: data.success ? 0 : records.length,
+        reschedSkipped: data.success
+          ? (data.errors?.length ?? 0)
+          : records.length,
+        reschedErrors: data.errors?.length ? data.errors : undefined,
       }));
-    } catch {
+    } catch (e) {
       setHearingsImportResult((prev) => ({
         newImported: prev?.newImported || 0,
         newSkipped: prev?.newSkipped || 0,
         reschedUpdated: 0,
         reschedSkipped: hearingsCheckResult.rescheduledRecords.length,
+        reschedErrors: [(e as Error).message],
       }));
     }
     setImportingResched(false);
   };
 
-  // Export records as CSV download — enriches from syntheticRows via mapping
   const exportHearingsCsv = (
     filename: string,
     records: { rowIndex: number; [key: string]: unknown }[],
@@ -812,7 +808,6 @@ export function CsvCompareModal({
     );
   };
 
-  // Import to raw_hearings (simple)
   const handleImportToRaw = async () => {
     if (!results) return;
     const entries = [...results.newEntries, ...results.rescheduled].filter(
@@ -958,7 +953,7 @@ export function CsvCompareModal({
                 {/* Results */}
                 {results && (
                   <>
-                    {/* Summary stats — clickable to jump to section */}
+                    {/* Summary stats */}
                     {(() => {
                       const visibleNew = results.newEntries.filter(
                         (e) => !isArchived(e),
@@ -1169,13 +1164,11 @@ export function CsvCompareModal({
                                                 const next = new Set(
                                                   archiveSelected,
                                                 );
-
                                                 if (ev.target.checked) {
                                                   next.add(realIdx);
                                                 } else {
                                                   next.delete(realIdx);
                                                 }
-
                                                 setArchiveSelected(next);
                                               }}
                                               className="accent-primary"
@@ -1356,6 +1349,39 @@ export function CsvCompareModal({
                                   {filteredResched.map((e, vi) => {
                                     const realIdx =
                                       results.rescheduled.indexOf(e);
+                                    // Show updated (Rescheduled N) name if available from check result
+                                    const checkRec =
+                                      hearingsCheckResult?.rescheduledRecords.find(
+                                        (r) => {
+                                          const row =
+                                            hearingsCheckResult.syntheticRows[
+                                              r.rowIndex
+                                            ];
+                                          const baseName = (
+                                            row?.[
+                                              hearingsCheckResult.mapping
+                                                .claimant
+                                            ] || ""
+                                          )
+                                            .replace(
+                                              /\s*\(Rescheduled(?:\s+\d+)?\)\s*$/i,
+                                              "",
+                                            )
+                                            .trim();
+                                          return (
+                                            baseName.toLowerCase() ===
+                                              e.claimant.toLowerCase() &&
+                                            r.ssn === e.ssn
+                                          );
+                                        },
+                                      );
+                                    const displayName = checkRec
+                                      ? hearingsCheckResult!.syntheticRows[
+                                          checkRec.rowIndex
+                                        ]?.[
+                                          hearingsCheckResult!.mapping.claimant
+                                        ] || e.claimant
+                                      : e.claimant;
                                     return (
                                       <tr
                                         key={vi}
@@ -1382,7 +1408,7 @@ export function CsvCompareModal({
                                           />
                                         </td>
                                         <td className="px-2 py-1.5 font-medium">
-                                          {e.claimant}
+                                          {displayName}
                                         </td>
                                         <td className="px-2 py-1.5 text-muted-foreground tabular-nums">
                                           {e.ssn || "—"}
@@ -1494,7 +1520,7 @@ export function CsvCompareModal({
                         </div>
                       )}
 
-                    {/* Import result */}
+                    {/* Import result (raw) */}
                     {importResult && (
                       <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800">
                         ✅ Imported {importResult.imported} hearings to RAW
@@ -1509,7 +1535,6 @@ export function CsvCompareModal({
                       (() => {
                         const m = hearingsCheckResult.mapping;
                         const rows = hearingsCheckResult.syntheticRows;
-                        // Filter archived from hearings check results
                         const isCheckArchived = (r: { rowIndex: number }) => {
                           const row = rows[r.rowIndex];
                           if (!row) return false;
@@ -1667,6 +1692,10 @@ export function CsvCompareModal({
                                       Rescheduled — Will update original (
                                       {filteredResched.length})
                                     </p>
+                                    <p className="text-[10px] text-blue-600 dark:text-blue-400">
+                                      — Keeps SSN & Claim Type, clears
+                                      assignments
+                                    </p>
                                   </div>
                                   <button
                                     onClick={handleExportRescheduled}
@@ -1684,7 +1713,7 @@ export function CsvCompareModal({
                                           #
                                         </th>
                                         <th className="px-2 py-1 text-left font-semibold">
-                                          Claimant
+                                          New Claimant
                                         </th>
                                         <th className="px-2 py-1 text-left font-semibold">
                                           SSN
@@ -1727,13 +1756,13 @@ export function CsvCompareModal({
                                               <td className="px-2 py-1 text-muted-foreground">
                                                 {i + 1}
                                               </td>
-                                              <td className="px-2 py-1 font-medium">
+                                              <td className="px-2 py-1 font-medium text-blue-700 dark:text-blue-400">
                                                 {r.claimant}
                                               </td>
                                               <td className="px-2 py-1 text-muted-foreground tabular-nums">
                                                 {r.ssn || "—"}
                                               </td>
-                                              <td className="px-2 py-1 tabular-nums">
+                                              <td className="px-2 py-1 tabular-nums font-medium">
                                                 {r.hearing_date || "—"}
                                               </td>
                                               <td className="px-2 py-1 tabular-nums">
@@ -1745,10 +1774,10 @@ export function CsvCompareModal({
                                               <td className="px-2 py-1 text-muted-foreground">
                                                 {r.original_claimant || "—"}
                                               </td>
-                                              <td className="px-2 py-1 tabular-nums text-muted-foreground">
+                                              <td className="px-2 py-1 tabular-nums text-muted-foreground line-through">
                                                 {r.original_date || "—"}
                                               </td>
-                                              <td className="px-2 py-1 tabular-nums text-muted-foreground">
+                                              <td className="px-2 py-1 tabular-nums text-muted-foreground line-through">
                                                 {r.original_time || "—"}
                                               </td>
                                             </tr>
@@ -1839,37 +1868,39 @@ export function CsvCompareModal({
                                       — Fill in missing dates to include them
                                     </p>
                                   </div>
-                                  {Object.values(skippedDates).some((d) =>
-                                    d.trim(),
-                                  ) && (
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      className="h-6 text-[10px] gap-1"
-                                      disabled={importing}
-                                      onClick={handleRecheckSkipped}
+                                  <div className="flex items-center gap-1">
+                                    {Object.values(skippedDates).some((d) =>
+                                      d.trim(),
+                                    ) && (
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-6 text-[10px] gap-1"
+                                        disabled={importing}
+                                        onClick={handleRecheckSkipped}
+                                      >
+                                        {importing ? (
+                                          <div className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                                        ) : (
+                                          "🔄"
+                                        )}
+                                        Re-check{" "}
+                                        {
+                                          Object.values(skippedDates).filter(
+                                            (d) => d.trim(),
+                                          ).length
+                                        }{" "}
+                                        with dates
+                                      </Button>
+                                    )}
+                                    <button
+                                      onClick={handleExportSkipped}
+                                      className="p-1 rounded hover:bg-amber-100 dark:hover:bg-amber-800/40 text-amber-700 dark:text-amber-400"
+                                      title="Export Skipped as CSV"
                                     >
-                                      {importing ? (
-                                        <div className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                                      ) : (
-                                        "🔄"
-                                      )}
-                                      Re-check{" "}
-                                      {
-                                        Object.values(skippedDates).filter(
-                                          (d) => d.trim(),
-                                        ).length
-                                      }{" "}
-                                      with dates
-                                    </Button>
-                                  )}
-                                  <button
-                                    onClick={handleExportSkipped}
-                                    className="p-1 rounded hover:bg-amber-100 dark:hover:bg-amber-800/40 text-amber-700 dark:text-amber-400"
-                                    title="Export Skipped as CSV"
-                                  >
-                                    <Download className="h-3.5 w-3.5" />
-                                  </button>
+                                      <Download className="h-3.5 w-3.5" />
+                                    </button>
+                                  </div>
                                 </div>
                                 <div className="overflow-auto max-h-45">
                                   <table className="w-full text-xs">
@@ -1936,22 +1967,51 @@ export function CsvCompareModal({
 
                             {/* Hearings import result */}
                             {hearingsImportResult && (
-                              <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800">
-                                ✅{" "}
-                                {hearingsImportResult.newImported > 0
-                                  ? `${hearingsImportResult.newImported} inserted`
-                                  : ""}
-                                {hearingsImportResult.newImported > 0 &&
-                                hearingsImportResult.reschedUpdated > 0
-                                  ? " • "
-                                  : ""}
-                                {hearingsImportResult.reschedUpdated > 0
-                                  ? `${hearingsImportResult.reschedUpdated} rescheduled updated`
-                                  : ""}
-                                {!hearingsImportResult.newImported &&
-                                !hearingsImportResult.reschedUpdated
-                                  ? "No changes"
-                                  : ""}
+                              <div className="space-y-1.5">
+                                {(hearingsImportResult.newImported > 0 ||
+                                  hearingsImportResult.reschedUpdated > 0) && (
+                                  <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800">
+                                    ✅{" "}
+                                    {hearingsImportResult.newImported > 0
+                                      ? `${hearingsImportResult.newImported} inserted`
+                                      : ""}
+                                    {hearingsImportResult.newImported > 0 &&
+                                    hearingsImportResult.reschedUpdated > 0
+                                      ? " • "
+                                      : ""}
+                                    {hearingsImportResult.reschedUpdated > 0
+                                      ? `${hearingsImportResult.reschedUpdated} rescheduled — claimant renamed, date/time/ALJ updated, assignments cleared`
+                                      : ""}
+                                    {!hearingsImportResult.newImported &&
+                                    !hearingsImportResult.reschedUpdated
+                                      ? "No changes"
+                                      : ""}
+                                  </div>
+                                )}
+                                {hearingsImportResult.reschedErrors &&
+                                  hearingsImportResult.reschedErrors.length >
+                                    0 && (
+                                    <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-xs text-red-800 dark:bg-red-950/30 dark:text-red-300 dark:border-red-800">
+                                      ⚠️ {hearingsImportResult.reschedSkipped}{" "}
+                                      rescheduled failed:
+                                      <ul className="mt-1 list-disc pl-4 space-y-0.5">
+                                        {hearingsImportResult.reschedErrors
+                                          .slice(0, 5)
+                                          .map((err, i) => (
+                                            <li key={i}>{err}</li>
+                                          ))}
+                                        {hearingsImportResult.reschedErrors
+                                          .length > 5 && (
+                                          <li>
+                                            +{" "}
+                                            {hearingsImportResult.reschedErrors
+                                              .length - 5}{" "}
+                                            more
+                                          </li>
+                                        )}
+                                      </ul>
+                                    </div>
+                                  )}
                               </div>
                             )}
                           </div>

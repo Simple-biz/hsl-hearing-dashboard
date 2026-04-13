@@ -33,6 +33,7 @@ import {
   Link2,
   Archive,
   ArchiveRestore,
+  RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatCard, StatCardGrid } from "@/components/stat-card";
@@ -65,6 +66,7 @@ import {
   RepStatsModal,
 } from "@/components/modals";
 import { CsvCompareModal } from "@/components/modals/csv-compare-modal";
+import { RescheduledHistoryModal } from "@/components/modals/rescheduled-history-modal";
 import {
   updateHearing,
   deleteHearing,
@@ -2801,6 +2803,7 @@ export function DashboardClient({
   const [showUnassignAll, setShowUnassignAll] = useState(false);
   const [showActivityLog, setShowActivityLog] = useState(false);
   const [showRepStats, setShowRepStats] = useState(false);
+  const [showRescheduledHistory, setShowRescheduledHistory] = useState(false);
   const [showCsvCompare, setShowCsvCompare] = useState(false);
   const [showArchivedSheet, setShowArchivedSheet] = useState(false);
   const [archivedHearings, setArchivedHearings] = useState<
@@ -3453,6 +3456,19 @@ export function DashboardClient({
                 variant="outline"
                 size="sm"
                 className={cn(
+                  "h-7 gap-1.5 text-xs text-violet-600 border-violet-300 hover:bg-violet-50 dark:text-violet-400 dark:border-violet-800 dark:hover:bg-violet-950",
+                  BTN_PRESS,
+                )}
+                onClick={() => setShowRescheduledHistory(true)}
+              >
+                <RefreshCw className="h-3.5 w-3.5" /> Rescheduled
+              </Button>
+            )}
+            {canSeeAdminButtons(userRole) && (
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn(
                   "h-7 gap-1.5 text-xs text-amber-600 border-amber-300 hover:bg-amber-50 dark:text-amber-400 dark:border-amber-800 dark:hover:bg-amber-950",
                   BTN_PRESS,
                 )}
@@ -3626,6 +3642,11 @@ export function DashboardClient({
         <ActivityLogModal onClose={() => setShowActivityLog(false)} />
       )}
       {showRepStats && <RepStatsModal onClose={() => setShowRepStats(false)} />}
+      {showRescheduledHistory && (
+        <RescheduledHistoryModal
+          onClose={() => setShowRescheduledHistory(false)}
+        />
+      )}
       {showCsvCompare && (
         <CsvCompareModal
           onClose={() => {
