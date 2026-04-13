@@ -1020,6 +1020,7 @@ function WithdrawnModal({
   const [search, setSearch] = useState("");
   const [loading, startTransition] = useTransition();
   const [postHrgHearing, setPostHrgHearing] = useState<Hearing | null>(null);
+  const [worksheetHearing, setWorksheetHearing] = useState<Hearing | null>(null);
   const searchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback((p: number, q: string) => {
@@ -1291,18 +1292,31 @@ function WithdrawnModal({
                       </td>
                       <td className="px-3 py-1.5 text-center whitespace-nowrap">
                         {h.medical_record_link ? (
-                          <a
-                            href={h.medical_record_link}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-[9px] bg-blue-600 text-white px-1.5 py-0.5 rounded hover:bg-blue-700"
-                          >
-                            📋
-                          </a>
+                          <div className="inline-flex items-center justify-center gap-1">
+                            <a
+                              href={h.medical_record_link}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-[9px] bg-blue-600 text-white px-1.5 py-0.5 rounded hover:bg-blue-700"
+                              title="Open MR Worksheet"
+                            >
+                              📋
+                            </a>
+                            <button
+                              onClick={() => setWorksheetHearing(h)}
+                              className="text-[9px] px-1.5 py-0.5 rounded border border-border hover:bg-muted text-foreground"
+                              title="Edit MR Worksheet link"
+                            >
+                              ✏️
+                            </button>
+                          </div>
                         ) : (
-                          <span className="text-[10px] text-muted-foreground hover:text-foreground cursor-default">
+                          <button
+                            onClick={() => setWorksheetHearing(h)}
+                            className="text-[10px] text-muted-foreground hover:text-foreground"
+                          >
                             + Link
-                          </span>
+                          </button>
                         )}
                       </td>
                     </tr>
@@ -1361,6 +1375,24 @@ function WithdrawnModal({
             );
             setPostHrgHearing((h) =>
               h && h.id === id ? ({ ...h, ...patch } as Hearing) : h,
+            );
+          }}
+        />
+      )}
+      {worksheetHearing && (
+        <WorksheetLinkModal
+          hearing={worksheetHearing}
+          onClose={() => setWorksheetHearing(null)}
+          onSaved={(id, link) => {
+            setEntries((prev) =>
+              prev.map((h) =>
+                h.id === id ? ({ ...h, medical_record_link: link || null } as Hearing) : h,
+              ),
+            );
+            setWorksheetHearing((current) =>
+              current && current.id === id
+                ? ({ ...current, medical_record_link: link || null } as Hearing)
+                : current,
             );
           }}
         />
