@@ -491,12 +491,21 @@ export async function fetchPostHrgNotes(hearingId: number): Promise<{
   post_hrg_deadline_prev: string | null;
   post_hrg_deadline_changed_by: string | null;
 }> {
-  const { rows } = await db.query(
+  const { rows } = await db.query<{
+    post_hrg_notes: string | null;
+    post_hrg_deadline: string | null;
+    post_hrg_review: boolean;
+    post_hrg_dev_status: string | null;
+    post_hrg_requirements: string | null;
+    post_hrg_deadline_prev: string | null;
+    post_hrg_deadline_changed_by: string | null;
+  }>(
     "SELECT post_hrg_notes, post_hrg_deadline::text, post_hrg_review, post_hrg_dev_status, post_hrg_requirements, post_hrg_deadline_prev::text, post_hrg_deadline_changed_by FROM hearings WHERE id = $1",
     [hearingId],
   );
+
   return (
-    rows[0] || {
+    rows[0] ?? {
       post_hrg_notes: null,
       post_hrg_deadline: null,
       post_hrg_review: false,
@@ -514,6 +523,7 @@ export async function updateHearing(
   value: string | number | boolean | null,
 ) {
   const { logAction } = await import("@/lib/activity-log");
+
   const ALLOWED_FIELDS = [
     "assigned_rep_id",
     "mr_team_id",
@@ -534,7 +544,6 @@ export async function updateHearing(
     "post_hrg_deadline",
     "post_hrg_dev_status",
     "post_hrg_requirements",
-    // Edit modal fields
     "claimant",
     "ssn_last_4",
     "claim_type",
@@ -552,7 +561,6 @@ export async function updateHearing(
     "status_date",
     "entered_hearing_level_date",
     "download_type",
-    // Link fields
     "claimant_link",
     "medical_record_link",
   ];
@@ -561,7 +569,26 @@ export async function updateHearing(
     throw new Error(`Field "${field}" is not allowed for inline update`);
   }
 
-  // Human-readable field labels matching PHP dashboard
+  const SYNC_EVENT_FIELDS = new Set([
+    "claimant",
+    "claim_type",
+    "hearing_date",
+    "hearing_time",
+    "time_zone",
+    "converted_time_est",
+    "alj",
+    "hearing_decision_status",
+    "medical_record_status",
+    "mr_team_id",
+    "manner_of_appearance",
+    "medical_expert",
+    "vocational_expert",
+    "task_assigned",
+    "five_day_notice",
+    "post_hrg_deadline",
+    "medical_record_link",
+  ]);
+
   const FIELD_LABELS: Record<string, string> = {
     assigned_rep_id: "Representative",
     mr_team_id: "Medical Team",
@@ -602,37 +629,102 @@ export async function updateHearing(
     medical_record_link: "MR Worksheet",
   };
 
-  // Get old value before updating
-  const { rows: oldRows } = await db.query(
-    `SELECT ${field}, claimant FROM hearings WHERE id = $1`,
-    [hearingId],
-  );
-  const oldValue = oldRows[0]?.[field];
-  const claimant = oldRows[0]?.claimant || `Hearing #${hearingId}`;
-
-  // When deadline changes, track the previous date and who changed it
-  if (field === "post_hrg_deadline" && oldValue !== value) {
-    let changedBy = "Unknown";
+  let changedBy = "Unknown";
+  if (field === "post_hrg_deadline") {
     try {
       const { requireAuth } = await import("@/lib/session");
       const session = await requireAuth();
       changedBy = session.user.name || session.user.email || "Unknown";
     } catch {
-      /* fallback to Unknown */
+      // fallback stays Unknown
     }
-    await db.query(
-      `UPDATE hearings SET post_hrg_deadline = $1, post_hrg_deadline_prev = $2, post_hrg_deadline_changed_by = $3 WHERE id = $4`,
-      [value, oldValue || null, changedBy, hearingId],
-    );
-  } else {
-    // Perform the standard update
-    await db.query(`UPDATE hearings SET ${field} = $1 WHERE id = $2`, [
-      value,
-      hearingId,
-    ]);
   }
 
-  // Resolve display values for ID fields
+  const txResult = await db.transaction<{
+    oldValue: unknown;
+    claimant: string;
+  }>(async (client) => {
+    const { rows: oldRows } = await client.query<Record<string, unknown>>(
+      `SELECT ${field}, claimant FROM hearings WHERE id = $1`,
+      [hearingId],
+    );
+
+    const oldRow = oldRows[0] ?? {};
+    const oldValue = oldRow[field];
+    const claimant =
+      (oldRow.claimant as string | null) || `Hearing #${hearingId}`;
+
+    if (field === "post_hrg_deadline" && oldValue !== value) {
+      await client.query(
+        `UPDATE hearings
+         SET post_hrg_deadline = $1,
+             post_hrg_deadline_prev = $2,
+             post_hrg_deadline_changed_by = $3
+         WHERE id = $4`,
+        [value, oldValue || null, changedBy, hearingId],
+      );
+    } else {
+      await client.query(`UPDATE hearings SET ${field} = $1 WHERE id = $2`, [
+        value,
+        hearingId,
+      ]);
+    }
+
+    if (SYNC_EVENT_FIELDS.has(field)) {
+      const { rows: payloadRows } = await client.query<Record<string, unknown>>(
+        `
+          SELECT
+            h.id::text                               AS id,
+            COALESCE(h.claimant, '')                 AS claimant,
+            COALESCE(h.claim_type, '')               AS claim_type,
+            COALESCE(h.hearing_date::text, '')       AS hearing_date,
+            COALESCE(h.hearing_time::text, '')       AS hearing_time,
+            COALESCE(h.time_zone, '')                AS time_zone,
+            COALESCE(h.converted_time_est::text, '') AS converted_time_est,
+            COALESCE(h.alj, '')                      AS alj,
+            COALESCE(h.medical_expert, '')           AS medical_expert,
+            COALESCE(h.vocational_expert, '')        AS vocational_expert,
+            COALESCE(h.hearing_decision_status, '')  AS hearing_decision_status,
+            COALESCE(h.medical_record_status, '')    AS medical_record_status,
+            COALESCE(t.team_name, '')                AS mr_team_name,
+            COALESCE(h.manner_of_appearance, '')     AS manner_of_appearance,
+            COALESCE(h.post_hrg_deadline::text, '')  AS post_hrg_deadline,
+            COALESCE(h.task_assigned, false)         AS task_assigned,
+            COALESCE(h.five_day_notice, false)       AS five_day_notice,
+            COALESCE(h.medical_record_link, '')      AS medical_record_link
+          FROM hearings h
+          LEFT JOIN mr_teams t ON h.mr_team_id = t.id
+          WHERE h.id = $1
+        `,
+        [hearingId],
+      );
+
+      const payload = payloadRows[0] ?? null;
+
+      if (payload) {
+        await recordHearingSyncEvent(client, {
+          hearingId,
+          eventType: "update",
+          payload,
+          changedFields: {
+            [field]: {
+              old: oldValue ?? null,
+              new: value ?? null,
+            },
+          },
+        });
+      }
+    }
+
+    return {
+      oldValue,
+      claimant,
+    };
+  });
+
+  const oldValue = txResult.oldValue;
+  const claimant = txResult.claimant;
+
   const fieldLabel =
     FIELD_LABELS[field] ||
     field.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
@@ -640,14 +732,14 @@ export async function updateHearing(
   const resolveValue = async (f: string, v: unknown): Promise<string> => {
     if (v === null || v === undefined || v === "") return "(empty)";
     if (f === "assigned_rep_id") {
-      const { rows } = await db.query(
+      const { rows } = await db.query<{ name: string }>(
         "SELECT name FROM representatives WHERE id = $1",
         [v],
       );
       return rows[0]?.name || String(v);
     }
     if (f === "mr_team_id") {
-      const { rows } = await db.query(
+      const { rows } = await db.query<{ team_name: string }>(
         "SELECT team_name FROM mr_teams WHERE id = $1",
         [v],
       );
@@ -656,7 +748,6 @@ export async function updateHearing(
     if (f === "rep_docs_assigned_to") {
       return String(v);
     }
-    // Post HRG notes — show count instead of raw JSON
     if (f === "post_hrg_notes") {
       try {
         const parsed = JSON.parse(String(v));
@@ -667,7 +758,6 @@ export async function updateHearing(
         return String(v);
       }
     }
-    // Boolean fields
     if (
       [
         "task_assigned",
@@ -682,7 +772,6 @@ export async function updateHearing(
     return String(v);
   };
 
-  // Log with specific action name and detailed description
   if (field === "assigned_rep_id" && value) {
     const newName = await resolveValue(field, value);
     const oldName = oldValue ? await resolveValue(field, oldValue) : "(empty)";
@@ -810,10 +899,92 @@ export async function deleteDashboardPostHrgNote(
 }
 
 export async function deleteHearing(hearingId: number) {
-  const { logAction, getClaimantName } = await import("@/lib/activity-log");
-  const claimant = await getClaimantName(hearingId);
-  await db.query("DELETE FROM hearings WHERE id = $1", [hearingId]);
-  await logAction("hearing_deleted", `Deleted hearing: ${claimant}`);
+  const txResult = await db.transaction<{
+    claimant: string;
+  }>(async (client) => {
+    const { rows } = await client.query<{
+      claimant: string | null;
+      claim_type: string | null;
+      hearing_date: string | null;
+      hearing_time: string | null;
+      time_zone: string | null;
+      converted_time_est: string | null;
+      alj: string | null;
+      medical_expert: string | null;
+      vocational_expert: string | null;
+      hearing_decision_status: string | null;
+      medical_record_status: string | null;
+      manner_of_appearance: string | null;
+      post_hrg_deadline: string | null;
+      task_assigned: boolean | null;
+      five_day_notice: boolean | null;
+      medical_record_link: string | null;
+    }>(
+      `
+        SELECT
+          claimant,
+          claim_type,
+          hearing_date::text AS hearing_date,
+          hearing_time::text AS hearing_time,
+          time_zone,
+          converted_time_est::text AS converted_time_est,
+          alj,
+          medical_expert,
+          vocational_expert,
+          hearing_decision_status,
+          medical_record_status,
+          manner_of_appearance,
+          post_hrg_deadline::text AS post_hrg_deadline,
+          task_assigned,
+          five_day_notice,
+          medical_record_link
+        FROM hearings
+        WHERE id = $1
+      `,
+      [hearingId],
+    );
+
+    const row = rows[0];
+    if (!row) {
+      throw new Error(`Hearing #${hearingId} not found`);
+    }
+
+    const claimant = row.claimant || `Hearing #${hearingId}`;
+
+    await recordHearingSyncEvent(client, {
+      hearingId,
+      eventType: "delete",
+      payload: {
+        id: String(hearingId),
+        claimant: row.claimant || "",
+        claim_type: row.claim_type || "",
+        hearing_date: row.hearing_date || "",
+        hearing_time: row.hearing_time || "",
+        time_zone: row.time_zone || "",
+        converted_time_est: row.converted_time_est || "",
+        alj: row.alj || "",
+        medical_expert: row.medical_expert || "",
+        vocational_expert: row.vocational_expert || "",
+        hearing_decision_status: row.hearing_decision_status || "",
+        medical_record_status: row.medical_record_status || "",
+        manner_of_appearance: row.manner_of_appearance || "",
+        post_hrg_deadline: row.post_hrg_deadline || "",
+        task_assigned: row.task_assigned ?? false,
+        five_day_notice: row.five_day_notice ?? false,
+        medical_record_link: row.medical_record_link || "",
+      },
+      changedFields: {
+        deleted: true,
+      },
+    });
+
+    await client.query("DELETE FROM hearings WHERE id = $1", [hearingId]);
+
+    return { claimant };
+  });
+
+  const { logAction } = await import("@/lib/activity-log");
+  await logAction("hearing_deleted", `Deleted hearing: ${txResult.claimant}`);
 }
 
 export async function autoAssignSingle(hearingId: number) {
@@ -851,6 +1022,52 @@ function convertToEST(time: string, tz: string): string {
   return `${String(estH).padStart(2, "0")}:${String(m).padStart(2, "0")}:00`;
 }
 
+type HearingSyncEventType = "create" | "update" | "delete";
+
+type SyncEventQueryRunner = {
+  query: (
+    text: string,
+    params?: unknown[],
+  ) => Promise<{ rows: Record<string, unknown>[] }>;
+};
+
+async function recordHearingSyncEvent(
+  client: SyncEventQueryRunner,
+  {
+    hearingId,
+    eventType,
+    payload = null,
+    changedFields = null,
+    source = "web_app",
+  }: {
+    hearingId: number;
+    eventType: HearingSyncEventType;
+    payload?: Record<string, unknown> | null;
+    changedFields?: Record<string, unknown> | string[] | null;
+    source?: string;
+  },
+) {
+  await client.query(
+    `
+      INSERT INTO hearing_sync_events (
+        hearing_id,
+        event_type,
+        payload,
+        changed_fields,
+        source
+      )
+      VALUES ($1, $2, $3::jsonb, $4::jsonb, $5)
+    `,
+    [
+      hearingId,
+      eventType,
+      payload ? JSON.stringify(payload) : null,
+      changedFields ? JSON.stringify(changedFields) : null,
+      source,
+    ],
+  );
+}
+
 // ── Add Hearing ──
 export async function addHearing(form: {
   claimant: string;
@@ -873,40 +1090,91 @@ export async function addHearing(form: {
 }) {
   const converted = convertToEST(form.hearing_time, form.time_zone);
 
-  const { rows } = await db.query(
-    `INSERT INTO hearings (
-      claimant, ssn_last_4, claim_type,
-      hearing_date, hearing_time, time_zone, converted_time_est,
-      alj, city, state,
-      claimant_location, representative_location,
-      medical_expert, vocational_expert,
-      status_date, entered_hearing_level_date, download_type,
-      manner_of_appearance
-    ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-      NULLIF($15, '')::date, NULLIF($16, '')::date, NULLIF($17, ''), NULLIF($18, '')
-    ) RETURNING id`,
-    [
-      form.claimant,
-      form.ssn_last_4 || null,
-      form.claim_type || null,
-      form.hearing_date,
-      form.hearing_time,
-      form.time_zone,
-      converted,
-      form.alj || null,
-      form.city || null,
-      form.state || null,
-      form.claimant_location || null,
-      form.representative_location || null,
-      form.medical_expert || null,
-      form.vocational_expert || null,
-      form.status_date,
-      form.entered_hearing_level_date,
-      form.download_type,
-      form.manner_of_appearance,
-    ],
-  );
+  const hearingId = await db.transaction<number>(async (client) => {
+    const { rows } = await client.query<{ id: number }>(
+      `INSERT INTO hearings (
+        claimant, ssn_last_4, claim_type,
+        hearing_date, hearing_time, time_zone, converted_time_est,
+        alj, city, state,
+        claimant_location, representative_location,
+        medical_expert, vocational_expert,
+        status_date, entered_hearing_level_date, download_type,
+        manner_of_appearance
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+        NULLIF($15, '')::date, NULLIF($16, '')::date, NULLIF($17, ''), NULLIF($18, '')
+      ) RETURNING id`,
+      [
+        form.claimant,
+        form.ssn_last_4 || null,
+        form.claim_type || null,
+        form.hearing_date,
+        form.hearing_time,
+        form.time_zone,
+        converted,
+        form.alj || null,
+        form.city || null,
+        form.state || null,
+        form.claimant_location || null,
+        form.representative_location || null,
+        form.medical_expert || null,
+        form.vocational_expert || null,
+        form.status_date,
+        form.entered_hearing_level_date,
+        form.download_type,
+        form.manner_of_appearance,
+      ],
+    );
+
+    const newHearingId = rows[0].id;
+
+    await recordHearingSyncEvent(client, {
+      hearingId: newHearingId,
+      eventType: "create",
+      payload: {
+        id: String(newHearingId),
+        claimant: form.claimant || "",
+        claim_type: form.claim_type || "",
+        hearing_date: form.hearing_date || "",
+        hearing_time: form.hearing_time || "",
+        time_zone: form.time_zone || "",
+        converted_time_est: converted || "",
+        alj: form.alj || "",
+        city: form.city || "",
+        state: form.state || "",
+        claimant_location: form.claimant_location || "",
+        representative_location: form.representative_location || "",
+        medical_expert: form.medical_expert || "",
+        vocational_expert: form.vocational_expert || "",
+        hearing_decision_status: "",
+        medical_record_status: "",
+        mr_team_name: "",
+        manner_of_appearance: form.manner_of_appearance || "",
+        post_hrg_deadline: "",
+        task_assigned: false,
+        five_day_notice: false,
+        medical_record_link: "",
+      },
+      changedFields: [
+        "claimant",
+        "claim_type",
+        "hearing_date",
+        "hearing_time",
+        "time_zone",
+        "converted_time_est",
+        "alj",
+        "city",
+        "state",
+        "claimant_location",
+        "representative_location",
+        "medical_expert",
+        "vocational_expert",
+        "manner_of_appearance",
+      ],
+    });
+
+    return newHearingId;
+  });
 
   const { logAction } = await import("@/lib/activity-log");
   await logAction(
@@ -914,7 +1182,7 @@ export async function addHearing(form: {
     `${form.claimant} added (${form.hearing_date})`,
   );
 
-  return rows[0].id as number;
+  return hearingId;
 }
 
 // ── Email All — trigger n8n webhook for each assigned rep ──

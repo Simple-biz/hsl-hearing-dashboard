@@ -27,6 +27,7 @@ import type {
   MrTeam,
   Hearing,
   MrPivotPageData,
+  MrPivotStatCards,
   HearingFilters,
   PaginatedHearingsResult,
   RoundRobinState,
@@ -56,6 +57,141 @@ async function logActivity(
   } catch {
     // Never let logging failures break the mutation
   }
+}
+
+type HearingSyncEventType = "create" | "update" | "delete";
+
+type SyncEventRow = Record<string, unknown>;
+type SyncEventQueryRunner = {
+  query: <T extends SyncEventRow = SyncEventRow>(
+    text: string,
+    params?: unknown[],
+  ) => Promise<{ rows: T[] }>;
+};
+
+type HearingListPreview = {
+  id: number;
+  claimant: string;
+  hearing_date: string;
+};
+
+type HearingDatePreview = {
+  claimant: string;
+  hearing_date: string;
+};
+
+type HearingSyncPayloadRow = {
+  id: string;
+  claimant: string;
+  claim_type: string;
+  hearing_date: string;
+  hearing_time: string;
+  time_zone: string;
+  converted_time_est: string;
+  alj: string;
+  medical_expert: string;
+  vocational_expert: string;
+  hearing_decision_status: string;
+  medical_record_status: string;
+  mr_team_name: string;
+  manner_of_appearance: string;
+  post_hrg_deadline: string;
+  task_assigned: boolean;
+  five_day_notice: boolean;
+  medical_record_link: string;
+};
+
+async function recordHearingSyncEvent(
+  client: SyncEventQueryRunner,
+  {
+    hearingId,
+    eventType,
+    payload = null,
+    changedFields = null,
+    source = "medical_records_page",
+  }: {
+    hearingId: number;
+    eventType: HearingSyncEventType;
+    payload?: Record<string, unknown> | null;
+    changedFields?: Record<string, unknown> | string[] | null;
+    source?: string;
+  },
+) {
+  await client.query(
+    `
+      INSERT INTO hearing_sync_events (
+        hearing_id,
+        event_type,
+        payload,
+        changed_fields,
+        source
+      )
+      VALUES ($1, $2, $3::jsonb, $4::jsonb, $5)
+    `,
+    [
+      hearingId,
+      eventType,
+      payload ? JSON.stringify(payload) : null,
+      changedFields ? JSON.stringify(changedFields) : null,
+      source,
+    ],
+  );
+}
+
+async function fetchHearingSyncPayload(
+  client: SyncEventQueryRunner,
+  hearingId: number,
+): Promise<HearingSyncPayloadRow | null> {
+  const { rows } = await client.query<HearingSyncPayloadRow>(
+    `
+      SELECT
+        h.id::text                               AS id,
+        COALESCE(h.claimant, '')                 AS claimant,
+        COALESCE(h.claim_type, '')               AS claim_type,
+        COALESCE(h.hearing_date::text, '')       AS hearing_date,
+        COALESCE(h.hearing_time::text, '')       AS hearing_time,
+        COALESCE(h.time_zone, '')                AS time_zone,
+        COALESCE(h.converted_time_est::text, '') AS converted_time_est,
+        COALESCE(h.alj, '')                      AS alj,
+        COALESCE(h.medical_expert, '')           AS medical_expert,
+        COALESCE(h.vocational_expert, '')        AS vocational_expert,
+        COALESCE(h.hearing_decision_status, '')  AS hearing_decision_status,
+        COALESCE(h.medical_record_status, '')    AS medical_record_status,
+        COALESCE(t.team_name, '')                AS mr_team_name,
+        COALESCE(h.manner_of_appearance, '')     AS manner_of_appearance,
+        COALESCE(h.post_hrg_deadline::text, '')  AS post_hrg_deadline,
+        COALESCE(h.task_assigned, false)         AS task_assigned,
+        COALESCE(h.five_day_notice, false)       AS five_day_notice,
+        COALESCE(h.medical_record_link, '')      AS medical_record_link
+      FROM hearings h
+      LEFT JOIN mr_teams t ON h.mr_team_id = t.id
+      WHERE h.id = $1
+    `,
+    [hearingId],
+  );
+
+  return rows[0] ?? null;
+}
+
+async function recordHearingUpdateEvent(
+  client: SyncEventQueryRunner,
+  {
+    hearingId,
+    changedFields,
+  }: {
+    hearingId: number;
+    changedFields: Record<string, unknown>;
+  },
+) {
+  const payload = await fetchHearingSyncPayload(client, hearingId);
+  if (!payload) return;
+
+  await recordHearingSyncEvent(client, {
+    hearingId,
+    eventType: "update",
+    payload,
+    changedFields,
+  });
 }
 
 // ─── Shared SQL fragment — excludes withdrawn/dismissed records ───────────────
@@ -157,7 +293,7 @@ export async function getMrPivotPageData(
     `),
 
     // ── Next upcoming unassigned hearing ─────────────────────────────────────
-    db.query(`
+    db.query<HearingListPreview>(`
       SELECT id, claimant, hearing_date::text
       FROM hearings
       WHERE mr_team_id IS NULL
@@ -168,7 +304,7 @@ export async function getMrPivotPageData(
     `),
 
     // ── Next hearing without task assigned ────────────────────────────────────
-    db.query(`
+    db.query<HearingListPreview>(`
       SELECT id, claimant, hearing_date::text
       FROM hearings
       WHERE (task_assigned IS NULL OR task_assigned = false)
@@ -358,7 +494,7 @@ export async function getMrPivotPageData(
 
   // ── Shape: stat cards ───────────────────────────────────────────────────────
   const s = statsRow.rows[0] ?? {};
-  const statCards = {
+  const statCards: MrPivotStatCards = {
     totalHearings: Number(s.total           ?? 0),
     complete: Number(s.complete_count   ?? 0),
     inProgress: Number(s.progress_count   ?? 0),
@@ -486,7 +622,7 @@ export async function getMrPivotPageData(
   const nextTeamName = nextTeamObj?.name ?? "Blue Team";
 
   const [nextUnassignedRRRow, urgentUnassignedRow] = await Promise.all([
-    db.query(`
+    db.query<HearingListPreview>(`
       SELECT id, claimant, hearing_date::text
       FROM hearings
       WHERE mr_team_id IS NULL
@@ -643,14 +779,14 @@ export async function getHearingsPaginated(
   );
 
   const totalCount = Number(statsResult.rows[0]?.total ?? 0);
-  const page    = Math.max(1, filters.page ?? 1);
+  const page = Math.max(1, filters.page ?? 1);
   const perPage = filters.per_page === "all"
     ? Math.max(1, Math.min(totalCount, 500))
     : Math.max(1, Math.min(500, Number(filters.per_page ?? 50)));
-  const offset  = (page - 1) * perPage;
+  const offset = (page - 1) * perPage;
 
   params.push(perPage); const limitIdx  = params.length;
-  params.push(offset);  const offsetIdx = params.length;
+  params.push(offset); const offsetIdx = params.length;
 
   const hearingsResult = await db.query(
     `SELECT
@@ -694,10 +830,30 @@ export async function updateMrStatus(
   hearingId: number,
   status: string,
 ): Promise<{ success: boolean }> {
-  await db.query(
-    `UPDATE hearings SET medical_record_status = $1, updated_at = NOW() WHERE id = $2`,
-    [status, hearingId],
-  );
+  await db.transaction(async (client) => {
+    const { rows } = await client.query<{ medical_record_status: string | null }>(
+      `SELECT medical_record_status FROM hearings WHERE id = $1`,
+      [hearingId],
+    );
+
+    const oldStatus = rows[0]?.medical_record_status ?? null;
+
+    await client.query(
+      `UPDATE hearings SET medical_record_status = $1, updated_at = NOW() WHERE id = $2`,
+      [status, hearingId],
+    );
+
+    await recordHearingUpdateEvent(client, {
+      hearingId,
+      changedFields: {
+        medical_record_status: {
+          old: oldStatus,
+          new: status || null,
+        },
+      },
+    });
+  });
+
   await logActivity("mr_status_updated", `MR status updated to "${status}" for hearing #${hearingId}`);
   return { success: true };
 }
@@ -706,22 +862,43 @@ export async function updateHearingDecisionStatus(
   hearingId: number,
   status: string,
 ): Promise<{ success: boolean }> {
-  await db.query(
-    `UPDATE hearings SET hearing_decision_status = $1, updated_at = NOW() WHERE id = $2`,
-    [status, hearingId],
-  );
+  const txResult = await db.transaction<{ claimant: string }>(async (client) => {
+    const { rows } = await client.query<{
+      hearing_decision_status: string | null;
+      claimant: string | null;
+    }>(
+      `SELECT hearing_decision_status, claimant FROM hearings WHERE id = $1`,
+      [hearingId],
+    );
+
+    const oldStatus = rows[0]?.hearing_decision_status ?? null;
+    const claimant = rows[0]?.claimant || `Hearing #${hearingId}`;
+
+    await client.query(
+      `UPDATE hearings SET hearing_decision_status = $1, updated_at = NOW() WHERE id = $2`,
+      [status, hearingId],
+    );
+
+    await recordHearingUpdateEvent(client, {
+      hearingId,
+      changedFields: {
+        hearing_decision_status: {
+          old: oldStatus,
+          new: status || null,
+        },
+      },
+    });
+
+    return { claimant };
+  });
+
   await logActivity("decision_status_updated", `Decision status updated to "${status}" for hearing #${hearingId}`);
 
-  // If this is a withdrawal-type decision, push a notification for the MR bell
   const isWithdrawal = status.startsWith("Withdrawal") || status === "WD CLMT DECEASED" || status === "Dismissal";
-  const isPostHrg    = status === "Post HRG Review/ Dev";
+  const isPostHrg = status === "Post HRG Review/ Dev";
 
-  if (isWithdrawal || isPostHrg) {
-    const row = await db.query(`SELECT claimant FROM hearings WHERE id = $1`, [hearingId]);
-    const claimant = (row.rows[0]?.claimant as string | undefined) ?? `Hearing #${hearingId}`;
-    if (isWithdrawal) await createWithdrawalNotification(hearingId, claimant);
-    if (isPostHrg)    await createPostHrgNotification(hearingId, claimant);
-  }
+  if (isWithdrawal) await createWithdrawalNotification(hearingId, txResult.claimant);
+  if (isPostHrg) await createPostHrgNotification(hearingId, txResult.claimant);
 
   return { success: true };
 }
@@ -730,13 +907,50 @@ export async function updateMrTeam(
   hearingId: number,
   teamId: number | null,
 ): Promise<{ success: boolean }> {
-  await db.query(
-    `UPDATE hearings SET mr_team_id = $1, mr_team_assigned_at = $2, updated_at = NOW() WHERE id = $3`,
-    [teamId, teamId ? new Date().toISOString() : null, hearingId],
+  const txResult = await db.transaction<{ newTeamName: string | null }>(async (client) => {
+    const { rows } = await client.query<{ mr_team_name: string | null }>(
+      `
+        SELECT t.team_name AS mr_team_name
+        FROM hearings h
+        LEFT JOIN mr_teams t ON h.mr_team_id = t.id
+        WHERE h.id = $1
+      `,
+      [hearingId],
+    );
+
+    const oldTeamName = rows[0]?.mr_team_name ?? null;
+
+    await client.query(
+      `UPDATE hearings SET mr_team_id = $1, mr_team_assigned_at = $2, updated_at = NOW() WHERE id = $3`,
+      [teamId, teamId ? new Date().toISOString() : null, hearingId],
+    );
+
+    const payload = await fetchHearingSyncPayload(client, hearingId);
+    const newTeamName = payload?.mr_team_name || null;
+
+    if (payload) {
+      await recordHearingSyncEvent(client, {
+        hearingId,
+        eventType: "update",
+        payload,
+        changedFields: {
+          mr_team_name: {
+            old: oldTeamName,
+            new: newTeamName,
+          },
+        },
+      });
+    }
+
+    return { newTeamName };
+  });
+
+  await logActivity(
+    "mr_team_assigned",
+    txResult.newTeamName
+      ? `MR team "${txResult.newTeamName}" assigned to hearing #${hearingId}`
+      : `MR team unassigned from hearing #${hearingId}`,
   );
-  await logActivity("mr_team_assigned", teamId
-    ? `MR team #${teamId} assigned to hearing #${hearingId}`
-    : `MR team unassigned from hearing #${hearingId}`);
   return { success: true };
 }
 
@@ -744,10 +958,30 @@ export async function toggleTaskAssigned(
   hearingId: number,
   value: boolean,
 ): Promise<{ success: boolean }> {
-  await db.query(
-    `UPDATE hearings SET task_assigned = $1, updated_at = NOW() WHERE id = $2`,
-    [value, hearingId],
-  );
+  await db.transaction(async (client) => {
+    const { rows } = await client.query<{ task_assigned: boolean | null }>(
+      `SELECT task_assigned FROM hearings WHERE id = $1`,
+      [hearingId],
+    );
+
+    const oldValue = rows[0]?.task_assigned ?? null;
+
+    await client.query(
+      `UPDATE hearings SET task_assigned = $1, updated_at = NOW() WHERE id = $2`,
+      [value, hearingId],
+    );
+
+    await recordHearingUpdateEvent(client, {
+      hearingId,
+      changedFields: {
+        task_assigned: {
+          old: oldValue,
+          new: value,
+        },
+      },
+    });
+  });
+
   await logActivity("task_assigned_updated", `Task assigned set to ${value} for hearing #${hearingId}`);
   return { success: true };
 }
@@ -768,10 +1002,30 @@ export async function toggleFiveDayNotice(
   hearingId: number,
   value: boolean,
 ): Promise<{ success: boolean }> {
-  await db.query(
-    `UPDATE hearings SET five_day_notice = $1, updated_at = NOW() WHERE id = $2`,
-    [value, hearingId],
-  );
+  await db.transaction(async (client) => {
+    const { rows } = await client.query<{ five_day_notice: boolean | null }>(
+      `SELECT five_day_notice FROM hearings WHERE id = $1`,
+      [hearingId],
+    );
+
+    const oldValue = rows[0]?.five_day_notice ?? null;
+
+    await client.query(
+      `UPDATE hearings SET five_day_notice = $1, updated_at = NOW() WHERE id = $2`,
+      [value, hearingId],
+    );
+
+    await recordHearingUpdateEvent(client, {
+      hearingId,
+      changedFields: {
+        five_day_notice: {
+          old: oldValue,
+          new: value,
+        },
+      },
+    });
+  });
+
   await logActivity("five_day_notice_updated", `5-Day Notice set to ${value} for hearing #${hearingId}`);
   return { success: true };
 }
@@ -780,10 +1034,30 @@ export async function updateMoa(
   hearingId: number,
   manner: string,
 ): Promise<{ success: boolean }> {
-  await db.query(
-    `UPDATE hearings SET manner_of_appearance = $1, updated_at = NOW() WHERE id = $2`,
-    [manner, hearingId],
-  );
+  await db.transaction(async (client) => {
+    const { rows } = await client.query<{ manner_of_appearance: string | null }>(
+      `SELECT manner_of_appearance FROM hearings WHERE id = $1`,
+      [hearingId],
+    );
+
+    const oldManner = rows[0]?.manner_of_appearance ?? null;
+
+    await client.query(
+      `UPDATE hearings SET manner_of_appearance = $1, updated_at = NOW() WHERE id = $2`,
+      [manner, hearingId],
+    );
+
+    await recordHearingUpdateEvent(client, {
+      hearingId,
+      changedFields: {
+        manner_of_appearance: {
+          old: oldManner,
+          new: manner || null,
+        },
+      },
+    });
+  });
+
   await logActivity("moa_updated", `MOA updated to "${manner}" for hearing #${hearingId}`);
   return { success: true };
 }
@@ -792,10 +1066,30 @@ export async function updateWorksheetLink(
   hearingId: number,
   link: string,
 ): Promise<{ success: boolean }> {
-  await db.query(
-    `UPDATE hearings SET medical_record_link = $1, updated_at = NOW() WHERE id = $2`,
-    [link, hearingId],
-  );
+  await db.transaction(async (client) => {
+    const { rows } = await client.query<{ medical_record_link: string | null }>(
+      `SELECT medical_record_link FROM hearings WHERE id = $1`,
+      [hearingId],
+    );
+
+    const oldLink = rows[0]?.medical_record_link ?? null;
+
+    await client.query(
+      `UPDATE hearings SET medical_record_link = $1, updated_at = NOW() WHERE id = $2`,
+      [link, hearingId],
+    );
+
+    await recordHearingUpdateEvent(client, {
+      hearingId,
+      changedFields: {
+        medical_record_link: {
+          old: oldLink,
+          new: link || null,
+        },
+      },
+    });
+  });
+
   await logActivity("mr_link_updated", `Worksheet link updated for hearing #${hearingId}`);
   return { success: true };
 }
@@ -805,11 +1099,31 @@ export async function bulkUpdateMrStatus(
   status: string,
 ): Promise<{ success: boolean; message: string }> {
   if (!hearingIds.length) return { success: false, message: "No hearings selected" };
-  const placeholders = hearingIds.map((_, i) => `$${i + 2}`).join(", ");
-  await db.query(
-    `UPDATE hearings SET medical_record_status = $1, updated_at = NOW() WHERE id IN (${placeholders})`,
-    [status, ...hearingIds],
-  );
+
+  await db.transaction(async (client) => {
+    const { rows } = await client.query<{ id: number; medical_record_status: string | null }>(
+      `SELECT id, medical_record_status FROM hearings WHERE id = ANY($1::int[])`,
+      [hearingIds],
+    );
+
+    await client.query(
+      `UPDATE hearings SET medical_record_status = $1, updated_at = NOW() WHERE id = ANY($2::int[])`,
+      [status, hearingIds],
+    );
+
+    for (const row of rows) {
+      await recordHearingUpdateEvent(client, {
+        hearingId: row.id,
+        changedFields: {
+          medical_record_status: {
+            old: row.medical_record_status ?? null,
+            new: status || null,
+          },
+        },
+      });
+    }
+  });
+
   await logActivity("bulk_mr_status_updated", `Bulk updated ${hearingIds.length} hearing(s) to "${status}"`);
   return { success: true, message: `${hearingIds.length} hearing(s) updated to "${status}"` };
 }
@@ -819,25 +1133,58 @@ export async function assignJeromeUrgent(): Promise<{
   message: string;
   count: number;
 }> {
-  const jerome = await db.query(`
-    SELECT id FROM mr_teams WHERE team_name ILIKE '%jerome%' AND is_active = true LIMIT 1
-  `);
-  const jeromeId = jerome.rows[0]?.id;
-  if (!jeromeId) return { success: false, message: "Jerome's Team not found", count: 0 };
+  const txResult = await db.transaction<{
+    success: boolean;
+    message: string;
+    count: number;
+    teamName: string;
+  }>(async (client) => {
+    const jerome = await client.query<{ id: number; team_name: string }>(
+      `SELECT id, team_name FROM mr_teams WHERE team_name ILIKE '%jerome%' AND is_active = true LIMIT 1`,
+    );
+    const jeromeId = jerome.rows[0]?.id;
+    const teamName = jerome.rows[0]?.team_name || "Jerome's Team";
+    if (!jeromeId) return { success: false, message: "Jerome's Team not found", count: 0, teamName };
 
-  const result = await db.query(`
-    UPDATE hearings
-    SET mr_team_id = $1, mr_team_assigned_at = NOW(), updated_at = NOW()
-    WHERE mr_team_id IS NULL
-      AND hearing_date >= CURRENT_DATE
-      AND hearing_date <= CURRENT_DATE + INTERVAL '28 days'
-      AND (medical_record_status != 'WITHDRAWAL' OR medical_record_status IS NULL)
-    RETURNING id
-  `, [jeromeId]);
+    const result = await client.query<{ id: number }>(
+      `
+        UPDATE hearings
+        SET mr_team_id = $1, mr_team_assigned_at = NOW(), updated_at = NOW()
+        WHERE mr_team_id IS NULL
+          AND hearing_date >= CURRENT_DATE
+          AND hearing_date <= CURRENT_DATE + INTERVAL '28 days'
+          AND (medical_record_status != 'WITHDRAWAL' OR medical_record_status IS NULL)
+        RETURNING id
+      `,
+      [jeromeId],
+    );
 
-  const count = result.rows.length;
-  await logActivity("urgent_team_assigned", `${count} urgent hearing(s) assigned to Jerome's Team`);
-  return { success: true, message: `${count} hearing(s) assigned to Jerome's Team`, count };
+    for (const row of result.rows) {
+      const payload = await fetchHearingSyncPayload(client, row.id);
+      if (!payload) continue;
+
+      await recordHearingSyncEvent(client, {
+        hearingId: row.id,
+        eventType: "update",
+        payload,
+        changedFields: {
+          mr_team_name: {
+            old: null,
+            new: payload.mr_team_name || teamName,
+          },
+        },
+      });
+    }
+
+    const count = result.rows.length;
+    return { success: true, message: `${count} hearing(s) assigned to ${teamName}`, count, teamName };
+  });
+
+  if (txResult.success) {
+    await logActivity("urgent_team_assigned", `${txResult.count} urgent hearing(s) assigned to ${txResult.teamName}`);
+  }
+
+  return { success: txResult.success, message: txResult.message, count: txResult.count };
 }
 
 export async function getRoundRobinState(): Promise<RoundRobinState> {
@@ -858,7 +1205,7 @@ export async function getRoundRobinState(): Promise<RoundRobinState> {
         AND (h.medical_record_status != 'WITHDRAWAL' OR h.medical_record_status IS NULL)
       ORDER BY h.mr_team_assigned_at DESC LIMIT 1
     `),
-    db.query(`
+    db.query<HearingListPreview>(`
       SELECT id, claimant, hearing_date::text FROM hearings
       WHERE mr_team_id IS NULL AND hearing_date >= CURRENT_DATE
         AND (medical_record_status != 'WITHDRAWAL' OR medical_record_status IS NULL)
@@ -1128,11 +1475,11 @@ function parsePostHrgNotes(raw: unknown): PostHrgNote[] {
     if (Array.isArray(parsed)) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return parsed.map((n: any, i: number) => ({
-        id:          i,
-        hearing_id:  0,
+        id: i,
+        hearing_id: 0,
         author_name: n.author ?? n.author_name ?? n.user ?? "Unknown",
-        content:     n.content ?? n.note ?? "",
-        created_at:  n.date   ?? n.created_at  ?? new Date().toISOString(),
+        content: n.content ?? n.note ?? "",
+        created_at: n.date   ?? n.created_at  ?? new Date().toISOString(),
       }));
     }
   } catch { /* fall through */ }
@@ -1212,10 +1559,30 @@ export async function updatePostHrgDeadline(
   hearingId: number,
   deadline: string,
 ): Promise<{ success: boolean }> {
-  await db.query(
-    `UPDATE hearings SET post_hrg_deadline = $1, updated_at = NOW() WHERE id = $2`,
-    [deadline, hearingId],
-  );
+  await db.transaction(async (client) => {
+    const { rows } = await client.query<{ post_hrg_deadline: string | null }>(
+      `SELECT post_hrg_deadline::text AS post_hrg_deadline FROM hearings WHERE id = $1`,
+      [hearingId],
+    );
+
+    const oldDeadline = rows[0]?.post_hrg_deadline ?? null;
+
+    await client.query(
+      `UPDATE hearings SET post_hrg_deadline = $1, updated_at = NOW() WHERE id = $2`,
+      [deadline, hearingId],
+    );
+
+    await recordHearingUpdateEvent(client, {
+      hearingId,
+      changedFields: {
+        post_hrg_deadline: {
+          old: oldDeadline,
+          new: deadline || null,
+        },
+      },
+    });
+  });
+
   await logActivity(
     "post_hrg_deadline_updated",
     deadline
@@ -1228,9 +1595,9 @@ export async function updatePostHrgDeadline(
 export async function getPostHrgHearings(
   filters: HearingFilters,
 ): Promise<PaginatedHearingsResult> {
-  const page    = Math.max(1, filters.page ?? 1);
+  const page = Math.max(1, filters.page ?? 1);
   const perPage = Number(filters.per_page ?? 50);
-  const offset  = (page - 1) * perPage;
+  const offset = (page - 1) * perPage;
 
   const params: unknown[] = [];
   const where: string[] = [
@@ -1288,12 +1655,12 @@ export async function getPostHrgHearings(
 
   const total = countRes.rows[0]?.total ?? 0;
   return {
-    hearings:    dataRes.rows as Hearing[],
+    hearings: dataRes.rows as Hearing[],
     total,
     page,
-    per_page:    perPage,
+    per_page: perPage,
     total_pages: Math.max(1, Math.ceil(total / perPage)),
-    stats:       { total, complete: 0, in_progress: 0, ready: 0, not_started: 0, urgent: 0 },
+    stats: { total, complete: 0, in_progress: 0, ready: 0, not_started: 0, urgent: 0 },
   };
 }
 
@@ -1305,9 +1672,9 @@ export async function getWithdrawnHearings(filters: {
   search?: string;
   per_page?: number;
 }): Promise<{ hearings: Hearing[]; total: number; total_pages: number }> {
-  const page    = Math.max(1, filters.page ?? 1);
+  const page = Math.max(1, filters.page ?? 1);
   const perPage = filters.per_page ?? 50;
-  const offset  = (page - 1) * perPage;
+  const offset = (page - 1) * perPage;
 
   const params: unknown[] = [];
   const conds: string[] = [
@@ -1352,7 +1719,7 @@ export async function getWithdrawnHearings(filters: {
   const total = countRes.rows[0]?.total ?? 0;
 
   return {
-    hearings:    dataRes.rows as Hearing[],
+    hearings: dataRes.rows as Hearing[],
     total,
     total_pages: Math.max(1, Math.ceil(total / perPage)),
   };
@@ -1383,7 +1750,7 @@ export async function getCardStats(
 
   const [countResult, nextResult] = await Promise.all([
     db.query(`SELECT COUNT(*) AS cnt FROM hearings ${whereClause}`, params),
-    db.query(
+    db.query<HearingDatePreview>(
       `SELECT claimant, hearing_date::text FROM hearings ${whereClause} ORDER BY hearing_date ASC LIMIT 1`,
       params,
     ),

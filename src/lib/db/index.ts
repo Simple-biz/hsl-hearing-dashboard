@@ -1,4 +1,4 @@
-import { Pool } from "@neondatabase/serverless";
+import { Pool, type QueryResultRow } from "@neondatabase/serverless";
 
 // Shared pool instance (reused across requests in serverless)
 let pool: Pool | null = null;
@@ -14,6 +14,38 @@ function getPool(): Pool {
   return pool;
 }
 
+type DbRow = QueryResultRow;
+
+type DbQueryResult<T extends QueryResultRow = DbRow> = {
+  rows: T[];
+};
+
+type DbClient = {
+  query: <T extends QueryResultRow = DbRow>(
+    text: string,
+    params?: unknown[],
+  ) => Promise<DbQueryResult<T>>;
+};
+
+// Added this generic non-RLS transaction helper so our actual DB change +
+// the sync event write can stay atomic moving forward.
+async function transaction<T>(
+  callback: (client: DbClient) => Promise<T>,
+): Promise<T> {
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const result = await callback(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 /**
  * Run a query without RLS context (uses DB owner, bypasses RLS).
  * Use for: admin operations, imports, cron jobs, migrations.
@@ -23,7 +55,12 @@ function getPool(): Pool {
  *   const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [userId])
  */
 export const db = {
-  query: (text: string, params?: unknown[]) => getPool().query(text, params),
+  query: <T extends QueryResultRow = DbRow>(
+    text: string,
+    params?: unknown[],
+  ) => getPool().query<T>(text, params),
+  connect: () => getPool().connect(),
+  transaction,
 };
 
 /**
@@ -65,7 +102,7 @@ export async function dbWithRLS(
  * Run multiple queries in a single RLS-scoped transaction.
  *
  * Usage:
- *   const results = await dbTransaction(userId, userRole, async (client) => {
+ *   const result = await dbTransaction(userId, userRole, async (client) => {
  *     const hearings = await client.query('SELECT * FROM hearings WHERE id = $1', [id])
  *     await client.query('UPDATE hearings SET ... WHERE id = $1', [id])
  *     return hearings.rows[0]
@@ -74,9 +111,7 @@ export async function dbWithRLS(
 export async function dbTransaction<T>(
   userId: number,
   userRole: string,
-  callback: (client: {
-    query: (text: string, params?: unknown[]) => Promise<{ rows: T[] }>;
-  }) => Promise<T>,
+  callback: (client: DbClient) => Promise<T>,
 ): Promise<T> {
   const client = await getPool().connect();
   try {
