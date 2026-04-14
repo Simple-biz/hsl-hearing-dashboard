@@ -64,6 +64,7 @@ const ALL_ROLES = [
   { value: "post_hearing_admin", label: "Post Hearing Admin", group: "Staff" },
   { value: "post_hearing_staff", label: "Post Hearing Staff", group: "Staff" },
   { value: "staff", label: "Staff", group: "Staff" },
+  { value: "chronicle_editor", label: "Chronicle Editor", group: "Staff" },
   { value: "rep", label: "Representative", group: "Representatives" },
 ];
 

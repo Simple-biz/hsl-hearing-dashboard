@@ -3,3 +3,5 @@ ALTER TYPE user_role ADD VALUE IF NOT EXISTS 'hearings_docs_fee';
 ALTER TYPE user_role ADD VALUE IF NOT EXISTS 'hearings_docs';
 ALTER TYPE user_role ADD VALUE IF NOT EXISTS 'hearings_mc';
 ALTER TYPE user_role ADD VALUE IF NOT EXISTS 'hearings_brief';
+
+ALTER TYPE user_role ADD VALUE IF NOT EXISTS 'chronicle_editor';

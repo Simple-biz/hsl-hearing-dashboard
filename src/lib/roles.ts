@@ -20,7 +20,8 @@ export type UserRole =
   | "hearings_mc"
   | "hearings_brief"
   | "post_hearing_admin"
-  | "post_hearing_staff";
+  | "post_hearing_staff"
+  | "chronicle_editor";
 
 // Pages each role can access
 export const PAGE_ACCESS: Record<string, UserRole[]> = {
@@ -44,6 +45,7 @@ export const PAGE_ACCESS: Record<string, UserRole[]> = {
     "mr_lead",
     "post_hearing_admin",
     "post_hearing_staff",
+    "chronicle_editor",
   ],
   rep_dashboard: ["system_admin", "admin", "manager", "hearings_admin", "rep"],
   import: ["system_admin"],
@@ -279,6 +281,21 @@ export const EDITABLE_FIELDS: Record<string, UserRole[]> = {
     "post_hearing_admin",
     "post_hearing_staff",
   ],
+  chronicle_link: [
+    "system_admin",
+    "admin",
+    "manager",
+    "hearings_admin",
+    "hearings_mc",
+    "chronicle_editor",
+  ],
+  ovh_link: [
+    "system_admin",
+    "admin",
+    "manager",
+    "hearings_admin",
+    "hearings_mc",
+  ],
 };
 // Columns visible per role on the main dashboard
 // PHP: $canViewAllColumns = !$isRep — everyone except rep sees ALL columns
@@ -312,6 +329,7 @@ export const VISIBLE_COLUMNS: Record<UserRole, string[]> = {
     "alj",
     "manner_of_appearance",
   ],
+  chronicle_editor: ["ALL"],
 };
 
 // User-level page restrictions (by user ID)
