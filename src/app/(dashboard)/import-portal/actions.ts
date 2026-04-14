@@ -23,6 +23,14 @@ export interface PortalRecord {
   approved_notes: string | null;
 }
 
+export interface PortalStats {
+  total: number;
+  clients: number;
+  got_mr_count: number;
+  min_date: string | null;
+  max_date: string | null;
+}
+
 interface UpdatedEntry {
   row: number;
   id: number;
@@ -31,12 +39,37 @@ interface UpdatedEntry {
   provider: string;
 }
 
+interface ImportPortalResult {
+  imported: number;
+  updated: number;
+  skipped: number;
+  deleted: number;
+  updatedEntries: UpdatedEntry[];
+}
+
+type UserIdRow = { id: number };
+type CountRow = { count: number };
+type SpecialistRow = { id: number; name: string };
+type ExistingPortalRow = {
+  id: number;
+  client_key: string;
+  hdate: string;
+  prov: string;
+};
+type PortalStatsRow = {
+  total: number | string;
+  clients: number | string;
+  got_mr_count: number | string;
+  min_date: string | null;
+  max_date: string | null;
+};
+
 // ── Resolve current user ID from session ──
 async function getCurrentUserId(): Promise<number | null> {
   try {
     const session = await requireRole(["system_admin"]);
     if (session?.user?.email) {
-      const { rows } = await db.query(
+      const { rows } = await db.query<UserIdRow>(
         "SELECT id FROM users WHERE email = $1 LIMIT 1",
         [session.user.email],
       );
@@ -49,41 +82,48 @@ async function getCurrentUserId(): Promise<number | null> {
 }
 
 // ── Fetch portal stats ──
-export async function getPortalStats() {
-  const {
-    rows: [stats],
-  } = await db.query(`
-    SELECT COUNT(*)::text as total,
-           (COUNT(DISTINCT client_name) FILTER (WHERE client_name IS NOT NULL AND client_name != ''))::text as clients,
-           (COUNT(*) FILTER (WHERE got_mr = true))::text as got_mr_count,
-           MIN(entry_date)::text as min_date,
-           MAX(entry_date)::text as max_date
+export async function getPortalStats(): Promise<PortalStats> {
+  const { rows } = await db.query<PortalStatsRow>(`
+    SELECT COUNT(*)::int AS total,
+           (COUNT(DISTINCT client_name) FILTER (WHERE client_name IS NOT NULL AND client_name != ''))::int AS clients,
+           (COUNT(*) FILTER (WHERE got_mr = true))::int AS got_mr_count,
+           MIN(entry_date)::text AS min_date,
+           MAX(entry_date)::text AS max_date
     FROM mr_patient_portal
   `);
-  return stats;
+
+  const stats = rows[0];
+
+  return {
+    total: Number(stats?.total ?? 0),
+    clients: Number(stats?.clients ?? 0),
+    got_mr_count: Number(stats?.got_mr_count ?? 0),
+    min_date: stats?.min_date ?? null,
+    max_date: stats?.max_date ?? null,
+  };
 }
 
 // ── Import portal records ──
 export async function importPortalRecords(
   records: PortalRecord[],
   mode: "skip" | "update" | "replace",
-) {
+): Promise<ImportPortalResult> {
   const userId = await getCurrentUserId();
   let deleted = 0;
 
   if (mode === "replace") {
-    const {
-      rows: [{ count }],
-    } = await db.query("SELECT COUNT(*)::int as count FROM mr_patient_portal");
+    const { rows } = await db.query<CountRow>(
+      "SELECT COUNT(*)::int AS count FROM mr_patient_portal",
+    );
 
-    deleted = count;
+    deleted = rows[0]?.count ?? 0;
 
     // Use TRUNCATE instead of DELETE to reset IDs
     await db.query("TRUNCATE TABLE mr_patient_portal RESTART IDENTITY");
   }
 
   // Pre-load MR Specialists for name lookup
-  const { rows: specialistRows } = await db.query(
+  const { rows: specialistRows } = await db.query<SpecialistRow>(
     "SELECT id, name FROM mr_specialists WHERE is_active = true",
   );
   const specialists: Record<string, number> = {};
@@ -99,11 +139,11 @@ export async function importPortalRecords(
   // Pre-fetch existing records for skip/update modes
   let existingMap: Map<string, number> | null = null;
   if (mode !== "replace") {
-    const { rows: existing } = await db.query(
-      `SELECT id, 
-              LOWER(TRIM(COALESCE(client_name, ''))) as client_key,
-              COALESCE(hearing_date::text, '') as hdate,
-              COALESCE(LOWER(TRIM(provider)), '') as prov
+    const { rows: existing } = await db.query<ExistingPortalRow>(
+      `SELECT id,
+              LOWER(TRIM(COALESCE(client_name, ''))) AS client_key,
+              COALESCE(hearing_date::text, '') AS hdate,
+              COALESCE(LOWER(TRIM(provider)), '') AS prov
        FROM mr_patient_portal`,
     );
     existingMap = new Map();
@@ -153,22 +193,29 @@ export async function importPortalRecords(
     }
 
     // Match key: client_name + hearing_date + provider
-    const matchKey = `${clientName.toLowerCase().trim()}|${hearingDate || ""}|${(provider || "").toLowerCase()}`;
+    const matchKey = `${clientName.toLowerCase().trim()}|${hearingDate || ""}|${provider.toLowerCase()}`;
 
     if (existingMap && existingMap.has(matchKey)) {
       if (mode === "skip") {
         skipped++;
         continue;
-      } else if (mode === "update") {
-        const existingId = existingMap.get(matchKey)!;
+      }
+
+      if (mode === "update") {
+        const existingId = existingMap.get(matchKey);
+        if (!existingId) {
+          skipped++;
+          continue;
+        }
+
         await db.query(
-          `UPDATE mr_patient_portal SET 
+          `UPDATE mr_patient_portal SET
             entry_date = $1,
             mycase_link = $2,
-            portal_link = $3, 
-            portal_username = $4, 
+            portal_link = $3,
+            portal_username = $4,
             portal_password = $5,
-            got_mr = $6, 
+            got_mr = $6,
             approved_by_tl = $7,
             mr_specialist_id = $8,
             username_notes = COALESCE($9, username_notes),
@@ -193,6 +240,7 @@ export async function importPortalRecords(
             existingId,
           ],
         );
+
         updatedEntries.push({
           row: i + 1,
           id: existingId,
@@ -204,9 +252,9 @@ export async function importPortalRecords(
       }
     } else {
       await db.query(
-        `INSERT INTO mr_patient_portal 
-          (entry_date, hearing_date, client_name, provider, mycase_link, portal_link, 
-           portal_username, portal_password, got_mr, approved_by_tl, mr_specialist_id, 
+        `INSERT INTO mr_patient_portal
+          (entry_date, hearing_date, client_name, provider, mycase_link, portal_link,
+           portal_username, portal_password, got_mr, approved_by_tl, mr_specialist_id,
            username_notes, password_notes, got_mr_notes, approved_notes, created_by)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
         [
@@ -239,6 +287,7 @@ export async function importPortalRecords(
         ? "update existing"
         : "replace all";
   const deleteText = deleted > 0 ? `, ${deleted} deleted` : "";
+
   await logAction(
     "portal_bulk_import",
     `Imported portal data (${modeText}): ${imported} new, ${updated} updated, ${skipped} skipped${deleteText}`,
