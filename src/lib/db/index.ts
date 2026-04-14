@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { Pool, type QueryResultRow } from "@neondatabase/serverless";
 
 // Shared pool instance (reused across requests in serverless)
@@ -14,28 +15,32 @@ function getPool(): Pool {
   return pool;
 }
 
-type DbRow = QueryResultRow;
-
-type DbQueryResult<T extends QueryResultRow = DbRow> = {
+type DbQueryResult<T = any> = {
   rows: T[];
+  rowCount: number | null;
+  command?: string;
+  oid?: number;
+  fields?: unknown[];
 };
 
 type DbClient = {
-  query: <T extends QueryResultRow = DbRow>(
+  query: <T = any>(
     text: string,
     params?: unknown[],
   ) => Promise<DbQueryResult<T>>;
 };
 
-// Added this generic non-RLS transaction helper so our actual DB change +
-// the sync event write can stay atomic moving forward.
+// Compatibility mode:
+// - keeps transaction support for atomic sync-event writes
+// - still allows explicit db.query<RowType>(...) where needed
+// - preserves rowCount for older code paths
 async function transaction<T>(
   callback: (client: DbClient) => Promise<T>,
 ): Promise<T> {
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
-    const result = await callback(client);
+    const result = await callback(client as unknown as DbClient);
     await client.query("COMMIT");
     return result;
   } catch (error) {
@@ -47,37 +52,24 @@ async function transaction<T>(
 }
 
 /**
- * Run a query without RLS context (uses DB owner, bypasses RLS).
- * Use for: admin operations, imports, cron jobs, migrations.
- *
- * Usage:
- *   const { rows } = await db.query('SELECT * FROM users')
- *   const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [userId])
+ * Run a query without RLS context.
  */
 export const db = {
-  query: <T extends QueryResultRow = DbRow>(
-    text: string,
-    params?: unknown[],
-  ) => getPool().query<T>(text, params),
+  query: <T = any>(text: string, params?: unknown[]) =>
+    getPool().query(text, params) as unknown as Promise<DbQueryResult<T>>,
   connect: () => getPool().connect(),
   transaction,
 };
 
 /**
  * Run a query WITH RLS context.
- * Sets app.current_user_id and app.current_user_role as session variables
- * inside a transaction so RLS policies enforce access control.
- *
- * Usage:
- *   const rows = await dbWithRLS(userId, userRole, 'SELECT * FROM hearings')
- *   const rows = await dbWithRLS(userId, userRole, 'SELECT * FROM hearings WHERE id = $1', [123])
  */
-export async function dbWithRLS(
+export async function dbWithRLS<T = any>(
   userId: number,
   userRole: string,
   text: string,
   params?: unknown[],
-) {
+): Promise<DbQueryResult<T>> {
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
@@ -89,7 +81,7 @@ export async function dbWithRLS(
     ]);
     const result = await client.query(text, params);
     await client.query("COMMIT");
-    return result;
+    return result as unknown as DbQueryResult<T>;
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
@@ -100,13 +92,6 @@ export async function dbWithRLS(
 
 /**
  * Run multiple queries in a single RLS-scoped transaction.
- *
- * Usage:
- *   const result = await dbTransaction(userId, userRole, async (client) => {
- *     const hearings = await client.query('SELECT * FROM hearings WHERE id = $1', [id])
- *     await client.query('UPDATE hearings SET ... WHERE id = $1', [id])
- *     return hearings.rows[0]
- *   })
  */
 export async function dbTransaction<T>(
   userId: number,
@@ -122,7 +107,7 @@ export async function dbTransaction<T>(
     await client.query(`SELECT set_config('app.current_user_role', $1, true)`, [
       userRole,
     ]);
-    const result = await callback(client);
+    const result = await callback(client as unknown as DbClient);
     await client.query("COMMIT");
     return result;
   } catch (error) {
