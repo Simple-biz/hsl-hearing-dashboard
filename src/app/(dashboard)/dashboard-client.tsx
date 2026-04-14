@@ -2297,12 +2297,14 @@ function MoaCell({
   onUpdate,
   moaOptions,
   isRep,
+  canEditOvh,
 }: {
   hearing: HearingRow;
   editable: boolean;
   onUpdate: (id: number, field: string, value: UpdateValue) => void;
   moaOptions: { value: string; label: string }[];
   isRep: boolean;
+  canEditOvh: boolean;
 }) {
   const isOvh = hearing.manner_of_appearance === "OVH";
 
@@ -2330,7 +2332,7 @@ function MoaCell({
             >
               <ExternalLink className="h-3 w-3 text-cyan-600" />
             </button>
-          ) : !isRep ? (
+          ) : !isRep && canEditOvh ? (
             <button
               type="button"
               onClick={() => {
@@ -2582,6 +2584,7 @@ const HearingTable = memo(function HearingTable({
             onUpdate={onUpdate}
             moaOptions={moaFallback}
             isRep={userRole === "rep"}
+            canEditOvh={canEditField(userRole, "ovh_link")}
           />
         );
       case "rep_docs_assigned_to":

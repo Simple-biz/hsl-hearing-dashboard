@@ -49,6 +49,7 @@ const ALL_ROLES = [
   { value: "post_hearing_admin", label: "Post Hearing Admin", group: "Staff" },
   { value: "post_hearing_staff", label: "Post Hearing Staff", group: "Staff" },
   { value: "staff", label: "Staff", group: "Staff" },
+  { value: "chronicle_editor", label: "Chronicle Editor", group: "Staff" },
   { value: "rep", label: "Representative", group: "Representatives" },
 ];
 
@@ -482,6 +483,12 @@ Test Rep, testrep@hogansmith.com, rep, , in-house`}
                   <p>
                     <span className="font-semibold text-foreground">staff</span>{" "}
                     — View-only dashboard access
+                  </p>
+                  <p>
+                    <span className="font-semibold text-foreground">
+                      chronicle_editor
+                    </span>{" "}
+                    — Can add/update Chronicle link only, rest is view-only
                   </p>
                   <p>
                     <span className="font-semibold text-foreground">rep</span> —
