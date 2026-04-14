@@ -1037,10 +1037,12 @@ function LinkEditModal({
 function ClaimantCell({
   hearing,
   editable,
+  chronicleEditable,
   onSave,
 }: {
   hearing: HearingRow;
   editable?: boolean;
+  chronicleEditable?: boolean;
   onSave?: (id: number, field: string, value: UpdateValue) => void;
 }) {
   const [editingField, setEditingField] = useState<ClaimantEditField | null>(
@@ -1048,6 +1050,7 @@ function ClaimantCell({
   );
 
   const chronicleLink: string | null = hearing.chronicle_link ?? null;
+  const canEditChronicle = chronicleEditable ?? editable ?? false;
 
   let currentEditUrl: string = "";
   if (editingField === "claimant_link") {
@@ -1070,7 +1073,7 @@ function ClaimantCell({
     setEditingField(null);
   };
 
-  const showChronicleRow: boolean = !!(editable || chronicleLink);
+  const showChronicleRow: boolean = !!(canEditChronicle || chronicleLink);
 
   return (
     <div className="min-w-0 pr-1">
@@ -1125,7 +1128,7 @@ function ClaimantCell({
                 Chronicle
               </button>
             )}
-            {editable && (
+            {canEditChronicle && (
               <button
                 type="button"
                 onClick={() => setEditingField("chronicle_link")}
@@ -2535,6 +2538,7 @@ const HearingTable = memo(function HearingTable({
           <ClaimantCell
             hearing={hearing}
             editable={canEditField(userRole, "claimant_link")}
+            chronicleEditable={canEditField(userRole, "chronicle_link")}
             onSave={onUpdate}
           />
         );
