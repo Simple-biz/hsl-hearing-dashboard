@@ -720,7 +720,7 @@ export function RepresentativeDocsClient({
                         )}
                         style={{ width: 130, minWidth: 130, left: 240 }}
                       >
-                        <span className="truncate text-xs block max-w-[120px]">
+                        <span className="truncate text-xs block max-w-30">
                           {r.representative_name || "—"}
                         </span>
                       </td>
