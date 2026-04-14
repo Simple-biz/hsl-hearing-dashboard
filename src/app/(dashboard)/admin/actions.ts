@@ -487,22 +487,30 @@ export async function sendWelcomeEmail(userId: number, password: string) {
   if (!webhookUrl || !webhookSecret)
     throw new Error("N8N webhook not configured");
 
+  const payload: Record<string, string> = {
+    email_type: "new_user_welcome",
+    to_email: email,
+    to_name: full_name,
+    password,
+    role: role.replace(/_/g, " "),
+    login_url:
+      process.env.NEXT_PUBLIC_APP_URL || "https://hearings.hogansmith.com",
+  };
+
+  payload.to_cc =
+    role === "rep" && process.env.REP_WELCOME_CC_EMAIL
+      ? process.env.REP_WELCOME_CC_EMAIL
+      : "";
+
   await fetch(webhookUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "X-Webhook-Secret": webhookSecret,
     },
-    body: JSON.stringify({
-      email_type: "new_user_welcome",
-      to_email: email,
-      to_name: full_name,
-      password,
-      role: role.replace(/_/g, " "),
-      login_url:
-        process.env.NEXT_PUBLIC_APP_URL || "https://hearings.hogansmith.com",
-    }),
+    body: JSON.stringify(payload),
   });
+
   await logAction(
     "email_sent",
     `Welcome email sent to ${full_name} (${email})`,
@@ -577,22 +585,30 @@ export async function sendVideoTutorialEmail(userId: number, password: string) {
   if (!webhookUrl || !webhookSecret)
     throw new Error("N8N webhook not configured");
 
+  const payload: Record<string, string> = {
+    email_type: "scheduling_video_tutorial",
+    to_email: email,
+    to_name: full_name,
+    password,
+    role: role.replace(/_/g, " "),
+    login_url:
+      process.env.NEXT_PUBLIC_APP_URL || "https://hearings.hogansmith.com",
+  };
+
+  payload.to_cc =
+    role === "rep" && process.env.REP_WELCOME_CC_EMAIL
+      ? process.env.REP_WELCOME_CC_EMAIL
+      : "";
+
   await fetch(webhookUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "X-Webhook-Secret": webhookSecret,
     },
-    body: JSON.stringify({
-      email_type: "scheduling_video_tutorial",
-      to_email: email,
-      to_name: full_name,
-      password,
-      role: role.replace(/_/g, " "),
-      login_url:
-        process.env.NEXT_PUBLIC_APP_URL || "https://hearings.hogansmith.com",
-    }),
+    body: JSON.stringify(payload),
   });
+
   await logAction(
     "email_sent",
     `Scheduling video tutorial sent to ${full_name} (${email})`,
