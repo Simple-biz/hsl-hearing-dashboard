@@ -268,6 +268,30 @@ export async function POST(req: NextRequest) {
           originalId,
         ],
       );
+      // ── Reset representative_docs workflow (retains assigned_to only) ──
+      // claimant_link, chronicle_link, and ssn_last_4 live on the hearings row
+      // and are preserved by the UPDATE above.
+      await db.query(
+        `UPDATE representative_docs SET
+           overall_status = NULL,
+           uploaded_noh = false, uploaded_noh_at = NULL,
+           sent_repdocs_to_cl = false, sent_repdocs_to_cl_at = NULL,
+           repdocs_signed = false, repdocs_signed_at = NULL,
+           contact_ltr = false, contact_ltr_at = NULL,
+           repdocs_split = false, repdocs_split_at = NULL,
+           repdocs_uploaded_chronicle = false, repdocs_uploaded_chronicle_at = NULL,
+           oho_confirmation = false, oho_confirmation_at = NULL,
+           oho_assigned_to = NULL,
+           checker_calendar = false,
+           checker_chronicle_claim = false,
+           checker_noh = false,
+           checker_contact_ltr = false,
+           checker_status = NULL,
+           updated_at = NOW()
+         WHERE hearing_id = $1`,
+        [originalId],
+      );
+
       updated++;
 
       await logAction(

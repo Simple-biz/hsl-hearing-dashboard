@@ -36,9 +36,12 @@ export interface RepDocsRow {
 
   // Joined from hearings
   claimant: string | null;
+  claim_type: string | null;
   hearing_date: string | null;
   representative_name: string | null;
+  rep_type: string | null;
   claimant_link: string | null;
+  chronicle_link: string | null;
   ssn_last_4: string | null;
   assignment_status: string | null;
 }
@@ -104,6 +107,8 @@ interface FetchParams {
   search?: string;
   status?: string;
   assignedTo?: string;
+  dateFrom?: string;
+  dateTo?: string;
   sortKey?: string;
   sortDir?: "asc" | "desc";
 }
@@ -157,6 +162,17 @@ export async function fetchRepDocsPage(
     idx++;
   }
 
+  if (params.dateFrom) {
+    conditions.push(`h.hearing_date >= $${idx}::date`);
+    values.push(params.dateFrom);
+    idx++;
+  }
+  if (params.dateTo) {
+    conditions.push(`h.hearing_date <= $${idx}::date`);
+    values.push(params.dateTo);
+    idx++;
+  }
+
   const where = `WHERE ${conditions.join(" AND ")}`;
 
   const SORT_MAP: Record<string, string> = {
@@ -196,9 +212,12 @@ export async function fetchRepDocsPage(
         rd.checker_calendar, rd.checker_chronicle_claim,
         rd.checker_noh, rd.checker_contact_ltr, rd.checker_status,
         h.claimant,
+        h.claim_type,
         h.hearing_date::text AS hearing_date,
         r.name AS representative_name,
+        r.rep_type,
         h.claimant_link,
+        h.chronicle_link,
         h.ssn_last_4,
         h.assignment_status
       FROM representative_docs rd
@@ -249,10 +268,17 @@ async function recomputeOverallStatus(
   id: number,
   assignmentStatus: string | null,
 ) {
-  // Withdrawn wins
-  if (assignmentStatus && assignmentStatus.toLowerCase().includes("withdraw")) {
+  const a = (assignmentStatus || "").toLowerCase();
+  if (a.includes("withdraw")) {
     await db.query(
       `UPDATE representative_docs SET overall_status = 'Withdrawn' WHERE id = $1`,
+      [id],
+    );
+    return;
+  }
+  if (a.includes("postpone")) {
+    await db.query(
+      `UPDATE representative_docs SET overall_status = 'Postponed' WHERE id = $1`,
       [id],
     );
     return;
@@ -353,4 +379,54 @@ export async function updateRepDocsField(
   }
 
   throw new Error(`Field "${field}" is not editable`);
+}
+
+// ─── Update claimant_link / chronicle_link on the joined hearing ───────────
+
+export async function updateHearingLink(
+  repDocsId: number,
+  field: "claimant_link" | "chronicle_link",
+  value: string | null,
+) {
+  await requireAuth();
+  if (field !== "claimant_link" && field !== "chronicle_link") {
+    throw new Error(`Field "${field}" is not a hearing link`);
+  }
+  await db.query(
+    `UPDATE hearings SET ${field} = $1, updated_at = NOW()
+     WHERE id = (SELECT hearing_id FROM representative_docs WHERE id = $2)`,
+    [value, repDocsId],
+  );
+  await logAction(
+    "hearing_link_updated_from_repdocs",
+    `${field} → '${value ?? "(empty)"}' for rep-docs #${repDocsId}`,
+  );
+  return { success: true };
+}
+
+// ─── Reset rep-docs workflow when a hearing is rescheduled ──────────────────
+// Clears all workflow/checker flags, timestamps, OHO assignment, and status.
+// Retains: assigned_to (rep docs assignee). claimant_link/chronicle_link/ssn_last_4
+// live on the hearings row and are preserved there by the reschedule flow.
+export async function clearRepDocsForRescheduledHearing(hearingId: number) {
+  await db.query(
+    `UPDATE representative_docs SET
+       overall_status = NULL,
+       uploaded_noh = false, uploaded_noh_at = NULL,
+       sent_repdocs_to_cl = false, sent_repdocs_to_cl_at = NULL,
+       repdocs_signed = false, repdocs_signed_at = NULL,
+       contact_ltr = false, contact_ltr_at = NULL,
+       repdocs_split = false, repdocs_split_at = NULL,
+       repdocs_uploaded_chronicle = false, repdocs_uploaded_chronicle_at = NULL,
+       oho_confirmation = false, oho_confirmation_at = NULL,
+       oho_assigned_to = NULL,
+       checker_calendar = false,
+       checker_chronicle_claim = false,
+       checker_noh = false,
+       checker_contact_ltr = false,
+       checker_status = NULL,
+       updated_at = NOW()
+     WHERE hearing_id = $1`,
+    [hearingId],
+  );
 }
