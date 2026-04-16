@@ -19,7 +19,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Pencil,
-  Link2,
+  ClipboardList,
+  AlertTriangle,
 } from "lucide-react";
 import { StatCard, StatCardGrid } from "@/components/stat-card";
 import { AppHeader } from "@/components/layout/app-header";
@@ -32,8 +33,12 @@ import {
   type RepDocsRow,
   type RepDocsStats,
   type RepDocsAssigneeOption,
+  type RepDocsFilteredBreakdown,
 } from "./actions";
 import type { UserRole } from "@/lib/roles";
+import { RepDocsImportModal } from "@/components/modals/rep-docs-import-modal";
+import { ActivityLogModal } from "@/components/modals/activity-log-modal";
+import { RepDocsWithdrawnModal } from "@/components/modals/rep-docs-withdrawn-modal";
 
 interface Props {
   userRole: UserRole;
@@ -156,9 +161,8 @@ const WORKFLOW_KEYS = [
 ] as const;
 
 function computeOverallStatus(row: RepDocsRow): string {
-  const a = (row.assignment_status || "").toLowerCase();
-  if (a.includes("withdraw")) return "Withdrawn";
-  if (a.includes("postpone")) return "Postponed";
+  // Withdrawn is an override (set by import or hearing status) — preserve it.
+  if ((row.overall_status || "").toLowerCase() === "withdrawn") return "Withdrawn";
   const flags = WORKFLOW_KEYS.map((k) => Boolean(row[k]));
   const truthy = flags.filter(Boolean).length;
   if (truthy === 0) return "Not Started";
@@ -196,6 +200,24 @@ const CHECKER_STATUS_CONFIG: {
 
 const CHECKER_STATUS_OPTIONS = CHECKER_STATUS_CONFIG.map((s) => s.value);
 
+const FIELD_LABELS: Record<string, string> = {
+  assigned_to: "Assignee",
+  overall_status: "Status",
+  uploaded_noh: "Uploaded NOH",
+  sent_repdocs_to_cl: "Sent Rep Docs to CL",
+  repdocs_signed: "Rep Docs Signed",
+  contact_ltr: "Contact Letter",
+  repdocs_split: "Rep Docs Split",
+  repdocs_uploaded_chronicle: "Uploaded in Chronicle",
+  oho_confirmation: "OHO Confirmation",
+  oho_assigned_to: "OHO Assignee",
+  checker_calendar: "Checker — Calendar",
+  checker_chronicle_claim: "Checker — Chronicle Claim",
+  checker_noh: "Checker — NOH",
+  checker_contact_ltr: "Checker — Contact Ltr",
+  checker_status: "Checker Status",
+};
+
 interface DateFilters {
   preset: string;
   dateFrom: string;
@@ -210,7 +232,10 @@ const EMPTY_DATE_FILTERS: DateFilters = {
 
 function formatDate(iso: string | null) {
   if (!iso) return "";
-  const d = new Date(iso);
+  // Date-only strings ("2026-05-12") parse as UTC midnight and drift to the
+  // previous day in negative-UTC timezones. Pin to noon so the date stays put.
+  const input = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso + "T12:00:00" : iso;
+  const d = new Date(input);
   if (isNaN(d.getTime())) return "";
   return d.toLocaleDateString("en-US", {
     month: "short",
@@ -359,7 +384,7 @@ function LinkEditModal({
 }
 
 // ── Claimant cell with claimant + chronicle link edit (mirrors dashboard-client) ──
-type LinkEditField = "claimant_link" | "chronicle_link";
+type LinkEditField = "chronicle_link";
 
 function ClaimantCell({
   row,
@@ -374,10 +399,7 @@ function ClaimantCell({
   const chronicleLink = row.chronicle_link ?? null;
 
   let currentEditUrl = "";
-  if (editingField === "claimant_link")
-    currentEditUrl = row.claimant_link ?? "";
-  else if (editingField === "chronicle_link")
-    currentEditUrl = chronicleLink ?? "";
+  if (editingField === "chronicle_link") currentEditUrl = chronicleLink ?? "";
 
   const handleSave = (url: string) => {
     if (editingField) onSave(row.id, editingField, url || null);
@@ -409,20 +431,6 @@ function ClaimantCell({
           >
             {row.claimant}
           </p>
-        )}
-        {editable && (
-          <button
-            type="button"
-            onClick={() => setEditingField("claimant_link")}
-            className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-blue-600 hover:bg-muted"
-            title="Edit claimant link"
-          >
-            {row.claimant_link ? (
-              <Pencil className="h-2.5 w-2.5" />
-            ) : (
-              <Link2 className="h-2.5 w-2.5" />
-            )}
-          </button>
         )}
       </div>
 
@@ -464,11 +472,7 @@ function ClaimantCell({
 
       {editingField && (
         <LinkEditModal
-          title={
-            editingField === "claimant_link"
-              ? "Claimant Link \u2014 " + (row.claimant ?? "")
-              : "Chronicle Link \u2014 " + (row.claimant ?? "")
-          }
+          title={"Chronicle Link \u2014 " + (row.claimant ?? "")}
           currentUrl={currentEditUrl}
           onSave={handleSave}
           onRemove={handleRemove}
@@ -488,6 +492,9 @@ export function RepresentativeDocsClient({
 }: Props) {
   const [records, setRecords] = useState<RepDocsRow[]>(initialRecords);
   const [totalFiltered, setTotalFiltered] = useState(initialTotalFiltered);
+  const [breakdown, setBreakdown] = useState<RepDocsFilteredBreakdown | null>(
+    null,
+  );
   const [stats] = useState<RepDocsStats>(initialStats);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -497,6 +504,9 @@ export function RepresentativeDocsClient({
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
   const [isPending, startTransition] = useTransition();
+  const [showImport, setShowImport] = useState(false);
+  const [showActivityLog, setShowActivityLog] = useState(false);
+  const [showWithdrawn, setShowWithdrawn] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const totalPages = Math.max(1, Math.ceil(totalFiltered / pageSize));
@@ -583,6 +593,7 @@ export function RepresentativeDocsClient({
         });
         setRecords(res.records);
         setTotalFiltered(res.totalFiltered);
+        setBreakdown(res.breakdown);
       });
     },
     [
@@ -628,6 +639,7 @@ export function RepresentativeDocsClient({
       const res = await fetchRepDocsPage({ page: 1, pageSize });
       setRecords(res.records);
       setTotalFiltered(res.totalFiltered);
+      setBreakdown(res.breakdown);
     });
   }, [pageSize]);
 
@@ -674,6 +686,8 @@ export function RepresentativeDocsClient({
 
     try {
       await updateRepDocsField(id, field, value);
+      const label = FIELD_LABELS[field] ?? field;
+      toast.success(`${label} updated`);
     } catch (e) {
       setRecords((list) => list.map((r) => (r.id === id ? prev : r)));
       toast.error(e instanceof Error ? e.message : "Update failed");
@@ -682,10 +696,11 @@ export function RepresentativeDocsClient({
 
   const handleLink = useCallback(
     async (id: number, field: string, value: string | null) => {
-      if (field !== "claimant_link" && field !== "chronicle_link") return;
+      if (field !== "chronicle_link") return;
       try {
         await updateHearingLink(id, field, value);
         updateLocal(id, { [field]: value } as Partial<RepDocsRow>);
+        toast.success("Chronicle link updated");
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Link update failed");
       }
@@ -713,8 +728,39 @@ export function RepresentativeDocsClient({
       <div className="flex min-w-0 flex-col gap-3 p-3 sm:gap-4 sm:p-4 lg:p-6">
         <DashboardNav userRole={userRole} />
 
+        <div className="flex justify-end gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1.5 text-xs"
+            onClick={() => setShowWithdrawn(true)}
+          >
+            <AlertTriangle className="h-3.5 w-3.5" />
+            Withdrawn ({stats.withdrawn})
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1.5 text-xs"
+            onClick={() => setShowActivityLog(true)}
+          >
+            <ClipboardList className="h-3.5 w-3.5" />
+            Activity Log
+          </Button>
+          {userRole === "system_admin" && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 gap-1.5 text-xs"
+              onClick={() => setShowImport(true)}
+            >
+              📥 Import CSV
+            </Button>
+          )}
+        </div>
+
         {/* Stat Cards */}
-        <StatCardGrid className="grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
+        <StatCardGrid className="grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
           <StatCard
             label="Total"
             value={stats.total}
@@ -739,6 +785,11 @@ export function RepresentativeDocsClient({
             label="Withdrawn"
             value={stats.withdrawn}
             gradient="from-red-400 to-rose-500"
+          />
+          <StatCard
+            label="Not Assigned"
+            value={stats.notAssigned}
+            gradient="from-orange-400 to-red-500"
           />
         </StatCardGrid>
 
@@ -785,6 +836,7 @@ export function RepresentativeDocsClient({
               }}
             >
               <option value="all">All Assignees</option>
+              <option value="__none__">— Not Assigned —</option>
               {assigneeNames.map((n) => (
                 <option key={n} value={n}>
                   {n}
@@ -848,6 +900,60 @@ export function RepresentativeDocsClient({
             )}
           </div>
         </div>
+
+        {/* Filter summary banner */}
+        {hasActiveFilters && breakdown && (
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs dark:border-blue-900 dark:bg-blue-950/30">
+            <span className="font-semibold text-blue-700 dark:text-blue-300">
+              Filtered:
+            </span>
+            <span className="font-bold text-blue-900 dark:text-blue-100 tabular-nums">
+              {breakdown.total} record{breakdown.total === 1 ? "" : "s"}
+            </span>
+            {(() => {
+              const chips: { label: string; value: number; cls: string }[] = [
+                {
+                  label: "Not Started",
+                  value: breakdown.notStarted,
+                  cls: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
+                },
+                {
+                  label: "Incomplete",
+                  value: breakdown.incomplete,
+                  cls: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+                },
+                {
+                  label: "Complete",
+                  value: breakdown.complete,
+                  cls: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
+                },
+                {
+                  label: "Withdrawn",
+                  value: breakdown.withdrawn,
+                  cls: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
+                },
+                {
+                  label: "Not Assigned",
+                  value: breakdown.notAssigned,
+                  cls: "bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300",
+                },
+              ];
+              return chips
+                .filter((c) => c.value > 0)
+                .map((c) => (
+                  <span
+                    key={c.label}
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-semibold tabular-nums",
+                      c.cls,
+                    )}
+                  >
+                    {c.label}: {c.value}
+                  </span>
+                ));
+            })()}
+          </div>
+        )}
 
         {/* Pagination bar */}
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-card px-3 py-2">
@@ -917,6 +1023,24 @@ export function RepresentativeDocsClient({
           <span className="text-border">|</span>
           <span>First 6 columns frozen</span>
         </div>
+
+        {showImport && (
+          <RepDocsImportModal
+            onClose={() => setShowImport(false)}
+            onSuccess={() => {
+              setShowImport(false);
+              reload({ page: 1 });
+            }}
+          />
+        )}
+
+        {showActivityLog && (
+          <ActivityLogModal onClose={() => setShowActivityLog(false)} />
+        )}
+
+        {showWithdrawn && (
+          <RepDocsWithdrawnModal onClose={() => setShowWithdrawn(false)} />
+        )}
       </div>
     </div>
   );

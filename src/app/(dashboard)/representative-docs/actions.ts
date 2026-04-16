@@ -52,6 +52,7 @@ export interface RepDocsStats {
   incomplete: number;
   notStarted: number;
   withdrawn: number;
+  notAssigned: number;
 }
 
 export interface RepDocsAssigneeOption {
@@ -128,9 +129,22 @@ async function ensureRowsForHearings() {
   );
 }
 
+export interface RepDocsFilteredBreakdown {
+  total: number;
+  notStarted: number;
+  incomplete: number;
+  complete: number;
+  withdrawn: number;
+  notAssigned: number;
+}
+
 export async function fetchRepDocsPage(
   params: FetchParams = {},
-): Promise<{ records: RepDocsRow[]; totalFiltered: number }> {
+): Promise<{
+  records: RepDocsRow[];
+  totalFiltered: number;
+  breakdown: RepDocsFilteredBreakdown;
+}> {
   await ensureRowsForHearings();
 
   const page = params.page ?? 1;
@@ -157,9 +171,13 @@ export async function fetchRepDocsPage(
   }
 
   if (params.assignedTo && params.assignedTo !== "all") {
-    conditions.push(`rd.assigned_to = $${idx}`);
-    values.push(params.assignedTo);
-    idx++;
+    if (params.assignedTo === "__none__") {
+      conditions.push(`COALESCE(TRIM(rd.assigned_to), '') = ''`);
+    } else {
+      conditions.push(`rd.assigned_to = $${idx}`);
+      values.push(params.assignedTo);
+      idx++;
+    }
   }
 
   if (params.dateFrom) {
@@ -191,7 +209,13 @@ export async function fetchRepDocsPage(
 
   const [countRes, dataRes] = await Promise.all([
     db.query(
-      `SELECT COUNT(*)::int AS total
+      `SELECT
+         COUNT(*)::int AS total,
+         COUNT(*) FILTER (WHERE LOWER(COALESCE(rd.overall_status,'not started')) = 'not started')::int AS not_started,
+         COUNT(*) FILTER (WHERE LOWER(COALESCE(rd.overall_status,'')) = 'incomplete')::int AS incomplete,
+         COUNT(*) FILTER (WHERE LOWER(COALESCE(rd.overall_status,'')) = 'complete')::int AS complete,
+         COUNT(*) FILTER (WHERE LOWER(COALESCE(rd.overall_status,'')) = 'withdrawn')::int AS withdrawn,
+         COUNT(*) FILTER (WHERE COALESCE(TRIM(rd.assigned_to), '') = '')::int AS not_assigned
        FROM representative_docs rd
        JOIN hearings h ON h.id = rd.hearing_id
        LEFT JOIN representatives r ON r.id = h.assigned_rep_id
@@ -230,9 +254,18 @@ export async function fetchRepDocsPage(
     ),
   ]);
 
+  const c = countRes.rows[0];
   return {
     records: dataRes.rows as RepDocsRow[],
-    totalFiltered: countRes.rows[0].total,
+    totalFiltered: c.total,
+    breakdown: {
+      total: c.total,
+      notStarted: c.not_started,
+      incomplete: c.incomplete,
+      complete: c.complete,
+      withdrawn: c.withdrawn,
+      notAssigned: c.not_assigned,
+    },
   };
 }
 
@@ -247,7 +280,8 @@ export async function fetchRepDocsStats(): Promise<RepDocsStats> {
       COUNT(*) FILTER (WHERE LOWER(COALESCE(rd.overall_status,'')) = 'complete')::int AS complete,
       COUNT(*) FILTER (WHERE LOWER(COALESCE(rd.overall_status,'')) = 'incomplete')::int AS incomplete,
       COUNT(*) FILTER (WHERE LOWER(COALESCE(rd.overall_status,'not started')) = 'not started')::int AS not_started,
-      COUNT(*) FILTER (WHERE LOWER(COALESCE(rd.overall_status,'')) = 'withdrawn')::int AS withdrawn
+      COUNT(*) FILTER (WHERE LOWER(COALESCE(rd.overall_status,'')) = 'withdrawn')::int AS withdrawn,
+      COUNT(*) FILTER (WHERE COALESCE(TRIM(rd.assigned_to), '') = '')::int AS not_assigned
     FROM representative_docs rd
     JOIN hearings h ON h.id = rd.hearing_id
     WHERE h.hearing_date IS NOT NULL`,
@@ -259,31 +293,13 @@ export async function fetchRepDocsStats(): Promise<RepDocsStats> {
     incomplete: s.incomplete,
     notStarted: s.not_started,
     withdrawn: s.withdrawn,
+    notAssigned: s.not_assigned,
   };
 }
 
 // ─── Recompute overall status from workflow flags ───────────────────────────
 
-async function recomputeOverallStatus(
-  id: number,
-  assignmentStatus: string | null,
-) {
-  const a = (assignmentStatus || "").toLowerCase();
-  if (a.includes("withdraw")) {
-    await db.query(
-      `UPDATE representative_docs SET overall_status = 'Withdrawn' WHERE id = $1`,
-      [id],
-    );
-    return;
-  }
-  if (a.includes("postpone")) {
-    await db.query(
-      `UPDATE representative_docs SET overall_status = 'Postponed' WHERE id = $1`,
-      [id],
-    );
-    return;
-  }
-
+async function recomputeOverallStatus(id: number) {
   const { rows } = await db.query(
     `SELECT ${WORKFLOW_FIELDS.join(", ")} FROM representative_docs WHERE id = $1`,
     [id],
@@ -326,15 +342,7 @@ export async function updateRepDocsField(
       [boolVal, Number(session.user.id) || null, id],
     );
 
-    // Pull hearing assignment_status to compute overall
-    const { rows } = await db.query(
-      `SELECT h.assignment_status
-       FROM representative_docs rd
-       JOIN hearings h ON h.id = rd.hearing_id
-       WHERE rd.id = $1`,
-      [id],
-    );
-    await recomputeOverallStatus(id, rows[0]?.assignment_status ?? null);
+    await recomputeOverallStatus(id);
 
     await logAction(
       "rep_docs_field_updated",

@@ -1359,6 +1359,8 @@ export async function fetchActivityLog(params: {
         "post_hrg_note_added",
         "post_hrg_deadline_updated",
         "post_hrg_note_deleted",
+        "rep_docs_field_updated",
+        "rep_docs_imported",
       ],
       hearings: [
         "hearing_updated",
