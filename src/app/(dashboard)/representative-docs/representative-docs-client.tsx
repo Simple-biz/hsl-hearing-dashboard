@@ -42,6 +42,7 @@ import { RepDocsImportModal } from "@/components/modals/rep-docs-import-modal";
 import { ActivityLogModal } from "@/components/modals/activity-log-modal";
 import { RepDocsWithdrawnModal } from "@/components/modals/rep-docs-withdrawn-modal";
 import { RepDocsChangesModal } from "@/components/modals/rep-docs-changes-modal";
+import { RepDocsDetailPanel } from "./rep-docs-detail-panel";
 import { countRepDocsChangesSince } from "./actions";
 
 interface Props {
@@ -525,6 +526,7 @@ export function RepresentativeDocsClient({
   const [showWithdrawn, setShowWithdrawn] = useState(false);
   const [showChanges, setShowChanges] = useState(false);
   const [changeCount, setChangeCount] = useState(0);
+  const [selectedRow, setSelectedRow] = useState<RepDocsRow | null>(null);
   const [lastSeenAt, setLastSeenAt] = useState<string | null>(
     typeof window !== "undefined"
       ? localStorage.getItem("rep-docs-changes-seen-at")
@@ -1098,6 +1100,7 @@ export function RepresentativeDocsClient({
           isPending={isPending}
           onField={handleField}
           onLink={handleLink}
+          onRowClick={(row) => setSelectedRow(row)}
         />
 
         {/* Bottom scroll hint */}
@@ -1124,6 +1127,13 @@ export function RepresentativeDocsClient({
         {showWithdrawn && (
           <RepDocsWithdrawnModal onClose={() => setShowWithdrawn(false)} />
         )}
+
+        <RepDocsDetailPanel
+          row={selectedRow}
+          assignees={assignees}
+          ohoAssignees={ohoAssignees}
+          onClose={() => setSelectedRow(null)}
+        />
 
         {showChanges && (
           <RepDocsChangesModal
@@ -1178,6 +1188,7 @@ function RepDocsTable({
   isPending,
   onField,
   onLink,
+  onRowClick,
 }: {
   records: RepDocsRow[];
   assignees: RepDocsAssigneeOption[];
@@ -1185,6 +1196,7 @@ function RepDocsTable({
   isPending: boolean;
   onField: (id: number, field: string, value: string | boolean | null) => void;
   onLink: (id: number, field: string, value: string | null) => void;
+  onRowClick: (row: RepDocsRow) => void;
 }) {
   const parentRef = useRef<HTMLDivElement>(null);
   const ROW_H = 44;
@@ -1346,6 +1358,7 @@ function RepDocsTable({
                       ohoAssignees={ohoAssignees}
                       onField={onField}
                       onLink={onLink}
+                      onRowClick={onRowClick}
                     />
                   );
                 })}
@@ -1390,6 +1403,7 @@ const RepDocsRowView = memo(
     ohoAssignees,
     onField,
     onLink,
+    onRowClick,
   }: {
     row: RepDocsRow;
     ri: number;
@@ -1401,6 +1415,7 @@ const RepDocsRowView = memo(
       value: string | boolean | null,
     ) => void;
     onLink: (id: number, field: string, value: string | null) => void;
+    onRowClick: (row: RepDocsRow) => void;
   }) {
     const isWithdrawn =
       (row.overall_status || "").toLowerCase() === "withdrawn";
@@ -1433,10 +1448,11 @@ const RepDocsRowView = memo(
     return (
       <tr
         className={cn(
-          "border-b border-border/40 last:border-0",
+          "border-b border-border/40 last:border-0 cursor-pointer",
           evenBg,
           isWithdrawn && "text-red-900 dark:text-red-300",
         )}
+        onClick={() => onRowClick(row)}
       >
         {/* Date */}
         <td {...stickyCell("hearing_date")}>
@@ -1630,5 +1646,6 @@ const RepDocsRowView = memo(
     prev.row === next.row &&
     prev.ri === next.ri &&
     prev.assignees === next.assignees &&
-    prev.ohoAssignees === next.ohoAssignees,
+    prev.ohoAssignees === next.ohoAssignees &&
+    prev.onRowClick === next.onRowClick,
 );
