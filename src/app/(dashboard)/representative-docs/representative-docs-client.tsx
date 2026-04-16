@@ -1402,11 +1402,14 @@ const RepDocsRowView = memo(
     ) => void;
     onLink: (id: number, field: string, value: string | null) => void;
   }) {
-    const evenBg =
-      ri % 2 === 0
+    const isWithdrawn =
+      (row.overall_status || "").toLowerCase() === "withdrawn";
+
+    const evenBg = isWithdrawn
+      ? "bg-red-50 dark:bg-red-950/30"
+      : ri % 2 === 0
         ? "bg-white dark:bg-zinc-950"
         : "bg-zinc-50 dark:bg-zinc-900";
-
     const getFrozen = (key: string) => FROZEN_COLS.find((c) => c.key === key)!;
 
     const stickyCell = (key: string) => {
@@ -1428,7 +1431,13 @@ const RepDocsRowView = memo(
     };
 
     return (
-      <tr className={cn("border-b border-border/40 last:border-0", evenBg)}>
+      <tr
+        className={cn(
+          "border-b border-border/40 last:border-0",
+          evenBg,
+          isWithdrawn && "text-red-900 dark:text-red-300",
+        )}
+      >
         {/* Date */}
         <td {...stickyCell("hearing_date")}>
           <span className="text-xs tabular-nums">
