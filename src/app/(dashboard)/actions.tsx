@@ -636,6 +636,33 @@ export async function updateHearing(
     ]);
   }
 
+  // Sync decision status → representative_docs overall_status
+  if (field === "hearing_decision_status" && value !== oldValue) {
+    const decision = String(value ?? "").toLowerCase();
+    let repDocsStatus: string | null = null;
+
+    if (decision.startsWith("withdrawal") || decision === "dismissed" || decision === "dismissal") {
+      repDocsStatus = "Withdrawn";
+    } else if (decision === "continued") {
+      repDocsStatus = "Postponed";
+    } else if (
+      decision === "favorable" ||
+      decision === "fully favorable" ||
+      decision === "partially favorable"
+    ) {
+      repDocsStatus = "Favorable";
+    }
+
+    if (repDocsStatus) {
+      await db.query(
+        `UPDATE representative_docs
+         SET overall_status = $1, updated_at = NOW()
+         WHERE hearing_id = $2`,
+        [repDocsStatus, hearingId],
+      );
+    }
+  }
+
   // Resolve display values for ID fields
   const fieldLabel =
     FIELD_LABELS[field] ||

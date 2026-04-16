@@ -6,6 +6,7 @@ import {
   useMemo,
   useCallback,
   useRef,
+  useEffect,
   memo,
 } from "react";
 import { createPortal } from "react-dom";
@@ -21,6 +22,7 @@ import {
   Pencil,
   ClipboardList,
   AlertTriangle,
+  Bell,
 } from "lucide-react";
 import { StatCard, StatCardGrid } from "@/components/stat-card";
 import { AppHeader } from "@/components/layout/app-header";
@@ -39,6 +41,8 @@ import type { UserRole } from "@/lib/roles";
 import { RepDocsImportModal } from "@/components/modals/rep-docs-import-modal";
 import { ActivityLogModal } from "@/components/modals/activity-log-modal";
 import { RepDocsWithdrawnModal } from "@/components/modals/rep-docs-withdrawn-modal";
+import { RepDocsChangesModal } from "@/components/modals/rep-docs-changes-modal";
+import { countRepDocsChangesSince } from "./actions";
 
 interface Props {
   userRole: UserRole;
@@ -46,6 +50,7 @@ interface Props {
   initialTotalFiltered: number;
   initialStats: RepDocsStats;
   assignees: RepDocsAssigneeOption[];
+  ohoAssignees: RepDocsAssigneeOption[];
 }
 
 const WORKFLOW_COLUMNS: {
@@ -113,6 +118,15 @@ const CHECKER_COLUMNS: {
   { key: "checker_contact_ltr", label: "Contact Ltr", shortLabel: "Cont. Ltr" },
 ];
 
+// ── Contrast helper — dark text on light backgrounds, white on dark ──
+function isLight(hex: string): boolean {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return (r * 299 + g * 587 + b * 114) / 1000 > 128;
+}
+
 // ── Overall status config (single source of truth) ──
 const STATUS_CONFIG: {
   value: string;
@@ -146,6 +160,12 @@ const STATUS_CONFIG: {
     label: "Postponed",
     badgeClass: "bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-400",
   },
+  {
+    value: "Favorable",
+    label: "Favorable",
+    badgeClass:
+      "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400",
+  },
 ];
 
 const STATUS_OPTIONS = STATUS_CONFIG.map((s) => s.value);
@@ -162,7 +182,8 @@ const WORKFLOW_KEYS = [
 
 function computeOverallStatus(row: RepDocsRow): string {
   // Withdrawn is an override (set by import or hearing status) — preserve it.
-  if ((row.overall_status || "").toLowerCase() === "withdrawn") return "Withdrawn";
+  if ((row.overall_status || "").toLowerCase() === "withdrawn")
+    return "Withdrawn";
   const flags = WORKFLOW_KEYS.map((k) => Boolean(row[k]));
   const truthy = flags.filter(Boolean).length;
   if (truthy === 0) return "Not Started";
@@ -176,19 +197,15 @@ const CHECKER_STATUS_CONFIG: {
   badgeClass: string;
 }[] = [
   {
-    value: "Pending",
-    label: "Pending",
+    value: "Not Started",
+    label: "Not Started",
     badgeClass: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
   },
   {
-    value: "Reviewed",
-    label: "Reviewed",
-    badgeClass: "bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-400",
-  },
-  {
-    value: "Issues Found",
-    label: "Issues Found",
-    badgeClass: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
+    value: "Incomplete",
+    label: "Incomplete",
+    badgeClass:
+      "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400",
   },
   {
     value: "Complete",
@@ -197,8 +214,6 @@ const CHECKER_STATUS_CONFIG: {
       "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400",
   },
 ];
-
-const CHECKER_STATUS_OPTIONS = CHECKER_STATUS_CONFIG.map((s) => s.value);
 
 const FIELD_LABELS: Record<string, string> = {
   assigned_to: "Assignee",
@@ -489,6 +504,7 @@ export function RepresentativeDocsClient({
   initialTotalFiltered,
   initialStats,
   assignees,
+  ohoAssignees,
 }: Props) {
   const [records, setRecords] = useState<RepDocsRow[]>(initialRecords);
   const [totalFiltered, setTotalFiltered] = useState(initialTotalFiltered);
@@ -507,6 +523,13 @@ export function RepresentativeDocsClient({
   const [showImport, setShowImport] = useState(false);
   const [showActivityLog, setShowActivityLog] = useState(false);
   const [showWithdrawn, setShowWithdrawn] = useState(false);
+  const [showChanges, setShowChanges] = useState(false);
+  const [changeCount, setChangeCount] = useState(0);
+  const [lastSeenAt, setLastSeenAt] = useState<string | null>(
+    typeof window !== "undefined"
+      ? localStorage.getItem("rep-docs-changes-seen-at")
+      : null,
+  );
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const totalPages = Math.max(1, Math.ceil(totalFiltered / pageSize));
@@ -515,6 +538,7 @@ export function RepresentativeDocsClient({
     () => assignees.map((a) => a.name),
     [assignees],
   );
+  // assignees passed directly to table for bg_color support
 
   const buildDateParams = useCallback((df: DateFilters) => {
     if (!df.preset || df.preset === "custom") {
@@ -607,6 +631,27 @@ export function RepresentativeDocsClient({
     ],
   );
 
+  // Poll for new changes every 60s — lightweight count query only.
+  // Shows a badge on the bell button; no page refresh, no disruption.
+  useEffect(() => {
+    const POLL_MS = 60_000;
+
+    const checkCount = async () => {
+      try {
+        const since =
+          lastSeenAt || new Date(Date.now() - 86400000).toISOString();
+        const cnt = await countRepDocsChangesSince(since);
+        setChangeCount(cnt);
+      } catch {
+        // Silently ignore
+      }
+    };
+
+    checkCount(); // initial check on mount
+    const interval = setInterval(checkCount, POLL_MS);
+    return () => clearInterval(interval);
+  }, [lastSeenAt]);
+
   const handleSearchChange = useCallback(
     (val: string) => {
       setSearch(val);
@@ -682,6 +727,29 @@ export function RepresentativeDocsClient({
     if (wf && field !== "overall_status") {
       optimistic.overall_status = computeOverallStatus(optimistic);
     }
+    const checkerFields = [
+      "checker_calendar",
+      "checker_chronicle_claim",
+      "checker_noh",
+      "checker_contact_ltr",
+    ];
+    if (checkerFields.includes(field)) {
+      const allTrue =
+        Boolean(optimistic.checker_calendar) &&
+        Boolean(optimistic.checker_chronicle_claim) &&
+        Boolean(optimistic.checker_noh) &&
+        Boolean(optimistic.checker_contact_ltr);
+      const allFalse =
+        !optimistic.checker_calendar &&
+        !optimistic.checker_chronicle_claim &&
+        !optimistic.checker_noh &&
+        !optimistic.checker_contact_ltr;
+      optimistic.checker_status = allTrue
+        ? "Complete"
+        : allFalse
+          ? "Not Started"
+          : "Incomplete";
+    }
     setRecords((list) => list.map((r) => (r.id === id ? optimistic : r)));
 
     try {
@@ -729,6 +797,20 @@ export function RepresentativeDocsClient({
         <DashboardNav userRole={userRole} />
 
         <div className="flex justify-end gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1.5 text-xs relative"
+            onClick={() => setShowChanges(true)}
+          >
+            <Bell className="h-3.5 w-3.5" />
+            Changes
+            {changeCount > 0 && (
+              <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold text-white">
+                {changeCount > 99 ? "99+" : changeCount}
+              </span>
+            )}
+          </Button>
           <Button
             size="sm"
             variant="outline"
@@ -1011,7 +1093,8 @@ export function RepresentativeDocsClient({
         {/* Table — virtualized, with frozen columns */}
         <RepDocsTable
           records={records}
-          assigneeNames={assigneeNames}
+          assignees={assignees}
+          ohoAssignees={ohoAssignees}
           isPending={isPending}
           onField={handleField}
           onLink={handleLink}
@@ -1040,6 +1123,19 @@ export function RepresentativeDocsClient({
 
         {showWithdrawn && (
           <RepDocsWithdrawnModal onClose={() => setShowWithdrawn(false)} />
+        )}
+
+        {showChanges && (
+          <RepDocsChangesModal
+            onClose={() => setShowChanges(false)}
+            onRefreshPage={() => reload()}
+            lastSeenAt={lastSeenAt}
+            onMarkSeen={(ts) => {
+              setLastSeenAt(ts);
+              localStorage.setItem("rep-docs-changes-seen-at", ts);
+              setChangeCount(0);
+            }}
+          />
         )}
       </div>
     </div>
@@ -1077,13 +1173,15 @@ const CHECKER_CELL_W = 72;
 
 function RepDocsTable({
   records,
-  assigneeNames,
+  assignees,
+  ohoAssignees,
   isPending,
   onField,
   onLink,
 }: {
   records: RepDocsRow[];
-  assigneeNames: string[];
+  assignees: RepDocsAssigneeOption[];
+  ohoAssignees: RepDocsAssigneeOption[];
   isPending: boolean;
   onField: (id: number, field: string, value: string | boolean | null) => void;
   onLink: (id: number, field: string, value: string | null) => void;
@@ -1244,7 +1342,8 @@ function RepDocsTable({
                       key={r.id}
                       row={r}
                       ri={vRow.index}
-                      assigneeNames={assigneeNames}
+                      assignees={assignees}
+                      ohoAssignees={ohoAssignees}
                       onField={onField}
                       onLink={onLink}
                     />
@@ -1287,13 +1386,15 @@ const RepDocsRowView = memo(
   function RepDocsRowView({
     row,
     ri,
-    assigneeNames,
+    assignees,
+    ohoAssignees,
     onField,
     onLink,
   }: {
     row: RepDocsRow;
     ri: number;
-    assigneeNames: string[];
+    assignees: RepDocsAssigneeOption[];
+    ohoAssignees: RepDocsAssigneeOption[];
     onField: (
       id: number,
       field: string,
@@ -1350,20 +1451,45 @@ const RepDocsRowView = memo(
         </td>
         {/* Assigned To */}
         <td {...stickyCell("assigned_to")}>
-          <select
-            className="h-6 w-full rounded border border-transparent px-1 text-[11px] cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-400 hover:border-border bg-card text-foreground"
-            value={row.assigned_to ?? ""}
-            onChange={(e) =>
-              onField(row.id, "assigned_to", e.target.value || null)
-            }
-          >
-            <option value="">—</option>
-            {assigneeNames.map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </select>
+          {(() => {
+            const selectedAssignee = assignees.find(
+              (a) => a.name === row.assigned_to,
+            );
+            const bgColor = selectedAssignee?.bg_color;
+            return (
+              <select
+                className="h-6 w-full rounded border border-transparent px-1 text-[11px] cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-400 hover:border-border"
+                value={row.assigned_to ?? ""}
+                style={
+                  bgColor
+                    ? {
+                        backgroundColor: bgColor,
+                        color: isLight(bgColor) ? "#1f2937" : "#fff",
+                      }
+                    : undefined
+                }
+                onChange={(e) =>
+                  onField(row.id, "assigned_to", e.target.value || null)
+                }
+              >
+                <option
+                  value=""
+                  style={{ backgroundColor: "white", color: "#333" }}
+                >
+                  —
+                </option>
+                {assignees.map((a) => (
+                  <option
+                    key={a.name}
+                    value={a.name}
+                    style={{ backgroundColor: "white", color: "#333" }}
+                  >
+                    {a.name}
+                  </option>
+                ))}
+              </select>
+            );
+          })()}
         </td>
         {/* Status */}
         <td {...stickyCell("overall_status")}>
@@ -1401,16 +1527,45 @@ const RepDocsRowView = memo(
 
         {/* OHO Assigned */}
         <td className="px-2 py-1.5" style={{ width: OHO_W, minWidth: OHO_W }}>
-          <input
-            className="h-6 w-full rounded border border-transparent bg-transparent px-1 text-xs hover:border-border focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-            defaultValue={row.oho_assigned_to ?? ""}
-            onBlur={(e) => {
-              const v = e.target.value.trim() || null;
-              if (v !== (row.oho_assigned_to ?? null)) {
-                onField(row.id, "oho_assigned_to", v);
-              }
-            }}
-          />
+          {(() => {
+            const selectedOho = ohoAssignees.find(
+              (a) => a.name === row.oho_assigned_to,
+            );
+            const bgColor = selectedOho?.bg_color;
+            return (
+              <select
+                className="h-6 w-full rounded border border-transparent px-1 text-[11px] cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-400 hover:border-border"
+                value={row.oho_assigned_to ?? ""}
+                style={
+                  bgColor
+                    ? {
+                        backgroundColor: bgColor,
+                        color: isLight(bgColor) ? "#1f2937" : "#fff",
+                      }
+                    : undefined
+                }
+                onChange={(e) =>
+                  onField(row.id, "oho_assigned_to", e.target.value || null)
+                }
+              >
+                <option
+                  value=""
+                  style={{ backgroundColor: "white", color: "#333" }}
+                >
+                  —
+                </option>
+                {ohoAssignees.map((a) => (
+                  <option
+                    key={a.name}
+                    value={a.name}
+                    style={{ backgroundColor: "white", color: "#333" }}
+                  >
+                    {a.name}
+                  </option>
+                ))}
+              </select>
+            );
+          })()}
         </td>
 
         {/* Checker checkboxes */}
@@ -1431,25 +1586,30 @@ const RepDocsRowView = memo(
           </td>
         ))}
 
-        {/* Checker Status */}
+        {/* Checker Status — auto-computed, read-only */}
         <td
           className="px-2 py-1.5"
           style={{ width: CHECKER_STATUS_W, minWidth: CHECKER_STATUS_W }}
         >
-          <select
-            className="h-6 w-full rounded border border-transparent px-1 text-[11px] cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-400 hover:border-border bg-card text-foreground"
-            value={row.checker_status ?? ""}
-            onChange={(e) =>
-              onField(row.id, "checker_status", e.target.value || null)
-            }
-          >
-            <option value="">—</option>
-            {CHECKER_STATUS_OPTIONS.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
+          {(() => {
+            const cfg = CHECKER_STATUS_CONFIG.find(
+              (s) =>
+                s.value.toLowerCase() ===
+                (row.checker_status || "").toLowerCase(),
+            );
+            return cfg ? (
+              <span
+                className={cn(
+                  "inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold",
+                  cfg.badgeClass,
+                )}
+              >
+                {cfg.label}
+              </span>
+            ) : (
+              <span className="text-xs text-muted-foreground">—</span>
+            );
+          })()}
         </td>
 
         {/* Filler — absorbs extra width so columns stay fixed */}
@@ -1457,5 +1617,9 @@ const RepDocsRowView = memo(
       </tr>
     );
   },
-  (prev, next) => prev.row === next.row && prev.ri === next.ri,
+  (prev, next) =>
+    prev.row === next.row &&
+    prev.ri === next.ri &&
+    prev.assignees === next.assignees &&
+    prev.ohoAssignees === next.ohoAssignees,
 );

@@ -6,6 +6,7 @@ import {
   fetchRepDocsPage,
   fetchRepDocsStats,
   fetchRepDocsAssignees,
+  fetchOhoAssignees,
 } from "./actions";
 
 export default async function RepresentativeDocsPage() {
@@ -16,10 +17,11 @@ export default async function RepresentativeDocsPage() {
     redirect("/");
   }
 
-  const [initialPage, stats, assignees] = await Promise.all([
+  const [initialPage, stats, assignees, ohoAssignees] = await Promise.all([
     fetchRepDocsPage({ page: 1, pageSize: 100 }),
     fetchRepDocsStats(),
     fetchRepDocsAssignees(),
+    fetchOhoAssignees(),
   ]);
 
   return (
@@ -29,6 +31,7 @@ export default async function RepresentativeDocsPage() {
       initialTotalFiltered={initialPage.totalFiltered}
       initialStats={stats}
       assignees={assignees}
+      ohoAssignees={ohoAssignees}
     />
   );
 }
