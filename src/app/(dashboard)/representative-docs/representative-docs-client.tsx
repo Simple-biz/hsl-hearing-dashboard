@@ -640,7 +640,8 @@ export function RepresentativeDocsClient({
   );
 
   // Poll for new changes every 60s — lightweight count query only.
-  // Shows a badge on the bell button; no page refresh, no disruption.
+  // Shows a badge on the bell button; fires a toast when new changes appear.
+  const prevChangeCountRef = useRef(0);
   useEffect(() => {
     const POLL_MS = 60_000;
 
@@ -649,7 +650,21 @@ export function RepresentativeDocsClient({
         const since =
           lastSeenAt || new Date(Date.now() - 86400000).toISOString();
         const cnt = await countRepDocsChangesSince(since);
+        const prev = prevChangeCountRef.current;
+        prevChangeCountRef.current = cnt;
         setChangeCount(cnt);
+
+        // Only toast when the count actually increased (not on first mount)
+        if (cnt > prev && prev > 0) {
+          const diff = cnt - prev;
+          toast(`${diff} new change${diff === 1 ? "" : "s"} detected`, {
+            action: {
+              label: "Refresh",
+              onClick: () => reload(),
+            },
+            duration: 8000,
+          });
+        }
       } catch {
         // Silently ignore
       }
@@ -658,7 +673,7 @@ export function RepresentativeDocsClient({
     checkCount(); // initial check on mount
     const interval = setInterval(checkCount, POLL_MS);
     return () => clearInterval(interval);
-  }, [lastSeenAt]);
+  }, [lastSeenAt, reload]);
 
   const handleSearchChange = useCallback(
     (val: string) => {
