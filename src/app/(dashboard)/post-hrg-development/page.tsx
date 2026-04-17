@@ -35,6 +35,7 @@ export default async function PostHrgDevelopmentPage() {
       initialTotalFiltered={initialPage.totalFiltered}
       initialStats={stats}
       initialPhStatusOptions={options.phStatusOptions}
+      initialStatusOptions={options.statusOptions}
       initialRepresentatives={options.representatives}
       initialResponsibleOptions={options.responsibleOptions}
     />

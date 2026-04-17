@@ -20,6 +20,7 @@ export interface PostHrgDevRow {
   deadline: string | null;
   new_due_date: string | null;
   remarks: string | null;
+  indicator: string | null;
   // Notes (JSON) for fields that have comment sections
   details_notes: string | null;
   person_responsible_notes: string | null;
@@ -27,7 +28,11 @@ export interface PostHrgDevRow {
   ext_letter_sent_notes: string | null;
   status_notes: string | null;
   // Joined from hearings table
+  representative_name: string | null;
+  rep_type: string | null;
   claimant_link: string | null;
+  chronicle_link: string | null;
+  claim_type: string | null;
   ssn_last_4: string | null;
   created_at: string;
   updated_at: string;
@@ -68,30 +73,39 @@ export interface ResponsibleOption {
  */
 export async function fetchPostHrgOptions(): Promise<{
   phStatusOptions: ConfigOption[];
+  statusOptions: ConfigOption[];
   representatives: RepOption[];
   responsibleOptions: ResponsibleOption[];
 }> {
-  const [configRes, repsRes, mrSpecRes, mrTeamsRes] = await Promise.all([
-    db.query(
-      `SELECT option_value, option_color, COALESCE(team_scope, 'shared') AS team_scope
+  const [configRes, statusConfigRes, repsRes, mrSpecRes, mrTeamsRes] =
+    await Promise.all([
+      db.query(
+        `SELECT option_value, option_color, COALESCE(team_scope, 'shared') AS team_scope
        FROM config_options
        WHERE option_type = 'hearing_decision_status'
          AND is_active = true
          AND COALESCE(team_scope, 'shared') IN ('shared', 'post_hearing')
        ORDER BY display_order`,
-    ),
-    db.query(
-      `SELECT id, name FROM representatives WHERE is_active = true ORDER BY name`,
-    ),
-    // MR specialists (individuals)
-    db.query(
-      `SELECT name FROM mr_specialists WHERE is_active = true ORDER BY display_order, name`,
-    ),
-    // MR teams
-    db.query(
-      `SELECT team_name, team_color FROM mr_teams WHERE is_active = true ORDER BY display_order`,
-    ),
-  ]);
+      ),
+      db.query(
+        `SELECT option_value, option_color, COALESCE(team_scope, 'shared') AS team_scope
+       FROM config_options
+       WHERE option_type = 'post_hrg_workflow_status'
+         AND is_active = true
+       ORDER BY display_order`,
+      ),
+      db.query(
+        `SELECT id, name FROM representatives WHERE is_active = true ORDER BY name`,
+      ),
+      // MR specialists (individuals)
+      db.query(
+        `SELECT name FROM mr_specialists WHERE is_active = true ORDER BY display_order, name`,
+      ),
+      // MR teams
+      db.query(
+        `SELECT team_name, team_color FROM mr_teams WHERE is_active = true ORDER BY display_order`,
+      ),
+    ]);
 
   // Build responsible options from DB + hardcoded color mapping
   const PERSON_COLORS: Record<string, string> = {
@@ -182,6 +196,17 @@ export async function fetchPostHrgOptions(): Promise<{
         teamScope: r.team_scope,
       }),
     ),
+    statusOptions: statusConfigRes.rows.map(
+      (r: {
+        option_value: string;
+        option_color: string | null;
+        team_scope: string;
+      }) => ({
+        value: r.option_value,
+        color: r.option_color,
+        teamScope: r.team_scope,
+      }),
+    ),
     representatives: repsRes.rows.map((r: { id: number; name: string }) => ({
       id: r.id,
       name: r.name,
@@ -198,6 +223,7 @@ export interface FetchPostHrgPageParams {
   search?: string;
   status?: string;
   phStatus?: string;
+  indicator?: string;
   sortKey?: string;
   sortDir?: "asc" | "desc";
 }
@@ -229,6 +255,16 @@ export async function fetchPostHrgDevPage(
     conditions.push(`LOWER(p.post_hearing_status) = LOWER($${idx})`);
     values.push(params.phStatus);
     idx++;
+  }
+
+  if (params.indicator && params.indicator !== "all") {
+    if (params.indicator === "none") {
+      conditions.push(`p.indicator IS NULL`);
+    } else {
+      conditions.push(`p.indicator = $${idx}`);
+      values.push(params.indicator);
+      idx++;
+    }
   }
 
   const where =
@@ -268,18 +304,23 @@ export async function fetchPostHrgDevPage(
         p.details, p.person_responsible,
         p.em_sent_task_created, p.ext_letter_sent,
         p.status, p.deadline::text, p.new_due_date::text,
-        p.remarks,
+        p.remarks, p.indicator,
         p.details_notes, p.person_responsible_notes,
         p.em_sent_task_created_notes, p.ext_letter_sent_notes,
         p.status_notes,
         p.created_at::text, p.updated_at::text,
         p.created_by, p.updated_by,
+        r.name AS representative_name,
+        r.rep_type,
         h.claimant_link,
+        h.chronicle_link,
+        h.claim_type,
         h.ssn_last_4,
         h.post_hrg_notes,
         h.post_hrg_deadline::text AS post_hrg_deadline
       FROM post_hrg_development p
       LEFT JOIN hearings h ON h.id = p.hearing_id
+      LEFT JOIN representatives r ON r.id = h.assigned_rep_id
       ${where}
       ${orderBy}
       LIMIT ${limit} OFFSET ${offset}`,
@@ -309,12 +350,17 @@ export async function fetchPostHrgDevRecords(): Promise<PostHrgDevRow[]> {
       p.status_notes,
       p.created_at::text, p.updated_at::text,
       p.created_by, p.updated_by,
+      r.name AS representative_name,
+      r.rep_type,
       h.claimant_link,
+      h.chronicle_link,
+      h.claim_type,
       h.ssn_last_4,
       h.post_hrg_notes,
       h.post_hrg_deadline::text AS post_hrg_deadline
     FROM post_hrg_development p
     LEFT JOIN hearings h ON h.id = p.hearing_id
+    LEFT JOIN representatives r ON r.id = h.assigned_rep_id
     ORDER BY
       CASE WHEN p.status = 'Completed' THEN 1 ELSE 0 END ASC,
       p.deadline ASC NULLS LAST,
@@ -541,6 +587,7 @@ export async function updatePostHrgDevField(
     "deadline",
     "new_due_date",
     "remarks",
+    "indicator",
   ];
 
   if (!ALLOWED_FIELDS.includes(field)) {
@@ -583,6 +630,7 @@ export async function updatePostHrgDevField(
     deadline: "Deadline",
     new_due_date: "New Due Date",
     remarks: "Remarks",
+    indicator: "Indicator",
   };
 
   const label = FIELD_LABELS[field] || field;
@@ -713,6 +761,43 @@ export async function importPostHrgDevRecords(data: {
     return JSON.stringify(entries);
   };
 
+  // Pre-load representatives and responsible persons for fuzzy name matching
+  const { rows: repRows } = await db.query(
+    `SELECT name FROM representatives WHERE is_active = true`,
+  );
+  const dbRepNames: string[] = repRows.map((r) => r.name as string);
+
+  const { rows: mrSpecRows } = await db.query(
+    `SELECT name FROM mr_specialists WHERE is_active = true`,
+  );
+  const { rows: mrTeamRows } = await db.query(
+    `SELECT team_name FROM mr_teams WHERE is_active = true`,
+  );
+  const dbResponsibleNames: string[] = [
+    ...mrSpecRows.map((r) => r.name as string),
+    ...mrTeamRows.map((r) => r.team_name as string),
+  ];
+
+  // Resolve a sheet name to the closest DB name (case-insensitive, trimmed)
+  function resolveNameFromDb(
+    sheetName: string | null,
+    dbNames: string[],
+  ): string | null {
+    if (!sheetName) return null;
+    const norm = sheetName.trim().toLowerCase();
+    if (!norm) return null;
+    // Exact match (case-insensitive)
+    const exact = dbNames.find((n) => n.toLowerCase() === norm);
+    if (exact) return exact;
+    // Partial match — sheet name contained within a DB name or vice-versa
+    const partial = dbNames.find(
+      (n) => n.toLowerCase().includes(norm) || norm.includes(n.toLowerCase()),
+    );
+    if (partial) return partial;
+    // No match — return original value so it's still visible in the UI
+    return sheetName.trim();
+  }
+
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i] as string[];
     const claimant = getVal(row, "claimant");
@@ -740,6 +825,9 @@ export async function importPostHrgDevRecords(data: {
         if (!repName && hRows[0].rep_name) repName = hRows[0].rep_name;
       }
     }
+
+    // Resolve rep name and person_responsible against DB values
+    repName = resolveNameFromDb(repName, dbRepNames);
 
     // Extract cell comments for note fields
     const notesData: Record<string, string | null> = {};
@@ -772,7 +860,10 @@ export async function importPostHrgDevRecords(data: {
           getVal(row, "post_hearing_status") || null,
           getVal(row, "type_of_docs_needed") || null,
           getVal(row, "details") || null,
-          getVal(row, "person_responsible") || null,
+          resolveNameFromDb(
+            getVal(row, "person_responsible") || null,
+            dbResponsibleNames,
+          ),
           parseBool(
             mapping.em_sent_task_created !== undefined
               ? row[mapping.em_sent_task_created]
