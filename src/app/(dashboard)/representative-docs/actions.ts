@@ -6,6 +6,12 @@ import { logAction } from "@/lib/activity-log";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+export interface RepDocsNoteEntry {
+  user: string;
+  date: string;
+  note: string;
+}
+
 export interface RepDocsRow {
   id: number;
   hearing_id: number;
@@ -44,6 +50,9 @@ export interface RepDocsRow {
   chronicle_link: string | null;
   ssn_last_4: string | null;
   assignment_status: string | null;
+
+  // Notes (JSONB array)
+  notes: RepDocsNoteEntry[] | null;
 }
 
 export interface RepDocsStats {
@@ -244,6 +253,7 @@ export async function fetchRepDocsPage(params: FetchParams = {}): Promise<{
         rd.oho_assigned_to,
         rd.checker_calendar, rd.checker_chronicle_claim,
         rd.checker_noh, rd.checker_contact_ltr, rd.checker_status,
+        rd.notes,
         h.claimant,
         h.claim_type,
         h.hearing_date::text AS hearing_date,
@@ -635,4 +645,91 @@ export async function countRepDocsChangesSince(since: string): Promise<number> {
     [since],
   );
   return rows[0].cnt as number;
+}
+
+// ─── JSONB notes: add / delete ─────────────────────────────────────────────
+
+function parseRepDocsNotes(raw: unknown): RepDocsNoteEntry[] {
+  if (!raw) return [];
+  const arr = Array.isArray(raw) ? raw : (() => {
+    try { return JSON.parse(String(raw)); } catch { return []; }
+  })();
+  if (!Array.isArray(arr)) return [];
+  return arr.map((item: Record<string, unknown>) => ({
+    user: String(item.user ?? "Unknown"),
+    date: String(item.date ?? ""),
+    note: String(item.note ?? ""),
+  }));
+}
+
+export async function addRepDocsNote(
+  repDocsId: number,
+  noteText: string,
+  userName: string,
+) {
+  await requireAuth();
+
+  const { rows } = await db.query(
+    `SELECT rd.notes, h.claimant
+     FROM representative_docs rd
+     JOIN hearings h ON h.id = rd.hearing_id
+     WHERE rd.id = $1`,
+    [repDocsId],
+  );
+  if (!rows[0]) return { success: false, error: "Row not found" };
+
+  const notes = parseRepDocsNotes(rows[0].notes);
+  const newNote: RepDocsNoteEntry = {
+    user: userName,
+    date: new Date().toISOString(),
+    note: noteText,
+  };
+  notes.unshift(newNote);
+
+  await db.query(
+    `UPDATE representative_docs SET notes = $1::jsonb, updated_at = NOW() WHERE id = $2`,
+    [JSON.stringify(notes), repDocsId],
+  );
+
+  await logAction(
+    "rep_docs_field_updated",
+    `notes → added note for rep-docs #${repDocsId} (${rows[0].claimant})`,
+  );
+
+  return { success: true, notes };
+}
+
+export async function deleteRepDocsNote(
+  repDocsId: number,
+  noteIndex: number,
+) {
+  await requireAuth();
+
+  const { rows } = await db.query(
+    `SELECT rd.notes, h.claimant
+     FROM representative_docs rd
+     JOIN hearings h ON h.id = rd.hearing_id
+     WHERE rd.id = $1`,
+    [repDocsId],
+  );
+  if (!rows[0]) return { success: false, error: "Row not found", notes: null };
+
+  const notes = parseRepDocsNotes(rows[0].notes);
+  if (noteIndex < 0 || noteIndex >= notes.length) {
+    return { success: false, error: "Invalid note index", notes };
+  }
+
+  notes.splice(noteIndex, 1);
+
+  await db.query(
+    `UPDATE representative_docs SET notes = $1::jsonb, updated_at = NOW() WHERE id = $2`,
+    [JSON.stringify(notes), repDocsId],
+  );
+
+  await logAction(
+    "rep_docs_field_updated",
+    `notes → deleted note for rep-docs #${repDocsId} (${rows[0].claimant})`,
+  );
+
+  return { success: true, notes };
 }

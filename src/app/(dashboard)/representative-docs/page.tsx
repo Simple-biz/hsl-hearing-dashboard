@@ -27,6 +27,7 @@ export default async function RepresentativeDocsPage() {
   return (
     <RepresentativeDocsClient
       userRole={role}
+      userName={session.user.name || "Unknown"}
       initialRecords={initialPage.records}
       initialTotalFiltered={initialPage.totalFiltered}
       initialStats={stats}

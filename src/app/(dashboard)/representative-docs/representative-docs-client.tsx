@@ -23,6 +23,7 @@ import {
   ClipboardList,
   AlertTriangle,
   Bell,
+  MessageSquare,
 } from "lucide-react";
 import { StatCard, StatCardGrid } from "@/components/stat-card";
 import { AppHeader } from "@/components/layout/app-header";
@@ -43,10 +44,12 @@ import { ActivityLogModal } from "@/components/modals/activity-log-modal";
 import { RepDocsWithdrawnModal } from "@/components/modals/rep-docs-withdrawn-modal";
 import { RepDocsChangesModal } from "@/components/modals/rep-docs-changes-modal";
 import { RepDocsDetailPanel } from "./rep-docs-detail-panel";
+import { RepDocsNotesPanel } from "./rep-docs-notes-panel";
 import { countRepDocsChangesSince } from "./actions";
 
 interface Props {
   userRole: UserRole;
+  userName: string;
   initialRecords: RepDocsRow[];
   initialTotalFiltered: number;
   initialStats: RepDocsStats;
@@ -501,6 +504,7 @@ function ClaimantCell({
 
 export function RepresentativeDocsClient({
   userRole,
+  userName,
   initialRecords,
   initialTotalFiltered,
   initialStats,
@@ -527,6 +531,8 @@ export function RepresentativeDocsClient({
   const [showChanges, setShowChanges] = useState(false);
   const [changeCount, setChangeCount] = useState(0);
   const [selectedRow, setSelectedRow] = useState<RepDocsRow | null>(null);
+  const [notesRow, setNotesRow] = useState<RepDocsRow | null>(null);
+  const [notesAnchorRect, setNotesAnchorRect] = useState<DOMRect | null>(null);
   const [lastSeenAt, setLastSeenAt] = useState<string | null>(
     typeof window !== "undefined"
       ? localStorage.getItem("rep-docs-changes-seen-at")
@@ -1101,6 +1107,10 @@ export function RepresentativeDocsClient({
           onField={handleField}
           onLink={handleLink}
           onRowClick={(row) => setSelectedRow(row)}
+          onNotesClick={(row, rect) => {
+            setNotesRow(row);
+            setNotesAnchorRect(rect);
+          }}
         />
 
         {/* Bottom scroll hint */}
@@ -1133,6 +1143,23 @@ export function RepresentativeDocsClient({
           assignees={assignees}
           ohoAssignees={ohoAssignees}
           onClose={() => setSelectedRow(null)}
+        />
+
+        <RepDocsNotesPanel
+          row={notesRow}
+          anchorRect={notesAnchorRect}
+          onClose={() => {
+            setNotesRow(null);
+            setNotesAnchorRect(null);
+          }}
+          onSaved={(id, notes) => {
+            updateLocal(id, { notes });
+            // Also update notesRow so the panel reflects the latest
+            setNotesRow((prev) =>
+              prev && prev.id === id ? { ...prev, notes } : prev,
+            );
+          }}
+          userName={userName}
         />
 
         {showChanges && (
@@ -1189,6 +1216,7 @@ function RepDocsTable({
   onField,
   onLink,
   onRowClick,
+  onNotesClick,
 }: {
   records: RepDocsRow[];
   assignees: RepDocsAssigneeOption[];
@@ -1197,6 +1225,7 @@ function RepDocsTable({
   onField: (id: number, field: string, value: string | boolean | null) => void;
   onLink: (id: number, field: string, value: string | null) => void;
   onRowClick: (row: RepDocsRow) => void;
+  onNotesClick: (row: RepDocsRow, rect: DOMRect) => void;
 }) {
   const parentRef = useRef<HTMLDivElement>(null);
   const ROW_H = 44;
@@ -1359,6 +1388,7 @@ function RepDocsTable({
                       onField={onField}
                       onLink={onLink}
                       onRowClick={onRowClick}
+                      onNotesClick={onNotesClick}
                     />
                   );
                 })}
@@ -1404,6 +1434,7 @@ const RepDocsRowView = memo(
     onField,
     onLink,
     onRowClick,
+    onNotesClick,
   }: {
     row: RepDocsRow;
     ri: number;
@@ -1416,6 +1447,7 @@ const RepDocsRowView = memo(
     ) => void;
     onLink: (id: number, field: string, value: string | null) => void;
     onRowClick: (row: RepDocsRow) => void;
+    onNotesClick: (row: RepDocsRow, rect: DOMRect) => void;
   }) {
     const isWithdrawn =
       (row.overall_status || "").toLowerCase() === "withdrawn";
@@ -1635,6 +1667,29 @@ const RepDocsRowView = memo(
               <span className="text-xs text-muted-foreground">—</span>
             );
           })()}
+        </td>
+
+        {/* Notes button */}
+        <td
+          className="px-1 py-1.5 text-center"
+          style={{ width: 32, minWidth: 32 }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onNotesClick(row, e.currentTarget.getBoundingClientRect());
+            }}
+            className={cn(
+              "rounded p-1 transition-colors",
+              row.notes && Array.isArray(row.notes) && row.notes.length > 0
+                ? "text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30"
+                : "text-muted-foreground hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30",
+            )}
+            title={row.notes && Array.isArray(row.notes) && row.notes.length > 0 ? "View / edit notes" : "Add notes"}
+          >
+            <MessageSquare className="h-3.5 w-3.5" />
+          </button>
         </td>
 
         {/* Filler — absorbs extra width so columns stay fixed */}
