@@ -1158,6 +1158,13 @@ export function RepresentativeDocsClient({
           assignees={assignees}
           ohoAssignees={ohoAssignees}
           onClose={() => setSelectedRow(null)}
+          onOpenNotes={(r) => {
+            // Position notes panel to the left of the detail panel
+            const panelLeft = window.innerWidth - 448; // max-w-md ≈ 448px
+            const rect = new DOMRect(panelLeft - 8, window.innerHeight / 2 - 120, 0, 0);
+            setNotesRow(r);
+            setNotesAnchorRect(rect);
+          }}
         />
 
         <RepDocsNotesPanel
