@@ -14,6 +14,7 @@ import {
   Eye,
   Loader2,
   X,
+  Trophy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { UserRole } from "@/lib/roles";
@@ -30,6 +31,7 @@ import { ReportMonthlyDetailsModal } from "@/components/modals/report-monthly-de
 import { ReportStatusSummaryModal } from "@/components/modals/report-status-summary-modal";
 import { ReportAssignedCasesModal } from "@/components/modals/report-assigned-cases-modal";
 import { ReportMatrixModal } from "@/components/modals/report-matrix-modal";
+import { WinRateModal } from "@/components/modals/win-rate-modal";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -397,6 +399,7 @@ export function ReportsClient({
   const [statusModalOpen, setStatusModalOpen] = useState(false);
   const [assignedModalOpen, setAssignedModalOpen] = useState(false);
   const [matrixModalOpen, setMatrixModalOpen] = useState(false);
+  const [winRateModalOpen, setWinRateModalOpen] = useState(false);
 
   const isFiltered =
     !!activeFilters.quickSelect || !!activeFilters.month || !!activeFilters.rep;
@@ -457,6 +460,17 @@ export function ReportsClient({
             onClick={() => exportRepMatrixCsv(data.repStatusRows)}
           >
             <Download className="h-3.5 w-3.5" /> Export Matrix
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className={cn(
+              "h-7 gap-1.5 text-[11px] text-emerald-600 border-emerald-300 hover:bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:hover:bg-emerald-950",
+              BTN_PRESS,
+            )}
+            onClick={() => setWinRateModalOpen(true)}
+          >
+            <Trophy className="h-3.5 w-3.5" /> Win Rate
           </Button>
         </DashboardNav>
 
@@ -840,6 +854,11 @@ export function ReportsClient({
         open={matrixModalOpen}
         onClose={() => setMatrixModalOpen(false)}
         repStatusRows={data.repStatusRows}
+      />
+      <WinRateModal
+        open={winRateModalOpen}
+        onClose={() => setWinRateModalOpen(false)}
+        allReps={allReps}
       />
     </>
   );
