@@ -6,6 +6,12 @@ import { logAction } from "@/lib/activity-log";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+export interface RepDocsNoteEntry {
+  user: string;
+  date: string;
+  note: string;
+}
+
 export interface RepDocsRow {
   id: number;
   hearing_id: number;
@@ -36,11 +42,17 @@ export interface RepDocsRow {
 
   // Joined from hearings
   claimant: string | null;
+  claim_type: string | null;
   hearing_date: string | null;
   representative_name: string | null;
+  rep_type: string | null;
   claimant_link: string | null;
+  chronicle_link: string | null;
   ssn_last_4: string | null;
   assignment_status: string | null;
+
+  // Notes (JSONB array)
+  notes: RepDocsNoteEntry[] | null;
 }
 
 export interface RepDocsStats {
@@ -49,11 +61,13 @@ export interface RepDocsStats {
   incomplete: number;
   notStarted: number;
   withdrawn: number;
+  notAssigned: number;
 }
 
 export interface RepDocsAssigneeOption {
   id: number;
   name: string;
+  bg_color: string | null;
 }
 
 // ─── Workflow field metadata ────────────────────────────────────────────────
@@ -82,14 +96,24 @@ const TEXT_FIELDS = new Set([
   "assigned_to",
   "overall_status",
   "oho_assigned_to",
-  "checker_status",
 ]);
 
 // ─── Options ────────────────────────────────────────────────────────────────
 
-export async function fetchRepDocsAssignees(): Promise<RepDocsAssigneeOption[]> {
+export async function fetchRepDocsAssignees(): Promise<
+  RepDocsAssigneeOption[]
+> {
   const { rows } = await db.query(
-    `SELECT id, name FROM rep_docs_assignees
+    `SELECT id, name, bg_color FROM rep_docs_assignees
+     WHERE is_active = true
+     ORDER BY display_order, name`,
+  );
+  return rows as RepDocsAssigneeOption[];
+}
+
+export async function fetchOhoAssignees(): Promise<RepDocsAssigneeOption[]> {
+  const { rows } = await db.query(
+    `SELECT id, name, bg_color FROM oho_assignees
      WHERE is_active = true
      ORDER BY display_order, name`,
   );
@@ -104,6 +128,8 @@ interface FetchParams {
   search?: string;
   status?: string;
   assignedTo?: string;
+  dateFrom?: string;
+  dateTo?: string;
   sortKey?: string;
   sortDir?: "asc" | "desc";
 }
@@ -123,9 +149,20 @@ async function ensureRowsForHearings() {
   );
 }
 
-export async function fetchRepDocsPage(
-  params: FetchParams = {},
-): Promise<{ records: RepDocsRow[]; totalFiltered: number }> {
+export interface RepDocsFilteredBreakdown {
+  total: number;
+  notStarted: number;
+  incomplete: number;
+  complete: number;
+  withdrawn: number;
+  notAssigned: number;
+}
+
+export async function fetchRepDocsPage(params: FetchParams = {}): Promise<{
+  records: RepDocsRow[];
+  totalFiltered: number;
+  breakdown: RepDocsFilteredBreakdown;
+}> {
   await ensureRowsForHearings();
 
   const page = params.page ?? 1;
@@ -152,8 +189,23 @@ export async function fetchRepDocsPage(
   }
 
   if (params.assignedTo && params.assignedTo !== "all") {
-    conditions.push(`rd.assigned_to = $${idx}`);
-    values.push(params.assignedTo);
+    if (params.assignedTo === "__none__") {
+      conditions.push(`COALESCE(TRIM(rd.assigned_to), '') = ''`);
+    } else {
+      conditions.push(`rd.assigned_to = $${idx}`);
+      values.push(params.assignedTo);
+      idx++;
+    }
+  }
+
+  if (params.dateFrom) {
+    conditions.push(`h.hearing_date >= $${idx}::date`);
+    values.push(params.dateFrom);
+    idx++;
+  }
+  if (params.dateTo) {
+    conditions.push(`h.hearing_date <= $${idx}::date`);
+    values.push(params.dateTo);
     idx++;
   }
 
@@ -175,7 +227,13 @@ export async function fetchRepDocsPage(
 
   const [countRes, dataRes] = await Promise.all([
     db.query(
-      `SELECT COUNT(*)::int AS total
+      `SELECT
+         COUNT(*)::int AS total,
+         COUNT(*) FILTER (WHERE LOWER(COALESCE(rd.overall_status,'not started')) = 'not started')::int AS not_started,
+         COUNT(*) FILTER (WHERE LOWER(COALESCE(rd.overall_status,'')) = 'incomplete')::int AS incomplete,
+         COUNT(*) FILTER (WHERE LOWER(COALESCE(rd.overall_status,'')) = 'complete')::int AS complete,
+         COUNT(*) FILTER (WHERE LOWER(COALESCE(rd.overall_status,'')) = 'withdrawn')::int AS withdrawn,
+         COUNT(*) FILTER (WHERE COALESCE(TRIM(rd.assigned_to), '') = '')::int AS not_assigned
        FROM representative_docs rd
        JOIN hearings h ON h.id = rd.hearing_id
        LEFT JOIN representatives r ON r.id = h.assigned_rep_id
@@ -195,10 +253,14 @@ export async function fetchRepDocsPage(
         rd.oho_assigned_to,
         rd.checker_calendar, rd.checker_chronicle_claim,
         rd.checker_noh, rd.checker_contact_ltr, rd.checker_status,
+        rd.notes,
         h.claimant,
+        h.claim_type,
         h.hearing_date::text AS hearing_date,
         r.name AS representative_name,
+        r.rep_type,
         h.claimant_link,
+        h.chronicle_link,
         h.ssn_last_4,
         h.assignment_status
       FROM representative_docs rd
@@ -211,9 +273,18 @@ export async function fetchRepDocsPage(
     ),
   ]);
 
+  const c = countRes.rows[0];
   return {
     records: dataRes.rows as RepDocsRow[],
-    totalFiltered: countRes.rows[0].total,
+    totalFiltered: c.total,
+    breakdown: {
+      total: c.total,
+      notStarted: c.not_started,
+      incomplete: c.incomplete,
+      complete: c.complete,
+      withdrawn: c.withdrawn,
+      notAssigned: c.not_assigned,
+    },
   };
 }
 
@@ -228,7 +299,8 @@ export async function fetchRepDocsStats(): Promise<RepDocsStats> {
       COUNT(*) FILTER (WHERE LOWER(COALESCE(rd.overall_status,'')) = 'complete')::int AS complete,
       COUNT(*) FILTER (WHERE LOWER(COALESCE(rd.overall_status,'')) = 'incomplete')::int AS incomplete,
       COUNT(*) FILTER (WHERE LOWER(COALESCE(rd.overall_status,'not started')) = 'not started')::int AS not_started,
-      COUNT(*) FILTER (WHERE LOWER(COALESCE(rd.overall_status,'')) = 'withdrawn')::int AS withdrawn
+      COUNT(*) FILTER (WHERE LOWER(COALESCE(rd.overall_status,'')) = 'withdrawn')::int AS withdrawn,
+      COUNT(*) FILTER (WHERE COALESCE(TRIM(rd.assigned_to), '') = '')::int AS not_assigned
     FROM representative_docs rd
     JOIN hearings h ON h.id = rd.hearing_id
     WHERE h.hearing_date IS NOT NULL`,
@@ -240,24 +312,13 @@ export async function fetchRepDocsStats(): Promise<RepDocsStats> {
     incomplete: s.incomplete,
     notStarted: s.not_started,
     withdrawn: s.withdrawn,
+    notAssigned: s.not_assigned,
   };
 }
 
 // ─── Recompute overall status from workflow flags ───────────────────────────
 
-async function recomputeOverallStatus(
-  id: number,
-  assignmentStatus: string | null,
-) {
-  // Withdrawn wins
-  if (assignmentStatus && assignmentStatus.toLowerCase().includes("withdraw")) {
-    await db.query(
-      `UPDATE representative_docs SET overall_status = 'Withdrawn' WHERE id = $1`,
-      [id],
-    );
-    return;
-  }
-
+async function recomputeOverallStatus(id: number) {
   const { rows } = await db.query(
     `SELECT ${WORKFLOW_FIELDS.join(", ")} FROM representative_docs WHERE id = $1`,
     [id],
@@ -300,15 +361,7 @@ export async function updateRepDocsField(
       [boolVal, Number(session.user.id) || null, id],
     );
 
-    // Pull hearing assignment_status to compute overall
-    const { rows } = await db.query(
-      `SELECT h.assignment_status
-       FROM representative_docs rd
-       JOIN hearings h ON h.id = rd.hearing_id
-       WHERE rd.id = $1`,
-      [id],
-    );
-    await recomputeOverallStatus(id, rows[0]?.assignment_status ?? null);
+    await recomputeOverallStatus(id);
 
     await logAction(
       "rep_docs_field_updated",
@@ -318,6 +371,7 @@ export async function updateRepDocsField(
   }
 
   // Checker checkboxes (no timestamp)
+  // Checker checkboxes (no timestamp) — checker_status auto-computed
   if (CHECKER_FIELD_SET.has(field)) {
     const boolVal = Boolean(value);
     await db.query(
@@ -326,6 +380,36 @@ export async function updateRepDocsField(
        WHERE id = $3`,
       [boolVal, Number(session.user.id) || null, id],
     );
+
+    // Auto-compute checker_status from all 4 checker flags
+    const { rows: checkerRows } = await db.query(
+      `SELECT checker_calendar, checker_chronicle_claim, checker_noh, checker_contact_ltr
+       FROM representative_docs WHERE id = $1`,
+      [id],
+    );
+    if (checkerRows[0]) {
+      const c = checkerRows[0];
+      const allTrue =
+        c.checker_calendar &&
+        c.checker_chronicle_claim &&
+        c.checker_noh &&
+        c.checker_contact_ltr;
+      const allFalse =
+        !c.checker_calendar &&
+        !c.checker_chronicle_claim &&
+        !c.checker_noh &&
+        !c.checker_contact_ltr;
+      const checkerStatus = allTrue
+        ? "Complete"
+        : allFalse
+          ? "Not Started"
+          : "Incomplete";
+      await db.query(
+        `UPDATE representative_docs SET checker_status = $1 WHERE id = $2`,
+        [checkerStatus, id],
+      );
+    }
+
     await logAction(
       "rep_docs_field_updated",
       `${field} → ${boolVal ? "checked" : "unchecked"} for rep-docs #${id}`,
@@ -353,4 +437,299 @@ export async function updateRepDocsField(
   }
 
   throw new Error(`Field "${field}" is not editable`);
+}
+
+// ─── Update claimant_link / chronicle_link on the joined hearing ───────────
+
+export async function updateHearingLink(
+  repDocsId: number,
+  field: "claimant_link" | "chronicle_link",
+  value: string | null,
+) {
+  await requireAuth();
+  if (field !== "claimant_link" && field !== "chronicle_link") {
+    throw new Error(`Field "${field}" is not a hearing link`);
+  }
+  await db.query(
+    `UPDATE hearings SET ${field} = $1, updated_at = NOW()
+     WHERE id = (SELECT hearing_id FROM representative_docs WHERE id = $2)`,
+    [value, repDocsId],
+  );
+  await logAction(
+    "hearing_link_updated_from_repdocs",
+    `${field} → '${value ?? "(empty)"}' for rep-docs #${repDocsId}`,
+  );
+  return { success: true };
+}
+
+// ─── Reset rep-docs workflow when a hearing is rescheduled ──────────────────
+// Clears all workflow/checker flags, timestamps, OHO assignment, and status.
+// Retains: assigned_to (rep docs assignee). claimant_link/chronicle_link/ssn_last_4
+// live on the hearings row and are preserved there by the reschedule flow.
+export async function clearRepDocsForRescheduledHearing(hearingId: number) {
+  await db.query(
+    `UPDATE representative_docs SET
+       overall_status = NULL,
+       uploaded_noh = false, uploaded_noh_at = NULL,
+       sent_repdocs_to_cl = false, sent_repdocs_to_cl_at = NULL,
+       repdocs_signed = false, repdocs_signed_at = NULL,
+       contact_ltr = false, contact_ltr_at = NULL,
+       repdocs_split = false, repdocs_split_at = NULL,
+       repdocs_uploaded_chronicle = false, repdocs_uploaded_chronicle_at = NULL,
+       oho_confirmation = false, oho_confirmation_at = NULL,
+       oho_assigned_to = NULL,
+       checker_calendar = false,
+       checker_chronicle_claim = false,
+       checker_noh = false,
+       checker_contact_ltr = false,
+       checker_status = NULL,
+       updated_at = NOW()
+     WHERE hearing_id = $1`,
+    [hearingId],
+  );
+}
+
+// ─── Fetch recent rep-docs changes for the notification center ─────────────
+
+export interface RepDocsChange {
+  id: number;
+  action: string;
+  description: string;
+  userName: string | null;
+  createdAt: string;
+}
+
+export async function fetchRepDocsChanges(params: {
+  since?: string;
+  category?: "status" | "field" | "rep" | "all";
+  search?: string;
+  page?: number;
+  pageSize?: number;
+  dateFrom?: string;
+  dateTo?: string;
+}): Promise<{
+  changes: RepDocsChange[];
+  total: number;
+  latestAt: string | null;
+}> {
+  const allActions = [
+    "rep_docs_field_updated",
+    "rep_docs_imported",
+    "field_updated",
+    "hearing_link_updated_from_repdocs",
+    "rep_assigned",
+    "rep_unassigned",
+    "rep_auto_assigned",
+  ];
+  const statusActions = ["field_updated", "rep_docs_imported"];
+  const fieldActions = [
+    "rep_docs_field_updated",
+    "hearing_link_updated_from_repdocs",
+  ];
+  const repActions = ["rep_assigned", "rep_unassigned", "rep_auto_assigned"];
+
+  let actionFilter: string[];
+  switch (params.category) {
+    case "status":
+      actionFilter = statusActions;
+      break;
+    case "field":
+      actionFilter = fieldActions;
+      break;
+    case "rep":
+      actionFilter = repActions;
+      break;
+    default:
+      actionFilter = allActions;
+  }
+
+  const conditions: string[] = [`a.action = ANY($1)`];
+  const values: unknown[] = [actionFilter];
+  let idx = 2;
+
+  // For non-rep tabs, only include field_updated entries that are decision-related
+  if (params.category !== "rep") {
+    conditions.push(
+      `(a.action != 'field_updated' OR a.description ILIKE '%Decision%')`,
+    );
+  }
+
+  // For rep tab, only show changes for hearings tracked in rep docs
+  if (params.category === "rep") {
+    conditions.push(`
+      EXISTS (
+        SELECT 1 FROM hearings h
+        JOIN representative_docs rd ON rd.hearing_id = h.id
+        WHERE a.description ILIKE '%' || h.claimant || '%'
+          AND h.claimant IS NOT NULL
+          AND LENGTH(h.claimant) > 3
+      )
+    `);
+  }
+
+  if (params.since) {
+    conditions.push(`a.created_at > $${idx}::timestamptz`);
+    values.push(params.since);
+    idx++;
+  }
+
+  if (params.dateFrom) {
+    conditions.push(`a.created_at >= $${idx}::date`);
+    values.push(params.dateFrom);
+    idx++;
+  }
+
+  if (params.dateTo) {
+    conditions.push(`a.created_at < ($${idx}::date + INTERVAL '1 day')`);
+    values.push(params.dateTo);
+    idx++;
+  }
+
+  if (params.search?.trim()) {
+    conditions.push(`a.description ILIKE $${idx}`);
+    values.push(`%${params.search.trim()}%`);
+    idx++;
+  }
+
+  const where = `WHERE ${conditions.join(" AND ")}`;
+  const pg = params.page ?? 1;
+  const ps = params.pageSize ?? 25;
+  const offset = (pg - 1) * ps;
+
+  const [countRes, dataRes] = await Promise.all([
+    db.query(
+      `SELECT COUNT(*)::int AS total FROM activity_log a ${where}`,
+      values,
+    ),
+    db.query(
+      `SELECT a.id, a.action, a.description,
+              u.full_name AS user_name, a.created_at::text
+       FROM activity_log a
+       LEFT JOIN users u ON u.id = a.user_id
+       ${where}
+       ORDER BY a.created_at DESC
+       LIMIT ${ps} OFFSET ${offset}`,
+      values,
+    ),
+  ]);
+
+  const changes: RepDocsChange[] = dataRes.rows.map(
+    (r: Record<string, unknown>) => ({
+      id: r.id as number,
+      action: r.action as string,
+      description: r.description as string,
+      userName: (r.user_name as string) ?? null,
+      createdAt: r.created_at as string,
+    }),
+  );
+
+  return {
+    changes,
+    total: countRes.rows[0].total as number,
+    latestAt: changes[0]?.createdAt ?? null,
+  };
+}
+
+// Lightweight check — returns just the count of changes since a timestamp
+export async function countRepDocsChangesSince(since: string): Promise<number> {
+  const { rows } = await db.query(
+    `SELECT COUNT(*)::int AS cnt
+     FROM activity_log a
+     WHERE a.action IN (
+       'rep_docs_field_updated', 'rep_docs_imported',
+       'field_updated', 'hearing_link_updated_from_repdocs',
+       'rep_assigned', 'rep_unassigned', 'rep_auto_assigned'
+     )
+       AND (a.action != 'field_updated' OR a.description ILIKE '%Decision%')
+       AND a.created_at > $1::timestamptz`,
+    [since],
+  );
+  return rows[0].cnt as number;
+}
+
+// ─── JSONB notes: add / delete ─────────────────────────────────────────────
+
+function parseRepDocsNotes(raw: unknown): RepDocsNoteEntry[] {
+  if (!raw) return [];
+  const arr = Array.isArray(raw) ? raw : (() => {
+    try { return JSON.parse(String(raw)); } catch { return []; }
+  })();
+  if (!Array.isArray(arr)) return [];
+  return arr.map((item: Record<string, unknown>) => ({
+    user: String(item.user ?? "Unknown"),
+    date: String(item.date ?? ""),
+    note: String(item.note ?? ""),
+  }));
+}
+
+export async function addRepDocsNote(
+  repDocsId: number,
+  noteText: string,
+  userName: string,
+) {
+  await requireAuth();
+
+  const { rows } = await db.query(
+    `SELECT rd.notes, h.claimant
+     FROM representative_docs rd
+     JOIN hearings h ON h.id = rd.hearing_id
+     WHERE rd.id = $1`,
+    [repDocsId],
+  );
+  if (!rows[0]) return { success: false, error: "Row not found" };
+
+  const notes = parseRepDocsNotes(rows[0].notes);
+  const newNote: RepDocsNoteEntry = {
+    user: userName,
+    date: new Date().toISOString(),
+    note: noteText,
+  };
+  notes.unshift(newNote);
+
+  await db.query(
+    `UPDATE representative_docs SET notes = $1::jsonb, updated_at = NOW() WHERE id = $2`,
+    [JSON.stringify(notes), repDocsId],
+  );
+
+  await logAction(
+    "rep_docs_field_updated",
+    `notes → added note for rep-docs #${repDocsId} (${rows[0].claimant})`,
+  );
+
+  return { success: true, notes };
+}
+
+export async function deleteRepDocsNote(
+  repDocsId: number,
+  noteIndex: number,
+) {
+  await requireAuth();
+
+  const { rows } = await db.query(
+    `SELECT rd.notes, h.claimant
+     FROM representative_docs rd
+     JOIN hearings h ON h.id = rd.hearing_id
+     WHERE rd.id = $1`,
+    [repDocsId],
+  );
+  if (!rows[0]) return { success: false, error: "Row not found", notes: null };
+
+  const notes = parseRepDocsNotes(rows[0].notes);
+  if (noteIndex < 0 || noteIndex >= notes.length) {
+    return { success: false, error: "Invalid note index", notes };
+  }
+
+  notes.splice(noteIndex, 1);
+
+  await db.query(
+    `UPDATE representative_docs SET notes = $1::jsonb, updated_at = NOW() WHERE id = $2`,
+    [JSON.stringify(notes), repDocsId],
+  );
+
+  await logAction(
+    "rep_docs_field_updated",
+    `notes → deleted note for rep-docs #${repDocsId} (${rows[0].claimant})`,
+  );
+
+  return { success: true, notes };
 }

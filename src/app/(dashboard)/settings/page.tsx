@@ -4,6 +4,7 @@ import {
   getMrTeams,
   getFederalHolidays,
   getRepDocsAssignees,
+  getOhoAssignees,
   getMrSpecialists,
 } from "@/app/(dashboard)/admin/actions";
 import { SettingsClient } from "./settings-client";
@@ -18,14 +19,21 @@ export default async function SettingsPage() {
     "mr_lead",
   ]);
 
-  const [configOptions, mrTeams, holidays, assignees, specialists] =
-    await Promise.all([
-      getConfigOptions(),
-      getMrTeams(),
-      getFederalHolidays(),
-      getRepDocsAssignees(),
-      getMrSpecialists(),
-    ]);
+  const [
+    configOptions,
+    mrTeams,
+    holidays,
+    assignees,
+    ohoAssignees,
+    specialists,
+  ] = await Promise.all([
+    getConfigOptions(),
+    getMrTeams(),
+    getFederalHolidays(),
+    getRepDocsAssignees(),
+    getOhoAssignees(),
+    getMrSpecialists(),
+  ]);
 
   return (
     <SettingsClient
@@ -33,6 +41,7 @@ export default async function SettingsPage() {
       mrTeams={mrTeams}
       holidays={holidays}
       assignees={assignees}
+      ohoAssignees={ohoAssignees}
       specialists={specialists}
       userRole={session.user.role}
     />
