@@ -47,6 +47,13 @@ export interface ChangeEntry {
 export type SyncStatus = "completed" | "busy" | "no_change";
 export type HistorySource = "fresh_run" | "latest_completed_session";
 
+export interface SyncBackup {
+  fileId?: string;
+  fileName?: string;
+  url?: string;
+  createdAt?: string | null;
+}
+
 export interface SyncResult {
   runAt: string;       // ISO string
   triggeredBy: string; // Display name of the user who clicked Sync
@@ -57,6 +64,7 @@ export interface SyncResult {
   historySource?: HistorySource;
   historyCompletedAt?: string | null;
   message?: string;
+  backup?: SyncBackup | null;
   summary: {
     total: number;
     created: number;
@@ -346,6 +354,15 @@ function ChangeHistoryModal({ result, onClose }: ChangeHistoryModalProps) {
       })
     : null;
 
+  const backupCreatedAt = result.backup?.createdAt
+    ? new Date(result.backup.createdAt).toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      })
+    : null;
+
   const showingLatestCompletedSession =
     result.historySource === "latest_completed_session" &&
     (result.changes.length > 0 || Boolean(result.historyCompletedAt));
@@ -432,6 +449,21 @@ function ChangeHistoryModal({ result, onClose }: ChangeHistoryModalProps) {
                 <ExternalLink size={10} />
                 Open Sheet
               </a>
+              {result.backup?.url ? (
+                <>
+                  <span className="opacity-40">·</span>
+                  <a
+                    href={result.backup.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-emerald-600 hover:text-emerald-500 inline-flex items-center gap-1"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <ExternalLink size={10} />
+                    Open Backup
+                  </a>
+                </>
+              ) : null}
             </p>
           </div>
           <button
@@ -453,6 +485,30 @@ function ChangeHistoryModal({ result, onClose }: ChangeHistoryModalProps) {
             ) : null}
           </div>
         )}
+
+        {result.backup && (result.backup.url || result.backup.fileName || backupCreatedAt) ? (
+          <div className="mx-5 mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+            <span className="font-medium text-emerald-900">Pre-sync backup saved</span>
+            {backupCreatedAt ? <span>{" "}at {backupCreatedAt}.</span> : <span>.</span>}
+            {result.backup.fileName ? (
+              <span className="block mt-1 text-[11px] text-emerald-700/90">
+                {result.backup.fileName}
+              </span>
+            ) : null}
+            {result.backup.url ? (
+              <a
+                href={result.backup.url}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="mt-1 inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 hover:text-emerald-600"
+              >
+                <ExternalLink size={10} />
+                Open backup copy
+              </a>
+            ) : null}
+          </div>
+        ) : null}
 
         {/* Stats */}
         <div className="flex gap-2 px-5 py-3 border-b shrink-0">
@@ -787,6 +843,11 @@ export function GoogleSheetsSyncButton({ userRole }: SyncButtonProps) {
             {result.triggeredBy ? (
               <>
                 {" "}by <span className="font-medium text-foreground">{result.triggeredBy}</span>
+              </>
+            ) : null}
+            {result.backup?.url ? (
+              <>
+                {" "}· <span className="font-medium text-emerald-600">Backup ready</span>
               </>
             ) : null}
           </p>

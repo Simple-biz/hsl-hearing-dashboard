@@ -37,6 +37,13 @@ type ChangeType = "created" | "updated" | "deleted";
 type DbEventType = "create" | "update" | "delete";
 type HistorySource = "fresh_run" | "latest_completed_session";
 
+type SyncBackup = {
+  fileId?: string;
+  fileName?: string;
+  url?: string;
+  createdAt?: string | null;
+};
+
 type DbLatestSyncRow = {
   last_event_id: number | string | null;
   last_session_start_event_id: number | string | null;
@@ -47,6 +54,10 @@ type DbLatestSyncRow = {
   id: number | string | null;
   hearing_id: number | string | null;
   event_type: DbEventType | null;
+  last_backup_file_id: string | null;
+  last_backup_file_name: string | null;
+  last_backup_url: string | null;
+  last_backup_created_at: string | null;
   payload: unknown;
   changed_fields: unknown;
   created_at: string | null;
@@ -68,6 +79,7 @@ type SyncResult = {
     updated: number;
     deleted: number;
   };
+  backup?: SyncBackup | null;
   changes: Array<{
     type: ChangeType;
     record: string;
@@ -246,6 +258,19 @@ function buildLatestSyncResult(rows: DbLatestSyncRow[]): SyncResult | null {
   const updated = changes.filter((item) => item.type === "updated").length;
   const deleted = changes.filter((item) => item.type === "deleted").length;
 
+  const backup =
+    sessionMeta.last_backup_file_id ||
+    sessionMeta.last_backup_file_name ||
+    sessionMeta.last_backup_url ||
+    sessionMeta.last_backup_created_at
+      ? {
+          fileId: sessionMeta.last_backup_file_id || undefined,
+          fileName: sessionMeta.last_backup_file_name || undefined,
+          url: sessionMeta.last_backup_url || undefined,
+          createdAt: sessionMeta.last_backup_created_at || historyCompletedAt,
+        }
+      : null;
+
   return {
     runAt: historyCompletedAt,
     triggeredBy: sessionMeta.last_triggered_by_name || "Unknown user",
@@ -258,6 +283,7 @@ function buildLatestSyncResult(rows: DbLatestSyncRow[]): SyncResult | null {
     syncStatus: "completed",
     historySource: "latest_completed_session",
     historyCompletedAt,
+    backup,
     summary: {
       total: changes.length,
       created,
@@ -309,6 +335,10 @@ export async function GET() {
         w.last_triggered_by_id,
         w.last_triggered_by_name,
         w.last_triggered_by_role,
+        w.last_backup_file_id,
+        w.last_backup_file_name,
+        w.last_backup_url,
+        w.last_backup_created_at,
         e.id,
         e.hearing_id,
         e.event_type,
