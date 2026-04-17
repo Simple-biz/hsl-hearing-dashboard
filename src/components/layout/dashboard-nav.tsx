@@ -20,6 +20,11 @@ const NAV_ITEMS: NavItem[] = [
   { label: "MR Pivot", href: "/medical-records", page: "medical_records" },
   { label: "MR Reports", href: "/mr-reports", page: "mr_reports" },
   {
+    label: "Rep Docs",
+    href: "/representative-docs",
+    page: "representative_docs",
+  },
+  {
     label: "Post-HRG Dev",
     href: "/post-hrg-development",
     page: "post_hrg_development",
