@@ -220,7 +220,9 @@ export async function fetchRepDocsPage(params: FetchParams = {}): Promise<{
   };
   const sortCol = SORT_MAP[params.sortKey || ""] || "h.hearing_date";
   const dir = params.sortDir === "desc" ? "DESC" : "ASC";
-  const orderBy = `ORDER BY ${sortCol} ${dir} NULLS LAST, h.id ASC`;
+  // Unassigned non-withdrawn rows float to the top, then normal sort order
+  const unassignedFirst = `CASE WHEN COALESCE(TRIM(rd.assigned_to), '') = '' AND LOWER(COALESCE(rd.overall_status, '')) != 'withdrawn' THEN 0 ELSE 1 END`;
+  const orderBy = `ORDER BY ${unassignedFirst}, ${sortCol} ${dir} NULLS LAST, h.id ASC`;
 
   const limit = pageSize;
   const offset = (page - 1) * pageSize;

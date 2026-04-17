@@ -1506,7 +1506,11 @@ const RepDocsRowView = memo(
           evenBg,
           isWithdrawn && "text-red-900 dark:text-red-300",
         )}
-        onClick={() => onRowClick(row)}
+        onClick={(e) => {
+          const tag = (e.target as HTMLElement).tagName;
+          if (["INPUT", "SELECT", "OPTION", "BUTTON", "A", "SVG", "PATH"].includes(tag)) return;
+          onRowClick(row);
+        }}
       >
         {/* Date */}
         <td {...stickyCell("hearing_date")}>

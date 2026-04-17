@@ -348,6 +348,96 @@ async function fetchStatCards(
   ];
 }
 
+// ─── Win Rate Calculator ─────────────────────────────────────────────────────
+
+export interface WinRateFilters {
+  rep?: string;
+  dateFrom?: string;
+  dateTo?: string;
+}
+
+export interface WinRateRow {
+  rep: string;
+  favorable: number;
+  unfavorable: number;
+  total: number;
+  winRate: number;
+}
+
+export interface WinRateData {
+  rows: WinRateRow[];
+  overall: { favorable: number; unfavorable: number; total: number; winRate: number };
+}
+
+export async function fetchWinRateData(
+  filters: WinRateFilters = {},
+): Promise<WinRateData> {
+  const conditions: string[] = [
+    "r.is_active = true",
+    "(h.hearing_decision_status = 'Favorable' OR h.hearing_decision_status = 'Unfavorable')",
+  ];
+  const params: unknown[] = [];
+  let idx = 1;
+
+  if (filters.rep) {
+    conditions.push(`r.name = $${idx}`);
+    params.push(filters.rep);
+    idx++;
+  }
+  if (filters.dateFrom) {
+    conditions.push(`h.hearing_date >= $${idx}::date`);
+    params.push(filters.dateFrom);
+    idx++;
+  }
+  if (filters.dateTo) {
+    conditions.push(`h.hearing_date <= $${idx}::date`);
+    params.push(filters.dateTo);
+    idx++;
+  }
+
+  const where = `WHERE ${conditions.join(" AND ")}`;
+
+  const { rows } = await db.query(
+    `SELECT
+       r.name AS rep,
+       COUNT(*) FILTER (WHERE h.hearing_decision_status = 'Favorable')::int AS favorable,
+       COUNT(*) FILTER (WHERE h.hearing_decision_status = 'Unfavorable')::int AS unfavorable,
+       COUNT(*)::int AS total
+     FROM representatives r
+     JOIN hearings h ON h.assigned_rep_id = r.id
+     ${where}
+     GROUP BY r.id, r.name
+     HAVING COUNT(*) > 0
+     ORDER BY
+       CASE WHEN COUNT(*) = 0 THEN 0
+            ELSE (COUNT(*) FILTER (WHERE h.hearing_decision_status = 'Favorable')::float / COUNT(*)) END DESC,
+       r.name ASC`,
+    params,
+  );
+
+  const winRateRows: WinRateRow[] = (rows as { rep: string; favorable: number; unfavorable: number; total: number }[]).map((r) => ({
+    rep: r.rep,
+    favorable: r.favorable,
+    unfavorable: r.unfavorable,
+    total: r.total,
+    winRate: r.total > 0 ? Math.round((r.favorable / r.total) * 1000) / 10 : 0,
+  }));
+
+  const overallFav = winRateRows.reduce((s, r) => s + r.favorable, 0);
+  const overallUnfav = winRateRows.reduce((s, r) => s + r.unfavorable, 0);
+  const overallTotal = overallFav + overallUnfav;
+
+  return {
+    rows: winRateRows,
+    overall: {
+      favorable: overallFav,
+      unfavorable: overallUnfav,
+      total: overallTotal,
+      winRate: overallTotal > 0 ? Math.round((overallFav / overallTotal) * 1000) / 10 : 0,
+    },
+  };
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 export async function getReportsData(
