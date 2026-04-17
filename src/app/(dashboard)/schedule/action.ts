@@ -237,6 +237,58 @@ export async function resetSchedule(repId: number, yearMonth: string) {
   );
 }
 
+// ─── Lock status overview for admins ───────────────────────────────────────
+
+export interface RepLockStatus {
+  repId: number;
+  name: string;
+  repType: string;
+  email: string | null;
+  locked: boolean;
+  daysSet: number;
+}
+
+export async function fetchRepLockStatuses(
+  yearMonth: string,
+): Promise<RepLockStatus[]> {
+  const firstDay = `${yearMonth}-01`;
+  const lastDayDate = new Date(
+    parseInt(yearMonth.split("-")[0]),
+    parseInt(yearMonth.split("-")[1]),
+    0,
+  );
+  const lastDay = `${yearMonth}-${String(lastDayDate.getDate()).padStart(2, "0")}`;
+
+  const { rows } = await db.query(
+    `SELECT
+       r.id AS rep_id,
+       r.name,
+       r.rep_type,
+       r.email,
+       COALESCE(BOOL_OR(ra.schedule_locked), false) AS locked,
+       COUNT(ra.id)::int AS days_set
+     FROM representatives r
+     LEFT JOIN rep_availability ra
+       ON ra.rep_id = r.id
+       AND ra.availability_date BETWEEN $1 AND $2
+     WHERE r.is_active = true
+     GROUP BY r.id, r.name, r.rep_type, r.email
+     ORDER BY
+       COALESCE(BOOL_OR(ra.schedule_locked), false) ASC,
+       r.name ASC`,
+    [firstDay, lastDay],
+  );
+
+  return rows.map((r) => ({
+    repId: r.rep_id as number,
+    name: r.name as string,
+    repType: r.rep_type as string,
+    email: r.email as string | null,
+    locked: r.locked as boolean,
+    daysSet: r.days_set as number,
+  }));
+}
+
 export async function updateRepTimezone(repId: number, timezone: string) {
   const valid = [
     "America/New_York",
