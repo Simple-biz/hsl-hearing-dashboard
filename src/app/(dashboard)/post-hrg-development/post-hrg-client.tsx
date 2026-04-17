@@ -25,6 +25,9 @@ import {
   type RepOption,
   type ResponsibleOption,
 } from "./actions";
+import { PostHrgDetailPanel } from "./post-hrg-detail-panel";
+import { PostHrgActivityModal } from "@/components/modals/post-hrg-activity-modal";
+import { ClipboardList } from "lucide-react";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -195,7 +198,7 @@ function IndicatorDot({
             "w-3.5 h-3.5 rounded-full border transition-all shrink-0",
             color
               ? "border-transparent ring-1 ring-offset-1"
-              : "border-dashed border-muted-foreground/40 hover:border-muted-foreground/70",
+              : "border-2 border-dashed border-muted-foreground/50 hover:border-primary hover:bg-primary/10",
             isAdmin && "cursor-pointer",
             !isAdmin && "cursor-default",
           )}
@@ -1772,6 +1775,23 @@ const fmtDate = (d: string | null) => {
   }
 };
 
+function getHearingDateCls(dateStr: string | null): string {
+  if (!dateStr) return "";
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const d = new Date(dateStr + "T12:00:00");
+  const diffDays = Math.round(
+    (d.getTime() - today.getTime()) / (1000 * 60 * 60 * 24),
+  );
+  if (diffDays === 0) return "text-red-600 font-bold dark:text-red-400";
+  if (diffDays === 1)
+    return "text-yellow-600 font-semibold dark:text-yellow-400";
+  if (diffDays > 1 && diffDays <= 7)
+    return "text-amber-600 dark:text-amber-400";
+  if (diffDays > 7) return "text-emerald-600 dark:text-emerald-400";
+  return "text-blue-500 dark:text-blue-400"; // past
+}
+
 const isOverdueCheck = (r: PostHrgDevRow) => {
   if (!r.deadline || r.status?.toLowerCase() === "completed") return false;
   return new Date(r.deadline) < new Date();
@@ -1797,6 +1817,7 @@ interface MemoRowProps {
   renderCellFn: (r: PostHrgDevRow, col: ColumnDef) => React.ReactNode;
   columns: ColumnDef[];
   overdue: boolean;
+  onRowClick: () => void;
 }
 
 const MemoRow = memo(
@@ -1810,15 +1831,17 @@ const MemoRow = memo(
     renderCellFn,
     columns,
     overdue,
+    onRowClick,
   }: MemoRowProps) {
     const rb = ri % 2 === 0 ? evenBg : oddBg;
     return (
       <tr
         className={cn(
-          "group border-b border-border/40 last:border-0",
+          "group border-b border-border/40 last:border-0 cursor-pointer hover:bg-muted/40 transition-colors",
           rb,
           overdue && "bg-red-50/50! dark:bg-red-950/10!",
         )}
+        onClick={onRowClick}
       >
         {columns.map((col) => {
           const lp = getLeftPosFn(col.key);
@@ -1826,6 +1849,25 @@ const MemoRow = memo(
           return (
             <td
               key={col.key}
+              onClick={(e) => {
+                const INTERACTIVE_COLS = [
+                  "actions",
+                  "indicator",
+                  "post_hearing_status",
+                  "type_of_docs_needed",
+                  "person_responsible",
+                  "em_sent_task_created",
+                  "ext_letter_sent",
+                  "status",
+                  "deadline",
+                  "post_hrg_review",
+                  "remarks",
+                  "details",
+                ];
+                if (INTERACTIVE_COLS.includes(col.key)) {
+                  e.stopPropagation();
+                }
+              }}
               className={cn(
                 "px-2 py-1.5",
                 col.frozen && cn("sticky z-10 overflow-hidden", rb),
@@ -1911,6 +1953,8 @@ export function PostHrgClient({
   const [detailsModal, setDetailsModal] = useState<PostHrgDevRow | null>(null);
   const [postHrgModal, setPostHrgModal] = useState<PostHrgDevRow | null>(null);
   const [remarksModal, setRemarksModal] = useState<PostHrgDevRow | null>(null);
+  const [detailPanel, setDetailPanel] = useState<PostHrgDevRow | null>(null);
+  const [showActivityLog, setShowActivityLog] = useState(false);
 
   // Import state
   const [importStep, setImportStep] = useState(1);
@@ -2538,7 +2582,12 @@ export function PostHrgClient({
           );
         case "hearing_date":
           return (
-            <span className="text-xs tabular-nums whitespace-nowrap">
+            <span
+              className={cn(
+                "text-xs tabular-nums whitespace-nowrap",
+                getHearingDateCls(r.hearing_date),
+              )}
+            >
               {fmtDate(r.hearing_date)}
             </span>
           );
@@ -2772,12 +2821,21 @@ export function PostHrgClient({
             )}
           </div>
           {viewMode === "dashboard" && (
-            <button
-              className={cn(BTN_SUCCESS, "text-xs sm:text-sm")}
-              onClick={() => setShowAddModal(true)}
-            >
-              + Add Record
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                className={cn(BTN_OUTLINE, "text-xs sm:text-sm gap-1.5")}
+                onClick={() => setShowActivityLog(true)}
+              >
+                <ClipboardList className="h-3.5 w-3.5" />
+                Activity Log
+              </button>
+              <button
+                className={cn(BTN_SUCCESS, "text-xs sm:text-sm")}
+                onClick={() => setShowAddModal(true)}
+              >
+                + Add Record
+              </button>
+            </div>
           )}
         </div>
 
@@ -2840,26 +2898,68 @@ export function PostHrgClient({
                       </option>
                     ))}
                   </select>
-                  <select
-                    className={cn(SELECT_CLS, "flex-1 sm:w-44")}
-                    value={indicatorFilter}
-                    onChange={(e) =>
-                      handleFilterChange(
-                        searchTerm,
-                        statusFilter,
-                        phStatusFilter,
-                        e.target.value,
-                      )
-                    }
-                  >
-                    <option value="all">All Indicators</option>
-                    <option value="none">No Indicator</option>
-                    {INDICATOR_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="relative flex items-center gap-1.5">
+                    <select
+                      className={cn(SELECT_CLS, "flex-1 sm:w-44")}
+                      value={indicatorFilter}
+                      onChange={(e) =>
+                        handleFilterChange(
+                          searchTerm,
+                          statusFilter,
+                          phStatusFilter,
+                          e.target.value,
+                        )
+                      }
+                    >
+                      <option value="all">All Indicators</option>
+                      <option value="none">No Indicator</option>
+                      {INDICATOR_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+
+                    {/* Legend tooltip */}
+                    <div className="group relative shrink-0">
+                      <button
+                        type="button"
+                        className="h-5 w-5 rounded-full border border-border bg-muted text-muted-foreground text-[10px] font-bold flex items-center justify-center hover:bg-muted/80 transition-colors"
+                      >
+                        ?
+                      </button>
+                      <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 z-50 hidden group-hover:block">
+                        <div className="rounded-xl border bg-card shadow-xl p-3 w-56">
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                            Indicator Legend
+                          </p>
+                          <div className="space-y-1.5">
+                            {INDICATOR_OPTIONS.map((o) => (
+                              <div
+                                key={o.value}
+                                className="flex items-center gap-2"
+                              >
+                                <span
+                                  className="w-3 h-3 rounded-full shrink-0 ring-1 ring-offset-1"
+                                  style={{
+                                    backgroundColor: o.color,
+                                    boxShadow: `0 0 0 1px ${o.color}60`,
+                                  }}
+                                />
+                                <span className="text-[11px] text-foreground">
+                                  {o.label}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        {/* Arrow */}
+                        <div className="flex justify-center">
+                          <div className="w-2 h-2 rotate-45 border-b border-r border-border bg-card -mt-1" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
                 <span className="text-xs text-muted-foreground self-center">
                   {totalFiltered} records
@@ -2979,6 +3079,7 @@ export function PostHrgClient({
                                 renderCellFn={renderCell}
                                 columns={COLUMNS}
                                 overdue={isOverdueCheck(r)}
+                                onRowClick={() => setDetailPanel(r)}
                               />
                             );
                           })}
@@ -3692,6 +3793,14 @@ export function PostHrgClient({
           }}
         />
       )}
+      <PostHrgDetailPanel
+        row={detailPanel}
+        onClose={() => setDetailPanel(null)}
+      />
+      <PostHrgActivityModal
+        open={showActivityLog}
+        onClose={() => setShowActivityLog(false)}
+      />
     </>
   );
 }

@@ -70,6 +70,7 @@ const CONFIG_TYPES = [
     label: "Post Hrg Workflow Status",
     hasColor: true,
   },
+  { key: "post_hrg_indicator", label: "Post HRG Indicators", hasColor: true },
 ];
 
 const TEAM_TYPES = [

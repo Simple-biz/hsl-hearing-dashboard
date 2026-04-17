@@ -71,41 +71,59 @@ export interface ResponsibleOption {
 /**
  * Fetch PH Status options, representatives, and responsible person options.
  */
+export interface IndicatorOption {
+  value: string;
+  label: string;
+  color: string;
+}
+
 export async function fetchPostHrgOptions(): Promise<{
   phStatusOptions: ConfigOption[];
   statusOptions: ConfigOption[];
   representatives: RepOption[];
   responsibleOptions: ResponsibleOption[];
+  indicatorOptions: IndicatorOption[];
 }> {
-  const [configRes, statusConfigRes, repsRes, mrSpecRes, mrTeamsRes] =
-    await Promise.all([
-      db.query(
-        `SELECT option_value, option_color, COALESCE(team_scope, 'shared') AS team_scope
+  const [
+    configRes,
+    statusConfigRes,
+    repsRes,
+    mrSpecRes,
+    mrTeamsRes,
+    indicatorRes,
+  ] = await Promise.all([
+    db.query(
+      `SELECT option_value, option_color, COALESCE(team_scope, 'shared') AS team_scope
        FROM config_options
        WHERE option_type = 'hearing_decision_status'
          AND is_active = true
          AND COALESCE(team_scope, 'shared') IN ('shared', 'post_hearing')
        ORDER BY display_order`,
-      ),
-      db.query(
-        `SELECT option_value, option_color, COALESCE(team_scope, 'shared') AS team_scope
+    ),
+    db.query(
+      `SELECT option_value, option_color, COALESCE(team_scope, 'shared') AS team_scope
        FROM config_options
        WHERE option_type = 'post_hrg_workflow_status'
          AND is_active = true
        ORDER BY display_order`,
-      ),
-      db.query(
-        `SELECT id, name FROM representatives WHERE is_active = true ORDER BY name`,
-      ),
-      // MR specialists (individuals)
-      db.query(
-        `SELECT name FROM mr_specialists WHERE is_active = true ORDER BY display_order, name`,
-      ),
-      // MR teams
-      db.query(
-        `SELECT team_name, team_color FROM mr_teams WHERE is_active = true ORDER BY display_order`,
-      ),
-    ]);
+    ),
+    db.query(
+      `SELECT id, name FROM representatives WHERE is_active = true ORDER BY name`,
+    ),
+    // MR specialists (individuals)
+    db.query(
+      `SELECT name FROM mr_specialists WHERE is_active = true ORDER BY display_order, name`,
+    ),
+    // MR teams
+    db.query(
+      `SELECT team_name, team_color FROM mr_teams WHERE is_active = true ORDER BY display_order`,
+    ),
+    db.query(
+      `SELECT option_value, option_color FROM config_options
+   WHERE option_type = 'post_hrg_indicator' AND is_active = true
+   ORDER BY display_order`,
+    ),
+  ]);
 
   // Build responsible options from DB + hardcoded color mapping
   const PERSON_COLORS: Record<string, string> = {
@@ -212,6 +230,11 @@ export async function fetchPostHrgOptions(): Promise<{
       name: r.name,
     })),
     responsibleOptions,
+    indicatorOptions: indicatorRes.rows.map((r) => ({
+      value: r.option_value as string,
+      label: r.option_value as string,
+      color: (r.option_color as string) || "#9CA3AF",
+    })),
   };
 }
 
@@ -1084,4 +1107,79 @@ export async function deletePostHrgDevNote(
   );
 
   return { success: true, updatedNotes };
+}
+
+export interface PostHrgActivityLog {
+  id: number;
+  action: string;
+  description: string;
+  userName: string | null;
+  createdAt: string;
+}
+
+export async function fetchPostHrgActivityLog(
+  params: {
+    page?: number;
+    pageSize?: number;
+    search?: string;
+  } = {},
+): Promise<{ logs: PostHrgActivityLog[]; total: number }> {
+  const POST_HRG_ACTIONS = [
+    "post_hrg_dev_created",
+    "post_hrg_dev_updated",
+    "post_hrg_dev_field_updated",
+    "post_hrg_dev_deleted",
+    "post_hrg_dev_import",
+    "post_hrg_dev_note_added",
+    "post_hrg_dev_note_deleted",
+    "post_hrg_dev_auto_created",
+  ];
+
+  const conditions: string[] = [`a.action = ANY($1)`];
+  const values: unknown[] = [POST_HRG_ACTIONS];
+  let idx = 2;
+
+  if (params.search?.trim()) {
+    conditions.push(
+      `(a.description ILIKE $${idx} OR u.full_name ILIKE $${idx})`,
+    );
+    values.push(`%${params.search.trim()}%`);
+    idx++;
+  }
+
+  const where = `WHERE ${conditions.join(" AND ")}`;
+  const pg = params.page ?? 1;
+  const ps = params.pageSize ?? 50;
+  const offset = (pg - 1) * ps;
+
+  const [countRes, dataRes] = await Promise.all([
+    db.query(
+      `SELECT COUNT(*)::int AS total
+       FROM activity_log a
+       LEFT JOIN users u ON u.id = a.user_id
+       ${where}`,
+      values,
+    ),
+    db.query(
+      `SELECT a.id, a.action, a.description,
+              u.full_name AS user_name, a.created_at::text
+       FROM activity_log a
+       LEFT JOIN users u ON u.id = a.user_id
+       ${where}
+       ORDER BY a.created_at DESC
+       LIMIT ${ps} OFFSET ${offset}`,
+      values,
+    ),
+  ]);
+
+  return {
+    logs: dataRes.rows.map((r: Record<string, unknown>) => ({
+      id: r.id as number,
+      action: r.action as string,
+      description: r.description as string,
+      userName: (r.user_name as string) ?? null,
+      createdAt: r.created_at as string,
+    })),
+    total: countRes.rows[0].total,
+  };
 }
