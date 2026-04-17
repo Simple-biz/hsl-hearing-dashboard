@@ -10,7 +10,9 @@ import {
   FileText,
   CheckSquare,
   Clock,
+  MessageSquare,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { RepDocsRow, RepDocsAssigneeOption } from "./actions";
 
@@ -100,6 +102,7 @@ interface Props {
   assignees: RepDocsAssigneeOption[];
   ohoAssignees: RepDocsAssigneeOption[];
   onClose: () => void;
+  onOpenNotes: (row: RepDocsRow) => void;
 }
 
 export function RepDocsDetailPanel({
@@ -107,6 +110,7 @@ export function RepDocsDetailPanel({
   assignees,
   ohoAssignees,
   onClose,
+  onOpenNotes,
 }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -505,7 +509,7 @@ export function RepDocsDetailPanel({
         </div>
 
         {/* Footer */}
-        <div className="shrink-0 border-t bg-muted/20 px-5 py-3">
+        <div className="shrink-0 border-t bg-muted/20 px-5 py-3 flex items-center justify-between">
           <p className="text-[10px] text-muted-foreground">
             Press{" "}
             <kbd className="rounded border bg-muted px-1 py-0.5 font-mono text-[9px]">
@@ -513,6 +517,20 @@ export function RepDocsDetailPanel({
             </kbd>{" "}
             to close
           </p>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1.5 text-xs"
+            onClick={() => onOpenNotes(row)}
+          >
+            <MessageSquare className="h-3 w-3" />
+            Notes
+            {row.notes && Array.isArray(row.notes) && row.notes.length > 0 && (
+              <span className="ml-0.5 rounded-full bg-blue-500 text-white text-[9px] font-bold px-1.5 py-0.5 leading-none">
+                {row.notes.length}
+              </span>
+            )}
+          </Button>
         </div>
       </div>
     </>,
