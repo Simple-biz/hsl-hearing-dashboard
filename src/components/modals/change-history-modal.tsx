@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
@@ -43,10 +44,19 @@ export interface ChangeEntry {
   time: string;        // ISO string from N8N; formatted locally
 }
 
+export type SyncStatus = "completed" | "busy" | "no_change";
+export type HistorySource = "fresh_run" | "latest_completed_session";
+
 export interface SyncResult {
   runAt: string;       // ISO string
   triggeredBy: string; // Display name of the user who clicked Sync
+  triggeredByRole?: string;
+  triggeredById?: string;
   sheetUrl: string;
+  syncStatus?: SyncStatus;
+  historySource?: HistorySource;
+  historyCompletedAt?: string | null;
+  message?: string;
   summary: {
     total: number;
     created: number;
@@ -66,6 +76,11 @@ interface SyncToastState {
   message: string;
 }
 
+interface SyncNoticeState {
+  tone: "amber" | "green" | "slate";
+  message: string;
+}
+
 // ─── Loading steps ────────────────────────────────────────────────────────────
 // Labels mirror the actual N8N workflow node sequence so the wait feels
 // explained to the user rather than opaque.
@@ -79,6 +94,8 @@ const LOADING_STEPS = [
 ] as const;
 
 const STEP_INTERVAL_MS = 650;
+const BUSY_RETRY_DELAY_MS = 2500;
+const MAX_BUSY_RETRIES = 24;
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -320,6 +337,37 @@ function ChangeHistoryModal({ result, onClose }: ChangeHistoryModalProps) {
     minute: "2-digit",
   });
 
+  const latestSessionRunAt = result.historyCompletedAt
+    ? new Date(result.historyCompletedAt).toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      })
+    : null;
+
+  const showingLatestCompletedSession =
+    result.historySource === "latest_completed_session" &&
+    (result.changes.length > 0 || Boolean(result.historyCompletedAt));
+
+  const headerBadge = showingLatestCompletedSession
+    ? {
+        label: "Showing latest sync",
+        className:
+          "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
+      }
+    : result.syncStatus === "no_change"
+      ? {
+          label: "No new changes",
+          className:
+            "bg-slate-100 text-slate-700 dark:bg-slate-900/40 dark:text-slate-300",
+        }
+      : {
+          label: "Sync complete",
+          className:
+            "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300",
+        };
+
   function exportCSV() {
     const header = ["Type", "Record", "Field", "Old Value", "New Value", "Sheet Row"];
     const rows = result.changes.flatMap((e) =>
@@ -355,8 +403,13 @@ function ChangeHistoryModal({ result, onClose }: ChangeHistoryModalProps) {
           <div>
             <div className="flex items-center gap-2 mb-1">
               <h2 className="text-sm font-semibold">Change History</h2>
-              <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300">
-                Sync complete
+              <span
+                className={cn(
+                  "text-[10px] font-medium px-2 py-0.5 rounded-full",
+                  headerBadge.className
+                )}
+              >
+                {headerBadge.label}
               </span>
             </div>
             <p className="text-xs text-muted-foreground flex items-center flex-wrap gap-x-2 gap-y-0.5">
@@ -388,6 +441,18 @@ function ChangeHistoryModal({ result, onClose }: ChangeHistoryModalProps) {
             <X size={14} />
           </button>
         </div>
+
+        {showingLatestCompletedSession && (
+          <div className="mx-5 mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            {result.message ??
+              "No new changes were found from your click. Showing the latest completed sync session instead."}
+            {latestSessionRunAt ? (
+              <span className="block mt-1 text-[11px] text-amber-700/90">
+                Latest completed sync: {latestSessionRunAt}
+              </span>
+            ) : null}
+          </div>
+        )}
 
         {/* Stats */}
         <div className="flex gap-2 px-5 py-3 border-b shrink-0">
@@ -477,21 +542,64 @@ interface SyncButtonProps {
 }
 
 export function GoogleSheetsSyncButton({ userRole }: SyncButtonProps) {
-  const [phase, setPhase] = useState<"idle" | "syncing" | "done">("idle");
+  const [phase, setPhase] = useState<"idle" | "syncing" | "waiting" | "done">("idle");
   const [stepIndex, setStepIndex] = useState(0);
   const [result, setResult] = useState<SyncResult | null>(null);
   const [toast, setToast] = useState<SyncToastState | null>(null);
+  const [notice, setNotice] = useState<SyncNoticeState | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [hasLoadedLatest, setHasLoadedLatest] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setMounted(true);
 
     return () => {
       if (toastTimer.current) clearTimeout(toastTimer.current);
+      if (noticeTimer.current) clearTimeout(noticeTimer.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (!mounted || hasLoadedLatest) return;
+
+    let cancelled = false;
+
+    const loadLatest = async () => {
+      try {
+        const res = await fetch("/api/mr-sync", {
+          method: "GET",
+          cache: "no-store",
+        });
+
+        const payload = (await res.json().catch(() => null)) as
+          | (Partial<SyncResult> & { ok?: boolean; hasLatestSync?: boolean })
+          | null;
+
+        if (!res.ok || !payload?.ok || !payload?.hasLatestSync) {
+          return;
+        }
+
+        if (cancelled) return;
+
+        const latestResult = payload as SyncResult;
+        setResult(latestResult);
+        setPhase("done");
+      } catch {
+        // Silent failure: sync history hydration should never block the page.
+      } finally {
+        if (!cancelled) setHasLoadedLatest(true);
+      }
+    };
+
+    void loadLatest();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hasLoadedLatest, mounted]);
 
   const showErrorToast = useCallback((error: SyncApiError) => {
     const nextToast = mapSyncErrorToToast(error);
@@ -507,10 +615,18 @@ export function GoogleSheetsSyncButton({ userRole }: SyncButtonProps) {
     setToast(null);
   }, []);
 
+  const showNotice = useCallback((nextNotice: SyncNoticeState, durationMs = 8000) => {
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    setNotice(nextNotice);
+    noticeTimer.current = setTimeout(() => setNotice(null), durationMs);
+  }, []);
+
   const handleSync = useCallback(async () => {
     setPhase("syncing");
     setStepIndex(0);
     dismissToast();
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    setNotice(null);
     setModalOpen(true);
 
     let step = 0;
@@ -519,24 +635,68 @@ export function GoogleSheetsSyncButton({ userRole }: SyncButtonProps) {
       setStepIndex(step);
     }, STEP_INTERVAL_MS);
 
+    const sleep = (ms: number) =>
+      new Promise((resolve) => window.setTimeout(resolve, ms));
+
     try {
-      const res = await fetch("/api/mr-sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        cache: "no-store",
-      });
+      for (let attempt = 0; attempt <= MAX_BUSY_RETRIES; attempt += 1) {
+        const res = await fetch("/api/mr-sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          cache: "no-store",
+        });
 
-      const payload = (await res.json().catch(() => ({
-        message: "We could not complete the Google Sheets sync. Please try again.",
-      }))) as SyncApiError & Partial<SyncResult> & { ok?: boolean };
+        const payload = (await res.json().catch(() => ({
+          message: "We could not complete the Google Sheets sync. Please try again.",
+        }))) as SyncApiError & Partial<SyncResult> & { ok?: boolean };
 
-      if (!res.ok) {
-        throw payload;
+        if (!res.ok) {
+          throw payload;
+        }
+
+        const syncResult = payload as SyncResult;
+
+        if (syncResult.syncStatus === "busy") {
+          setResult(null);
+          setPhase("waiting");
+          setStepIndex(LOADING_STEPS.length - 1);
+          setNotice({
+            tone: "amber",
+            message:
+              syncResult.message ??
+              "Another Google Sheets sync is currently running. Waiting for it to finish…",
+          });
+
+          if (attempt === MAX_BUSY_RETRIES) {
+            setPhase("idle");
+            setModalOpen(false);
+            showErrorToast({
+              message:
+                "Another Google Sheets sync is still running. We stopped waiting automatically for now.",
+            });
+            return;
+          }
+
+          await sleep(BUSY_RETRY_DELAY_MS);
+          continue;
+        }
+
+        setNotice(null);
+        setResult(syncResult);
+        setPhase("done");
+
+        if (syncResult.syncStatus === "no_change" && syncResult.changes.length === 0) {
+          showNotice(
+            {
+              tone: "slate",
+              message: "No new changes were left to sync.",
+            },
+            7000,
+          );
+        }
+
+        return;
       }
-
-      const { ok: _ok, ...syncResult } = payload as SyncResult & { ok?: boolean };
-      setResult(syncResult);
-      setPhase("done");
     } catch (err) {
       const error =
         err && typeof err === "object"
@@ -552,50 +712,99 @@ export function GoogleSheetsSyncButton({ userRole }: SyncButtonProps) {
     } finally {
       clearInterval(stepTimer);
     }
-  }, [dismissToast, showErrorToast]);
+  }, [dismissToast, showErrorToast, showNotice]);
 
   if (!canSyncGoogleSheets(userRole)) return null;
 
+  const lastSyncAt = result?.historyCompletedAt ?? result?.runAt ?? null;
+  const lastSyncLabel = lastSyncAt
+    ? new Date(lastSyncAt).toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      })
+    : null;
+
   return (
     <>
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          onClick={handleSync}
-          disabled={phase === "syncing"}
-          className={cn(
-            "flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-all",
-            phase === "syncing"
-              ? "bg-blue-500/80 text-white cursor-not-allowed opacity-70"
-              : "bg-blue-600 hover:bg-blue-700 text-white"
-          )}
-        >
-          {phase === "syncing" ? (
-            <Loader2 size={12} className="animate-spin" />
-          ) : (
-            <RefreshCw size={12} />
-          )}
-          {phase === "syncing" ? "Syncing…" : "Sync to Google Sheets"}
-        </button>
-
-        {phase === "done" && result && !modalOpen && (
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={() => setModalOpen(true)}
-            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors relative"
+            onClick={handleSync}
+            disabled={phase === "syncing" || phase === "waiting"}
+            className={cn(
+              "flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-all",
+              phase === "syncing" || phase === "waiting"
+                ? "bg-blue-500/80 text-white cursor-not-allowed opacity-70"
+                : "bg-blue-600 hover:bg-blue-700 text-white"
+            )}
           >
-            <Clock size={12} />
-            Change History
-            <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-blue-500" />
+            {phase === "syncing" || phase === "waiting" ? (
+              <Loader2 size={12} className="animate-spin" />
+            ) : (
+              <RefreshCw size={12} />
+            )}
+            {phase === "waiting"
+              ? "Another sync is processing…"
+              : phase === "syncing"
+                ? "Sync in progress…"
+                : "Sync to Google Sheets"}
           </button>
+
+          {phase === "done" && result && !modalOpen && (
+            <button
+              onClick={() => setModalOpen(true)}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors relative"
+            >
+              <Clock size={12} />
+              Change History
+              <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-blue-500" />
+            </button>
+          )}
+        </div>
+
+        {notice && (
+          <div
+            className={cn(
+              "inline-flex w-fit items-center gap-2 rounded-lg border px-3 py-2 text-xs",
+              notice.tone === "amber" &&
+                "border-amber-200 bg-amber-50 text-amber-800",
+              notice.tone === "green" &&
+                "border-green-200 bg-green-50 text-green-800",
+              notice.tone === "slate" &&
+                "border-slate-200 bg-slate-50 text-slate-700",
+            )}
+          >
+            <AlertTriangle size={12} className={cn(notice.tone !== "amber" && "hidden")} />
+            <span>{notice.message}</span>
+          </div>
+        )}
+
+        {result && lastSyncLabel && !notice && (
+          <p className="text-[11px] text-muted-foreground">
+            Last completed sync: <span className="font-medium text-foreground">{lastSyncLabel}</span>
+            {result.triggeredBy ? (
+              <>
+                {" "}by <span className="font-medium text-foreground">{result.triggeredBy}</span>
+              </>
+            ) : null}
+          </p>
         )}
       </div>
 
-      {modalOpen && phase === "syncing" && (
+      {modalOpen && (phase === "syncing" || phase === "waiting") && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-120 rounded-xl border bg-card shadow-2xl">
             <div className="flex items-center justify-between px-5 py-4 border-b">
-              <h2 className="text-sm font-semibold">Syncing to Google Sheets</h2>
+              <h2 className="text-sm font-semibold">{phase === "waiting" ? "Another sync is processing…" : "Sync in progress…"}</h2>
             </div>
             <LoadingOverlay stepIndex={stepIndex} />
+            {phase === "waiting" && (
+              <div className="px-5 pb-5 text-center text-xs text-muted-foreground">
+                We&apos;re checking again automatically every few seconds so reps do not need to keep clicking the sync button.
+              </div>
+            )}
           </div>
         </div>
       )}
