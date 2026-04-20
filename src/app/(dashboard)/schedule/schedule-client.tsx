@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { AppHeader } from "@/components/layout/app-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,12 +17,15 @@ import {
   ChevronLeft,
   ChevronRight,
   Lock,
+  LockOpen,
   Save,
   RotateCcw,
   X,
   Plus,
   Trash2,
   Search,
+  ClipboardList,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { UserRole } from "@/lib/roles";
@@ -34,8 +37,14 @@ import {
   unlockSchedule,
   resetSchedule,
   updateRepTimezone,
+  fetchRepLockStatuses,
 } from "./action";
-import type { AvailabilityDay, HearingOnDay, RepOption } from "./action";
+import type {
+  AvailabilityDay,
+  HearingOnDay,
+  RepOption,
+  RepLockStatus,
+} from "./action";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 type AvailType =
@@ -144,6 +153,7 @@ export function ScheduleClient({
   const [saving, setSaving] = useState(false);
   const [repSearch, setRepSearch] = useState("");
   const [repLoaded, setRepLoaded] = useState(initialRepId > 0);
+  const [showLockStatus, setShowLockStatus] = useState(false);
   const [edits, setEdits] = useState<Record<string, DayState>>(() =>
     buildEdits(initialAvailability),
   );
@@ -314,6 +324,14 @@ export function ScheduleClient({
                 <ChevronLeft className="h-3.5 w-3.5" /> Back to Dashboard
               </Button>
             </Link>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs gap-1.5"
+              onClick={() => setShowLockStatus(true)}
+            >
+              <ClipboardList className="h-3.5 w-3.5" /> Lock Status
+            </Button>
           </div>
           <div className="rounded-xl border bg-card p-6 space-y-4">
             <div>
@@ -416,6 +434,17 @@ export function ScheduleClient({
             </p>
           </div>
         </div>
+
+        {showLockStatus && (
+          <LockStatusModal
+            defaultMonth={selectedMonth || initialMonth}
+            onClose={() => setShowLockStatus(false)}
+            onSelectRep={(repId) => {
+              setShowLockStatus(false);
+              handleSelectRep(repId);
+            }}
+          />
+        )}
       </>
     );
   }
@@ -1110,5 +1139,290 @@ export function ScheduleClient({
         </div>
       )}
     </>
+  );
+}
+
+// ═════════ LOCK STATUS MODAL ═════════
+
+function LockStatusModal({
+  defaultMonth,
+  onClose,
+  onSelectRep,
+}: {
+  defaultMonth: string;
+  onClose: () => void;
+  onSelectRep: (repId: number) => void;
+}) {
+  const [month, setMonth] = useState(defaultMonth);
+  const [statuses, setStatuses] = useState<RepLockStatus[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [filterType, setFilterType] = useState<string>("all");
+  const [filterLock, setFilterLock] = useState<string>("all");
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchRepLockStatuses(month).then((data) => {
+      if (!cancelled) {
+        setStatuses(data);
+        setLoading(false);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [month]);
+
+  const handleMonthChange = (ym: string) => {
+    setMonth(ym);
+    setLoading(true);
+  };
+
+  const monthLabel = (() => {
+    const [y, m] = month.split("-").map(Number);
+    return new Date(y, m - 1, 1).toLocaleDateString("en-US", {
+      month: "long",
+      year: "numeric",
+    });
+  })();
+
+  const filtered = useMemo(() => {
+    return statuses.filter((s) => {
+      if (search) {
+        const q = search.toLowerCase();
+        if (
+          !s.name.toLowerCase().includes(q) &&
+          !(s.email ?? "").toLowerCase().includes(q)
+        )
+          return false;
+      }
+      if (filterType !== "all" && s.repType !== filterType) return false;
+      if (filterLock === "locked" && !s.locked) return false;
+      if (filterLock === "unlocked" && s.locked) return false;
+      if (filterLock === "not_started" && (s.locked || s.daysSet > 0))
+        return false;
+      return true;
+    });
+  }, [statuses, search, filterType, filterLock]);
+
+  const lockedCount = statuses.filter((s) => s.locked).length;
+  const unlockedCount = statuses.filter(
+    (s) => !s.locked && s.daysSet > 0,
+  ).length;
+  const notStartedCount = statuses.filter(
+    (s) => !s.locked && s.daysSet === 0,
+  ).length;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-2xl rounded-xl border bg-card shadow-2xl flex flex-col max-h-[85vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between border-b px-5 py-4 shrink-0">
+          <div>
+            <h2 className="text-sm font-semibold">Schedule Lock Status</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">{monthLabel}</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Stats */}
+        <div className="grid grid-cols-3 gap-3 px-5 pt-4 shrink-0">
+          <button
+            onClick={() =>
+              setFilterLock(filterLock === "locked" ? "all" : "locked")
+            }
+            className={cn(
+              "rounded-lg p-2.5 text-center transition-colors border",
+              filterLock === "locked"
+                ? "border-emerald-400 bg-emerald-50 dark:bg-emerald-900/40 ring-2 ring-emerald-400"
+                : "border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-900/30 hover:bg-emerald-100 dark:hover:bg-emerald-900/50",
+            )}
+          >
+            <p className="text-xl font-bold text-emerald-700 dark:text-emerald-400 tabular-nums">
+              {lockedCount}
+            </p>
+            <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
+              Locked
+            </p>
+          </button>
+          <button
+            onClick={() =>
+              setFilterLock(filterLock === "unlocked" ? "all" : "unlocked")
+            }
+            className={cn(
+              "rounded-lg p-2.5 text-center transition-colors border",
+              filterLock === "unlocked"
+                ? "border-amber-400 bg-amber-50 dark:bg-amber-900/40 ring-2 ring-amber-400"
+                : "border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/30 hover:bg-amber-100 dark:hover:bg-amber-900/50",
+            )}
+          >
+            <p className="text-xl font-bold text-amber-700 dark:text-amber-400 tabular-nums">
+              {unlockedCount}
+            </p>
+            <p className="text-[10px] text-amber-600 dark:text-amber-400 font-medium">
+              In Progress
+            </p>
+          </button>
+          <button
+            onClick={() =>
+              setFilterLock(
+                filterLock === "not_started" ? "all" : "not_started",
+              )
+            }
+            className={cn(
+              "rounded-lg p-2.5 text-center transition-colors border",
+              filterLock === "not_started"
+                ? "border-red-400 bg-red-50 dark:bg-red-900/40 ring-2 ring-red-400"
+                : "border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/30 hover:bg-red-100 dark:hover:bg-red-900/50",
+            )}
+          >
+            <p className="text-xl font-bold text-red-700 dark:text-red-400 tabular-nums">
+              {notStartedCount}
+            </p>
+            <p className="text-[10px] text-red-600 dark:text-red-400 font-medium">
+              Not Started
+            </p>
+          </button>
+        </div>
+
+        {/* Filters */}
+        <div className="flex flex-wrap items-center gap-2 px-5 pt-3 pb-2 shrink-0">
+          <div className="relative flex-1 min-w-48">
+            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search by name or email..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="h-8 pl-8 text-xs"
+            />
+          </div>
+          <Input
+            type="month"
+            value={month}
+            onChange={(e) =>
+              e.target.value && handleMonthChange(e.target.value)
+            }
+            className="h-8 w-auto text-xs"
+          />
+          <Select value={filterType} onValueChange={setFilterType}>
+            <SelectTrigger className="h-8 w-auto min-w-32 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Types</SelectItem>
+              <SelectItem value="internal_advocates">Internal</SelectItem>
+              <SelectItem value="in-house">In-House</SelectItem>
+              <SelectItem value="external_advocates">External</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* List */}
+        <div className="flex-1 overflow-y-auto px-5 pb-3">
+          {loading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="py-12 text-center text-sm text-muted-foreground">
+              No representatives match your filters.
+            </div>
+          ) : (
+            <div className="rounded-lg border divide-y">
+              {filtered.map((rep) => (
+                <button
+                  key={rep.repId}
+                  onClick={() => onSelectRep(rep.repId)}
+                  className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-muted/50 transition-colors"
+                >
+                  {/* Lock icon */}
+                  <div
+                    className={cn(
+                      "shrink-0 flex items-center justify-center rounded-full h-7 w-7",
+                      rep.locked
+                        ? "bg-emerald-100 dark:bg-emerald-900/40"
+                        : rep.daysSet > 0
+                          ? "bg-amber-100 dark:bg-amber-900/40"
+                          : "bg-red-100 dark:bg-red-900/40",
+                    )}
+                  >
+                    {rep.locked ? (
+                      <Lock className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                    ) : rep.daysSet > 0 ? (
+                      <LockOpen className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                    ) : (
+                      <X className="h-3.5 w-3.5 text-red-500 dark:text-red-400" />
+                    )}
+                  </div>
+
+                  {/* Name & email */}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{rep.name}</p>
+                    {rep.email && (
+                      <p className="text-[10px] text-muted-foreground truncate">
+                        {rep.email}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Type badge */}
+                  <span
+                    className={cn(
+                      "shrink-0 rounded-md px-2 py-0.5 text-[10px] font-semibold",
+                      TYPE_COLORS[rep.repType] ||
+                        "bg-muted text-muted-foreground",
+                    )}
+                  >
+                    {TYPE_LABELS[rep.repType] || rep.repType}
+                  </span>
+
+                  {/* Status badge */}
+                  <span
+                    className={cn(
+                      "shrink-0 rounded-md px-2 py-0.5 text-[10px] font-semibold",
+                      rep.locked
+                        ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+                        : rep.daysSet > 0
+                          ? "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+                          : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
+                    )}
+                  >
+                    {rep.locked
+                      ? "Locked"
+                      : rep.daysSet > 0
+                        ? `${rep.daysSet} days set`
+                        : "Not started"}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="shrink-0 border-t px-5 py-3 flex items-center justify-between">
+          <p className="text-[10px] text-muted-foreground">
+            {filtered.length} of {statuses.length} reps shown
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs"
+            onClick={onClose}
+          >
+            Close
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }

@@ -22,6 +22,8 @@ export interface HearingRow {
   medical_record_status: string | null;
   medical_record_link: string | null;
   claimant_link: string | null;
+  chronicle_link: string | null;
+  ovh_link: string | null;
   assignment_status: string | null;
   task_assigned: boolean;
   rep_docs_complete: boolean;
@@ -454,7 +456,7 @@ export async function fetchHearingsPage(
         h.hearing_date::text, h.hearing_time::text, h.time_zone, h.converted_time_est::text,
         h.city, h.state, h.alj, h.manner_of_appearance, h.hearing_decision_status,
         h.assigned_rep_id, h.mr_team_id, h.brief_assigned_to, h.medical_record_status,
-        h.medical_record_link, h.claimant_link,
+        h.medical_record_link, h.claimant_link, h.chronicle_link, h.ovh_link,
         NULLIF(h.assignment_status::text, '') AS assignment_status,
         h.task_assigned, h.rep_docs_complete, h.rep_docs_assigned_to,
         h.fee_agreement_complete, h.five_day_notice, h.rfc_status, h.phi_sheet_complete,
@@ -562,7 +564,9 @@ export async function updateHearing(
     "entered_hearing_level_date",
     "download_type",
     "claimant_link",
+    "chronicle_link",
     "medical_record_link",
+    "ovh_link",
   ];
 
   if (!ALLOWED_FIELDS.includes(field)) {
@@ -668,6 +672,37 @@ export async function updateHearing(
         value,
         hearingId,
       ]);
+    }
+
+    // Sync decision status → representative_docs overall_status
+    if (field === "hearing_decision_status" && value !== oldValue) {
+      const decision = String(value ?? "").toLowerCase();
+      let repDocsStatus: string | null = null;
+
+      if (
+        decision.startsWith("withdrawal") ||
+        decision === "dismissed" ||
+        decision === "dismissal"
+      ) {
+        repDocsStatus = "Withdrawn";
+      } else if (decision === "continued") {
+        repDocsStatus = "Postponed";
+      } else if (
+        decision === "favorable" ||
+        decision === "fully favorable" ||
+        decision === "partially favorable"
+      ) {
+        repDocsStatus = "Favorable";
+      }
+
+      if (repDocsStatus) {
+        await client.query(
+          `UPDATE representative_docs
+           SET overall_status = $1, updated_at = NOW()
+           WHERE hearing_id = $2`,
+          [repDocsStatus, hearingId],
+        );
+      }
     }
 
     if (SYNC_EVENT_FIELDS.has(field)) {
@@ -1586,6 +1621,7 @@ export interface ActivityLogEntry {
   user_name: string | null;
   created_at: string;
   ip_address: string | null;
+  acknowledged?: boolean;
 }
 
 export async function fetchActivityLog(params: {
@@ -1597,6 +1633,8 @@ export async function fetchActivityLog(params: {
   dateTo?: string;
   userId?: string;
   excludeSystemAdmin?: boolean;
+  scopedActions?: string[];
+  ackScope?: "rep_docs";
 }): Promise<{
   entries: ActivityLogEntry[];
   total: number;
@@ -1606,8 +1644,20 @@ export async function fetchActivityLog(params: {
   const values: unknown[] = [];
   let idx = 1;
 
-  // Category filter — action names match PHP dashboard logActivity() calls
-  if (params.category && params.category !== "all") {
+  // Resolve current user id for per-user ack joins (only if ackScope is set)
+  let currentUserId: number | null = null;
+  if (params.ackScope) {
+    const { getSession } = await import("@/lib/session");
+    const sess = await getSession();
+    currentUserId = sess?.user?.id ? Number(sess.user.id) : null;
+  }
+
+  // Scoped actions override category filter — restricts results to a fixed set of actions
+  if (params.scopedActions && params.scopedActions.length > 0) {
+    conditions.push(`a.action = ANY($${idx})`);
+    values.push(params.scopedActions);
+    idx++;
+  } else if (params.category && params.category !== "all") {
     const catMap: Record<string, string[]> = {
       assignments: [
         "rep_assigned",
@@ -1623,6 +1673,8 @@ export async function fetchActivityLog(params: {
         "post_hrg_note_added",
         "post_hrg_deadline_updated",
         "post_hrg_note_deleted",
+        "rep_docs_field_updated",
+        "rep_docs_imported",
       ],
       hearings: [
         "hearing_updated",
@@ -1694,6 +1746,20 @@ export async function fetchActivityLog(params: {
   const where =
     conditions.length > 0 ? "WHERE " + conditions.join(" AND ") : "";
 
+  // Build ack join + select fragments (only when ackScope is set)
+  const ackSelect =
+    params.ackScope === "rep_docs"
+      ? ", (ack.user_id IS NOT NULL) AS acknowledged"
+      : "";
+  const ackJoin =
+    params.ackScope === "rep_docs"
+      ? `LEFT JOIN rep_docs_change_ack ack ON ack.activity_id = a.id AND ack.user_id = $${idx + 2}`
+      : "";
+  const dataValues =
+    params.ackScope === "rep_docs"
+      ? [...values, params.pageSize, (params.page - 1) * params.pageSize, currentUserId]
+      : [...values, params.pageSize, (params.page - 1) * params.pageSize];
+
   const [countRes, dataRes, usersRes] = await Promise.all([
     db.query(
       `SELECT COUNT(*)::int AS count FROM activity_log a ${where}`,
@@ -1710,14 +1776,15 @@ export async function fetchActivityLog(params: {
                ELSE a.description
              END AS description,
              u.full_name AS user_name,
-             a.created_at::text, a.ip_address
+             a.created_at::text, a.ip_address${ackSelect}
       FROM activity_log a
       LEFT JOIN users u ON u.id = a.user_id
+      ${ackJoin}
       ${where}
       ORDER BY a.created_at DESC
       LIMIT $${idx} OFFSET $${idx + 1}
     `,
-      [...values, params.pageSize, (params.page - 1) * params.pageSize],
+      dataValues,
     ),
     db.query(
       "SELECT id, full_name AS name FROM users WHERE is_active = true AND id != 1 ORDER BY full_name",

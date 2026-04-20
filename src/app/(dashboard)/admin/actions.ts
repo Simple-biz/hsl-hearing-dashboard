@@ -386,28 +386,33 @@ export async function deleteFederalHoliday(id: number) {
 export interface RepDocsAssignee {
   id: number;
   name: string;
+  bg_color: string | null;
   is_active: boolean;
   display_order: number;
 }
 
 export async function getRepDocsAssignees(): Promise<RepDocsAssignee[]> {
   const { rows } = await db.query(
-    "SELECT id, name, is_active, display_order FROM rep_docs_assignees ORDER BY display_order",
+    "SELECT id, name, bg_color, is_active, display_order FROM rep_docs_assignees ORDER BY display_order",
   );
   return rows as RepDocsAssignee[];
 }
 
-export async function saveRepDocsAssignee(data: { id?: number; name: string }) {
+export async function saveRepDocsAssignee(data: {
+  id?: number;
+  name: string;
+  bg_color?: string;
+}) {
   if (data.id) {
-    await db.query("UPDATE rep_docs_assignees SET name=$1 WHERE id=$2", [
-      data.name,
-      data.id,
-    ]);
+    await db.query(
+      "UPDATE rep_docs_assignees SET name=$1, bg_color=$2 WHERE id=$3",
+      [data.name, data.bg_color || null, data.id],
+    );
     return data.id;
   } else {
     const { rows } = await db.query(
-      "INSERT INTO rep_docs_assignees (name, is_active, display_order) VALUES ($1,true, (SELECT COALESCE(MAX(display_order),0)+1 FROM rep_docs_assignees)) RETURNING id",
-      [data.name],
+      "INSERT INTO rep_docs_assignees (name, bg_color, is_active, display_order) VALUES ($1,$2,true, (SELECT COALESCE(MAX(display_order),0)+1 FROM rep_docs_assignees)) RETURNING id",
+      [data.name, data.bg_color || null],
     );
     return rows[0].id as number;
   }
@@ -422,6 +427,54 @@ export async function toggleRepDocsAssignee(id: number, active: boolean) {
 
 export async function deleteRepDocsAssignee(id: number) {
   await db.query("DELETE FROM rep_docs_assignees WHERE id=$1", [id]);
+}
+
+// ═══════════ OHO ASSIGNEES ═══════════
+
+export interface OhoAssignee {
+  id: number;
+  name: string;
+  bg_color: string | null;
+  is_active: boolean;
+  display_order: number;
+}
+
+export async function getOhoAssignees(): Promise<OhoAssignee[]> {
+  const { rows } = await db.query(
+    "SELECT id, name, bg_color, is_active, display_order FROM oho_assignees ORDER BY display_order",
+  );
+  return rows as OhoAssignee[];
+}
+
+export async function saveOhoAssignee(data: {
+  id?: number;
+  name: string;
+  bg_color?: string;
+}) {
+  if (data.id) {
+    await db.query(
+      "UPDATE oho_assignees SET name=$1, bg_color=$2 WHERE id=$3",
+      [data.name, data.bg_color || null, data.id],
+    );
+    return data.id;
+  } else {
+    const { rows } = await db.query(
+      "INSERT INTO oho_assignees (name, bg_color, is_active, display_order) VALUES ($1,$2,true, (SELECT COALESCE(MAX(display_order),0)+1 FROM oho_assignees)) RETURNING id",
+      [data.name, data.bg_color || null],
+    );
+    return rows[0].id as number;
+  }
+}
+
+export async function toggleOhoAssignee(id: number, active: boolean) {
+  await db.query("UPDATE oho_assignees SET is_active=$1 WHERE id=$2", [
+    active,
+    id,
+  ]);
+}
+
+export async function deleteOhoAssignee(id: number) {
+  await db.query("DELETE FROM oho_assignees WHERE id=$1", [id]);
 }
 
 // ═══════════ MR SPECIALISTS ═══════════
@@ -487,22 +540,30 @@ export async function sendWelcomeEmail(userId: number, password: string) {
   if (!webhookUrl || !webhookSecret)
     throw new Error("N8N webhook not configured");
 
+  const payload: Record<string, string> = {
+    email_type: "new_user_welcome",
+    to_email: email,
+    to_name: full_name,
+    password,
+    role: role.replace(/_/g, " "),
+    login_url:
+      process.env.NEXT_PUBLIC_APP_URL || "https://hearings.hogansmith.com",
+  };
+
+  payload.to_cc =
+    role === "rep" && process.env.REP_WELCOME_CC_EMAIL
+      ? process.env.REP_WELCOME_CC_EMAIL
+      : "";
+
   await fetch(webhookUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "X-Webhook-Secret": webhookSecret,
     },
-    body: JSON.stringify({
-      email_type: "new_user_welcome",
-      to_email: email,
-      to_name: full_name,
-      password,
-      role: role.replace(/_/g, " "),
-      login_url:
-        process.env.NEXT_PUBLIC_APP_URL || "https://hearings.hogansmith.com",
-    }),
+    body: JSON.stringify(payload),
   });
+
   await logAction(
     "email_sent",
     `Welcome email sent to ${full_name} (${email})`,
@@ -577,22 +638,30 @@ export async function sendVideoTutorialEmail(userId: number, password: string) {
   if (!webhookUrl || !webhookSecret)
     throw new Error("N8N webhook not configured");
 
+  const payload: Record<string, string> = {
+    email_type: "scheduling_video_tutorial",
+    to_email: email,
+    to_name: full_name,
+    password,
+    role: role.replace(/_/g, " "),
+    login_url:
+      process.env.NEXT_PUBLIC_APP_URL || "https://hearings.hogansmith.com",
+  };
+
+  payload.to_cc =
+    role === "rep" && process.env.REP_WELCOME_CC_EMAIL
+      ? process.env.REP_WELCOME_CC_EMAIL
+      : "";
+
   await fetch(webhookUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "X-Webhook-Secret": webhookSecret,
     },
-    body: JSON.stringify({
-      email_type: "scheduling_video_tutorial",
-      to_email: email,
-      to_name: full_name,
-      password,
-      role: role.replace(/_/g, " "),
-      login_url:
-        process.env.NEXT_PUBLIC_APP_URL || "https://hearings.hogansmith.com",
-    }),
+    body: JSON.stringify(payload),
   });
+
   await logAction(
     "email_sent",
     `Scheduling video tutorial sent to ${full_name} (${email})`,

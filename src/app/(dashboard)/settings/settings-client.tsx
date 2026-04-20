@@ -16,6 +16,7 @@ import {
   Settings,
   Calendar,
   ClipboardList,
+  UserCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -36,6 +37,9 @@ import {
   saveRepDocsAssignee,
   toggleRepDocsAssignee,
   deleteRepDocsAssignee,
+  saveOhoAssignee,
+  toggleOhoAssignee,
+  deleteOhoAssignee,
 } from "@/app/(dashboard)/admin/actions";
 import type {
   ConfigOption,
@@ -44,6 +48,7 @@ import type {
   MrSpecialist,
   FederalHoliday,
   RepDocsAssignee,
+  OhoAssignee,
 } from "@/app/(dashboard)/admin/actions";
 import type { UserRole } from "@/lib/roles";
 
@@ -60,6 +65,12 @@ const CONFIG_TYPES = [
   { key: "rfc_document_type", label: "RFC Document Type", hasColor: true },
   { key: "rfc_method_received", label: "RFC Method Received", hasColor: true },
   { key: "post_hrg_dev_status", label: "Post Hrg Dev Status", hasColor: true },
+  {
+    key: "post_hrg_workflow_status",
+    label: "Post Hrg Workflow Status",
+    hasColor: true,
+  },
+  { key: "post_hrg_indicator", label: "Post HRG Indicators", hasColor: true },
 ];
 
 const TEAM_TYPES = [
@@ -207,6 +218,7 @@ interface Props {
   mrTeams: MrTeam[];
   holidays: FederalHoliday[];
   assignees: RepDocsAssignee[];
+  ohoAssignees: OhoAssignee[];
   specialists: MrSpecialist[];
   userRole: string;
 }
@@ -216,6 +228,7 @@ export function SettingsClient({
   mrTeams: initTeams,
   holidays: initHolidays,
   assignees: initAssignees,
+  ohoAssignees: initOhoAssignees,
   specialists: initSpecialists,
   userRole,
 }: Props) {
@@ -253,6 +266,11 @@ export function SettingsClient({
       label: "Rep Docs Assignees",
       icon: ClipboardList,
     },
+    canSeeConfigTabs && {
+      key: "oho_assignees",
+      label: "OHO Assignees",
+      icon: UserCheck,
+    },
   ].filter(Boolean) as {
     key: string;
     label: string;
@@ -264,6 +282,7 @@ export function SettingsClient({
   const [mrTeams, setMrTeams] = useState(initTeams);
   const [holidays, setHolidays] = useState(initHolidays);
   const [assignees, setAssignees] = useState(initAssignees);
+  const [ohoAssignees, setOhoAssignees] = useState(initOhoAssignees);
   const [specialists, setSpecialists] = useState(initSpecialists);
   const [, startTransition] = useTransition();
 
@@ -320,6 +339,13 @@ export function SettingsClient({
           <AssigneesTab
             assignees={assignees}
             setAssignees={setAssignees}
+            startTransition={startTransition}
+          />
+        )}
+        {tab === "oho_assignees" && canSeeConfigTabs && (
+          <OhoAssigneesTab
+            assignees={ohoAssignees}
+            setAssignees={setOhoAssignees}
             startTransition={startTransition}
           />
         )}
@@ -2031,21 +2057,27 @@ function AssigneesTab({
   const [showAddModal, setShowAddModal] = useState(false);
   const [editItem, setEditItem] = useState<RepDocsAssignee | null>(null);
   const [newName, setNewName] = useState("");
+  const [newColor, setNewColor] = useState("");
 
   const handleAdd = () => {
     if (!newName.trim()) return;
     startTransition(async () => {
-      const id = await saveRepDocsAssignee({ name: newName.trim() });
+      const id = await saveRepDocsAssignee({
+        name: newName.trim(),
+        bg_color: newColor || undefined,
+      });
       setAssignees([
         ...assignees,
         {
           id,
           name: newName.trim(),
+          bg_color: newColor || null,
           is_active: true,
           display_order: assignees.length + 1,
         },
       ]);
       setNewName("");
+      setNewColor("");
       setShowAddModal(false);
     });
   };
@@ -2053,7 +2085,11 @@ function AssigneesTab({
   const handleEditSave = () => {
     if (!editItem) return;
     startTransition(async () => {
-      await saveRepDocsAssignee({ id: editItem.id, name: editItem.name });
+      await saveRepDocsAssignee({
+        id: editItem.id,
+        name: editItem.name,
+        bg_color: editItem.bg_color || undefined,
+      });
       setAssignees(assignees.map((a) => (a.id === editItem.id ? editItem : a)));
       setEditItem(null);
     });
@@ -2100,14 +2136,22 @@ function AssigneesTab({
                     !a.is_active && "opacity-50",
                   )}
                 >
-                  <span
-                    className={cn(
-                      "flex-1 text-sm",
-                      !a.is_active && "line-through text-muted-foreground",
+                  <div className="flex items-center gap-2 flex-1">
+                    {a.bg_color && (
+                      <span
+                        className="inline-block h-4 w-4 rounded-full shrink-0 ring-1 ring-black/10"
+                        style={{ backgroundColor: a.bg_color }}
+                      />
                     )}
-                  >
-                    {a.name}
-                  </span>
+                    <span
+                      className={cn(
+                        "text-sm",
+                        !a.is_active && "line-through text-muted-foreground",
+                      )}
+                    >
+                      {a.name}
+                    </span>
+                  </div>
                   <StatusDot active={a.is_active} />
                   <Button
                     variant="outline"
@@ -2166,18 +2210,21 @@ function AssigneesTab({
           title="Add Rep Docs Assignee"
           onClose={() => setShowAddModal(false)}
         >
-          <div className="px-5 py-4">
-            <label className="mb-1.5 block text-xs font-medium">Name *</label>
-            <Input
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              placeholder="Enter name"
-              className="h-9 text-sm"
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleAdd();
-              }}
-            />
+          <div className="px-5 py-4 space-y-4">
+            <div>
+              <label className="mb-1.5 block text-xs font-medium">Name *</label>
+              <Input
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="Enter name"
+                className="h-9 text-sm"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleAdd();
+                }}
+              />
+            </div>
+            <ColorPicker value={newColor} onChange={setNewColor} />
           </div>
           <Separator />
           <div className="flex justify-end gap-2 px-5 py-3">
@@ -2197,18 +2244,271 @@ function AssigneesTab({
 
       {editItem && (
         <Modal title="Edit Assignee" onClose={() => setEditItem(null)}>
-          <div className="px-5 py-4">
-            <label className="mb-1.5 block text-xs font-medium">Name *</label>
-            <Input
-              value={editItem.name}
-              onChange={(e) =>
-                setEditItem({ ...editItem, name: e.target.value })
+          <div className="px-5 py-4 space-y-4">
+            <div>
+              <label className="mb-1.5 block text-xs font-medium">Name *</label>
+              <Input
+                value={editItem.name}
+                onChange={(e) =>
+                  setEditItem({ ...editItem, name: e.target.value })
+                }
+                className="h-9 text-sm"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleEditSave();
+                }}
+              />
+            </div>
+            <ColorPicker
+              value={editItem.bg_color || ""}
+              onChange={(c) =>
+                setEditItem({ ...editItem, bg_color: c || null })
               }
-              className="h-9 text-sm"
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleEditSave();
-              }}
+            />
+          </div>
+          <Separator />
+          <div className="flex justify-end gap-2 px-5 py-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setEditItem(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="bg-amber-600 hover:bg-amber-700"
+              onClick={handleEditSave}
+            >
+              Update
+            </Button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// OHO Assignees Tab
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function OhoAssigneesTab({
+  assignees,
+  setAssignees,
+  startTransition,
+}: {
+  assignees: OhoAssignee[];
+  setAssignees: (a: OhoAssignee[]) => void;
+  startTransition: (fn: () => void) => void;
+}) {
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [editItem, setEditItem] = useState<OhoAssignee | null>(null);
+  const [newName, setNewName] = useState("");
+  const [newColor, setNewColor] = useState("");
+
+  const handleAdd = () => {
+    if (!newName.trim()) return;
+    startTransition(async () => {
+      const id = await saveOhoAssignee({
+        name: newName.trim(),
+        bg_color: newColor || undefined,
+      });
+      setAssignees([
+        ...assignees,
+        {
+          id,
+          name: newName.trim(),
+          bg_color: newColor || null,
+          is_active: true,
+          display_order: assignees.length + 1,
+        },
+      ]);
+      setNewName("");
+      setNewColor("");
+      setShowAddModal(false);
+    });
+  };
+
+  const handleEditSave = () => {
+    if (!editItem) return;
+    startTransition(async () => {
+      await saveOhoAssignee({
+        id: editItem.id,
+        name: editItem.name,
+        bg_color: editItem.bg_color || undefined,
+      });
+      setAssignees(assignees.map((a) => (a.id === editItem.id ? editItem : a)));
+      setEditItem(null);
+    });
+  };
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">
+        People who can be assigned as OHO checker in representative docs.
+      </p>
+      <Card className="shadow-sm max-w-2xl">
+        <CardHeader className="flex flex-row items-center justify-between py-3 px-4">
+          <CardTitle className="text-base flex items-center gap-2">
+            <UserCheck className="h-4 w-4 text-primary" /> OHO Assignees{" "}
+            <span className="ml-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary font-normal">
+              {assignees.length}
+            </span>
+          </CardTitle>
+          <Button
+            size="sm"
+            className="h-8 gap-1.5"
+            onClick={() => {
+              setNewName("");
+              setShowAddModal(true);
+            }}
+          >
+            <Plus className="h-3.5 w-3.5" /> Add
+          </Button>
+        </CardHeader>
+        <Separator />
+        <div className="divide-y">
+          {assignees.length === 0 ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              No OHO assignees yet.
+            </div>
+          ) : (
+            [...assignees]
+              .sort((a, b) => Number(b.is_active) - Number(a.is_active))
+              .map((a) => (
+                <div
+                  key={a.id}
+                  className={cn(
+                    "flex items-center gap-2.5 px-4 py-2.5 hover:bg-muted/40 transition-colors",
+                    !a.is_active && "opacity-50",
+                  )}
+                >
+                  <div className="flex items-center gap-2 flex-1">
+                    {a.bg_color && (
+                      <span
+                        className="inline-block h-4 w-4 rounded-full shrink-0 ring-1 ring-black/10"
+                        style={{ backgroundColor: a.bg_color }}
+                      />
+                    )}
+                    <span
+                      className={cn(
+                        "text-sm",
+                        !a.is_active && "line-through text-muted-foreground",
+                      )}
+                    >
+                      {a.name}
+                    </span>
+                  </div>
+                  <StatusDot active={a.is_active} />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs px-2.5"
+                    onClick={() => setEditItem(a)}
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className={cn(
+                      "h-7 text-xs px-2.5",
+                      a.is_active
+                        ? "text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                        : "text-emerald-600 border-emerald-200 hover:bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:hover:bg-emerald-950/30",
+                    )}
+                    onClick={() => {
+                      startTransition(async () => {
+                        await toggleOhoAssignee(a.id, !a.is_active);
+                        setAssignees(
+                          assignees.map((x) =>
+                            x.id === a.id
+                              ? { ...x, is_active: !a.is_active }
+                              : x,
+                          ),
+                        );
+                      });
+                    }}
+                  >
+                    {a.is_active ? "Deactivate" : "Activate"}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-7 p-0 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30"
+                    onClick={() => {
+                      if (confirm(`Delete "${a.name}"?`))
+                        startTransition(async () => {
+                          await deleteOhoAssignee(a.id);
+                          setAssignees(assignees.filter((x) => x.id !== a.id));
+                        });
+                    }}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ))
+          )}
+        </div>
+      </Card>
+
+      {showAddModal && (
+        <Modal title="Add OHO Assignee" onClose={() => setShowAddModal(false)}>
+          <div className="px-5 py-4 space-y-4">
+            <div>
+              <label className="mb-1.5 block text-xs font-medium">Name *</label>
+              <Input
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="Enter name"
+                className="h-9 text-sm"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleAdd();
+                }}
+              />
+            </div>
+            <ColorPicker value={newColor} onChange={setNewColor} />
+          </div>
+          <Separator />
+          <div className="flex justify-end gap-2 px-5 py-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowAddModal(false)}
+            >
+              Cancel
+            </Button>
+            <Button size="sm" onClick={handleAdd}>
+              Add
+            </Button>
+          </div>
+        </Modal>
+      )}
+
+      {editItem && (
+        <Modal title="Edit OHO Assignee" onClose={() => setEditItem(null)}>
+          <div className="px-5 py-4 space-y-4">
+            <div>
+              <label className="mb-1.5 block text-xs font-medium">Name *</label>
+              <Input
+                value={editItem.name}
+                onChange={(e) =>
+                  setEditItem({ ...editItem, name: e.target.value })
+                }
+                className="h-9 text-sm"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleEditSave();
+                }}
+              />
+            </div>
+            <ColorPicker
+              value={editItem.bg_color || ""}
+              onChange={(c) =>
+                setEditItem({ ...editItem, bg_color: c || null })
+              }
             />
           </div>
           <Separator />

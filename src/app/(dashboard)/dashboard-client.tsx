@@ -33,6 +33,7 @@ import {
   Link2,
   Archive,
   ArchiveRestore,
+  RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatCard, StatCardGrid } from "@/components/stat-card";
@@ -65,6 +66,7 @@ import {
   RepStatsModal,
 } from "@/components/modals";
 import { CsvCompareModal } from "@/components/modals/csv-compare-modal";
+import { RescheduledHistoryModal } from "@/components/modals/rescheduled-history-modal";
 import {
   updateHearing,
   deleteHearing,
@@ -305,6 +307,7 @@ const FIELD_LABELS: Record<string, string> = {
   post_hrg_dev_status: "Post Hrg Dev Status",
   post_hrg_requirements: "Post HRG Requirements",
   claimant: "Claimant",
+  chronicle_link: "Chronicle Link",
   hearing_date: "Hearing Date",
   hearing_time: "Hearing Time",
   alj: "ALJ",
@@ -801,12 +804,14 @@ function ActionMenu({
                   </>
                 )}
               </button>
-              <button
-                onClick={menuAction(() => {})}
-                className="flex w-full items-center px-3 py-1.5 text-xs hover:bg-muted/50"
-              >
-                📝 Activity Log
-              </button>
+              {userRole !== "rep" && (
+                <button
+                  onClick={menuAction(() => {})}
+                  className="flex w-full items-center px-3 py-1.5 text-xs hover:bg-muted/50"
+                >
+                  📝 Activity Log
+                </button>
+              )}
               {isActionAdmin && (
                 <>
                   <div className="my-1 border-t" />
@@ -956,43 +961,144 @@ function ActionMenu({
   );
 }
 
-// ── Claimant cell — link if claimant_link exists + edit button ──
+// ── Reusable link edit modal ──
+type ClaimantEditField = "claimant_link" | "chronicle_link";
+
+function LinkEditModal({
+  title,
+  currentUrl,
+  onSave,
+  onRemove,
+  onClose,
+}: {
+  title: string;
+  currentUrl: string;
+  onSave: (url: string) => void;
+  onRemove: () => void;
+  onClose: () => void;
+}) {
+  const [url, setUrl] = useState(currentUrl);
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-lg border bg-card p-4 shadow-lg space-y-3"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-sm font-semibold">{title}</h3>
+        <input
+          type="url"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder="https://..."
+          className="w-full rounded-md border bg-transparent px-3 py-2 text-xs focus:border-ring focus:outline-none"
+          autoFocus
+          onKeyDown={(e) => {
+            if (e.key === "Enter") onSave(url.trim());
+            if (e.key === "Escape") onClose();
+          }}
+        />
+        <div className="flex justify-end gap-2">
+          {currentUrl && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs text-destructive"
+              onClick={onRemove}
+            >
+              Remove Link
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-xs"
+            onClick={onClose}
+          >
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            className="text-xs"
+            onClick={() => onSave(url.trim())}
+          >
+            Save
+          </Button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// ── Claimant cell ──
 function ClaimantCell({
   hearing,
   editable,
+  chronicleEditable,
   onSave,
 }: {
   hearing: HearingRow;
   editable?: boolean;
+  chronicleEditable?: boolean;
   onSave?: (id: number, field: string, value: UpdateValue) => void;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [url, setUrl] = useState(hearing.claimant_link || "");
-  const handleSave = () => {
-    if (onSave) onSave(hearing.id, "claimant_link", url.trim() || null);
-    setEditing(false);
+  const [editingField, setEditingField] = useState<ClaimantEditField | null>(
+    null,
+  );
+
+  const chronicleLink: string | null = hearing.chronicle_link ?? null;
+  const canEditChronicle = chronicleEditable ?? editable ?? false;
+
+  let currentEditUrl: string = "";
+  if (editingField === "claimant_link") {
+    currentEditUrl = hearing.claimant_link ?? "";
+  } else if (editingField === "chronicle_link") {
+    currentEditUrl = chronicleLink ?? "";
+  }
+
+  const handleSave = (url: string) => {
+    if (onSave && editingField) {
+      onSave(hearing.id, editingField, url || null);
+    }
+    setEditingField(null);
   };
+
+  const handleRemove = () => {
+    if (onSave && editingField) {
+      onSave(hearing.id, editingField, null);
+    }
+    setEditingField(null);
+  };
+
+  const showChronicleRow: boolean = !!(canEditChronicle || chronicleLink);
+
   return (
     <div className="min-w-0 pr-1">
       <div className="flex items-center gap-1 min-w-0">
         {hearing.claimant_link ? (
-          <a
-            href={hearing.claimant_link}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="truncate text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+          <button
+            type="button"
+            onClick={() =>
+              window.open(
+                hearing.claimant_link!,
+                "_blank",
+                "noopener,noreferrer",
+              )
+            }
+            className="truncate text-xs font-medium text-blue-600 hover:underline dark:text-blue-400 text-left"
           >
             {hearing.claimant}
-          </a>
+          </button>
         ) : (
           <p className="truncate text-xs font-medium">{hearing.claimant}</p>
         )}
         {editable && (
           <button
-            onClick={() => {
-              setUrl(hearing.claimant_link || "");
-              setEditing(true);
-            }}
+            type="button"
+            onClick={() => setEditingField("claimant_link")}
             className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-blue-600 hover:bg-muted"
             title="Edit claimant link"
           >
@@ -1004,64 +1110,59 @@ function ClaimantCell({
           </button>
         )}
       </div>
-      <p className="truncate text-[10px] text-muted-foreground">
-        {hearing.claim_type}
-      </p>
-      {editing &&
-        createPortal(
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-            onClick={() => setEditing(false)}
-          >
-            <div
-              className="w-full max-w-md rounded-lg border bg-card p-4 shadow-lg space-y-3"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <h3 className="text-sm font-semibold">
-                Claimant Link — {hearing.claimant}
-              </h3>
-              <input
-                type="url"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://..."
-                className="w-full rounded-md border bg-transparent px-3 py-2 text-xs focus:border-ring focus:outline-none"
-                autoFocus
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") handleSave();
-                  if (e.key === "Escape") setEditing(false);
-                }}
-              />
-              <div className="flex justify-end gap-2">
-                {hearing.claimant_link && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-xs text-destructive"
-                    onClick={() => {
-                      if (onSave) onSave(hearing.id, "claimant_link", null);
-                      setEditing(false);
-                    }}
-                  >
-                    Remove Link
-                  </Button>
+
+      <div className="flex items-center gap-1">
+        <p className="truncate text-[10px] text-muted-foreground">
+          {hearing.claim_type}
+        </p>
+        {showChronicleRow && (
+          <>
+            {chronicleLink && (
+              <button
+                type="button"
+                onClick={() =>
+                  window.open(chronicleLink, "_blank", "noopener,noreferrer")
+                }
+                className="text-[10px] font-medium text-violet-600 hover:underline dark:text-violet-400"
+              >
+                Chronicle
+              </button>
+            )}
+            {canEditChronicle && (
+              <button
+                type="button"
+                onClick={() => setEditingField("chronicle_link")}
+                className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-violet-600 hover:bg-muted"
+                title={
+                  chronicleLink ? "Edit Chronicle link" : "Add Chronicle link"
+                }
+              >
+                {chronicleLink ? (
+                  <Pencil className="h-2.5 w-2.5" />
+                ) : (
+                  <span className="text-[9px] font-semibold leading-none text-muted-foreground/60">
+                    +Ch
+                  </span>
                 )}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="text-xs"
-                  onClick={() => setEditing(false)}
-                >
-                  Cancel
-                </Button>
-                <Button size="sm" className="text-xs" onClick={handleSave}>
-                  Save
-                </Button>
-              </div>
-            </div>
-          </div>,
-          document.body,
+              </button>
+            )}
+          </>
         )}
+      </div>
+
+      {editingField && (
+        <LinkEditModal
+          title={
+            editingField === "claimant_link"
+              ? "Claimant Link \u2014 " + hearing.claimant
+              : "Chronicle Link \u2014 " + hearing.claimant
+          }
+          currentUrl={currentEditUrl}
+          onSave={handleSave}
+          onRemove={handleRemove}
+          onClose={() => setEditingField(null)}
+        />
+      )}
     </div>
   );
 }
@@ -1570,6 +1671,66 @@ function PostHrgCell({
   );
 }
 
+function RepPreviewBar({
+  representatives,
+  previewRepId,
+  onPreview,
+  onExit,
+}: {
+  representatives: RepRow[];
+  previewRepId: number | null;
+  onPreview: (repId: number, repEmail: string) => void;
+  onExit: () => void;
+}) {
+  const [selected, setSelected] = useState<string>("");
+
+  return (
+    <div className="flex items-center gap-2 rounded-lg border bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800 px-3 py-2">
+      <span className="text-xs font-semibold text-amber-700 dark:text-amber-400 shrink-0">
+        👁 Preview as Rep:
+      </span>
+      <select
+        className="h-7 rounded border bg-background px-2 text-xs flex-1 max-w-48"
+        value={selected}
+        onChange={(e) => setSelected(e.target.value)}
+      >
+        <option value="">Select a rep...</option>
+        {representatives
+          .filter((r) => r.is_active && r.email)
+          .map((r) => (
+            <option key={r.id} value={r.id + "|" + r.email}>
+              {r.name}
+            </option>
+          ))}
+      </select>
+      <Button
+        size="sm"
+        className="h-7 text-xs bg-amber-600 hover:bg-amber-700 text-white"
+        disabled={!selected}
+        onClick={() => {
+          const [id, email] = selected.split("|");
+          onPreview(Number(id), email);
+        }}
+      >
+        View as Rep
+      </Button>
+      {previewRepId && (
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 text-xs border-amber-400 text-amber-700 hover:bg-amber-100"
+          onClick={() => {
+            setSelected("");
+            onExit();
+          }}
+        >
+          ✕ Exit Preview
+        </Button>
+      )}
+    </div>
+  );
+}
+
 // ══════════════════════════════════════════════════════════════
 // STAT CARDS — gradient, matching original
 // ══════════════════════════════════════════════════════════════
@@ -1937,7 +2098,7 @@ const ALL_COLUMNS: ColumnDef[] = [
   { key: "alj", label: "ALJ", w: 150, sortable: true },
   { key: "location", label: "Location", w: 120, sortable: true },
   { key: "hearing_decision_status", label: "Decision", w: 125, sortable: true },
-  { key: "manner_of_appearance", label: "MOA", w: 75 },
+  { key: "manner_of_appearance", label: "MOA", w: 95 },
   { key: "rep_docs_assigned_to", label: "Docs Assigned", w: 110 },
   { key: "rep_docs_complete", label: "Rep Docs", w: 65 },
   { key: "fee_agreement_complete", label: "Fee Agmt", w: 65 },
@@ -2130,6 +2291,68 @@ const MemoRow = memo(
   (prev, next) => prev.hearing === next.hearing && prev.ri === next.ri,
 );
 
+function MoaCell({
+  hearing,
+  editable,
+  onUpdate,
+  moaOptions,
+  isRep,
+  canEditOvh,
+}: {
+  hearing: HearingRow;
+  editable: boolean;
+  onUpdate: (id: number, field: string, value: UpdateValue) => void;
+  moaOptions: { value: string; label: string }[];
+  isRep: boolean;
+  canEditOvh: boolean;
+}) {
+  const isOvh = hearing.manner_of_appearance === "OVH";
+
+  return (
+    <div className="flex items-center gap-1 min-w-0">
+      <div className="min-w-0">
+        <InlineDropdown
+          value={hearing.manner_of_appearance}
+          options={moaOptions}
+          onSave={(v) => onUpdate(hearing.id, "manner_of_appearance", v)}
+          editable={editable}
+          colorMap={MOA_COLORS}
+        />
+      </div>
+      {isOvh && (
+        <>
+          {hearing.ovh_link ? (
+            <button
+              type="button"
+              onClick={() =>
+                window.open(hearing.ovh_link!, "_blank", "noopener,noreferrer")
+              }
+              className="shrink-0 rounded p-0.5 hover:bg-muted"
+              title="Open OVH link"
+            >
+              <ExternalLink className="h-3 w-3 text-cyan-600" />
+            </button>
+          ) : !isRep && canEditOvh ? (
+            <button
+              type="button"
+              onClick={() => {
+                const url = prompt("Enter OVH link:", "");
+                if (url && url.trim()) {
+                  onUpdate(hearing.id, "ovh_link", url.trim());
+                }
+              }}
+              className="shrink-0 rounded p-0.5 hover:bg-muted"
+              title="Add OVH link"
+            >
+              <Link2 className="h-3 w-3 text-muted-foreground" />
+            </button>
+          ) : null}
+        </>
+      )}
+    </div>
+  );
+}
+
 const HearingTable = memo(function HearingTable({
   hearings,
   userRole,
@@ -2317,6 +2540,7 @@ const HearingTable = memo(function HearingTable({
           <ClaimantCell
             hearing={hearing}
             editable={canEditField(userRole, "claimant_link")}
+            chronicleEditable={canEditField(userRole, "chronicle_link")}
             onSave={onUpdate}
           />
         );
@@ -2354,12 +2578,13 @@ const HearingTable = memo(function HearingTable({
         );
       case "manner_of_appearance":
         return (
-          <InlineDropdown
-            value={hearing.manner_of_appearance}
-            options={moaFallback}
-            onSave={(v) => onUpdate(hearing.id, "manner_of_appearance", v)}
+          <MoaCell
+            hearing={hearing}
             editable={editable}
-            colorMap={MOA_COLORS}
+            onUpdate={onUpdate}
+            moaOptions={moaFallback}
+            isRep={userRole === "rep"}
+            canEditOvh={canEditField(userRole, "ovh_link")}
           />
         );
       case "rep_docs_assigned_to":
@@ -2801,6 +3026,7 @@ export function DashboardClient({
   const [showUnassignAll, setShowUnassignAll] = useState(false);
   const [showActivityLog, setShowActivityLog] = useState(false);
   const [showRepStats, setShowRepStats] = useState(false);
+  const [showRescheduledHistory, setShowRescheduledHistory] = useState(false);
   const [showCsvCompare, setShowCsvCompare] = useState(false);
   const [showArchivedSheet, setShowArchivedSheet] = useState(false);
   const [archivedHearings, setArchivedHearings] = useState<
@@ -2808,6 +3034,13 @@ export function DashboardClient({
   >([]);
   const [archivedCount, setArchivedCount] = useState(0);
   const [archiveLoading, setArchiveLoading] = useState(false);
+
+  const [previewRepId, setPreviewRepId] = useState<number | null>(null);
+  const [previewRepEmail, setPreviewRepEmail] = useState<string | null>(null);
+
+  const effectiveRole: UserRole = previewRepId ? "rep" : userRole;
+  const effectiveEmail: string = previewRepEmail ?? userEmail;
+
   // Selection is 100% DOM-based — no React state at all for checkbox clicks
   // The bulk action bar reads from the ref only when the user clicks an action
   const selectedIdsRef = useRef<Set<number>>(new Set());
@@ -2836,6 +3069,8 @@ export function DashboardClient({
       ps: number,
       sk: string,
       sd: "asc" | "desc",
+      roleOverride?: string,
+      emailOverride?: string,
     ) => {
       setLoading(true);
       try {
@@ -2855,8 +3090,8 @@ export function DashboardClient({
           datePreset: f.datePreset || undefined,
           sortKey: sk || undefined,
           sortDir: sk ? sd : undefined,
-          userRole,
-          userEmail,
+          userRole: roleOverride ?? effectiveRole,
+          userEmail: emailOverride ?? effectiveEmail,
         });
         setHearings(res.hearings);
         setTotalFiltered(res.totalFiltered);
@@ -2866,7 +3101,7 @@ export function DashboardClient({
       }
       setLoading(false);
     },
-    [userRole, userEmail, refreshStats],
+    [refreshStats, effectiveRole, effectiveEmail],
   );
 
   // Debounced filter change
@@ -3137,19 +3372,13 @@ export function DashboardClient({
   );
 
   // Granular permissions matching PHP dashboard
-  const showCheckbox = canSeeCheckbox(userRole);
+
   const showAdminButtons = canSeeAdminButtons(userRole);
   const showActivityLogBtn = canSeeActivityLog(userRole);
   const showRepStatsBtn = canSeeRepStats(userRole);
   const canCsvCompare = canSeeCsvCompare(userRole);
-  const showRepFilter = canSeeRepFilter(userRole);
-  const showNextUnassigned = canSeeNextUnassigned(userRole);
   const showExport = canExport(userRole);
   const hasManageAccess = canManage(userRole);
-
-  // const handleRefresh = () => {
-  //   fetchPage(filters, page, pageSize, sortKey, sortDir);
-  // };
 
   // Scroll sync for sticky horizontal scrollbar
   const tableScrollRef = useRef<HTMLDivElement>(null);
@@ -3410,14 +3639,52 @@ export function DashboardClient({
           )}
         </DashboardNav>
 
-        <StatsRow stats={stats} userRole={userRole} />
+        <StatsRow stats={stats} userRole={effectiveRole} />
+        {(userRole === "admin" || userRole === "system_admin") && (
+          <RepPreviewBar
+            representatives={representatives}
+            previewRepId={previewRepId}
+            onPreview={(id, email) => {
+              setPreviewRepId(id);
+              setPreviewRepEmail(email);
+              fetchPage(EMPTY_FILTERS, 1, pageSize, "", "asc", "rep", email);
+              setFilters(EMPTY_FILTERS);
+              setPage(1);
+            }}
+            onExit={() => {
+              setPreviewRepId(null);
+              setPreviewRepEmail(null);
+              fetchPage(
+                filters,
+                1,
+                pageSize,
+                sortKey,
+                sortDir,
+                userRole,
+                userEmail,
+              );
+            }}
+          />
+        )}
+
+        {previewRepId && (
+          <div className="flex items-center gap-2 rounded-lg bg-amber-100 dark:bg-amber-900/30 px-4 py-2 text-xs font-medium text-amber-800 dark:text-amber-300">
+            <span>👁 Previewing as:</span>
+            <span className="font-bold">
+              {representatives.find((r) => r.id === previewRepId)?.name}
+            </span>
+            <span className="text-amber-600 dark:text-amber-500">
+              — this is exactly what they see
+            </span>
+          </div>
+        )}
         <FilterBar
           filters={filters}
           onFilterChange={handleFilterChange}
           repCounts={repCounts}
           nextUnassigned={nextUnassigned}
-          showRepFilter={showRepFilter}
-          showNextUnassigned={showNextUnassigned}
+          showRepFilter={canSeeRepFilter(effectiveRole)}
+          showNextUnassigned={canSeeNextUnassigned(effectiveRole)}
         />
 
         {/* Pagination bar */}
@@ -3446,6 +3713,19 @@ export function DashboardClient({
                 onClick={() => setShowRepStats(true)}
               >
                 <BarChart3 className="h-3.5 w-3.5" /> Rep Stats
+              </Button>
+            )}
+            {canSeeAdminButtons(userRole) && (
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn(
+                  "h-7 gap-1.5 text-xs text-violet-600 border-violet-300 hover:bg-violet-50 dark:text-violet-400 dark:border-violet-800 dark:hover:bg-violet-950",
+                  BTN_PRESS,
+                )}
+                onClick={() => setShowRescheduledHistory(true)}
+              >
+                <RefreshCw className="h-3.5 w-3.5" /> Rescheduled
               </Button>
             )}
             {canSeeAdminButtons(userRole) && (
@@ -3570,7 +3850,7 @@ export function DashboardClient({
           )}
           <HearingTable
             hearings={hearings}
-            userRole={userRole}
+            userRole={effectiveRole}
             onUpdate={handleUpdate}
             onDelete={handleDelete}
             sortKey={sortKey}
@@ -3583,7 +3863,7 @@ export function DashboardClient({
             representatives={representatives}
             mrTeams={mrTeams}
             repDocsAssignees={repDocsAssignees}
-            showCheckbox={showCheckbox}
+            showCheckbox={canSeeCheckbox(effectiveRole)}
             onToggleAll={toggleAll}
             scrollRef={tableScrollRef}
           />
@@ -3626,6 +3906,11 @@ export function DashboardClient({
         <ActivityLogModal onClose={() => setShowActivityLog(false)} />
       )}
       {showRepStats && <RepStatsModal onClose={() => setShowRepStats(false)} />}
+      {showRescheduledHistory && (
+        <RescheduledHistoryModal
+          onClose={() => setShowRescheduledHistory(false)}
+        />
+      )}
       {showCsvCompare && (
         <CsvCompareModal
           onClose={() => {
