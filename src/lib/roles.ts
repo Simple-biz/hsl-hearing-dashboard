@@ -83,14 +83,7 @@ export const PAGE_ACCESS: Record<string, UserRole[]> = {
     "mr_lead",
   ],
   representatives: ["system_admin", "admin", "manager", "hearings_admin"],
-  schedule: [
-    "system_admin",
-    "admin",
-    "manager",
-    "hearings_admin",
-    "hearings_agent",
-    "rep",
-  ],
+  schedule: ["system_admin", "admin", "manager", "rep"],
   post_hrg_development: [
     // ← ADD THIS
     "system_admin",
@@ -98,7 +91,17 @@ export const PAGE_ACCESS: Record<string, UserRole[]> = {
     "post_hearing_admin",
     "post_hearing_staff",
   ],
-  representative_docs: ["system_admin", "admin", "hearings_agent"],
+  representative_docs: [
+    "system_admin",
+    "admin",
+    "hearings_admin",
+    "hearings_agent",
+    "hearings_status_moa",
+    "hearings_docs_fee",
+    "hearings_docs",
+    "hearings_mc",
+    "hearings_brief",
+  ],
   admin: ["system_admin", "admin"],
   api_keys: ["system_admin", "admin"],
   settings: [
