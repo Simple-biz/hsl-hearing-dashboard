@@ -103,6 +103,8 @@ export const PAGE_ACCESS: Record<string, UserRole[]> = {
     "hearings_docs",
     "hearings_mc",
     "hearings_brief",
+    "chronicle_editor",
+    "link_editor",
   ],
   admin: ["system_admin", "admin"],
   api_keys: ["system_admin", "admin"],
