@@ -21,7 +21,8 @@ export type UserRole =
   | "hearings_brief"
   | "post_hearing_admin"
   | "post_hearing_staff"
-  | "chronicle_editor";
+  | "chronicle_editor"
+  | "link_editor";
 
 // Pages each role can access
 export const PAGE_ACCESS: Record<string, UserRole[]> = {
@@ -46,6 +47,7 @@ export const PAGE_ACCESS: Record<string, UserRole[]> = {
     "post_hearing_admin",
     "post_hearing_staff",
     "chronicle_editor",
+    "link_editor",
   ],
   rep_dashboard: ["system_admin", "admin", "manager", "hearings_admin", "rep"],
   import: ["system_admin"],
@@ -241,6 +243,7 @@ export const EDITABLE_FIELDS: Record<string, UserRole[]> = {
     "manager",
     "hearings_admin",
     "hearings_mc",
+    "link_editor",
   ],
 
   // Post HRG — MR team + post hearing team
@@ -291,6 +294,7 @@ export const EDITABLE_FIELDS: Record<string, UserRole[]> = {
     "hearings_admin",
     "hearings_mc",
     "chronicle_editor",
+    "link_editor",
   ],
   ovh_link: [
     "system_admin",
@@ -333,6 +337,7 @@ export const VISIBLE_COLUMNS: Record<UserRole, string[]> = {
     "manner_of_appearance",
   ],
   chronicle_editor: ["ALL"],
+  link_editor: ["ALL"],
 };
 
 // User-level page restrictions (by user ID)
