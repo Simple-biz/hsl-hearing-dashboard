@@ -50,6 +50,7 @@ const ALL_ROLES = [
   { value: "post_hearing_staff", label: "Post Hearing Staff", group: "Staff" },
   { value: "staff", label: "Staff", group: "Staff" },
   { value: "chronicle_editor", label: "Chronicle Editor", group: "Staff" },
+  { value: "link_editor", label: "Link Editor", group: "Staff" },
   { value: "rep", label: "Representative", group: "Representatives" },
 ];
 
@@ -489,6 +490,13 @@ Test Rep, testrep@hogansmith.com, rep, , in-house`}
                       chronicle_editor
                     </span>{" "}
                     — Can add/update Chronicle link only, rest is view-only
+                  </p>
+                  <p>
+                    <span className="font-semibold text-foreground">
+                      link_editor
+                    </span>{" "}
+                    — Can add/update both Chronicle link and Claimant link,
+                    rest is view-only
                   </p>
                   <p>
                     <span className="font-semibold text-foreground">rep</span> —
