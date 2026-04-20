@@ -18,7 +18,7 @@ const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_SYNC_URL;
 const N8N_WEBHOOK_SECRET = process.env.N8N_WEBHOOK_SECRET;
 // replace URL with the actual sheet from the client team
 const DEFAULT_SHEET_URL =
-  "https://docs.google.com/spreadsheets/d/1zbztk8oFKUWSDYg1WB2KHXRpL3TDis35PTsodKvBFXg/edit#gid=1264115306";
+  "https://docs.google.com/spreadsheets/d/1kqbJ70Sfz04p5cP4LaWHLg_uAkUSRwfDLBagZE-H9W4/edit?gid=1264115306#gid=1264115306";
 
 // Raised from 25 s → 55 s to accommodate 6000+ row syncs.
 // Stay under the 60 s Vercel Pro hard limit with a 5 s safety buffer.
