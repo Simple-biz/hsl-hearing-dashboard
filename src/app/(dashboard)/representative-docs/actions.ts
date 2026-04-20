@@ -499,6 +499,7 @@ export interface RepDocsChange {
   description: string;
   userName: string | null;
   createdAt: string;
+  acknowledged: boolean;
 }
 
 export async function fetchRepDocsChanges(params: {
@@ -514,6 +515,9 @@ export async function fetchRepDocsChanges(params: {
   total: number;
   latestAt: string | null;
 }> {
+  const session = await requireAuth();
+  const currentUserId = Number(session.user.id) || null;
+
   const allActions = [
     "rep_docs_field_updated",
     "rep_docs_imported",
@@ -598,6 +602,9 @@ export async function fetchRepDocsChanges(params: {
   const ps = params.pageSize ?? 25;
   const offset = (pg - 1) * ps;
 
+  const ackParamIdx = idx; // position of current user id param, used below
+  const dataValues = [...values, currentUserId];
+
   const [countRes, dataRes] = await Promise.all([
     db.query(
       `SELECT COUNT(*)::int AS total FROM activity_log a ${where}`,
@@ -605,13 +612,16 @@ export async function fetchRepDocsChanges(params: {
     ),
     db.query(
       `SELECT a.id, a.action, a.description,
-              u.full_name AS user_name, a.created_at::text
+              u.full_name AS user_name, a.created_at::text,
+              (ack.user_id IS NOT NULL) AS acknowledged
        FROM activity_log a
        LEFT JOIN users u ON u.id = a.user_id
+       LEFT JOIN rep_docs_change_ack ack
+         ON ack.activity_id = a.id AND ack.user_id = $${ackParamIdx}
        ${where}
        ORDER BY a.created_at DESC
        LIMIT ${ps} OFFSET ${offset}`,
-      values,
+      dataValues,
     ),
   ]);
 
@@ -622,6 +632,7 @@ export async function fetchRepDocsChanges(params: {
       description: r.description as string,
       userName: (r.user_name as string) ?? null,
       createdAt: r.created_at as string,
+      acknowledged: Boolean(r.acknowledged),
     }),
   );
 
@@ -647,6 +658,141 @@ export async function countRepDocsChangesSince(since: string): Promise<number> {
     [since],
   );
   return rows[0].cnt as number;
+}
+
+// ─── Per-user acknowledgement of a rep-docs change entry ───────────────────
+
+export async function acknowledgeRepDocsChange(
+  activityId: number,
+  acknowledged: boolean,
+): Promise<{ success: boolean }> {
+  const session = await requireAuth();
+  const userId = Number(session.user.id);
+  if (!userId) return { success: false };
+
+  if (acknowledged) {
+    await db.query(
+      `INSERT INTO rep_docs_change_ack (user_id, activity_id)
+       VALUES ($1, $2)
+       ON CONFLICT (user_id, activity_id) DO NOTHING`,
+      [userId, activityId],
+    );
+  } else {
+    await db.query(
+      `DELETE FROM rep_docs_change_ack WHERE user_id = $1 AND activity_id = $2`,
+      [userId, activityId],
+    );
+  }
+
+  return { success: true };
+}
+
+// ─── Audit log of rep-docs acknowledgements ────────────────────────────────
+// Shows WHO acknowledged WHAT and WHEN — sourced from rep_docs_change_ack.
+
+export interface RepDocsAckEvent {
+  id: number; // activity_log.id (used as row key)
+  ackUserId: number;
+  ackUserName: string | null;
+  action: string;
+  description: string;
+  acknowledgedAt: string;
+}
+
+export async function fetchRepDocsAckLog(params: {
+  page: number;
+  pageSize: number;
+  dateRange?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  userId?: string;
+}): Promise<{
+  events: RepDocsAckEvent[];
+  total: number;
+  users: { id: number; name: string }[];
+}> {
+  await requireAuth();
+
+  const conditions: string[] = [];
+  const values: unknown[] = [];
+  let idx = 1;
+
+  if (params.dateRange === "today") {
+    conditions.push("ack.acknowledged_at >= CURRENT_DATE");
+  } else if (params.dateRange === "this_week") {
+    conditions.push("ack.acknowledged_at >= date_trunc('week', CURRENT_DATE)");
+  } else if (params.dateRange === "this_month") {
+    conditions.push("ack.acknowledged_at >= date_trunc('month', CURRENT_DATE)");
+  } else if (params.dateRange === "custom" && params.dateFrom) {
+    conditions.push(`ack.acknowledged_at >= $${idx}::date`);
+    values.push(params.dateFrom);
+    idx++;
+    if (params.dateTo) {
+      conditions.push(`ack.acknowledged_at < ($${idx}::date + INTERVAL '1 day')`);
+      values.push(params.dateTo);
+      idx++;
+    }
+  }
+
+  if (params.userId) {
+    conditions.push(`ack.user_id = $${idx}`);
+    values.push(parseInt(params.userId));
+    idx++;
+  }
+
+  const where =
+    conditions.length > 0 ? "WHERE " + conditions.join(" AND ") : "";
+
+  const [countRes, dataRes, usersRes] = await Promise.all([
+    db.query(
+      `SELECT COUNT(*)::int AS total FROM rep_docs_change_ack ack ${where}`,
+      values,
+    ),
+    db.query(
+      `SELECT a.id,
+              ack.user_id AS ack_user_id,
+              u.full_name AS ack_user_name,
+              a.action,
+              CASE
+                WHEN a.description ~ 'Hearing #[0-9]+' THEN
+                  regexp_replace(a.description, 'Hearing #([0-9]+)', COALESCE((
+                    SELECT h.claimant FROM hearings h WHERE h.id = (regexp_match(a.description, 'Hearing #([0-9]+)'))[1]::int
+                  ), 'Unknown'))
+                ELSE a.description
+              END AS description,
+              ack.acknowledged_at::text AS acknowledged_at
+       FROM rep_docs_change_ack ack
+       LEFT JOIN users u ON u.id = ack.user_id
+       LEFT JOIN activity_log a ON a.id = ack.activity_id
+       ${where}
+       ORDER BY ack.acknowledged_at DESC
+       LIMIT $${idx} OFFSET $${idx + 1}`,
+      [...values, params.pageSize, (params.page - 1) * params.pageSize],
+    ),
+    db.query(
+      `SELECT DISTINCT u.id, u.full_name AS name
+       FROM rep_docs_change_ack ack
+       JOIN users u ON u.id = ack.user_id
+       ORDER BY name`,
+    ),
+  ]);
+
+  const events: RepDocsAckEvent[] = dataRes.rows.map(
+    (r: Record<string, unknown>) => ({
+      id: r.id as number,
+      ackUserId: r.ack_user_id as number,
+      ackUserName: (r.ack_user_name as string) ?? null,
+      action: (r.action as string) ?? "",
+      description: (r.description as string) ?? "",
+      acknowledgedAt: r.acknowledged_at as string,
+    }),
+  );
+
+  return {
+    events,
+    total: countRes.rows[0].total as number,
+    users: usersRes.rows as { id: number; name: string }[],
+  };
 }
 
 // ─── JSONB notes: add / delete ─────────────────────────────────────────────

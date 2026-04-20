@@ -1146,7 +1146,45 @@ export function RepresentativeDocsClient({
         )}
 
         {showActivityLog && (
-          <ActivityLogModal onClose={() => setShowActivityLog(false)} />
+          <ActivityLogModal
+            onClose={() => setShowActivityLog(false)}
+            title="📋 Representative Docs Activity Log"
+            ackScope="rep_docs"
+            tabs={[
+              {
+                key: "all",
+                label: "All Changes",
+                actions: [
+                  "rep_docs_field_updated",
+                  "rep_docs_imported",
+                  "field_updated",
+                  "hearing_link_updated_from_repdocs",
+                  "rep_assigned",
+                  "rep_unassigned",
+                  "rep_auto_assigned",
+                ],
+              },
+              {
+                key: "status",
+                label: "Status / Decision",
+                actions: ["field_updated", "rep_docs_imported"],
+              },
+              {
+                key: "field",
+                label: "Field Updates",
+                actions: [
+                  "rep_docs_field_updated",
+                  "hearing_link_updated_from_repdocs",
+                ],
+              },
+              {
+                key: "ack",
+                label: "Acknowledgement",
+                actions: [],
+                mode: "ack_events",
+              },
+            ]}
+          />
         )}
 
         {showWithdrawn && (

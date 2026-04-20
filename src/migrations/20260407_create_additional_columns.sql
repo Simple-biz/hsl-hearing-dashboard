@@ -13,3 +13,6 @@ ALTER TABLE hearings ADD COLUMN IF NOT EXISTS post_hrg_deadline_changed_by varch
 ALTER TABLE hearings ADD COLUMN IF NOT EXISTS chronicle_link TEXT;
 
 ALTER TABLE hearings ADD COLUMN IF NOT EXISTS ovh_link TEXT;
+
+
+ALTER TABLE post_hrg_development ADD COLUMN IF NOT EXISTS indicator VARCHAR(20) DEFAULT NULL;

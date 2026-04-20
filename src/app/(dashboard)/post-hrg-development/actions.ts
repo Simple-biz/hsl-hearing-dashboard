@@ -20,6 +20,7 @@ export interface PostHrgDevRow {
   deadline: string | null;
   new_due_date: string | null;
   remarks: string | null;
+  indicator: string | null;
   // Notes (JSON) for fields that have comment sections
   details_notes: string | null;
   person_responsible_notes: string | null;
@@ -27,7 +28,11 @@ export interface PostHrgDevRow {
   ext_letter_sent_notes: string | null;
   status_notes: string | null;
   // Joined from hearings table
+  representative_name: string | null;
+  rep_type: string | null;
   claimant_link: string | null;
+  chronicle_link: string | null;
+  claim_type: string | null;
   ssn_last_4: string | null;
   created_at: string;
   updated_at: string;
@@ -66,18 +71,40 @@ export interface ResponsibleOption {
 /**
  * Fetch PH Status options, representatives, and responsible person options.
  */
+export interface IndicatorOption {
+  value: string;
+  label: string;
+  color: string;
+}
+
 export async function fetchPostHrgOptions(): Promise<{
   phStatusOptions: ConfigOption[];
+  statusOptions: ConfigOption[];
   representatives: RepOption[];
   responsibleOptions: ResponsibleOption[];
+  indicatorOptions: IndicatorOption[];
 }> {
-  const [configRes, repsRes, mrSpecRes, mrTeamsRes] = await Promise.all([
+  const [
+    configRes,
+    statusConfigRes,
+    repsRes,
+    mrSpecRes,
+    mrTeamsRes,
+    indicatorRes,
+  ] = await Promise.all([
     db.query(
       `SELECT option_value, option_color, COALESCE(team_scope, 'shared') AS team_scope
        FROM config_options
        WHERE option_type = 'hearing_decision_status'
          AND is_active = true
          AND COALESCE(team_scope, 'shared') IN ('shared', 'post_hearing')
+       ORDER BY display_order`,
+    ),
+    db.query(
+      `SELECT option_value, option_color, COALESCE(team_scope, 'shared') AS team_scope
+       FROM config_options
+       WHERE option_type = 'post_hrg_workflow_status'
+         AND is_active = true
        ORDER BY display_order`,
     ),
     db.query(
@@ -90,6 +117,11 @@ export async function fetchPostHrgOptions(): Promise<{
     // MR teams
     db.query(
       `SELECT team_name, team_color FROM mr_teams WHERE is_active = true ORDER BY display_order`,
+    ),
+    db.query(
+      `SELECT option_value, option_color FROM config_options
+   WHERE option_type = 'post_hrg_indicator' AND is_active = true
+   ORDER BY display_order`,
     ),
   ]);
 
@@ -182,11 +214,27 @@ export async function fetchPostHrgOptions(): Promise<{
         teamScope: r.team_scope,
       }),
     ),
+    statusOptions: statusConfigRes.rows.map(
+      (r: {
+        option_value: string;
+        option_color: string | null;
+        team_scope: string;
+      }) => ({
+        value: r.option_value,
+        color: r.option_color,
+        teamScope: r.team_scope,
+      }),
+    ),
     representatives: repsRes.rows.map((r: { id: number; name: string }) => ({
       id: r.id,
       name: r.name,
     })),
     responsibleOptions,
+    indicatorOptions: indicatorRes.rows.map((r) => ({
+      value: r.option_value as string,
+      label: r.option_value as string,
+      color: (r.option_color as string) || "#9CA3AF",
+    })),
   };
 }
 
@@ -198,6 +246,7 @@ export interface FetchPostHrgPageParams {
   search?: string;
   status?: string;
   phStatus?: string;
+  indicator?: string;
   sortKey?: string;
   sortDir?: "asc" | "desc";
 }
@@ -229,6 +278,16 @@ export async function fetchPostHrgDevPage(
     conditions.push(`LOWER(p.post_hearing_status) = LOWER($${idx})`);
     values.push(params.phStatus);
     idx++;
+  }
+
+  if (params.indicator && params.indicator !== "all") {
+    if (params.indicator === "none") {
+      conditions.push(`p.indicator IS NULL`);
+    } else {
+      conditions.push(`p.indicator = $${idx}`);
+      values.push(params.indicator);
+      idx++;
+    }
   }
 
   const where =
@@ -268,18 +327,23 @@ export async function fetchPostHrgDevPage(
         p.details, p.person_responsible,
         p.em_sent_task_created, p.ext_letter_sent,
         p.status, p.deadline::text, p.new_due_date::text,
-        p.remarks,
+        p.remarks, p.indicator,
         p.details_notes, p.person_responsible_notes,
         p.em_sent_task_created_notes, p.ext_letter_sent_notes,
         p.status_notes,
         p.created_at::text, p.updated_at::text,
         p.created_by, p.updated_by,
+        r.name AS representative_name,
+        r.rep_type,
         h.claimant_link,
+        h.chronicle_link,
+        h.claim_type,
         h.ssn_last_4,
         h.post_hrg_notes,
         h.post_hrg_deadline::text AS post_hrg_deadline
       FROM post_hrg_development p
       LEFT JOIN hearings h ON h.id = p.hearing_id
+      LEFT JOIN representatives r ON r.id = h.assigned_rep_id
       ${where}
       ${orderBy}
       LIMIT ${limit} OFFSET ${offset}`,
@@ -309,12 +373,17 @@ export async function fetchPostHrgDevRecords(): Promise<PostHrgDevRow[]> {
       p.status_notes,
       p.created_at::text, p.updated_at::text,
       p.created_by, p.updated_by,
+      r.name AS representative_name,
+      r.rep_type,
       h.claimant_link,
+      h.chronicle_link,
+      h.claim_type,
       h.ssn_last_4,
       h.post_hrg_notes,
       h.post_hrg_deadline::text AS post_hrg_deadline
     FROM post_hrg_development p
     LEFT JOIN hearings h ON h.id = p.hearing_id
+    LEFT JOIN representatives r ON r.id = h.assigned_rep_id
     ORDER BY
       CASE WHEN p.status = 'Completed' THEN 1 ELSE 0 END ASC,
       p.deadline ASC NULLS LAST,
@@ -541,6 +610,7 @@ export async function updatePostHrgDevField(
     "deadline",
     "new_due_date",
     "remarks",
+    "indicator",
   ];
 
   if (!ALLOWED_FIELDS.includes(field)) {
@@ -583,6 +653,7 @@ export async function updatePostHrgDevField(
     deadline: "Deadline",
     new_due_date: "New Due Date",
     remarks: "Remarks",
+    indicator: "Indicator",
   };
 
   const label = FIELD_LABELS[field] || field;
@@ -713,6 +784,43 @@ export async function importPostHrgDevRecords(data: {
     return JSON.stringify(entries);
   };
 
+  // Pre-load representatives and responsible persons for fuzzy name matching
+  const { rows: repRows } = await db.query(
+    `SELECT name FROM representatives WHERE is_active = true`,
+  );
+  const dbRepNames: string[] = repRows.map((r) => r.name as string);
+
+  const { rows: mrSpecRows } = await db.query(
+    `SELECT name FROM mr_specialists WHERE is_active = true`,
+  );
+  const { rows: mrTeamRows } = await db.query(
+    `SELECT team_name FROM mr_teams WHERE is_active = true`,
+  );
+  const dbResponsibleNames: string[] = [
+    ...mrSpecRows.map((r) => r.name as string),
+    ...mrTeamRows.map((r) => r.team_name as string),
+  ];
+
+  // Resolve a sheet name to the closest DB name (case-insensitive, trimmed)
+  function resolveNameFromDb(
+    sheetName: string | null,
+    dbNames: string[],
+  ): string | null {
+    if (!sheetName) return null;
+    const norm = sheetName.trim().toLowerCase();
+    if (!norm) return null;
+    // Exact match (case-insensitive)
+    const exact = dbNames.find((n) => n.toLowerCase() === norm);
+    if (exact) return exact;
+    // Partial match — sheet name contained within a DB name or vice-versa
+    const partial = dbNames.find(
+      (n) => n.toLowerCase().includes(norm) || norm.includes(n.toLowerCase()),
+    );
+    if (partial) return partial;
+    // No match — return original value so it's still visible in the UI
+    return sheetName.trim();
+  }
+
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i] as string[];
     const claimant = getVal(row, "claimant");
@@ -740,6 +848,9 @@ export async function importPostHrgDevRecords(data: {
         if (!repName && hRows[0].rep_name) repName = hRows[0].rep_name;
       }
     }
+
+    // Resolve rep name and person_responsible against DB values
+    repName = resolveNameFromDb(repName, dbRepNames);
 
     // Extract cell comments for note fields
     const notesData: Record<string, string | null> = {};
@@ -772,7 +883,10 @@ export async function importPostHrgDevRecords(data: {
           getVal(row, "post_hearing_status") || null,
           getVal(row, "type_of_docs_needed") || null,
           getVal(row, "details") || null,
-          getVal(row, "person_responsible") || null,
+          resolveNameFromDb(
+            getVal(row, "person_responsible") || null,
+            dbResponsibleNames,
+          ),
           parseBool(
             mapping.em_sent_task_created !== undefined
               ? row[mapping.em_sent_task_created]
@@ -993,4 +1107,79 @@ export async function deletePostHrgDevNote(
   );
 
   return { success: true, updatedNotes };
+}
+
+export interface PostHrgActivityLog {
+  id: number;
+  action: string;
+  description: string;
+  userName: string | null;
+  createdAt: string;
+}
+
+export async function fetchPostHrgActivityLog(
+  params: {
+    page?: number;
+    pageSize?: number;
+    search?: string;
+  } = {},
+): Promise<{ logs: PostHrgActivityLog[]; total: number }> {
+  const POST_HRG_ACTIONS = [
+    "post_hrg_dev_created",
+    "post_hrg_dev_updated",
+    "post_hrg_dev_field_updated",
+    "post_hrg_dev_deleted",
+    "post_hrg_dev_import",
+    "post_hrg_dev_note_added",
+    "post_hrg_dev_note_deleted",
+    "post_hrg_dev_auto_created",
+  ];
+
+  const conditions: string[] = [`a.action = ANY($1)`];
+  const values: unknown[] = [POST_HRG_ACTIONS];
+  let idx = 2;
+
+  if (params.search?.trim()) {
+    conditions.push(
+      `(a.description ILIKE $${idx} OR u.full_name ILIKE $${idx})`,
+    );
+    values.push(`%${params.search.trim()}%`);
+    idx++;
+  }
+
+  const where = `WHERE ${conditions.join(" AND ")}`;
+  const pg = params.page ?? 1;
+  const ps = params.pageSize ?? 50;
+  const offset = (pg - 1) * ps;
+
+  const [countRes, dataRes] = await Promise.all([
+    db.query(
+      `SELECT COUNT(*)::int AS total
+       FROM activity_log a
+       LEFT JOIN users u ON u.id = a.user_id
+       ${where}`,
+      values,
+    ),
+    db.query(
+      `SELECT a.id, a.action, a.description,
+              u.full_name AS user_name, a.created_at::text
+       FROM activity_log a
+       LEFT JOIN users u ON u.id = a.user_id
+       ${where}
+       ORDER BY a.created_at DESC
+       LIMIT ${ps} OFFSET ${offset}`,
+      values,
+    ),
+  ]);
+
+  return {
+    logs: dataRes.rows.map((r: Record<string, unknown>) => ({
+      id: r.id as number,
+      action: r.action as string,
+      description: r.description as string,
+      userName: (r.user_name as string) ?? null,
+      createdAt: r.created_at as string,
+    })),
+    total: countRes.rows[0].total,
+  };
 }
