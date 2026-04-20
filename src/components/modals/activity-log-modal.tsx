@@ -7,6 +7,17 @@ import { X, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { fetchActivityLog } from "@/app/(dashboard)/actions";
 import type { ActivityLogEntry } from "@/app/(dashboard)/actions";
+import {
+  acknowledgeRepDocsChange,
+  fetchRepDocsAckLog,
+} from "@/app/(dashboard)/representative-docs/actions";
+import type { RepDocsAckEvent } from "@/app/(dashboard)/representative-docs/actions";
+
+const REP_DOCS_ACK_ACTIONS = new Set([
+  "rep_assigned",
+  "rep_unassigned",
+  "rep_auto_assigned",
+]);
 
 const CATEGORIES = [
   { key: "assignments", label: "👤 Assignments" },
@@ -62,20 +73,51 @@ const ACTION_COLORS: Record<string, string> = {
   hearing_unarchived: "bg-teal-100 text-teal-700 dark:bg-teal-900/30",
 };
 
+export interface ActivityLogTab {
+  key: string;
+  label: string;
+  actions: string[]; // actions scoped to this tab; empty = use scopedActions/CATEGORIES default
+  /**
+   * When "ack_events", the tab shows WHO acknowledged WHAT (sourced from
+   * rep_docs_change_ack), instead of the raw activity_log list. `actions` is
+   * ignored in this mode.
+   */
+  mode?: "activities" | "ack_events";
+}
+
 export function ActivityLogModal({
   onClose,
   excludeSystemAdmin = true,
+  scopedActions,
+  title,
+  tabs,
+  ackScope,
 }: {
   onClose: () => void;
   excludeSystemAdmin?: boolean;
+  scopedActions?: string[];
+  title?: string;
+  tabs?: ActivityLogTab[];
+  ackScope?: "rep_docs";
 }) {
-  const [category, setCategory] = useState("assignments");
+  const hasCustomTabs = Array.isArray(tabs) && tabs.length > 0;
+  const isScoped =
+    hasCustomTabs ||
+    (Array.isArray(scopedActions) && scopedActions.length > 0);
+  const [category, setCategory] = useState<string>(
+    hasCustomTabs
+      ? tabs![0].key
+      : Array.isArray(scopedActions) && scopedActions.length > 0
+        ? "all"
+        : "assignments",
+  );
   const [dateRange, setDateRange] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [userId, setUserId] = useState("");
   const [page, setPage] = useState(1);
   const [entries, setEntries] = useState<ActivityLogEntry[] | null>(null);
+  const [ackEvents, setAckEvents] = useState<RepDocsAckEvent[] | null>(null);
   const [total, setTotal] = useState(0);
   const [users, setUsers] = useState<{ id: number; name: string }[]>([]);
   const [fetchId, setFetchId] = useState(1); // increments on every fetch, used to derive "loading"
@@ -84,26 +126,59 @@ export function ActivityLogModal({
 
   const loading = fetchId !== lastFetchId;
 
+  const activeTab = hasCustomTabs
+    ? tabs!.find((t) => t.key === category)
+    : undefined;
+  const isAckEventsMode = activeTab?.mode === "ack_events";
+
   useEffect(() => {
     let cancelled = false;
     const currentFetchId = fetchId;
-    fetchActivityLog({
-      page,
-      pageSize,
-      category,
-      dateRange: dateRange || undefined,
-      dateFrom: dateFrom || undefined,
-      dateTo: dateTo || undefined,
-      userId: userId || undefined,
-      excludeSystemAdmin,
-    }).then((res) => {
-      if (!cancelled) {
-        setEntries(res.entries);
-        setTotal(res.total);
-        setUsers(res.users);
-        setLastFetchId(currentFetchId);
-      }
-    });
+
+    if (isAckEventsMode) {
+      fetchRepDocsAckLog({
+        page,
+        pageSize,
+        dateRange: dateRange || undefined,
+        dateFrom: dateFrom || undefined,
+        dateTo: dateTo || undefined,
+        userId: userId || undefined,
+      }).then((res) => {
+        if (!cancelled) {
+          setAckEvents(res.events);
+          setEntries(null);
+          setTotal(res.total);
+          setUsers(res.users);
+          setLastFetchId(currentFetchId);
+        }
+      });
+    } else {
+      const effectiveScopedActions = hasCustomTabs
+        ? activeTab?.actions ?? scopedActions
+        : isScoped
+          ? scopedActions
+          : undefined;
+      fetchActivityLog({
+        page,
+        pageSize,
+        category: hasCustomTabs ? "all" : category,
+        dateRange: dateRange || undefined,
+        dateFrom: dateFrom || undefined,
+        dateTo: dateTo || undefined,
+        userId: userId || undefined,
+        excludeSystemAdmin,
+        scopedActions: effectiveScopedActions,
+        ackScope,
+      }).then((res) => {
+        if (!cancelled) {
+          setEntries(res.entries);
+          setAckEvents(null);
+          setTotal(res.total);
+          setUsers(res.users);
+          setLastFetchId(currentFetchId);
+        }
+      });
+    }
     return () => {
       cancelled = true;
     };
@@ -142,6 +217,34 @@ export function ActivityLogModal({
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
+  // Decide whether an entry shows an acknowledge checkbox
+  const canAck = (action: string) =>
+    ackScope === "rep_docs" && REP_DOCS_ACK_ACTIONS.has(action);
+
+  const toggleAck = async (id: number, next: boolean) => {
+    // Optimistic update
+    setEntries((prev) =>
+      prev
+        ? prev.map((e) => (e.id === id ? { ...e, acknowledged: next } : e))
+        : prev,
+    );
+    try {
+      if (ackScope === "rep_docs") {
+        const res = await acknowledgeRepDocsChange(id, next);
+        if (!res?.success) throw new Error("acknowledgeRepDocsChange returned success=false");
+      }
+    } catch (err) {
+      console.error("[ActivityLog] toggleAck failed:", err);
+      setEntries((prev) =>
+        prev
+          ? prev.map((e) =>
+              e.id === id ? { ...e, acknowledged: !next } : e,
+            )
+          : prev,
+      );
+    }
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
@@ -152,7 +255,9 @@ export function ActivityLogModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b bg-muted/50 px-5 py-4 shrink-0">
-          <h2 className="text-sm font-semibold">📋 Dashboard Activity Log</h2>
+          <h2 className="text-sm font-semibold">
+            {title ?? "📋 Dashboard Activity Log"}
+          </h2>
           <button
             onClick={onClose}
             className="text-muted-foreground hover:text-foreground"
@@ -162,23 +267,42 @@ export function ActivityLogModal({
         </div>
 
         <div className="flex-1 overflow-hidden flex flex-col">
-          {/* Category tabs */}
-          <div className="flex items-center gap-1 border-b px-5 py-2 overflow-x-auto shrink-0">
-            {CATEGORIES.map((cat) => (
-              <button
-                key={cat.key}
-                onClick={() => changeCategory(cat.key)}
-                className={cn(
-                  "rounded-md px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors",
-                  category === cat.key
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-muted",
-                )}
-              >
-                {cat.label}
-              </button>
-            ))}
-          </div>
+          {/* Tabs — custom tabs override default CATEGORIES; hidden when neither */}
+          {hasCustomTabs ? (
+            <div className="flex items-center gap-1 border-b px-5 py-2 overflow-x-auto shrink-0">
+              {tabs!.map((t) => (
+                <button
+                  key={t.key}
+                  onClick={() => changeCategory(t.key)}
+                  className={cn(
+                    "rounded-md px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors",
+                    category === t.key
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:bg-muted",
+                  )}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          ) : !isScoped ? (
+            <div className="flex items-center gap-1 border-b px-5 py-2 overflow-x-auto shrink-0">
+              {CATEGORIES.map((cat) => (
+                <button
+                  key={cat.key}
+                  onClick={() => changeCategory(cat.key)}
+                  className={cn(
+                    "rounded-md px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors",
+                    category === cat.key
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:bg-muted",
+                  )}
+                >
+                  {cat.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
 
           {/* Filters */}
           <div className="flex flex-wrap items-center gap-2 border-b px-5 py-2.5 shrink-0">
@@ -229,7 +353,70 @@ export function ActivityLogModal({
 
           {/* List */}
           <div className="flex-1 overflow-y-auto px-5 py-2">
-            {loading && entries === null ? (
+            {isAckEventsMode ? (
+              loading && ackEvents === null ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : ackEvents !== null && ackEvents.length === 0 ? (
+                <div className="py-12 text-center text-sm text-muted-foreground">
+                  No acknowledgements yet.
+                </div>
+              ) : ackEvents !== null ? (
+                <div
+                  className={cn(
+                    "space-y-1",
+                    loading && "opacity-50 pointer-events-none",
+                  )}
+                >
+                  {ackEvents.map((ev) => (
+                    <div
+                      key={`${ev.ackUserId}-${ev.id}`}
+                      className="flex items-start gap-3 rounded-md px-2 py-2 hover:bg-muted/30"
+                    >
+                      <span
+                        className={cn(
+                          "shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase",
+                          "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30",
+                        )}
+                      >
+                        ACK
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs leading-relaxed">
+                          <span className="font-medium text-foreground">
+                            {ev.ackUserName ?? "Unknown user"}
+                          </span>{" "}
+                          acknowledged:{" "}
+                          <span className="text-muted-foreground">
+                            {ev.description}
+                          </span>
+                        </p>
+                        <div className="flex items-center gap-2 mt-0.5 text-[10px] text-muted-foreground">
+                          <span
+                            className={cn(
+                              "rounded px-1 py-0.5 font-medium",
+                              ACTION_COLORS[ev.action] ||
+                                "bg-muted text-muted-foreground",
+                            )}
+                          >
+                            {ev.action.replace(/_/g, " ")}
+                          </span>
+                          <span>
+                            {new Date(ev.acknowledgedAt).toLocaleString("en-US", {
+                              month: "short",
+                              day: "numeric",
+                              hour: "numeric",
+                              minute: "2-digit",
+                            })}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null
+            ) : loading && entries === null ? (
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
               </div>
@@ -244,45 +431,65 @@ export function ActivityLogModal({
                   loading && "opacity-50 pointer-events-none",
                 )}
               >
-                {entries.map((entry) => (
-                  <div
-                    key={entry.id}
-                    className="flex items-start gap-3 rounded-md px-2 py-2 hover:bg-muted/30"
-                  >
-                    <span
+                {entries.map((entry) => {
+                  const showAck = canAck(entry.action);
+                  return (
+                    <div
+                      key={entry.id}
                       className={cn(
-                        "shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase",
-                        ACTION_COLORS[entry.action] ||
-                          "bg-muted text-muted-foreground",
+                        "flex items-start gap-3 rounded-md px-2 py-2 hover:bg-muted/30",
+                        showAck && entry.acknowledged && "opacity-60",
                       )}
                     >
-                      {entry.action.replace(/_/g, " ")}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs leading-relaxed">
-                        {entry.description}
-                      </p>
-                      <div className="flex items-center gap-2 mt-0.5 text-[10px] text-muted-foreground">
-                        <span>
-                          {new Date(entry.created_at).toLocaleString("en-US", {
-                            month: "short",
-                            day: "numeric",
-                            hour: "numeric",
-                            minute: "2-digit",
-                          })}
-                        </span>
-                        {entry.user_name && (
-                          <span>
-                            by{" "}
-                            <span className="font-medium text-foreground">
-                              {entry.user_name}
-                            </span>
-                          </span>
+                      <span
+                        className={cn(
+                          "shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase",
+                          ACTION_COLORS[entry.action] ||
+                            "bg-muted text-muted-foreground",
                         )}
+                      >
+                        {entry.action.replace(/_/g, " ")}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs leading-relaxed">
+                          {entry.description}
+                        </p>
+                        <div className="flex items-center gap-2 mt-0.5 text-[10px] text-muted-foreground">
+                          <span>
+                            {new Date(entry.created_at).toLocaleString("en-US", {
+                              month: "short",
+                              day: "numeric",
+                              hour: "numeric",
+                              minute: "2-digit",
+                            })}
+                          </span>
+                          {entry.user_name && (
+                            <span>
+                              by{" "}
+                              <span className="font-medium text-foreground">
+                                {entry.user_name}
+                              </span>
+                            </span>
+                          )}
+                        </div>
                       </div>
+                      {showAck && (
+                        <label
+                          className="shrink-0 flex items-center gap-1.5 cursor-pointer text-[10px] text-muted-foreground hover:text-foreground select-none pt-0.5"
+                          title="Acknowledge — mark this change as seen"
+                        >
+                          <input
+                            type="checkbox"
+                            className="h-3.5 w-3.5 cursor-pointer accent-emerald-600"
+                            checked={Boolean(entry.acknowledged)}
+                            onChange={(e) => toggleAck(entry.id, e.target.checked)}
+                          />
+                          <span>{entry.acknowledged ? "Seen" : "Ack"}</span>
+                        </label>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : null}
           </div>

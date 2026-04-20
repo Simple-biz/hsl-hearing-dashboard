@@ -14,8 +14,15 @@ import {
 import { cn } from "@/lib/utils";
 import {
   fetchRepDocsChanges,
+  acknowledgeRepDocsChange,
   type RepDocsChange,
 } from "@/app/(dashboard)/representative-docs/actions";
+
+const REP_CHANGE_ACTIONS = new Set([
+  "rep_assigned",
+  "rep_unassigned",
+  "rep_auto_assigned",
+]);
 
 type Tab = "all" | "status" | "field" | "rep";
 
@@ -194,6 +201,31 @@ export function RepDocsChangesModal({
     load(tab, search, 1, preset, "", "");
   };
 
+  const toggleAck = async (activityId: number, next: boolean) => {
+    // Optimistic update
+    setChanges((prev) =>
+      prev
+        ? prev.map((c) =>
+            c.id === activityId ? { ...c, acknowledged: next } : c,
+          )
+        : prev,
+    );
+    try {
+      const res = await acknowledgeRepDocsChange(activityId, next);
+      if (!res?.success) throw new Error("acknowledgeRepDocsChange returned success=false");
+    } catch (err) {
+      console.error("[RepDocsChanges] toggleAck failed:", err);
+      // Revert on failure
+      setChanges((prev) =>
+        prev
+          ? prev.map((c) =>
+              c.id === activityId ? { ...c, acknowledged: !next } : c,
+            )
+          : prev,
+      );
+    }
+  };
+
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   const fmtTime = (iso: string) => {
@@ -332,45 +364,64 @@ export function RepDocsChangesModal({
                 loading && "opacity-50 pointer-events-none",
               )}
             >
-              {changes.map((c) => (
-                <div
-                  key={c.id}
-                  className={cn(
-                    "flex items-start gap-3 rounded-md px-2 py-2 hover:bg-muted/30",
-                    isNew(c.createdAt) &&
-                      "bg-blue-50/50 dark:bg-blue-950/20 border-l-2 border-l-blue-400",
-                  )}
-                >
-                  <span
+              {changes.map((c) => {
+                const isRepChange = REP_CHANGE_ACTIONS.has(c.action);
+                return (
+                  <div
+                    key={c.id}
                     className={cn(
-                      "shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase",
-                      ACTION_STYLES[c.action] ||
-                        "bg-muted text-muted-foreground",
+                      "flex items-start gap-3 rounded-md px-2 py-2 hover:bg-muted/30",
+                      isNew(c.createdAt) &&
+                        !c.acknowledged &&
+                        "bg-blue-50/50 dark:bg-blue-950/20 border-l-2 border-l-blue-400",
+                      c.acknowledged && "opacity-60",
                     )}
                   >
-                    {ACTION_LABELS[c.action] || c.action.replace(/_/g, " ")}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs leading-relaxed">{c.description}</p>
-                    <div className="flex items-center gap-2 mt-0.5 text-[10px] text-muted-foreground">
-                      <span>{fmtTime(c.createdAt)}</span>
-                      {c.userName && (
-                        <span>
-                          by{" "}
-                          <span className="font-medium text-foreground">
-                            {c.userName}
+                    <span
+                      className={cn(
+                        "shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase",
+                        ACTION_STYLES[c.action] ||
+                          "bg-muted text-muted-foreground",
+                      )}
+                    >
+                      {ACTION_LABELS[c.action] || c.action.replace(/_/g, " ")}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs leading-relaxed">{c.description}</p>
+                      <div className="flex items-center gap-2 mt-0.5 text-[10px] text-muted-foreground">
+                        <span>{fmtTime(c.createdAt)}</span>
+                        {c.userName && (
+                          <span>
+                            by{" "}
+                            <span className="font-medium text-foreground">
+                              {c.userName}
+                            </span>
                           </span>
-                        </span>
-                      )}
-                      {isNew(c.createdAt) && (
-                        <span className="rounded bg-blue-100 px-1 py-0.5 text-[9px] font-semibold text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
-                          NEW
-                        </span>
-                      )}
+                        )}
+                        {isNew(c.createdAt) && !c.acknowledged && (
+                          <span className="rounded bg-blue-100 px-1 py-0.5 text-[9px] font-semibold text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+                            NEW
+                          </span>
+                        )}
+                      </div>
                     </div>
+                    {isRepChange && (
+                      <label
+                        className="shrink-0 flex items-center gap-1.5 cursor-pointer text-[10px] text-muted-foreground hover:text-foreground select-none pt-0.5"
+                        title="Acknowledge — mark this change as seen"
+                      >
+                        <input
+                          type="checkbox"
+                          className="h-3.5 w-3.5 cursor-pointer accent-emerald-600"
+                          checked={c.acknowledged}
+                          onChange={(e) => toggleAck(c.id, e.target.checked)}
+                        />
+                        <span>{c.acknowledged ? "Seen" : "Ack"}</span>
+                      </label>
+                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : null}
         </div>

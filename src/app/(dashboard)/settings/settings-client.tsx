@@ -65,6 +65,12 @@ const CONFIG_TYPES = [
   { key: "rfc_document_type", label: "RFC Document Type", hasColor: true },
   { key: "rfc_method_received", label: "RFC Method Received", hasColor: true },
   { key: "post_hrg_dev_status", label: "Post Hrg Dev Status", hasColor: true },
+  {
+    key: "post_hrg_workflow_status",
+    label: "Post Hrg Workflow Status",
+    hasColor: true,
+  },
+  { key: "post_hrg_indicator", label: "Post HRG Indicators", hasColor: true },
 ];
 
 const TEAM_TYPES = [

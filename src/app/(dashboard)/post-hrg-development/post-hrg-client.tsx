@@ -25,6 +25,9 @@ import {
   type RepOption,
   type ResponsibleOption,
 } from "./actions";
+import { PostHrgDetailPanel } from "./post-hrg-detail-panel";
+import { PostHrgActivityModal } from "@/components/modals/post-hrg-activity-modal";
+import { ClipboardList } from "lucide-react";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -97,6 +100,181 @@ const PH_STATUS_HEX: Record<string, { bg: string; color: string }> = {
   Dismissed: { bg: "#F3F4F6", color: "#374151" },
 };
 
+// ─── Indicator (color-coded row flag) ──────────────────────────────────────
+
+const INDICATOR_OPTIONS: {
+  value: string;
+  label: string;
+  color: string;
+  ring: string;
+}[] = [
+  {
+    value: "green",
+    label: "Need to check / monitor",
+    color: "#39FF14",
+    ring: "ring-[#39FF14]",
+  },
+  {
+    value: "yellow",
+    label: "CE's that need response",
+    color: "#FACC15",
+    ring: "ring-yellow-400",
+  },
+  {
+    value: "blue",
+    label: "Normal CE's",
+    color: "#93C5FD",
+    ring: "ring-blue-300",
+  },
+  {
+    value: "gray",
+    label: "Assigned to Charlotte",
+    color: "#9CA3AF",
+    ring: "ring-gray-400",
+  },
+  {
+    value: "orange",
+    label: "Assigned to Esther",
+    color: "#FB923C",
+    ring: "ring-orange-400",
+  },
+];
+
+function getIndicatorColor(value: string | null): string | null {
+  if (!value) return null;
+  return INDICATOR_OPTIONS.find((o) => o.value === value)?.color ?? null;
+}
+
+function IndicatorDot({
+  value,
+  onChange,
+  isAdmin,
+}: {
+  value: string | null;
+  onChange: (v: string | null) => void;
+  isAdmin: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const color = getIndicatorColor(value);
+
+  // Position the portal dropdown relative to the button
+  useEffect(() => {
+    if (!open || !btnRef.current) return;
+    const rect = btnRef.current.getBoundingClientRect();
+    setPos({ top: rect.bottom + 4, left: rect.left + rect.width / 2 });
+  }, [open]);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (btnRef.current?.contains(t)) return;
+      if (popRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  if (!isAdmin && !color) {
+    return <span className="block w-3 h-3" />;
+  }
+
+  return (
+    <>
+      <div className="flex items-center justify-center">
+        <button
+          ref={btnRef}
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (isAdmin) setOpen((p) => !p);
+          }}
+          className={cn(
+            "w-3.5 h-3.5 rounded-full border transition-all shrink-0",
+            color
+              ? "border-transparent ring-1 ring-offset-1"
+              : "border-2 border-dashed border-muted-foreground/50 hover:border-primary hover:bg-primary/10",
+            isAdmin && "cursor-pointer",
+            !isAdmin && "cursor-default",
+          )}
+          style={
+            color
+              ? { backgroundColor: color, boxShadow: `0 0 0 1px ${color}40` }
+              : undefined
+          }
+          title={
+            value
+              ? (INDICATOR_OPTIONS.find((o) => o.value === value)?.label ?? "")
+              : isAdmin
+                ? "Set indicator"
+                : ""
+          }
+        />
+      </div>
+      {open &&
+        createPortal(
+          <div
+            ref={popRef}
+            className="fixed z-100 rounded-lg border bg-card p-1.5 shadow-lg min-w-45"
+            style={{
+              top: pos.top,
+              left: pos.left,
+              transform: "translateX(-50%)",
+            }}
+          >
+            {INDICATOR_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onChange(opt.value === value ? null : opt.value);
+                  setOpen(false);
+                }}
+                className={cn(
+                  "flex items-center gap-2 w-full rounded-md px-2 py-1.5 text-left text-[11px] transition-colors hover:bg-muted",
+                  value === opt.value && "bg-muted font-semibold",
+                )}
+              >
+                <span
+                  className="w-3 h-3 rounded-full shrink-0 ring-1 ring-offset-1"
+                  style={{
+                    backgroundColor: opt.color,
+                    boxShadow: `0 0 0 1px ${opt.color}40`,
+                  }}
+                />
+                <span className="truncate">{opt.label}</span>
+              </button>
+            ))}
+            {value && (
+              <>
+                <div className="my-1 border-t border-border" />
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onChange(null);
+                    setOpen(false);
+                  }}
+                  className="flex items-center gap-2 w-full rounded-md px-2 py-1.5 text-left text-[11px] text-muted-foreground hover:bg-muted transition-colors"
+                >
+                  <span className="w-3 h-3 rounded-full shrink-0 border border-dashed border-muted-foreground/40" />
+                  <span>Remove indicator</span>
+                </button>
+              </>
+            )}
+          </div>,
+          document.body,
+        )}
+    </>
+  );
+}
+
 const IMPORT_FIELD_MAP: Record<string, string[]> = {
   claimant: ["claimant's name", "claimant name", "claimant", "name", "client"],
   hearing_date: ["hearing date", "date", "hearing_date", "hrg date"],
@@ -157,6 +335,42 @@ function autoMapImport(headers: string[]): Record<string, number> {
     }
   }
   return mapping;
+}
+
+// ─── Rep Badge (read-only, mirrors representative-docs-client) ─────────────
+
+const REP_BADGE_COLORS: Record<string, string> = {
+  "in-house":
+    "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
+  internal_advocates:
+    "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
+  contract:
+    "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+  external_advocates:
+    "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+};
+
+function RepBadge({ record }: { record: PostHrgDevRow }) {
+  const repName = record.representative_name || record.assigned_rep;
+  if (!repName) {
+    return <span className="text-xs text-muted-foreground">—</span>;
+  }
+  const isInternal =
+    record.rep_type === "in-house" || record.rep_type === "internal_advocates";
+  const icon = isInternal ? "\u{1F3E0}" : "\u{1F4CB}";
+  const colorClass =
+    REP_BADGE_COLORS[record.rep_type || ""] || "bg-muted text-muted-foreground";
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-semibold",
+        colorClass,
+      )}
+      title={repName}
+    >
+      {icon} {repName}
+    </span>
+  );
 }
 
 // ─── Styling ────────────────────────────────────────────────────────────────
@@ -361,150 +575,56 @@ function InlineDate({
 
 // ─── Claimant Cell ──────────────────────────────────────────────────────────
 
-function ClaimantCell({
-  record,
-  onSave,
-}: {
-  record: PostHrgDevRow;
-  onSave: (id: number, field: string, value: string | null) => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [url, setUrl] = useState(record.claimant_link || "");
-  const handleSave = () => {
-    onSave(record.id, "claimant_link", url.trim() || null);
-    setEditing(false);
-  };
+function ClaimantCell({ record }: { record: PostHrgDevRow }) {
+  const chronicleLink = record.chronicle_link ?? null;
+
   return (
     <div className="min-w-0 pr-1">
       <div className="flex items-center gap-1 min-w-0">
         {record.claimant_link ? (
-          <a
-            href={record.claimant_link}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="truncate text-xs font-medium text-blue-600 underline underline-offset-2 decoration-blue-400/60 hover:text-blue-800 hover:decoration-blue-600 dark:text-blue-400 dark:hover:text-blue-300 transition-colors"
-            title={`${record.claimant} — Open case link`}
+          <button
+            type="button"
+            onClick={() =>
+              window.open(
+                record.claimant_link!,
+                "_blank",
+                "noopener,noreferrer",
+              )
+            }
+            className="truncate text-xs font-medium text-blue-600 hover:underline dark:text-blue-400 text-left"
+            title={record.claimant ?? undefined}
           >
             {record.claimant}
-          </a>
+          </button>
         ) : (
-          <span
+          <p
             className="truncate text-xs font-medium"
-            title={record.claimant}
+            title={record.claimant ?? undefined}
           >
             {record.claimant}
-          </span>
+          </p>
         )}
-        {record.hearing_id && (
-          <span
-            className="shrink-0 text-[9px] text-blue-500 dark:text-blue-400"
-            title="Linked to hearing"
-          >
-            🔗
-          </span>
-        )}
-        <button
-          onClick={() => {
-            setUrl(record.claimant_link || "");
-            setEditing(true);
-          }}
-          className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-blue-600 hover:bg-muted opacity-0 group-hover:opacity-100 transition-opacity"
-          title="Edit claimant link"
-        >
-          {record.claimant_link ? (
-            <svg
-              className="h-2.5 w-2.5"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
-              />
-            </svg>
-          ) : (
-            <svg
-              className="h-2.5 w-2.5"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"
-              />
-            </svg>
-          )}
-        </button>
       </div>
-      {editing &&
-        createPortal(
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-            onClick={() => setEditing(false)}
-          >
-            <div
-              className="w-full max-w-md rounded-lg border bg-card p-4 shadow-lg space-y-3"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <h3 className="text-sm font-semibold">
-                Claimant Link — {record.claimant}
-              </h3>
-              <input
-                type="url"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://..."
-                className="w-full rounded-md border bg-transparent px-3 py-2 text-xs focus:border-ring focus:outline-none"
-                autoFocus
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") handleSave();
-                  if (e.key === "Escape") setEditing(false);
-                }}
-              />
-              <div className="flex justify-end gap-2">
-                {record.claimant_link && (
-                  <button
-                    className={cn(
-                      BTN,
-                      "px-3 py-1.5 text-xs text-red-600 hover:bg-red-50",
-                    )}
-                    onClick={() => {
-                      onSave(record.id, "claimant_link", null);
-                      setEditing(false);
-                    }}
-                  >
-                    Remove Link
-                  </button>
-                )}
-                <button
-                  className={cn(
-                    BTN,
-                    "px-3 py-1.5 text-xs bg-muted text-foreground",
-                  )}
-                  onClick={() => setEditing(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  className={cn(
-                    BTN,
-                    "px-3 py-1.5 text-xs bg-primary text-primary-foreground",
-                  )}
-                  onClick={handleSave}
-                >
-                  Save
-                </button>
-              </div>
-            </div>
-          </div>,
-          document.body,
+
+      <div className="flex items-center gap-1">
+        {record.claim_type && (
+          <p className="truncate text-[10px] text-muted-foreground">
+            {record.claim_type}
+          </p>
         )}
+        {chronicleLink && (
+          <button
+            type="button"
+            onClick={() =>
+              window.open(chronicleLink, "_blank", "noopener,noreferrer")
+            }
+            className="text-[10px] font-medium text-violet-600 hover:underline dark:text-violet-400"
+            title="Open Chronicle link"
+          >
+            Chronicle
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -1606,13 +1726,20 @@ const COLUMNS: {
   sortable?: boolean;
   frozen?: boolean;
 }[] = [
+  { key: "indicator", label: "", w: 32, frozen: true },
   { key: "claimant", label: "Claimant", w: 175, sortable: true, frozen: true },
   { key: "ssn_last_4", label: "SSN", w: 62, frozen: true },
-  { key: "hearing_date", label: "Hearing Date", w: 100, sortable: true },
+  {
+    key: "hearing_date",
+    label: "Hearing Date",
+    w: 100,
+    sortable: true,
+    frozen: true,
+  },
+  { key: "assigned_rep", label: "Rep", w: 120, sortable: true, frozen: true },
   { key: "post_hearing_status", label: "PH Status", w: 130, sortable: true },
   { key: "type_of_docs_needed", label: "Docs Needed", w: 120 },
   { key: "details", label: "Details", w: 240 },
-  { key: "assigned_rep", label: "Rep", w: 120, sortable: true },
   { key: "person_responsible", label: "Responsible", w: 120, sortable: true },
   { key: "em_sent_task_created", label: "EM/Task", w: 80 },
   { key: "ext_letter_sent", label: "EXT", w: 70 },
@@ -1648,6 +1775,23 @@ const fmtDate = (d: string | null) => {
   }
 };
 
+function getHearingDateCls(dateStr: string | null): string {
+  if (!dateStr) return "";
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const d = new Date(dateStr + "T12:00:00");
+  const diffDays = Math.round(
+    (d.getTime() - today.getTime()) / (1000 * 60 * 60 * 24),
+  );
+  if (diffDays === 0) return "text-red-600 font-bold dark:text-red-400";
+  if (diffDays === 1)
+    return "text-yellow-600 font-semibold dark:text-yellow-400";
+  if (diffDays > 1 && diffDays <= 7)
+    return "text-amber-600 dark:text-amber-400";
+  if (diffDays > 7) return "text-emerald-600 dark:text-emerald-400";
+  return "text-blue-500 dark:text-blue-400"; // past
+}
+
 const isOverdueCheck = (r: PostHrgDevRow) => {
   if (!r.deadline || r.status?.toLowerCase() === "completed") return false;
   return new Date(r.deadline) < new Date();
@@ -1673,6 +1817,7 @@ interface MemoRowProps {
   renderCellFn: (r: PostHrgDevRow, col: ColumnDef) => React.ReactNode;
   columns: ColumnDef[];
   overdue: boolean;
+  onRowClick: () => void;
 }
 
 const MemoRow = memo(
@@ -1686,15 +1831,17 @@ const MemoRow = memo(
     renderCellFn,
     columns,
     overdue,
+    onRowClick,
   }: MemoRowProps) {
     const rb = ri % 2 === 0 ? evenBg : oddBg;
     return (
       <tr
         className={cn(
-          "group border-b border-border/40 last:border-0",
+          "group border-b border-border/40 last:border-0 cursor-pointer hover:bg-muted/40 transition-colors",
           rb,
           overdue && "bg-red-50/50! dark:bg-red-950/10!",
         )}
+        onClick={onRowClick}
       >
         {columns.map((col) => {
           const lp = getLeftPosFn(col.key);
@@ -1702,6 +1849,25 @@ const MemoRow = memo(
           return (
             <td
               key={col.key}
+              onClick={(e) => {
+                const INTERACTIVE_COLS = [
+                  "actions",
+                  "indicator",
+                  "post_hearing_status",
+                  "type_of_docs_needed",
+                  "person_responsible",
+                  "em_sent_task_created",
+                  "ext_letter_sent",
+                  "status",
+                  "deadline",
+                  "post_hrg_review",
+                  "remarks",
+                  "details",
+                ];
+                if (INTERACTIVE_COLS.includes(col.key)) {
+                  e.stopPropagation();
+                }
+              }}
               className={cn(
                 "px-2 py-1.5",
                 col.frozen && cn("sticky z-10 overflow-hidden", rb),
@@ -1738,6 +1904,7 @@ export function PostHrgClient({
   initialTotalFiltered,
   initialStats,
   initialPhStatusOptions,
+  initialStatusOptions,
   initialRepresentatives,
   initialResponsibleOptions,
 }: {
@@ -1748,6 +1915,7 @@ export function PostHrgClient({
   initialTotalFiltered: number;
   initialStats: PostHrgDevStats;
   initialPhStatusOptions: ConfigOption[];
+  initialStatusOptions: ConfigOption[];
   initialRepresentatives: RepOption[];
   initialResponsibleOptions: ResponsibleOption[];
 }) {
@@ -1760,12 +1928,14 @@ export function PostHrgClient({
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [phStatusFilter, setPhStatusFilter] = useState<string>("all");
+  const [indicatorFilter, setIndicatorFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
   const [sortKey, setSortKey] = useState("deadline");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
 
   const phStatusOptions = initialPhStatusOptions;
+  const statusOptions = initialStatusOptions;
   const representatives = initialRepresentatives;
   const responsibleOptions = initialResponsibleOptions;
 
@@ -1783,6 +1953,8 @@ export function PostHrgClient({
   const [detailsModal, setDetailsModal] = useState<PostHrgDevRow | null>(null);
   const [postHrgModal, setPostHrgModal] = useState<PostHrgDevRow | null>(null);
   const [remarksModal, setRemarksModal] = useState<PostHrgDevRow | null>(null);
+  const [detailPanel, setDetailPanel] = useState<PostHrgDevRow | null>(null);
+  const [showActivityLog, setShowActivityLog] = useState(false);
 
   // Import state
   const [importStep, setImportStep] = useState(1);
@@ -1823,6 +1995,21 @@ export function PostHrgClient({
   );
 
   // Derived options
+  const DYNAMIC_STATUS_OPTIONS = useMemo(
+    () =>
+      statusOptions.length > 0
+        ? statusOptions.map((o) => ({ value: o.value, label: o.value }))
+        : STATUS_OPTIONS,
+    [statusOptions],
+  );
+  const statusHexMap = useMemo(() => {
+    const map: Record<string, { bg: string; color: string }> = {};
+    for (const o of statusOptions) {
+      if (o.color) map[o.value] = { bg: o.color + "22", color: o.color };
+      else if (STATUS_HEX[o.value]) map[o.value] = STATUS_HEX[o.value];
+    }
+    return map;
+  }, [statusOptions]);
   const PH_STATUS_OPTIONS = useMemo(
     () => phStatusOptions.map((o) => ({ value: o.value, label: o.value })),
     [phStatusOptions],
@@ -1874,6 +2061,7 @@ export function PostHrgClient({
       search?: string,
       status?: string,
       phStatus?: string,
+      indicator?: string,
     ) => {
       setLoading(true);
       try {
@@ -1883,6 +2071,7 @@ export function PostHrgClient({
           search: search?.trim() || undefined,
           status: status !== "all" ? status : undefined,
           phStatus: phStatus !== "all" ? phStatus : undefined,
+          indicator: indicator !== "all" ? indicator : undefined,
           sortKey: sk,
           sortDir: sd,
         });
@@ -1898,10 +2087,16 @@ export function PostHrgClient({
   );
 
   const handleFilterChange = useCallback(
-    (newSearch: string, newStatus: string, newPhStatus: string) => {
+    (
+      newSearch: string,
+      newStatus: string,
+      newPhStatus: string,
+      newIndicator: string,
+    ) => {
       setSearchTerm(newSearch);
       setStatusFilter(newStatus);
       setPhStatusFilter(newPhStatus);
+      setIndicatorFilter(newIndicator);
       setPage(1);
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(() => {
@@ -1913,6 +2108,7 @@ export function PostHrgClient({
           newSearch,
           newStatus,
           newPhStatus,
+          newIndicator,
         );
       }, 300);
     },
@@ -1930,6 +2126,7 @@ export function PostHrgClient({
         searchTerm,
         statusFilter,
         phStatusFilter,
+        indicatorFilter,
       );
     },
     [
@@ -1940,6 +2137,7 @@ export function PostHrgClient({
       searchTerm,
       statusFilter,
       phStatusFilter,
+      indicatorFilter,
     ],
   );
 
@@ -1955,9 +2153,18 @@ export function PostHrgClient({
         searchTerm,
         statusFilter,
         phStatusFilter,
+        indicatorFilter,
       );
     },
-    [fetchPage, sortKey, sortDir, searchTerm, statusFilter, phStatusFilter],
+    [
+      fetchPage,
+      sortKey,
+      sortDir,
+      searchTerm,
+      statusFilter,
+      phStatusFilter,
+      indicatorFilter,
+    ],
   );
 
   const handleSort = useCallback(
@@ -1974,6 +2181,7 @@ export function PostHrgClient({
         searchTerm,
         statusFilter,
         phStatusFilter,
+        indicatorFilter,
       );
     },
     [
@@ -1985,6 +2193,7 @@ export function PostHrgClient({
       searchTerm,
       statusFilter,
       phStatusFilter,
+      indicatorFilter,
     ],
   );
 
@@ -2010,6 +2219,7 @@ export function PostHrgClient({
           searchTerm,
           statusFilter,
           phStatusFilter,
+          indicatorFilter,
         );
       }
     },
@@ -2024,30 +2234,8 @@ export function PostHrgClient({
       searchTerm,
       statusFilter,
       phStatusFilter,
+      indicatorFilter,
     ],
-  );
-
-  const handleClaimantLinkUpdate = useCallback(
-    async (recordId: number, _field: string, value: string | null) => {
-      const rec = records.find((r) => r.id === recordId);
-      if (!rec?.hearing_id) {
-        toast("Cannot edit link — no linked hearing");
-        return;
-      }
-      try {
-        const { updateHearing } = await import("@/app/(dashboard)/actions");
-        await updateHearing(rec.hearing_id, "claimant_link", value);
-        setRecords((prev) =>
-          prev.map((r) =>
-            r.id === recordId ? { ...r, claimant_link: value } : r,
-          ),
-        );
-        toast("Link updated", "success");
-      } catch {
-        toast("Failed to update link");
-      }
-    },
-    [records, toast],
   );
 
   const handleRecordUpdate = useCallback((updated: PostHrgDevRow) => {
@@ -2080,6 +2268,7 @@ export function PostHrgClient({
           searchTerm,
           statusFilter,
           phStatusFilter,
+          indicatorFilter,
         );
       } else toast("Create failed: " + (result.message || ""));
     } catch {
@@ -2098,6 +2287,7 @@ export function PostHrgClient({
     searchTerm,
     statusFilter,
     phStatusFilter,
+    indicatorFilter,
   ]);
 
   const deleteRecord = useCallback(
@@ -2374,8 +2564,16 @@ export function PostHrgClient({
   const renderCell = useCallback(
     (r: PostHrgDevRow, col: { key: string }) => {
       switch (col.key) {
+        case "indicator":
+          return (
+            <IndicatorDot
+              value={r.indicator}
+              onChange={(v) => handleFieldUpdate(r.id, "indicator", v)}
+              isAdmin={isAdmin}
+            />
+          );
         case "claimant":
-          return <ClaimantCell record={r} onSave={handleClaimantLinkUpdate} />;
+          return <ClaimantCell record={r} />;
         case "ssn_last_4":
           return (
             <span className="text-xs font-mono text-muted-foreground">
@@ -2384,7 +2582,12 @@ export function PostHrgClient({
           );
         case "hearing_date":
           return (
-            <span className="text-xs tabular-nums whitespace-nowrap">
+            <span
+              className={cn(
+                "text-xs tabular-nums whitespace-nowrap",
+                getHearingDateCls(r.hearing_date),
+              )}
+            >
               {fmtDate(r.hearing_date)}
             </span>
           );
@@ -2412,14 +2615,7 @@ export function PostHrgClient({
             </div>
           );
         case "assigned_rep":
-          return (
-            <InlineDropdown
-              value={r.assigned_rep}
-              options={REP_OPTIONS}
-              onSave={(v) => handleFieldUpdate(r.id, "assigned_rep", v)}
-              placeholder="—"
-            />
-          );
+          return <RepBadge record={r} />;
         case "person_responsible":
           return (
             <div className="flex items-center gap-1">
@@ -2490,9 +2686,9 @@ export function PostHrgClient({
             <div className="flex items-center gap-1">
               <InlineDropdown
                 value={r.status}
-                options={STATUS_OPTIONS}
+                options={DYNAMIC_STATUS_OPTIONS}
                 onSave={(v) => handleFieldUpdate(r.id, "status", v)}
-                hexColorMap={STATUS_HEX}
+                hexColorMap={statusHexMap}
               />
               <NoteCellBadge
                 record={r}
@@ -2559,11 +2755,11 @@ export function PostHrgClient({
     [
       PH_STATUS_OPTIONS,
       phStatusHexMap,
-      REP_OPTIONS,
+      DYNAMIC_STATUS_OPTIONS,
+      statusHexMap,
       RESPONSIBLE_OPTIONS,
       responsibleHexMap,
       handleFieldUpdate,
-      handleClaimantLinkUpdate,
       isAdmin,
       deleteConfirm,
       deleteRecord,
@@ -2625,12 +2821,21 @@ export function PostHrgClient({
             )}
           </div>
           {viewMode === "dashboard" && (
-            <button
-              className={cn(BTN_SUCCESS, "text-xs sm:text-sm")}
-              onClick={() => setShowAddModal(true)}
-            >
-              + Add Record
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                className={cn(BTN_OUTLINE, "text-xs sm:text-sm gap-1.5")}
+                onClick={() => setShowActivityLog(true)}
+              >
+                <ClipboardList className="h-3.5 w-3.5" />
+                Activity Log
+              </button>
+              <button
+                className={cn(BTN_SUCCESS, "text-xs sm:text-sm")}
+                onClick={() => setShowAddModal(true)}
+              >
+                + Add Record
+              </button>
+            </div>
           )}
         </div>
 
@@ -2650,10 +2855,11 @@ export function PostHrgClient({
                       e.target.value,
                       statusFilter,
                       phStatusFilter,
+                      indicatorFilter,
                     )
                   }
                 />
-                <div className="flex gap-2 flex-1 sm:flex-none">
+                <div className="flex gap-2 flex-1 sm:flex-none flex-wrap">
                   <select
                     className={cn(SELECT_CLS, "flex-1 sm:w-40")}
                     value={statusFilter}
@@ -2662,11 +2868,12 @@ export function PostHrgClient({
                         searchTerm,
                         e.target.value,
                         phStatusFilter,
+                        indicatorFilter,
                       )
                     }
                   >
                     <option value="all">All Status</option>
-                    {STATUS_OPTIONS.map((s) => (
+                    {DYNAMIC_STATUS_OPTIONS.map((s) => (
                       <option key={s.value} value={s.value}>
                         {s.label}
                       </option>
@@ -2680,6 +2887,7 @@ export function PostHrgClient({
                         searchTerm,
                         statusFilter,
                         e.target.value,
+                        indicatorFilter,
                       )
                     }
                   >
@@ -2690,6 +2898,68 @@ export function PostHrgClient({
                       </option>
                     ))}
                   </select>
+                  <div className="relative flex items-center gap-1.5">
+                    <select
+                      className={cn(SELECT_CLS, "flex-1 sm:w-44")}
+                      value={indicatorFilter}
+                      onChange={(e) =>
+                        handleFilterChange(
+                          searchTerm,
+                          statusFilter,
+                          phStatusFilter,
+                          e.target.value,
+                        )
+                      }
+                    >
+                      <option value="all">All Indicators</option>
+                      <option value="none">No Indicator</option>
+                      {INDICATOR_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+
+                    {/* Legend tooltip */}
+                    <div className="group relative shrink-0">
+                      <button
+                        type="button"
+                        className="h-5 w-5 rounded-full border border-border bg-muted text-muted-foreground text-[10px] font-bold flex items-center justify-center hover:bg-muted/80 transition-colors"
+                      >
+                        ?
+                      </button>
+                      <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 z-50 hidden group-hover:block">
+                        <div className="rounded-xl border bg-card shadow-xl p-3 w-56">
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                            Indicator Legend
+                          </p>
+                          <div className="space-y-1.5">
+                            {INDICATOR_OPTIONS.map((o) => (
+                              <div
+                                key={o.value}
+                                className="flex items-center gap-2"
+                              >
+                                <span
+                                  className="w-3 h-3 rounded-full shrink-0 ring-1 ring-offset-1"
+                                  style={{
+                                    backgroundColor: o.color,
+                                    boxShadow: `0 0 0 1px ${o.color}60`,
+                                  }}
+                                />
+                                <span className="text-[11px] text-foreground">
+                                  {o.label}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        {/* Arrow */}
+                        <div className="flex justify-center">
+                          <div className="w-2 h-2 rotate-45 border-b border-r border-border bg-card -mt-1" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
                 <span className="text-xs text-muted-foreground self-center">
                   {totalFiltered} records
@@ -2809,6 +3079,7 @@ export function PostHrgClient({
                                 renderCellFn={renderCell}
                                 columns={COLUMNS}
                                 overdue={isOverdueCheck(r)}
+                                onRowClick={() => setDetailPanel(r)}
                               />
                             );
                           })}
@@ -3219,6 +3490,7 @@ export function PostHrgClient({
                             searchTerm,
                             statusFilter,
                             phStatusFilter,
+                            indicatorFilter,
                           );
                         }}
                       >
@@ -3360,7 +3632,7 @@ export function PostHrgClient({
                     }
                   >
                     <option value="">—</option>
-                    {STATUS_OPTIONS.map((o) => (
+                    {DYNAMIC_STATUS_OPTIONS.map((o) => (
                       <option key={o.value} value={o.value}>
                         {o.label}
                       </option>
@@ -3508,7 +3780,7 @@ export function PostHrgClient({
           userRole={userRole}
         />
       )}
-      {/* ════════════════ REMARKS MODAL ════════════════ */} ← ADD AFTER
+      {/* ════════════════ REMARKS MODAL ════════════════ */}
       {remarksModal && (
         <RemarksModal
           record={remarksModal}
@@ -3521,6 +3793,14 @@ export function PostHrgClient({
           }}
         />
       )}
+      <PostHrgDetailPanel
+        row={detailPanel}
+        onClose={() => setDetailPanel(null)}
+      />
+      <PostHrgActivityModal
+        open={showActivityLog}
+        onClose={() => setShowActivityLog(false)}
+      />
     </>
   );
 }
