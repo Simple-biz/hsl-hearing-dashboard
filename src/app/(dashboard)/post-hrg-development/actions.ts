@@ -83,6 +83,7 @@ export async function fetchPostHrgOptions(): Promise<{
   representatives: RepOption[];
   responsibleOptions: ResponsibleOption[];
   indicatorOptions: IndicatorOption[];
+  docsNeededOptions: { value: string }[];
 }> {
   const [
     configRes,
@@ -91,6 +92,7 @@ export async function fetchPostHrgOptions(): Promise<{
     mrSpecRes,
     mrTeamsRes,
     indicatorRes,
+    docsNeededRes,
   ] = await Promise.all([
     db.query(
       `SELECT option_value, option_color, COALESCE(team_scope, 'shared') AS team_scope
@@ -122,6 +124,11 @@ export async function fetchPostHrgOptions(): Promise<{
       `SELECT option_value, option_color FROM config_options
    WHERE option_type = 'post_hrg_indicator' AND is_active = true
    ORDER BY display_order`,
+    ),
+    db.query(
+      `SELECT option_value FROM config_options
+       WHERE option_type = 'type_of_docs_needed' AND is_active = true
+       ORDER BY display_order`,
     ),
   ]);
 
@@ -234,6 +241,9 @@ export async function fetchPostHrgOptions(): Promise<{
       value: r.option_value as string,
       label: r.option_value as string,
       color: (r.option_color as string) || "#9CA3AF",
+    })),
+    docsNeededOptions: docsNeededRes.rows.map((r: { option_value: string }) => ({
+      value: r.option_value,
     })),
   };
 }
@@ -699,6 +709,14 @@ export async function importPostHrgDevRecords(data: {
   let imported = 0;
   let matched = 0;
   const errors: string[] = [];
+  // Rows that did NOT make it into the table — surfaced in the UI preview.
+  // Includes both silent skips (missing claimant) and INSERT failures.
+  const skipped: {
+    row: number;
+    claimant: string;
+    hearingDate: string | null;
+    reason: string;
+  }[] = [];
 
   // Parse helpers
   const parseDate = (raw: unknown): string | null => {
@@ -824,7 +842,16 @@ export async function importPostHrgDevRecords(data: {
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i] as string[];
     const claimant = getVal(row, "claimant");
-    if (!claimant) continue;
+    const sheetRowNum = data.rowOffset + i + 2;
+    if (!claimant) {
+      skipped.push({
+        row: sheetRowNum,
+        claimant: "",
+        hearingDate: null,
+        reason: "Missing claimant",
+      });
+      continue;
+    }
 
     const hearingDate = parseDate(getVal(row, "hearing_date"));
 
@@ -911,9 +938,14 @@ export async function importPostHrgDevRecords(data: {
       );
       imported++;
     } catch (err) {
-      errors.push(
-        `Row ${data.rowOffset + i + 2}: ${err instanceof Error ? err.message : "Unknown error"}`,
-      );
+      const reason = err instanceof Error ? err.message : "Unknown error";
+      errors.push(`Row ${sheetRowNum}: ${reason}`);
+      skipped.push({
+        row: sheetRowNum,
+        claimant,
+        hearingDate,
+        reason,
+      });
     }
   }
 
@@ -925,7 +957,7 @@ export async function importPostHrgDevRecords(data: {
     );
   }
 
-  return { success: true, imported, matched, errors };
+  return { success: true, imported, matched, errors, skipped };
 }
 
 // ─── Create from hearing (called when decision set to "Pending Decision") ───

@@ -145,6 +145,21 @@ function getIndicatorColor(value: string | null): string | null {
   return INDICATOR_OPTIONS.find((o) => o.value === value)?.color ?? null;
 }
 
+// True when `createdAt` is the same calendar day as "now" in the user's local
+// timezone. Drives the NEW badge and the soft-blue row tint for fresh rows.
+// Refreshes naturally on next page load — no midnight timer needed.
+function isCreatedToday(createdAt: string | null | undefined): boolean {
+  if (!createdAt) return false;
+  const created = new Date(createdAt);
+  if (isNaN(created.getTime())) return false;
+  const now = new Date();
+  return (
+    created.getFullYear() === now.getFullYear() &&
+    created.getMonth() === now.getMonth() &&
+    created.getDate() === now.getDate()
+  );
+}
+
 function IndicatorDot({
   value,
   onChange,
@@ -577,6 +592,7 @@ function InlineDate({
 
 function ClaimantCell({ record }: { record: PostHrgDevRow }) {
   const chronicleLink = record.chronicle_link ?? null;
+  const isNew = isCreatedToday(record.created_at);
 
   return (
     <div className="min-w-0 pr-1">
@@ -603,6 +619,14 @@ function ClaimantCell({ record }: { record: PostHrgDevRow }) {
           >
             {record.claimant}
           </p>
+        )}
+        {isNew && (
+          <span
+            className="shrink-0 rounded-full bg-sky-500 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-white shadow-sm"
+            title="Added today"
+          >
+            NEW
+          </span>
         )}
       </div>
 
@@ -1818,6 +1842,7 @@ interface MemoRowProps {
   columns: ColumnDef[];
   overdue: boolean;
   onRowClick: () => void;
+  tintColor: string | null;
 }
 
 const MemoRow = memo(
@@ -1832,15 +1857,19 @@ const MemoRow = memo(
     columns,
     overdue,
     onRowClick,
+    tintColor,
   }: MemoRowProps) {
     const rb = ri % 2 === 0 ? evenBg : oddBg;
+    // Translucent fill (~24% alpha) so text stays readable on any indicator color
+    const tintBg = tintColor ? `${tintColor}3D` : undefined;
     return (
       <tr
         className={cn(
           "group border-b border-border/40 last:border-0 cursor-pointer hover:bg-muted/40 transition-colors",
-          rb,
+          !tintBg && rb,
           overdue && "bg-red-50/50! dark:bg-red-950/10!",
         )}
+        style={tintBg ? { backgroundColor: tintBg } : undefined}
         onClick={onRowClick}
       >
         {columns.map((col) => {
@@ -1870,7 +1899,7 @@ const MemoRow = memo(
               }}
               className={cn(
                 "px-2 py-1.5",
-                col.frozen && cn("sticky z-10 overflow-hidden", rb),
+                col.frozen && cn("sticky z-10 overflow-hidden", !tintBg && rb),
                 isLF &&
                   "border-r-2 border-r-blue-400/40 dark:border-r-blue-500/40",
               )}
@@ -1879,6 +1908,7 @@ const MemoRow = memo(
                 minWidth: col.w,
                 maxWidth: col.frozen ? col.w : undefined,
                 ...(lp !== undefined ? { left: lp } : {}),
+                ...(tintBg && col.frozen ? { backgroundColor: tintBg } : {}),
               }}
             >
               {renderCellFn(record, col)}
@@ -1891,7 +1921,8 @@ const MemoRow = memo(
   (prev, next) =>
     prev.record === next.record &&
     prev.ri === next.ri &&
-    prev.overdue === next.overdue,
+    prev.overdue === next.overdue &&
+    prev.tintColor === next.tintColor,
 );
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -1907,6 +1938,7 @@ export function PostHrgClient({
   initialStatusOptions,
   initialRepresentatives,
   initialResponsibleOptions,
+  initialDocsNeededOptions,
 }: {
   userRole: string;
   userId: number;
@@ -1918,6 +1950,7 @@ export function PostHrgClient({
   initialStatusOptions: ConfigOption[];
   initialRepresentatives: RepOption[];
   initialResponsibleOptions: ResponsibleOption[];
+  initialDocsNeededOptions: { value: string }[];
 }) {
   const [viewMode, setViewMode] = useState<ViewMode>("dashboard");
   const [records, setRecords] = useState<PostHrgDevRow[]>(initialRecords);
@@ -1929,6 +1962,29 @@ export function PostHrgClient({
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [phStatusFilter, setPhStatusFilter] = useState<string>("all");
   const [indicatorFilter, setIndicatorFilter] = useState<string>("all");
+  // Legacy indicator display: tint the entire row (sheet style) instead of the
+  // small dot in the leftmost column. Persisted in localStorage so each user's
+  // preference survives reloads.
+  const [legacyIndicator, setLegacyIndicator] = useState<boolean>(false);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("postHrg.legacyIndicator");
+      if (raw === "true") setLegacyIndicator(true);
+    } catch {
+      // localStorage unavailable — fall back to default
+    }
+  }, []);
+  const toggleLegacyIndicator = useCallback(() => {
+    setLegacyIndicator((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("postHrg.legacyIndicator", String(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }, []);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
   const [sortKey, setSortKey] = useState("deadline");
@@ -1971,6 +2027,12 @@ export function PostHrgClient({
     imported: number;
     matched: number;
     errors: string[];
+    skipped: {
+      row: number;
+      claimant: string;
+      hearingDate: string | null;
+      reason: string;
+    }[];
   } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2001,6 +2063,16 @@ export function PostHrgClient({
         ? statusOptions.map((o) => ({ value: o.value, label: o.value }))
         : STATUS_OPTIONS,
     [statusOptions],
+  );
+  const DYNAMIC_DOCS_NEEDED_OPTIONS = useMemo(
+    () =>
+      initialDocsNeededOptions.length > 0
+        ? initialDocsNeededOptions.map((o) => ({
+            value: o.value,
+            label: o.value,
+          }))
+        : DOCS_NEEDED_OPTIONS,
+    [initialDocsNeededOptions],
   );
   const statusHexMap = useMemo(() => {
     const map: Record<string, { bg: string; color: string }> = {};
@@ -2509,6 +2581,12 @@ export function PostHrgClient({
     let imported = 0;
     let matchedTotal = 0;
     const errors: string[] = [];
+    const skipped: {
+      row: number;
+      claimant: string;
+      hearingDate: string | null;
+      reason: string;
+    }[] = [];
     for (let i = 0; i < currentSheet.rows.length; i += BATCH) {
       const batch = currentSheet.rows.slice(i, i + BATCH);
       try {
@@ -2524,6 +2602,7 @@ export function PostHrgClient({
           imported += result.imported || 0;
           matchedTotal += result.matched || 0;
           if (result.errors?.length) errors.push(...result.errors);
+          if (result.skipped?.length) skipped.push(...result.skipped);
         } else errors.push(`Batch ${Math.floor(i / BATCH) + 1}: error`);
       } catch {
         errors.push(`Batch ${Math.floor(i / BATCH) + 1}: Network error`);
@@ -2536,7 +2615,7 @@ export function PostHrgClient({
       );
     }
     setImporting(false);
-    setImportResult({ imported, matched: matchedTotal, errors });
+    setImportResult({ imported, matched: matchedTotal, errors, skipped });
     toast(
       `Imported ${imported} records (${matchedTotal} linked)`,
       errors.length > 0 ? "error" : "success",
@@ -2604,7 +2683,7 @@ export function PostHrgClient({
           return (
             <InlineDropdown
               value={r.type_of_docs_needed}
-              options={DOCS_NEEDED_OPTIONS}
+              options={DYNAMIC_DOCS_NEEDED_OPTIONS}
               onSave={(v) => handleFieldUpdate(r.id, "type_of_docs_needed", v)}
             />
           );
@@ -2756,6 +2835,7 @@ export function PostHrgClient({
       PH_STATUS_OPTIONS,
       phStatusHexMap,
       DYNAMIC_STATUS_OPTIONS,
+      DYNAMIC_DOCS_NEEDED_OPTIONS,
       statusHexMap,
       RESPONSIBLE_OPTIONS,
       responsibleHexMap,
@@ -2920,6 +3000,25 @@ export function PostHrgClient({
                       ))}
                     </select>
 
+                    {/* Legacy display toggle — tints the entire row by indicator color (sheet style) */}
+                    <button
+                      type="button"
+                      onClick={toggleLegacyIndicator}
+                      title={
+                        legacyIndicator
+                          ? "Legacy mode ON — entire row is tinted by indicator color. Click to switch to dot."
+                          : "Legacy mode OFF — indicator shown as dot. Click to tint entire row (sheet style)."
+                      }
+                      className={cn(
+                        "h-5 px-2 rounded-full border text-[10px] font-semibold transition-colors shrink-0",
+                        legacyIndicator
+                          ? "border-amber-400 bg-amber-100 text-amber-800 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-200"
+                          : "border-border bg-muted text-muted-foreground hover:bg-muted/80",
+                      )}
+                    >
+                      {legacyIndicator ? "Legacy: ON" : "Legacy"}
+                    </button>
+
                     {/* Legend tooltip */}
                     <div className="group relative shrink-0">
                       <button
@@ -3080,6 +3179,17 @@ export function PostHrgClient({
                                 columns={COLUMNS}
                                 overdue={isOverdueCheck(r)}
                                 onRowClick={() => setDetailPanel(r)}
+                                tintColor={(() => {
+                                  // Legacy indicator tint wins when set; otherwise
+                                  // fresh-today rows get a soft sky-blue background.
+                                  const indTint = legacyIndicator
+                                    ? getIndicatorColor(r.indicator)
+                                    : null;
+                                  if (indTint) return indTint;
+                                  return isCreatedToday(r.created_at)
+                                    ? "#0EA5E9"
+                                    : null;
+                                })()}
                               />
                             );
                           })}
@@ -3456,7 +3566,7 @@ export function PostHrgClient({
                 )}
                 {importResult && !importing && (
                   <div className="space-y-4">
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid grid-cols-4 gap-3">
                       <div className="rounded-lg bg-emerald-50 dark:bg-emerald-950/30 p-4 text-center">
                         <div className="text-3xl font-bold text-emerald-700">
                           {importResult.imported}
@@ -3469,6 +3579,12 @@ export function PostHrgClient({
                         </div>
                         <div className="text-sm text-blue-600">Linked</div>
                       </div>
+                      <div className="rounded-lg bg-amber-50 dark:bg-amber-950/30 p-4 text-center">
+                        <div className="text-3xl font-bold text-amber-700">
+                          {importResult.skipped.length}
+                        </div>
+                        <div className="text-sm text-amber-600">Skipped</div>
+                      </div>
                       <div className="rounded-lg bg-red-50 dark:bg-red-950/30 p-4 text-center">
                         <div className="text-3xl font-bold text-red-700">
                           {importResult.errors.length}
@@ -3476,6 +3592,58 @@ export function PostHrgClient({
                         <div className="text-sm text-red-600">Errors</div>
                       </div>
                     </div>
+                    {importResult.skipped.length > 0 && (
+                      <div className="rounded-lg border bg-amber-50/40 dark:bg-amber-950/10">
+                        <div className="px-4 py-2 border-b bg-amber-100/50 dark:bg-amber-900/20 text-sm font-semibold text-amber-800 dark:text-amber-300">
+                          ⚠️ Not Uploaded ({importResult.skipped.length} rows)
+                        </div>
+                        <div className="max-h-64 overflow-y-auto">
+                          <table className="w-full text-xs">
+                            <thead className="sticky top-0 bg-amber-100/80 dark:bg-amber-900/30 text-amber-900 dark:text-amber-200">
+                              <tr>
+                                <th className="px-3 py-2 text-left font-semibold w-16">
+                                  Row
+                                </th>
+                                <th className="px-3 py-2 text-left font-semibold">
+                                  Claimant
+                                </th>
+                                <th className="px-3 py-2 text-left font-semibold w-28">
+                                  Hearing Date
+                                </th>
+                                <th className="px-3 py-2 text-left font-semibold">
+                                  Reason
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {importResult.skipped.map((s, i) => (
+                                <tr
+                                  key={`${s.row}-${i}`}
+                                  className="border-t border-amber-200/60 dark:border-amber-800/40"
+                                >
+                                  <td className="px-3 py-1.5 tabular-nums">
+                                    {s.row}
+                                  </td>
+                                  <td className="px-3 py-1.5">
+                                    {s.claimant || (
+                                      <span className="italic text-muted-foreground">
+                                        (empty)
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="px-3 py-1.5 tabular-nums">
+                                    {s.hearingDate || "—"}
+                                  </td>
+                                  <td className="px-3 py-1.5 text-amber-800 dark:text-amber-300">
+                                    {s.reason}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
                     <div className="flex gap-3">
                       <button
                         className={BTN_PRIMARY}
@@ -3667,7 +3835,7 @@ export function PostHrgClient({
                   }
                 >
                   <option value="">—</option>
-                  {DOCS_NEEDED_OPTIONS.map((o) => (
+                  {DYNAMIC_DOCS_NEEDED_OPTIONS.map((o) => (
                     <option key={o.value} value={o.value}>
                       {o.label}
                     </option>

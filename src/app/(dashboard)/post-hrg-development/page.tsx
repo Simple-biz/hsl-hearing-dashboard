@@ -38,6 +38,7 @@ export default async function PostHrgDevelopmentPage() {
       initialStatusOptions={options.statusOptions}
       initialRepresentatives={options.representatives}
       initialResponsibleOptions={options.responsibleOptions}
+      initialDocsNeededOptions={options.docsNeededOptions}
     />
   );
 }
