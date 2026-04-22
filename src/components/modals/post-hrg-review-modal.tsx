@@ -529,7 +529,7 @@ function PhdInternalReview({
               No MR / Dashboard notes yet.
             </p>
           ) : (
-            <div className="space-y-1.5">
+            <div className="max-h-56 overflow-y-auto pr-1 space-y-1.5">
               {hearingNotes.map((n, i) => (
                 <div
                   key={i}
@@ -718,7 +718,7 @@ function NotesHistory({
           No notes yet
         </p>
       ) : (
-        <div className="space-y-2">
+        <div className="max-h-72 overflow-y-auto pr-1 space-y-2">
           {notes.map((n, i) => (
             <div
               key={i}
