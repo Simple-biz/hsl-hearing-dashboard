@@ -1476,10 +1476,10 @@ const COLUMNS: {
   { key: "post_hearing_status", label: "PH Status", w: 130, sortable: true },
   { key: "type_of_docs_needed", label: "Docs Needed", w: 120 },
   { key: "details", label: "Details", w: 240 },
-  { key: "person_responsible", label: "Responsible", w: 120, sortable: true },
+  { key: "person_responsible", label: "Responsible", w: 160, sortable: true },
   { key: "em_sent_task_created", label: "EM/Task", w: 80 },
   { key: "ext_letter_sent", label: "EXT", w: 70 },
-  { key: "status", label: "Status", w: 110, sortable: true },
+  { key: "status", label: "Status", w: 150, sortable: true },
   // new_due_date REMOVED — replaced with post_hrg_review
   { key: "post_hrg_review", label: "Post HRG Review", w: 140 },
   { key: "remarks", label: "Remarks", w: 200 },
@@ -2775,7 +2775,8 @@ export function PostHrgClient({
                     key: "all",
                     label: "All",
                     count: recordTypeCounts.all,
-                    activeCls: "border-primary text-foreground bg-primary/5",
+                    activeCls:
+                      "border-primary text-foreground bg-primary/15 dark:bg-primary/25 ring-1 ring-primary/40 dark:ring-primary/60",
                     chipActive: "bg-primary/15 text-primary",
                     badgeCls:
                       "bg-slate-200 text-slate-700 ring-slate-300 dark:bg-slate-700/50 dark:text-slate-200 dark:ring-slate-600",
@@ -2786,7 +2787,7 @@ export function PostHrgClient({
                     label: "Post HRG",
                     count: recordTypeCounts.postHrg,
                     activeCls:
-                      "border-violet-500 text-violet-700 dark:text-violet-300 bg-violet-500/5",
+                      "border-violet-500 text-violet-800 dark:text-violet-100 bg-violet-100 dark:bg-violet-500/30 ring-1 ring-violet-300 dark:ring-violet-400/60",
                     chipActive:
                       "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300",
                     badgeCls:
@@ -2798,7 +2799,7 @@ export function PostHrgClient({
                     label: "MR",
                     count: recordTypeCounts.mr,
                     activeCls:
-                      "border-amber-500 text-amber-700 dark:text-amber-300 bg-amber-500/5",
+                      "border-amber-500 text-amber-800 dark:text-amber-100 bg-amber-100 dark:bg-amber-500/30 ring-1 ring-amber-300 dark:ring-amber-400/60",
                     chipActive:
                       "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
                     badgeCls:
@@ -2810,7 +2811,7 @@ export function PostHrgClient({
                     label: "REP",
                     count: recordTypeCounts.rep,
                     activeCls:
-                      "border-emerald-500 text-emerald-700 dark:text-emerald-300 bg-emerald-500/5",
+                      "border-emerald-500 text-emerald-800 dark:text-emerald-100 bg-emerald-100 dark:bg-emerald-500/30 ring-1 ring-emerald-300 dark:ring-emerald-400/60",
                     chipActive:
                       "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
                     badgeCls:
