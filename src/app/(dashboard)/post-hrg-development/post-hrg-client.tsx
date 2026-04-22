@@ -12,6 +12,7 @@ import * as XLSX from "xlsx";
 import {
   fetchPostHrgDevPage,
   fetchPostHrgDevStats,
+  fetchPostHrgRecordTypeCounts,
   createPostHrgDevRecord,
   updatePostHrgDevField,
   deletePostHrgDevRecord,
@@ -21,12 +22,15 @@ import {
   fetchPostHrgDevNotes,
   type PostHrgDevRow,
   type PostHrgDevStats,
+  type PostHrgRecordType,
+  type PostHrgRecordTypeCounts,
   type ConfigOption,
   type RepOption,
   type ResponsibleOption,
 } from "./actions";
 import { PostHrgDetailPanel } from "./post-hrg-detail-panel";
 import { PostHrgActivityModal } from "@/components/modals/post-hrg-activity-modal";
+import { PostHrgReviewModal } from "@/components/modals/post-hrg-review-modal";
 import { ClipboardList } from "lucide-react";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -590,7 +594,52 @@ function InlineDate({
 
 // ─── Claimant Cell ──────────────────────────────────────────────────────────
 
-function ClaimantCell({ record }: { record: PostHrgDevRow }) {
+const RECORD_TYPE_STYLE: Record<
+  PostHrgRecordType,
+  { label: string; className: string; title: string }
+> = {
+  MR: {
+    label: "MR",
+    className:
+      "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+    title: "Medical / Examination record",
+  },
+  POST_HRG: {
+    label: "POST HRG",
+    className:
+      "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300",
+    title: "Post-hearing legal record (brief, memo, letter)",
+  },
+  REP: {
+    label: "REP",
+    className:
+      "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
+    title: "Rep-side / claimant-supplied evidence",
+  },
+};
+
+function RecordTypeBadge({ type }: { type: PostHrgRecordType }) {
+  const s = RECORD_TYPE_STYLE[type];
+  return (
+    <span
+      className={cn(
+        "shrink-0 rounded-full px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide",
+        s.className,
+      )}
+      title={s.title}
+    >
+      {s.label}
+    </span>
+  );
+}
+
+function ClaimantCell({
+  record,
+  showTypeBadge,
+}: {
+  record: PostHrgDevRow;
+  showTypeBadge?: boolean;
+}) {
   const chronicleLink = record.chronicle_link ?? null;
   const isNew = isCreatedToday(record.created_at);
 
@@ -620,6 +669,7 @@ function ClaimantCell({ record }: { record: PostHrgDevRow }) {
             {record.claimant}
           </p>
         )}
+        {showTypeBadge && <RecordTypeBadge type={record.record_type} />}
         {isNew && (
           <span
             className="shrink-0 rounded-full bg-sky-500 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-white shadow-sm"
@@ -729,339 +779,6 @@ function PostHrgCell({
         </span>
       )}
     </button>
-  );
-}
-
-// ─── Post HRG Modal (syncs with hearings table via hearing_id) ───────────────
-
-function PostHrgDevModal({
-  record,
-  onClose,
-  onRecordUpdate,
-  userName,
-  userRole,
-}: {
-  record: PostHrgDevRow;
-  onClose: () => void;
-  onRecordUpdate: (r: PostHrgDevRow) => void;
-  userName: string;
-  userRole: string;
-}) {
-  const [notes, setNotes] = useState<PostHrgNote[]>(() =>
-    parseNotes(record.post_hrg_notes ?? null),
-  );
-  const [newNote, setNewNote] = useState("");
-  const [deadline, setDeadline] = useState(record.post_hrg_deadline || "");
-  const [saving, setSaving] = useState(false);
-  const [deadlineSaving, setDeadlineSaving] = useState(false);
-
-  // Poll for updates every 8s (reads from hearings table server-side)
-  useEffect(() => {
-    let active = true;
-    const poll = async () => {
-      if (!active || !record.hearing_id) return;
-      try {
-        const { fetchPostHrgNotes } = await import("@/app/(dashboard)/actions");
-        const data = (await fetchPostHrgNotes(record.hearing_id)) as
-          | string
-          | { post_hrg_notes: string | null; post_hrg_deadline: string | null }
-          | null;
-        if (!active || !data) return;
-        if (typeof data === "string") {
-          setNotes(parseNotes(data));
-        } else {
-          setNotes(parseNotes(data.post_hrg_notes));
-          if (data.post_hrg_deadline != null) {
-            setDeadline(data.post_hrg_deadline);
-          }
-        }
-      } catch {
-        /* ignore */
-      }
-    };
-    const id = setInterval(poll, 8000);
-    return () => {
-      active = false;
-      clearInterval(id);
-    };
-  }, [record.hearing_id]);
-
-  const canEditNotes = [
-    "system_admin",
-    "admin",
-    "manager",
-    "mr_admin",
-    "mr_lead",
-    "mr_agent",
-    "post_hearing_admin",
-    "post_hearing_staff",
-  ].includes(userRole);
-
-  const handleAddNote = async () => {
-    if (!newNote.trim() || !canEditNotes || !record.hearing_id) return;
-    setSaving(true);
-    try {
-      // Write to hearings table — same action as dashboard
-      const { addDashboardPostHrgNote } =
-        await import("@/app/(dashboard)/actions");
-      const trimmed = newNote.trim();
-      const r = await addDashboardPostHrgNote(
-        record.hearing_id,
-        trimmed,
-        userName,
-      );
-      if (r.success) {
-        const added: PostHrgNote = {
-          user: userName,
-          date: new Date().toISOString(),
-          note: trimmed,
-        };
-        const updatedNotes = [added, ...notes];
-        setNotes(updatedNotes);
-        setNewNote("");
-        // Sync back to local record state
-        onRecordUpdate({
-          ...record,
-          post_hrg_notes: JSON.stringify(updatedNotes),
-        } as PostHrgDevRow);
-      }
-    } catch {
-      /* */
-    }
-    setSaving(false);
-  };
-
-  const handleDeleteNote = async (idx: number) => {
-    if (!canEditNotes || !record.hearing_id) return;
-    try {
-      const { deleteDashboardPostHrgNote } =
-        await import("@/app/(dashboard)/actions");
-      const r = await deleteDashboardPostHrgNote(record.hearing_id, idx);
-      if (r.success) {
-        const updatedNotes = notes.filter((_, i) => i !== idx);
-        setNotes(updatedNotes);
-        onRecordUpdate({
-          ...record,
-          post_hrg_notes:
-            updatedNotes.length > 0 ? JSON.stringify(updatedNotes) : null,
-        } as PostHrgDevRow);
-      }
-    } catch {
-      /* */
-    }
-  };
-
-  const handleUpdateDeadline = async () => {
-    if (!record.hearing_id) return;
-    setDeadlineSaving(true);
-    try {
-      const { updateHearing } = await import("@/app/(dashboard)/actions");
-      await updateHearing(
-        record.hearing_id,
-        "post_hrg_deadline",
-        deadline || null,
-      );
-      onRecordUpdate({
-        ...record,
-        post_hrg_deadline: deadline || null,
-      } as PostHrgDevRow);
-    } catch {
-      /* */
-    }
-    setDeadlineSaving(false);
-  };
-
-  const handleClearDeadline = async () => {
-    if (!record.hearing_id) return;
-    setDeadlineSaving(true);
-    try {
-      const { updateHearing } = await import("@/app/(dashboard)/actions");
-      await updateHearing(record.hearing_id, "post_hrg_deadline", null);
-      setDeadline("");
-      onRecordUpdate({ ...record, post_hrg_deadline: null } as PostHrgDevRow);
-    } catch {
-      /* */
-    }
-    setDeadlineSaving(false);
-  };
-
-  const fmtD = (d: string) =>
-    new Date(d + "T12:00:00").toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-lg rounded-xl border bg-card shadow-2xl flex flex-col max-h-[85vh]"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between border-b px-5 py-4 shrink-0">
-          <div>
-            <h2 className="text-sm font-semibold">Post HRG Review</h2>
-            <p className="text-[10px] text-muted-foreground mt-0.5">
-              {record.claimant}
-              {record.hearing_date &&
-                ` • ${new Date(record.hearing_date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`}
-              {record.assigned_rep && ` • ${record.assigned_rep}`}
-            </p>
-          </div>
-          <button
-            onClick={onClose}
-            className="rounded-md p-1 hover:bg-muted text-muted-foreground hover:text-foreground text-lg"
-          >
-            ✕
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-          {/* Sync notice */}
-          <div className="flex items-center gap-2 rounded-lg bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 px-3 py-2">
-            <span className="text-blue-500 text-sm">🔗</span>
-            <p className="text-[11px] text-blue-700 dark:text-blue-400">
-              Synced with hearing record — changes reflect on the main dashboard
-              too.
-            </p>
-          </div>
-
-          {/* Deadline */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium">Deadline Date</label>
-            <div className="flex items-center gap-2 flex-wrap">
-              <input
-                type="date"
-                value={deadline}
-                onChange={(e) => setDeadline(e.target.value)}
-                className="h-8 rounded-lg border bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary w-auto"
-              />
-              <button
-                className={cn(
-                  BTN_OUTLINE,
-                  "px-3 py-1 text-xs h-8 disabled:opacity-50",
-                )}
-                onClick={handleUpdateDeadline}
-                disabled={deadlineSaving}
-              >
-                {deadlineSaving ? "Saving..." : "Update"}
-              </button>
-              {deadline && (
-                <button
-                  className={cn(BTN_SECONDARY, "px-3 py-1 text-xs h-8")}
-                  onClick={handleClearDeadline}
-                  disabled={deadlineSaving}
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-            {record.post_hrg_deadline &&
-              record.post_hrg_deadline !== deadline && (
-                <p className="text-[10px] text-muted-foreground">
-                  Saved:{" "}
-                  <span className="font-medium">
-                    {fmtD(record.post_hrg_deadline)}
-                  </span>
-                </p>
-              )}
-          </div>
-
-          {/* Add note */}
-          {canEditNotes ? (
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium">Add New Note</label>
-              <textarea
-                value={newNote}
-                onChange={(e) => setNewNote(e.target.value)}
-                rows={3}
-                placeholder="Enter your note..."
-                className={cn(INPUT, "resize-none text-xs")}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    handleAddNote();
-                  }
-                }}
-              />
-              <button
-                className={cn(BTN_PRIMARY, "px-3 py-1.5 text-xs")}
-                onClick={handleAddNote}
-                disabled={saving || !newNote.trim()}
-              >
-                {saving ? "Saving..." : "Add Note"}
-              </button>
-            </div>
-          ) : (
-            <p className="text-xs text-muted-foreground italic py-2">
-              You do not have permission to add notes.
-            </p>
-          )}
-
-          {/* Notes history */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium">
-              Notes History{" "}
-              <span className="text-muted-foreground">({notes.length})</span>
-            </label>
-            {notes.length === 0 ? (
-              <p className="py-4 text-center text-xs text-muted-foreground">
-                No notes yet
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {notes.map((n, i) => (
-                  <div
-                    key={i}
-                    className="rounded-lg border bg-muted/30 p-3 space-y-1"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                        <span className="font-medium text-foreground">
-                          {n.user || "Unknown"}
-                        </span>
-                        {n.date && (
-                          <span>
-                            {new Date(n.date).toLocaleDateString("en-US", {
-                              month: "short",
-                              day: "numeric",
-                              hour: "numeric",
-                              minute: "2-digit",
-                            })}
-                          </span>
-                        )}
-                      </div>
-                      {canEditNotes && (
-                        <button
-                          onClick={() => handleDeleteNote(i)}
-                          className="text-xs text-muted-foreground hover:text-red-600"
-                        >
-                          ✕
-                        </button>
-                      )}
-                    </div>
-                    <p className="text-xs whitespace-pre-wrap">{n.note}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="border-t px-5 py-3 shrink-0">
-          <button
-            className={cn(BTN_SECONDARY, "px-3 py-1.5 text-xs")}
-            onClick={onClose}
-          >
-            Close
-          </button>
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -1899,7 +1616,11 @@ const MemoRow = memo(
               }}
               className={cn(
                 "px-2 py-1.5",
-                col.frozen && cn("sticky z-10 overflow-hidden", !tintBg && rb),
+                // Frozen cells must stay opaque so scrolled content from the
+                // non-frozen columns doesn't bleed through. Always paint the
+                // row surface (rb); when tinted, overlay the translucent tint
+                // via backgroundImage so it composites over the solid surface.
+                col.frozen && cn("sticky z-10 overflow-hidden", rb),
                 isLF &&
                   "border-r-2 border-r-blue-400/40 dark:border-r-blue-500/40",
               )}
@@ -1908,7 +1629,9 @@ const MemoRow = memo(
                 minWidth: col.w,
                 maxWidth: col.frozen ? col.w : undefined,
                 ...(lp !== undefined ? { left: lp } : {}),
-                ...(tintBg && col.frozen ? { backgroundColor: tintBg } : {}),
+                ...(tintBg && col.frozen
+                  ? { backgroundImage: `linear-gradient(${tintBg}, ${tintBg})` }
+                  : {}),
               }}
             >
               {renderCellFn(record, col)}
@@ -1939,6 +1662,8 @@ export function PostHrgClient({
   initialRepresentatives,
   initialResponsibleOptions,
   initialDocsNeededOptions,
+  initialRecordType,
+  initialRecordTypeCounts,
 }: {
   userRole: string;
   userId: number;
@@ -1951,6 +1676,8 @@ export function PostHrgClient({
   initialRepresentatives: RepOption[];
   initialResponsibleOptions: ResponsibleOption[];
   initialDocsNeededOptions: { value: string }[];
+  initialRecordType: PostHrgRecordType | "all";
+  initialRecordTypeCounts: PostHrgRecordTypeCounts;
 }) {
   const [viewMode, setViewMode] = useState<ViewMode>("dashboard");
   const [records, setRecords] = useState<PostHrgDevRow[]>(initialRecords);
@@ -1962,6 +1689,23 @@ export function PostHrgClient({
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [phStatusFilter, setPhStatusFilter] = useState<string>("all");
   const [indicatorFilter, setIndicatorFilter] = useState<string>("all");
+  // Hearing-date filter: preset drives from/to. Threaded via ref so the
+  // existing positional fetchPage signature stays stable.
+  const [datePreset, setDatePreset] = useState<string>("");
+  const [dateFrom, setDateFrom] = useState<string>("");
+  const [dateTo, setDateTo] = useState<string>("");
+  const dateRangeRef = useRef<{ from: string; to: string }>({
+    from: "",
+    to: "",
+  });
+  // Tab state — which record_type bucket is active (MR / POST_HRG / REP / all).
+  // Read by fetchPage via ref so we don't have to thread it through every caller.
+  const [recordType, setRecordType] = useState<PostHrgRecordType | "all">(
+    initialRecordType,
+  );
+  const recordTypeRef = useRef<PostHrgRecordType | "all">(initialRecordType);
+  const [recordTypeCounts, setRecordTypeCounts] =
+    useState<PostHrgRecordTypeCounts>(initialRecordTypeCounts);
   // Legacy indicator display: tint the entire row (sheet style) instead of the
   // small dot in the leftmost column. Persisted in localStorage so each user's
   // preference survives reloads.
@@ -1985,6 +1729,25 @@ export function PostHrgClient({
       return next;
     });
   }, []);
+
+  // Tab change: update state + ref + URL, then refetch with the new bucket.
+  const handleRecordTypeChange = useCallback(
+    (next: PostHrgRecordType | "all") => {
+      if (next === recordTypeRef.current) return;
+      recordTypeRef.current = next;
+      setRecordType(next);
+      setPage(1);
+      try {
+        const url = new URL(window.location.href);
+        if (next === "POST_HRG") url.searchParams.delete("tab");
+        else url.searchParams.set("tab", next.toLowerCase());
+        window.history.replaceState(null, "", url.toString());
+      } catch {
+        // ignore
+      }
+    },
+    [],
+  );
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
   const [sortKey, setSortKey] = useState("deadline");
@@ -2118,7 +1881,12 @@ export function PostHrgClient({
   // ── Server-side fetch ──
   const refreshStats = useCallback(async () => {
     try {
-      setStats(await fetchPostHrgDevStats());
+      const [s, c] = await Promise.all([
+        fetchPostHrgDevStats(recordTypeRef.current),
+        fetchPostHrgRecordTypeCounts(),
+      ]);
+      setStats(s);
+      setRecordTypeCounts(c);
     } catch {
       /* */
     }
@@ -2144,6 +1912,9 @@ export function PostHrgClient({
           status: status !== "all" ? status : undefined,
           phStatus: phStatus !== "all" ? phStatus : undefined,
           indicator: indicator !== "all" ? indicator : undefined,
+          recordType: recordTypeRef.current,
+          hearingDateFrom: dateRangeRef.current.from || undefined,
+          hearingDateTo: dateRangeRef.current.to || undefined,
           sortKey: sk,
           sortDir: sd,
         });
@@ -2157,6 +1928,25 @@ export function PostHrgClient({
     },
     [toast, refreshStats],
   );
+
+  // Refetch when the active tab changes. Compare against ref to avoid firing
+  // on the initial mount (data is already SSR-rendered).
+  const prevTabRef = useRef<PostHrgRecordType | "all">(initialRecordType);
+  useEffect(() => {
+    if (recordType === prevTabRef.current) return;
+    prevTabRef.current = recordType;
+    fetchPage(
+      1,
+      pageSize,
+      sortKey,
+      sortDir,
+      searchTerm,
+      statusFilter,
+      phStatusFilter,
+      indicatorFilter,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recordType]);
 
   const handleFilterChange = useCallback(
     (
@@ -2186,6 +1976,111 @@ export function PostHrgClient({
     },
     [fetchPage, pageSize, sortKey, sortDir],
   );
+
+  // Forward-looking presets for hearing_date (mirrors dashboard-client).
+  const computeDateRange = useCallback(
+    (preset: string): { from: string; to: string } => {
+      if (!preset || preset === "custom") return { from: "", to: "" };
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const iso = (d: Date) => d.toISOString().slice(0, 10);
+
+      if (preset === "today") return { from: iso(today), to: iso(today) };
+      if (preset === "tomorrow") {
+        const t = new Date(today);
+        t.setDate(t.getDate() + 1);
+        return { from: iso(t), to: iso(t) };
+      }
+      if (preset === "this-week") {
+        const start = new Date(today);
+        start.setDate(today.getDate() - today.getDay());
+        const end = new Date(start);
+        end.setDate(start.getDate() + 6);
+        return { from: iso(start), to: iso(end) };
+      }
+      if (preset === "next-week") {
+        const start = new Date(today);
+        start.setDate(today.getDate() - today.getDay() + 7);
+        const end = new Date(start);
+        end.setDate(start.getDate() + 6);
+        return { from: iso(start), to: iso(end) };
+      }
+      if (preset === "this-month") {
+        const start = new Date(today.getFullYear(), today.getMonth(), 1);
+        const end = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+        return { from: iso(start), to: iso(end) };
+      }
+      if (preset === "next-30") {
+        const end = new Date(today);
+        end.setDate(today.getDate() + 30);
+        return { from: iso(today), to: iso(end) };
+      }
+      return { from: "", to: "" };
+    },
+    [],
+  );
+
+  const refetchWithCurrentFilters = useCallback(() => {
+    setPage(1);
+    fetchPage(
+      1,
+      pageSize,
+      sortKey,
+      sortDir,
+      searchTerm,
+      statusFilter,
+      phStatusFilter,
+      indicatorFilter,
+    );
+  }, [
+    fetchPage,
+    pageSize,
+    sortKey,
+    sortDir,
+    searchTerm,
+    statusFilter,
+    phStatusFilter,
+    indicatorFilter,
+  ]);
+
+  const handleDatePresetChange = useCallback(
+    (preset: string) => {
+      setDatePreset(preset);
+      if (preset === "custom") return; // wait for user to pick from/to
+      const r = computeDateRange(preset);
+      setDateFrom(r.from);
+      setDateTo(r.to);
+      dateRangeRef.current = r;
+      refetchWithCurrentFilters();
+    },
+    [computeDateRange, refetchWithCurrentFilters],
+  );
+
+  const handleDateFromChange = useCallback(
+    (val: string) => {
+      setDateFrom(val);
+      dateRangeRef.current = { from: val, to: dateTo };
+      refetchWithCurrentFilters();
+    },
+    [dateTo, refetchWithCurrentFilters],
+  );
+
+  const handleDateToChange = useCallback(
+    (val: string) => {
+      setDateTo(val);
+      dateRangeRef.current = { from: dateFrom, to: val };
+      refetchWithCurrentFilters();
+    },
+    [dateFrom, refetchWithCurrentFilters],
+  );
+
+  const handleClearDates = useCallback(() => {
+    setDatePreset("");
+    setDateFrom("");
+    setDateTo("");
+    dateRangeRef.current = { from: "", to: "" };
+    refetchWithCurrentFilters();
+  }, [refetchWithCurrentFilters]);
 
   const handlePageChange = useCallback(
     (p: number) => {
@@ -2327,6 +2222,9 @@ export function PostHrgClient({
         ...addData,
         claimant: addData.claimant!,
         created_by: userId,
+        // Default new rows to the active tab so they appear where the user is.
+        // On the "all" tab fall back to POST_HRG.
+        record_type: recordType === "all" ? "POST_HRG" : recordType,
       });
       if (result.success) {
         setShowAddModal(false);
@@ -2350,6 +2248,7 @@ export function PostHrgClient({
   }, [
     addData,
     userId,
+    recordType,
     toast,
     fetchPage,
     page,
@@ -2652,7 +2551,9 @@ export function PostHrgClient({
             />
           );
         case "claimant":
-          return <ClaimantCell record={r} />;
+          return (
+            <ClaimantCell record={r} showTypeBadge={recordType === "all"} />
+          );
         case "ssn_last_4":
           return (
             <span className="text-xs font-mono text-muted-foreground">
@@ -2843,6 +2744,7 @@ export function PostHrgClient({
       isAdmin,
       deleteConfirm,
       deleteRecord,
+      recordType,
     ],
   );
 
@@ -2923,6 +2825,78 @@ export function PostHrgClient({
           <>
             <StatsRow stats={stats} />
 
+            {/* Record-type tabs (All / Post HRG / MR / REP). */}
+            <div className="flex items-center gap-1.5 border-b border-border/60 px-1 overflow-x-auto">
+              {(
+                [
+                  {
+                    key: "all",
+                    label: "All",
+                    count: recordTypeCounts.all,
+                    activeCls:
+                      "border-primary text-foreground bg-primary/5",
+                    chipActive: "bg-primary/15 text-primary",
+                  },
+                  {
+                    key: "POST_HRG",
+                    label: "Post HRG",
+                    count: recordTypeCounts.postHrg,
+                    activeCls:
+                      "border-violet-500 text-violet-700 dark:text-violet-300 bg-violet-500/5",
+                    chipActive:
+                      "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300",
+                  },
+                  {
+                    key: "MR",
+                    label: "MR",
+                    count: recordTypeCounts.mr,
+                    activeCls:
+                      "border-amber-500 text-amber-700 dark:text-amber-300 bg-amber-500/5",
+                    chipActive:
+                      "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+                  },
+                  {
+                    key: "REP",
+                    label: "REP",
+                    count: recordTypeCounts.rep,
+                    activeCls:
+                      "border-emerald-500 text-emerald-700 dark:text-emerald-300 bg-emerald-500/5",
+                    chipActive:
+                      "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
+                  },
+                ] as const
+              ).map((t) => {
+                const active = recordType === t.key;
+                return (
+                  <button
+                    key={t.key}
+                    type="button"
+                    onClick={() => handleRecordTypeChange(t.key)}
+                    className={cn(
+                      "group relative flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 -mb-px rounded-t-md transition-all duration-200 whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      active
+                        ? cn("shadow-sm", t.activeCls)
+                        : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50 hover:border-muted-foreground/30 hover:-translate-y-px",
+                    )}
+                  >
+                    <span className="transition-transform duration-200 group-active:scale-95">
+                      {t.label}
+                    </span>
+                    <span
+                      className={cn(
+                        "inline-flex items-center justify-center min-w-[1.25rem] rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums transition-colors",
+                        active
+                          ? t.chipActive
+                          : "bg-muted text-muted-foreground group-hover:bg-muted-foreground/15",
+                      )}
+                    >
+                      {t.count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
             <div className={cn(CARD, "p-3 sm:p-4")}>
               <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2 sm:gap-3">
                 <input
@@ -2999,6 +2973,51 @@ export function PostHrgClient({
                         </option>
                       ))}
                     </select>
+
+                    <select
+                      className={cn(SELECT_CLS, "flex-1 sm:w-40")}
+                      value={datePreset}
+                      onChange={(e) => handleDatePresetChange(e.target.value)}
+                    >
+                      <option value="">All Dates</option>
+                      <option value="today">Today</option>
+                      <option value="tomorrow">Tomorrow</option>
+                      <option value="this-week">This Week</option>
+                      <option value="next-week">Next Week</option>
+                      <option value="this-month">This Month</option>
+                      <option value="next-30">Next 30 Days</option>
+                      <option value="custom">Custom Range...</option>
+                    </select>
+
+                    {datePreset === "custom" && (
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="date"
+                          value={dateFrom}
+                          onChange={(e) => handleDateFromChange(e.target.value)}
+                          max={dateTo || undefined}
+                          className="h-8 w-31.25 rounded-md border bg-card px-2 text-xs"
+                        />
+                        <span className="text-xs text-muted-foreground">to</span>
+                        <input
+                          type="date"
+                          value={dateTo}
+                          onChange={(e) => handleDateToChange(e.target.value)}
+                          min={dateFrom || undefined}
+                          className="h-8 w-31.25 rounded-md border bg-card px-2 text-xs"
+                        />
+                      </div>
+                    )}
+
+                    {(datePreset || dateFrom || dateTo) && (
+                      <button
+                        type="button"
+                        onClick={handleClearDates}
+                        className="h-8 px-2 rounded-md text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors shrink-0"
+                      >
+                        Clear Dates
+                      </button>
+                    )}
 
                     {/* Legacy display toggle — tints the entire row by indicator color (sheet style) */}
                     <button
@@ -3938,16 +3957,78 @@ export function PostHrgClient({
           onRecordUpdate={handleRecordUpdate}
         />
       )}
-      {/* ════════════════ POST HRG MODAL ════════════════ */}
-      {postHrgModal && (
-        <PostHrgDevModal
-          record={postHrgModal}
-          onClose={() => setPostHrgModal(null)}
-          onRecordUpdate={handleRecordUpdate}
-          userName={userName}
-          userRole={userRole}
-        />
-      )}
+      {/* ════════════════ POST HRG REVIEW MODAL ════════════════ */}
+      {postHrgModal &&
+        (postHrgModal.record_type === "MR" && postHrgModal.hearing_id ? (
+          <PostHrgReviewModal
+            mode="hearing"
+            hearingId={postHrgModal.hearing_id}
+            claimant={postHrgModal.claimant}
+            hearingDateText={
+              postHrgModal.hearing_date
+                ? new Date(
+                    postHrgModal.hearing_date + "T12:00:00",
+                  ).toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })
+                : null
+            }
+            assignedRep={postHrgModal.assigned_rep}
+            userName={userName}
+            userRole={userRole}
+            initialNotes={postHrgModal.post_hrg_notes}
+            initialDeadline={postHrgModal.post_hrg_deadline}
+            initialRequirements={null}
+            initialDeadlinePrev={null}
+            initialDeadlineChangedBy={null}
+            onClose={() => setPostHrgModal(null)}
+            onHearingPatch={(patch) => {
+              const next = { ...postHrgModal } as PostHrgDevRow;
+              if (patch.post_hrg_notes !== undefined) {
+                (next as unknown as { post_hrg_notes: string | null }).post_hrg_notes =
+                  patch.post_hrg_notes;
+              }
+              if (patch.post_hrg_deadline !== undefined) {
+                (next as unknown as { post_hrg_deadline: string | null }).post_hrg_deadline =
+                  patch.post_hrg_deadline;
+              }
+              handleRecordUpdate(next);
+            }}
+          />
+        ) : (
+          <PostHrgReviewModal
+            mode="phd-internal"
+            phdRowId={postHrgModal.id}
+            claimant={postHrgModal.claimant}
+            hearingDateText={
+              postHrgModal.hearing_date
+                ? new Date(
+                    postHrgModal.hearing_date + "T12:00:00",
+                  ).toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })
+                : null
+            }
+            assignedRep={postHrgModal.assigned_rep}
+            userName={userName}
+            userRole={userRole}
+            initialNotes={postHrgModal.details_notes}
+            onClose={() => setPostHrgModal(null)}
+            onPhdPatch={(patch) => {
+              handleRecordUpdate({
+                ...postHrgModal,
+                details_notes:
+                  patch.details_notes !== undefined
+                    ? patch.details_notes
+                    : postHrgModal.details_notes,
+              });
+            }}
+          />
+        ))}
       {/* ════════════════ REMARKS MODAL ════════════════ */}
       {remarksModal && (
         <RemarksModal
