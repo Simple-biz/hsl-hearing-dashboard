@@ -149,6 +149,22 @@ function getIndicatorColor(value: string | null): string | null {
   return INDICATOR_OPTIONS.find((o) => o.value === value)?.color ?? null;
 }
 
+// Pick a readable text color for a filled badge against `hex`.
+// Uses the perceived-luminance formula (rec. 601 weights). Light fills get
+// dark slate text; dark fills get white. Keeps status pills legible even when
+// the configured option color is itself a pale pastel.
+function deriveBadgeColors(hex: string): { bg: string; color: string } {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  if ([r, g, b].some((n) => Number.isNaN(n))) {
+    return { bg: hex, color: "#111827" };
+  }
+  const isLight = (r * 299 + g * 587 + b * 114) / 1000 > 180;
+  return { bg: hex, color: isLight ? "#1F2937" : "#ffffff" };
+}
+
 // True when `createdAt` is the same calendar day as "now" in the user's local
 // timezone. Drives the NEW badge and the soft-blue row tint for fresh rows.
 // Refreshes naturally on next page load — no midnight timer needed.
@@ -443,11 +459,11 @@ function InlineDropdown({
           : undefined
       }
       className={cn(
-        "h-6 w-full rounded border px-1 text-[11px] font-semibold cursor-pointer transition-colors",
-        "focus:outline-none focus:ring-1 focus:ring-blue-400",
+        "h-6 w-full rounded border px-1 text-[11px] font-semibold cursor-pointer",
+        "transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-blue-400/60",
         currentHex
-          ? "border-current"
-          : "border-transparent hover:border-border text-foreground bg-card",
+          ? "border-transparent shadow-sm hover:brightness-110 hover:shadow-md"
+          : "border-transparent hover:border-border hover:bg-muted/40 text-foreground bg-card",
       )}
     >
       <option value="" style={{ backgroundColor: "white", color: "#333" }}>
@@ -479,7 +495,10 @@ function InlineCheck({
         type="checkbox"
         checked={checked}
         onChange={(e) => onToggle(e.target.checked)}
-        className="h-4 w-4 rounded accent-green-600 cursor-pointer"
+        className={cn(
+          "h-4 w-4 rounded accent-green-600 cursor-pointer",
+          "transition-transform duration-100 hover:scale-110 focus:scale-110",
+        )}
       />
     </div>
   );
@@ -501,7 +520,8 @@ function InlineDate({
       onChange={(e) => onSave(e.target.value || null)}
       className={cn(
         "h-6 w-full rounded border border-transparent px-1 text-[11px] tabular-nums bg-card cursor-pointer",
-        "hover:border-border focus:outline-none focus:ring-1 focus:ring-blue-400",
+        "transition-colors duration-150 hover:border-border hover:bg-muted/40",
+        "focus:outline-none focus:ring-2 focus:ring-blue-400/60 focus:border-blue-400",
         isOverdue && "text-red-600 font-bold",
       )}
     />
@@ -1579,14 +1599,27 @@ const MemoRow = memo(
     const rb = ri % 2 === 0 ? evenBg : oddBg;
     // Translucent fill (~24% alpha) so text stays readable on any indicator color
     const tintBg = tintColor ? `${tintColor}3D` : undefined;
+    // Slightly stronger tint on hover (~38% alpha) for visual feedback even
+    // when an indicator color is set — inline backgroundColor would otherwise
+    // beat the `hover:bg-muted/40` utility on tinted rows.
+    const tintHoverBg = tintColor ? `${tintColor}61` : undefined;
     return (
       <tr
         className={cn(
-          "group border-b border-border/40 last:border-0 cursor-pointer hover:bg-muted/40 transition-colors",
+          "group border-b border-border/40 last:border-0 cursor-pointer transition-colors duration-150",
+          !tintBg && "hover:bg-muted/50",
           !tintBg && rb,
+          tintBg && "hover:bg-[var(--row-tint-hover)!important]",
           overdue && "bg-red-50/50! dark:bg-red-950/10!",
         )}
-        style={tintBg ? { backgroundColor: tintBg } : undefined}
+        style={
+          tintBg
+            ? ({
+                backgroundColor: tintBg,
+                ["--row-tint-hover" as string]: tintHoverBg,
+              } as React.CSSProperties)
+            : undefined
+        }
         onClick={onRowClick}
       >
         {columns.map((col) => {
@@ -1706,30 +1739,6 @@ export function PostHrgClient({
   const recordTypeRef = useRef<PostHrgRecordType | "all">(initialRecordType);
   const [recordTypeCounts, setRecordTypeCounts] =
     useState<PostHrgRecordTypeCounts>(initialRecordTypeCounts);
-  // Legacy indicator display: tint the entire row (sheet style) instead of the
-  // small dot in the leftmost column. Persisted in localStorage so each user's
-  // preference survives reloads.
-  const [legacyIndicator, setLegacyIndicator] = useState<boolean>(false);
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem("postHrg.legacyIndicator");
-      if (raw === "true") setLegacyIndicator(true);
-    } catch {
-      // localStorage unavailable — fall back to default
-    }
-  }, []);
-  const toggleLegacyIndicator = useCallback(() => {
-    setLegacyIndicator((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem("postHrg.legacyIndicator", String(next));
-      } catch {
-        // ignore
-      }
-      return next;
-    });
-  }, []);
-
   // Tab change: update state + ref + URL, then refetch with the new bucket.
   const handleRecordTypeChange = useCallback(
     (next: PostHrgRecordType | "all") => {
@@ -1840,7 +1849,7 @@ export function PostHrgClient({
   const statusHexMap = useMemo(() => {
     const map: Record<string, { bg: string; color: string }> = {};
     for (const o of statusOptions) {
-      if (o.color) map[o.value] = { bg: o.color + "22", color: o.color };
+      if (o.color) map[o.value] = deriveBadgeColors(o.color);
       else if (STATUS_HEX[o.value]) map[o.value] = STATUS_HEX[o.value];
     }
     return map;
@@ -1852,7 +1861,7 @@ export function PostHrgClient({
   const phStatusHexMap = useMemo(() => {
     const map: Record<string, { bg: string; color: string }> = {};
     for (const o of phStatusOptions) {
-      if (o.color) map[o.value] = { bg: o.color + "22", color: o.color };
+      if (o.color) map[o.value] = deriveBadgeColors(o.color);
       else if (PH_STATUS_HEX[o.value]) map[o.value] = PH_STATUS_HEX[o.value];
     }
     return map;
@@ -1868,12 +1877,7 @@ export function PostHrgClient({
   const responsibleHexMap = useMemo(() => {
     const map: Record<string, { bg: string; color: string }> = {};
     for (const o of responsibleOptions) {
-      const hex = o.color.replace("#", "");
-      const r = parseInt(hex.slice(0, 2), 16);
-      const g = parseInt(hex.slice(2, 4), 16);
-      const b = parseInt(hex.slice(4, 6), 16);
-      const isLight = (r * 299 + g * 587 + b * 114) / 1000 > 180;
-      map[o.value] = { bg: o.color, color: isLight ? "#374151" : "#ffffff" };
+      map[o.value] = deriveBadgeColors(o.color);
     }
     return map;
   }, [responsibleOptions]);
@@ -3019,25 +3023,6 @@ export function PostHrgClient({
                       </button>
                     )}
 
-                    {/* Legacy display toggle — tints the entire row by indicator color (sheet style) */}
-                    <button
-                      type="button"
-                      onClick={toggleLegacyIndicator}
-                      title={
-                        legacyIndicator
-                          ? "Legacy mode ON — entire row is tinted by indicator color. Click to switch to dot."
-                          : "Legacy mode OFF — indicator shown as dot. Click to tint entire row (sheet style)."
-                      }
-                      className={cn(
-                        "h-5 px-2 rounded-full border text-[10px] font-semibold transition-colors shrink-0",
-                        legacyIndicator
-                          ? "border-amber-400 bg-amber-100 text-amber-800 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-200"
-                          : "border-border bg-muted text-muted-foreground hover:bg-muted/80",
-                      )}
-                    >
-                      {legacyIndicator ? "Legacy: ON" : "Legacy"}
-                    </button>
-
                     {/* Legend tooltip */}
                     <div className="group relative shrink-0">
                       <button
@@ -3198,17 +3183,12 @@ export function PostHrgClient({
                                 columns={COLUMNS}
                                 overdue={isOverdueCheck(r)}
                                 onRowClick={() => setDetailPanel(r)}
-                                tintColor={(() => {
-                                  // Legacy indicator tint wins when set; otherwise
-                                  // fresh-today rows get a soft sky-blue background.
-                                  const indTint = legacyIndicator
-                                    ? getIndicatorColor(r.indicator)
-                                    : null;
-                                  if (indTint) return indTint;
-                                  return isCreatedToday(r.created_at)
+                                tintColor={
+                                  getIndicatorColor(r.indicator) ??
+                                  (isCreatedToday(r.created_at)
                                     ? "#0EA5E9"
-                                    : null;
-                                })()}
+                                    : null)
+                                }
                               />
                             );
                           })}
