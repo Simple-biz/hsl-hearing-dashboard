@@ -85,6 +85,12 @@ type PhdInternalModeProps = CommonProps & {
   mode: "phd-internal";
   phdRowId: number;
   initialNotes: string | null;
+  // If the PHD row links to a hearing, pass the hearing id here. The modal
+  // will additionally fetch & display the hearing's `post_hrg_notes` as a
+  // read-only "Notes from MR / Dashboard" section so the post-hearing team
+  // has visibility into the MR thread. Their own notes still only write to
+  // PHD's `details_notes`.
+  linkedHearingId?: number | null;
   onPhdPatch: (patch: { details_notes?: string | null }) => void;
 };
 
@@ -381,11 +387,13 @@ function PhdInternalReview({
   onClose,
   phdRowId,
   initialNotes,
+  linkedHearingId,
   onPhdPatch,
 }: PhdInternalModeProps) {
   const [notes, setNotes] = useState<PostHrgNote[]>(() =>
     parseNotes(initialNotes),
   );
+  const [hearingNotes, setHearingNotes] = useState<PostHrgNote[]>([]);
   const [newNote, setNewNote] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -403,12 +411,47 @@ function PhdInternalReview({
         /* */
       }
     };
+    poll();
     const id = setInterval(poll, 8000);
     return () => {
       active = false;
       clearInterval(id);
     };
   }, [phdRowId]);
+
+  // When the PHD row is linked to a hearing, also poll the hearing's
+  // post_hrg_notes so the post-hearing team sees the MR / Dashboard thread
+  // as read-only context.
+  useEffect(() => {
+    if (!linkedHearingId) {
+      setHearingNotes([]);
+      return;
+    }
+    let active = true;
+    const poll = async () => {
+      if (!active) return;
+      try {
+        const { fetchPostHrgNotes } = await import(
+          "@/app/(dashboard)/actions"
+        );
+        const data = (await fetchPostHrgNotes(linkedHearingId)) as
+          | string
+          | { post_hrg_notes: string | null }
+          | null;
+        if (!active || !data) return;
+        const raw = typeof data === "string" ? data : data.post_hrg_notes;
+        setHearingNotes(parseNotes(raw));
+      } catch {
+        /* ignore */
+      }
+    };
+    poll();
+    const id = setInterval(poll, 8000);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, [linkedHearingId]);
 
   const canEditNotes = ROLES_CAN_EDIT_NOTES.includes(userRole);
 
@@ -471,6 +514,38 @@ function PhdInternalReview({
         canEdit={canEditNotes}
         onDelete={handleDeleteNote}
       />
+      {linkedHearingId ? (
+        <div className="space-y-1.5 pt-2 border-t border-border/60">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-muted-foreground">
+              Notes from MR / Dashboard
+            </span>
+            <span className="text-[10px] text-muted-foreground/70">
+              ({hearingNotes.length}) — read-only
+            </span>
+          </div>
+          {hearingNotes.length === 0 ? (
+            <p className="text-xs text-muted-foreground italic py-1">
+              No MR / Dashboard notes yet.
+            </p>
+          ) : (
+            <div className="space-y-1.5">
+              {hearingNotes.map((n, i) => (
+                <div
+                  key={i}
+                  className="rounded-md border bg-muted/30 px-3 py-2"
+                >
+                  <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1">
+                    <span className="font-medium">{n.user || "Unknown"}</span>
+                    {n.date && <span>{n.date}</span>}
+                  </div>
+                  <p className="text-xs whitespace-pre-wrap">{n.note}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
     </ModalShell>
   );
 }

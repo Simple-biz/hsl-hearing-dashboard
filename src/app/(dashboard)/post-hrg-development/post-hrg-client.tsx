@@ -707,8 +707,22 @@ function PostHrgCell({
   record: PostHrgDevRow;
   onClick: () => void;
 }) {
-  const notes = parseNotes(record.post_hrg_notes ?? null);
-  const noteCount = notes.length;
+  // Count from the same source(s) the modal will surface.
+  // - MR + hearing_id  → modal opens in `hearing` mode against
+  //   `hearings.post_hrg_notes` only.
+  // - POST_HRG / REP / orphan MR → modal opens in `phd-internal` mode against
+  //   `details_notes`, plus a read-only "MR / Dashboard" section pulling from
+  //   `hearings.post_hrg_notes` when the row has a linked hearing.
+  const usesHearingNotes =
+    record.record_type === "MR" && !!record.hearing_id;
+  const detailsNotes = parseNotes(
+    (record as unknown as { details_notes: string | null }).details_notes ??
+      null,
+  );
+  const hearingNotes = parseNotes(record.post_hrg_notes ?? null);
+  const noteCount = usesHearingNotes
+    ? hearingNotes.length
+    : detailsNotes.length + (record.hearing_id ? hearingNotes.length : 0);
   const deadline = record.post_hrg_deadline ?? null;
 
   let badgeClass = "bg-muted/50 text-muted-foreground hover:bg-muted";
@@ -3969,6 +3983,7 @@ export function PostHrgClient({
           <PostHrgReviewModal
             mode="phd-internal"
             phdRowId={postHrgModal.id}
+            linkedHearingId={postHrgModal.hearing_id}
             claimant={postHrgModal.claimant}
             hearingDateText={
               postHrgModal.hearing_date
