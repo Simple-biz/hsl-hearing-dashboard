@@ -742,18 +742,6 @@ function PostHrgCell({
     text = "Notes";
   }
 
-  // No linked hearing — show disabled state
-  if (!record.hearing_id) {
-    return (
-      <span
-        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium bg-muted/30 text-muted-foreground/50 cursor-not-allowed"
-        title="No linked hearing — Post HRG data syncs from hearing record"
-      >
-        🔗 No hearing
-      </span>
-    );
-  }
-
   return (
     <button
       onClick={onClick}
