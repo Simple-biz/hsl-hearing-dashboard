@@ -15,7 +15,6 @@ import {
   fetchPostHrgRecordTypeCounts,
   createPostHrgDevRecord,
   updatePostHrgDevField,
-  deletePostHrgDevRecord,
   importPostHrgDevRecords,
   addPostHrgDevNote,
   deletePostHrgDevNote,
@@ -501,30 +500,6 @@ function InlineCheck({
         )}
       />
     </div>
-  );
-}
-
-function InlineDate({
-  value,
-  onSave,
-  isOverdue,
-}: {
-  value: string | null;
-  onSave: (v: string | null) => void;
-  isOverdue?: boolean;
-}) {
-  return (
-    <input
-      type="date"
-      value={value || ""}
-      onChange={(e) => onSave(e.target.value || null)}
-      className={cn(
-        "h-6 w-full rounded border border-transparent px-1 text-[11px] tabular-nums bg-card cursor-pointer",
-        "transition-colors duration-150 hover:border-border hover:bg-muted/40",
-        "focus:outline-none focus:ring-2 focus:ring-blue-400/60 focus:border-blue-400",
-        isOverdue && "text-red-600 font-bold",
-      )}
-    />
   );
 }
 
@@ -1505,11 +1480,9 @@ const COLUMNS: {
   { key: "em_sent_task_created", label: "EM/Task", w: 80 },
   { key: "ext_letter_sent", label: "EXT", w: 70 },
   { key: "status", label: "Status", w: 110, sortable: true },
-  { key: "deadline", label: "Deadline", w: 110, sortable: true },
   // new_due_date REMOVED — replaced with post_hrg_review
   { key: "post_hrg_review", label: "Post HRG Review", w: 140 },
   { key: "remarks", label: "Remarks", w: 200 },
-  { key: "actions", label: "", w: 70 },
 ];
 
 const lastFrozenKey = COLUMNS.filter((c) => c.frozen).at(-1)?.key ?? "";
@@ -1599,38 +1572,29 @@ const MemoRow = memo(
     const rb = ri % 2 === 0 ? evenBg : oddBg;
     // Translucent fill (~24% alpha) so text stays readable on any indicator color
     const tintBg = tintColor ? `${tintColor}3D` : undefined;
-    // Slightly stronger tint on hover (~38% alpha) for visual feedback even
-    // when an indicator color is set — inline backgroundColor would otherwise
-    // beat the `hover:bg-muted/40` utility on tinted rows.
-    const tintHoverBg = tintColor ? `${tintColor}61` : undefined;
     return (
       <tr
         className={cn(
           "group border-b border-border/40 last:border-0 cursor-pointer transition-colors duration-150",
           !tintBg && "hover:bg-muted/50",
-          !tintBg && rb,
-          tintBg && "hover:bg-[var(--row-tint-hover)!important]",
           overdue && "bg-red-50/50! dark:bg-red-950/10!",
         )}
-        style={
-          tintBg
-            ? ({
-                backgroundColor: tintBg,
-                ["--row-tint-hover" as string]: tintHoverBg,
-              } as React.CSSProperties)
-            : undefined
-        }
         onClick={onRowClick}
       >
         {columns.map((col) => {
           const lp = getLeftPosFn(col.key);
           const isLF = col.key === lastFrozen;
+          // Apply background per-cell because <tr> backgroundColor is
+          // unreliable under `border-collapse: collapse` (browsers often
+          // skip it). Non-frozen cells get the tint as a flat color over
+          // the transparent body. Frozen cells keep the opaque `rb` surface
+          // (so scrolling content doesn't bleed through) and overlay the
+          // translucent tint via `backgroundImage`.
           return (
             <td
               key={col.key}
               onClick={(e) => {
                 const INTERACTIVE_COLS = [
-                  "actions",
                   "indicator",
                   "post_hearing_status",
                   "type_of_docs_needed",
@@ -1638,7 +1602,6 @@ const MemoRow = memo(
                   "em_sent_task_created",
                   "ext_letter_sent",
                   "status",
-                  "deadline",
                   "post_hrg_review",
                   "remarks",
                   "details",
@@ -1649,11 +1612,11 @@ const MemoRow = memo(
               }}
               className={cn(
                 "px-2 py-1.5",
-                // Frozen cells must stay opaque so scrolled content from the
-                // non-frozen columns doesn't bleed through. Always paint the
-                // row surface (rb); when tinted, overlay the translucent tint
-                // via backgroundImage so it composites over the solid surface.
+                // Frozen cells always paint the opaque row surface
                 col.frozen && cn("sticky z-10 overflow-hidden", rb),
+                // Non-frozen cells need rb only when there's no tint —
+                // otherwise the tint backgroundColor below provides the fill.
+                !col.frozen && !tintBg && rb,
                 isLF &&
                   "border-r-2 border-r-blue-400/40 dark:border-r-blue-500/40",
               )}
@@ -1662,8 +1625,12 @@ const MemoRow = memo(
                 minWidth: col.w,
                 maxWidth: col.frozen ? col.w : undefined,
                 ...(lp !== undefined ? { left: lp } : {}),
-                ...(tintBg && col.frozen
-                  ? { backgroundImage: `linear-gradient(${tintBg}, ${tintBg})` }
+                ...(tintBg
+                  ? col.frozen
+                    ? {
+                        backgroundImage: `linear-gradient(${tintBg}, ${tintBg})`,
+                      }
+                    : { backgroundColor: tintBg }
                   : {}),
               }}
             >
@@ -1708,7 +1675,7 @@ export function PostHrgClient({
   initialStatusOptions: ConfigOption[];
   initialRepresentatives: RepOption[];
   initialResponsibleOptions: ResponsibleOption[];
-  initialDocsNeededOptions: { value: string }[];
+  initialDocsNeededOptions: { value: string; color: string | null }[];
   initialRecordType: PostHrgRecordType | "all";
   initialRecordTypeCounts: PostHrgRecordTypeCounts;
 }) {
@@ -1739,6 +1706,31 @@ export function PostHrgClient({
   const recordTypeRef = useRef<PostHrgRecordType | "all">(initialRecordType);
   const [recordTypeCounts, setRecordTypeCounts] =
     useState<PostHrgRecordTypeCounts>(initialRecordTypeCounts);
+  // Legacy indicator display: tint the entire row (sheet style) by indicator
+  // color. Persisted in localStorage so each user's preference survives reloads.
+  // Default ON — the team prefers the row-tint at-a-glance over the dot.
+  const [legacyIndicator, setLegacyIndicator] = useState<boolean>(true);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("postHrg.legacyIndicator");
+      if (raw === "false") setLegacyIndicator(false);
+      else if (raw === "true") setLegacyIndicator(true);
+    } catch {
+      // localStorage unavailable — keep default
+    }
+  }, []);
+  const toggleLegacyIndicator = useCallback(() => {
+    setLegacyIndicator((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("postHrg.legacyIndicator", String(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }, []);
+
   // Tab change: update state + ref + URL, then refetch with the new bucket.
   const handleRecordTypeChange = useCallback(
     (next: PostHrgRecordType | "all") => {
@@ -1759,7 +1751,7 @@ export function PostHrgClient({
   );
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
-  const [sortKey, setSortKey] = useState("deadline");
+  const [sortKey, setSortKey] = useState("hearing_date");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
 
   const phStatusOptions = initialPhStatusOptions;
@@ -1770,7 +1762,6 @@ export function PostHrgClient({
   const [showAddModal, setShowAddModal] = useState(false);
   const [addData, setAddData] = useState<Partial<PostHrgDevRow>>({});
   const [saving, setSaving] = useState(false);
-  const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
 
   // Modals
   const [noteModal, setNoteModal] = useState<{
@@ -1846,6 +1837,13 @@ export function PostHrgClient({
         : DOCS_NEEDED_OPTIONS,
     [initialDocsNeededOptions],
   );
+  const docsNeededHexMap = useMemo(() => {
+    const map: Record<string, { bg: string; color: string }> = {};
+    for (const o of initialDocsNeededOptions) {
+      if (o.color) map[o.value] = deriveBadgeColors(o.color);
+    }
+    return map;
+  }, [initialDocsNeededOptions]);
   const statusHexMap = useMemo(() => {
     const map: Record<string, { bg: string; color: string }> = {};
     for (const o of statusOptions) {
@@ -2265,23 +2263,6 @@ export function PostHrgClient({
     indicatorFilter,
   ]);
 
-  const deleteRecord = useCallback(
-    async (id: number) => {
-      try {
-        const result = await deletePostHrgDevRecord(id);
-        if (result.success) {
-          setRecords((prev) => prev.filter((r) => r.id !== id));
-          setDeleteConfirm(null);
-          toast("Record deleted", "success");
-          refreshStats();
-        }
-      } catch {
-        toast("Delete failed");
-      }
-    },
-    [toast, refreshStats],
-  );
-
   // ── Import ──
   const handleFile = useCallback(
     (f: File) => {
@@ -2590,6 +2571,7 @@ export function PostHrgClient({
               value={r.type_of_docs_needed}
               options={DYNAMIC_DOCS_NEEDED_OPTIONS}
               onSave={(v) => handleFieldUpdate(r.id, "type_of_docs_needed", v)}
+              hexColorMap={docsNeededHexMap}
             />
           );
         case "details":
@@ -2683,55 +2665,12 @@ export function PostHrgClient({
               />
             </div>
           );
-        case "deadline":
-          return (
-            <InlineDate
-              value={r.deadline}
-              onSave={(v) => handleFieldUpdate(r.id, "deadline", v)}
-              isOverdue={isOverdueCheck(r)}
-            />
-          );
         case "post_hrg_review":
           return <PostHrgCell record={r} onClick={() => setPostHrgModal(r)} />;
         case "remarks":
           return (
             <RemarksCellBadge record={r} onClick={() => setRemarksModal(r)} />
           );
-        case "actions":
-          return isAdmin ? (
-            deleteConfirm === r.id ? (
-              <div className="flex gap-1">
-                <button
-                  className={cn(
-                    BTN,
-                    "px-2 py-0.5 text-[10px] bg-red-600 text-white hover:bg-red-700",
-                  )}
-                  onClick={() => deleteRecord(r.id)}
-                >
-                  Yes
-                </button>
-                <button
-                  className={cn(
-                    BTN,
-                    "px-2 py-0.5 text-[10px] bg-muted text-foreground",
-                  )}
-                  onClick={() => setDeleteConfirm(null)}
-                >
-                  No
-                </button>
-              </div>
-            ) : (
-              <button
-                className={cn(
-                  BTN,
-                  "px-2 py-0.5 text-[10px] text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30",
-                )}
-                onClick={() => setDeleteConfirm(r.id)}
-              >
-                ✕
-              </button>
-            )
-          ) : null;
         default:
           return <span className="text-xs">—</span>;
       }
@@ -2741,13 +2680,12 @@ export function PostHrgClient({
       phStatusHexMap,
       DYNAMIC_STATUS_OPTIONS,
       DYNAMIC_DOCS_NEEDED_OPTIONS,
+      docsNeededHexMap,
       statusHexMap,
       RESPONSIBLE_OPTIONS,
       responsibleHexMap,
       handleFieldUpdate,
       isAdmin,
-      deleteConfirm,
-      deleteRecord,
       recordType,
     ],
   );
@@ -2837,9 +2775,11 @@ export function PostHrgClient({
                     key: "all",
                     label: "All",
                     count: recordTypeCounts.all,
-                    activeCls:
-                      "border-primary text-foreground bg-primary/5",
+                    activeCls: "border-primary text-foreground bg-primary/5",
                     chipActive: "bg-primary/15 text-primary",
+                    badgeCls:
+                      "bg-slate-200 text-slate-700 ring-slate-300 dark:bg-slate-700/50 dark:text-slate-200 dark:ring-slate-600",
+                    dotCls: "bg-slate-400 dark:bg-slate-500",
                   },
                   {
                     key: "POST_HRG",
@@ -2849,6 +2789,9 @@ export function PostHrgClient({
                       "border-violet-500 text-violet-700 dark:text-violet-300 bg-violet-500/5",
                     chipActive:
                       "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300",
+                    badgeCls:
+                      "bg-violet-100 text-violet-700 ring-violet-200 dark:bg-violet-900/40 dark:text-violet-300 dark:ring-violet-800",
+                    dotCls: "bg-violet-500",
                   },
                   {
                     key: "MR",
@@ -2858,6 +2801,9 @@ export function PostHrgClient({
                       "border-amber-500 text-amber-700 dark:text-amber-300 bg-amber-500/5",
                     chipActive:
                       "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+                    badgeCls:
+                      "bg-amber-100 text-amber-800 ring-amber-200 dark:bg-amber-900/40 dark:text-amber-300 dark:ring-amber-800",
+                    dotCls: "bg-amber-500",
                   },
                   {
                     key: "REP",
@@ -2867,6 +2813,9 @@ export function PostHrgClient({
                       "border-emerald-500 text-emerald-700 dark:text-emerald-300 bg-emerald-500/5",
                     chipActive:
                       "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
+                    badgeCls:
+                      "bg-emerald-100 text-emerald-800 ring-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-300 dark:ring-emerald-800",
+                    dotCls: "bg-emerald-500",
                   },
                 ] as const
               ).map((t) => {
@@ -2883,7 +2832,20 @@ export function PostHrgClient({
                         : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50 hover:border-muted-foreground/30 hover:-translate-y-px",
                     )}
                   >
-                    <span className="transition-transform duration-200 group-active:scale-95">
+                    {/* Type badge — small colored pill so each tab stays
+                        visually identifiable even when not the active tab. */}
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ring-1 transition-colors",
+                        t.badgeCls,
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "h-1.5 w-1.5 rounded-full",
+                          t.dotCls,
+                        )}
+                      />
                       {t.label}
                     </span>
                     <span
@@ -3002,7 +2964,9 @@ export function PostHrgClient({
                           max={dateTo || undefined}
                           className="h-8 w-31.25 rounded-md border bg-card px-2 text-xs"
                         />
-                        <span className="text-xs text-muted-foreground">to</span>
+                        <span className="text-xs text-muted-foreground">
+                          to
+                        </span>
                         <input
                           type="date"
                           value={dateTo}
@@ -3022,6 +2986,25 @@ export function PostHrgClient({
                         Clear Dates
                       </button>
                     )}
+
+                    {/* Legacy display toggle — tints the entire row by indicator color (sheet style) */}
+                    <button
+                      type="button"
+                      onClick={toggleLegacyIndicator}
+                      title={
+                        legacyIndicator
+                          ? "Legacy mode ON — entire row is tinted by indicator color. Click to switch to dot only."
+                          : "Legacy mode OFF — indicator shown as dot only. Click to tint entire row (sheet style)."
+                      }
+                      className={cn(
+                        "h-5 px-2 rounded-full border text-[10px] font-semibold transition-colors shrink-0",
+                        legacyIndicator
+                          ? "border-amber-400 bg-amber-100 text-amber-800 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-200"
+                          : "border-border bg-muted text-muted-foreground hover:bg-muted/80",
+                      )}
+                    >
+                      {legacyIndicator ? "Legacy: ON" : "Legacy"}
+                    </button>
 
                     {/* Legend tooltip */}
                     <div className="group relative shrink-0">
@@ -3183,12 +3166,20 @@ export function PostHrgClient({
                                 columns={COLUMNS}
                                 overdue={isOverdueCheck(r)}
                                 onRowClick={() => setDetailPanel(r)}
-                                tintColor={
-                                  getIndicatorColor(r.indicator) ??
-                                  (isCreatedToday(r.created_at)
+                                tintColor={(() => {
+                                  // When legacy mode is ON, indicator color
+                                  // tints the entire row (sheet style).
+                                  // Otherwise the indicator stays as a dot
+                                  // and the row only gets the soft sky-blue
+                                  // tint for fresh-today rows.
+                                  const indTint = legacyIndicator
+                                    ? getIndicatorColor(r.indicator)
+                                    : null;
+                                  if (indTint) return indTint;
+                                  return isCreatedToday(r.created_at)
                                     ? "#0EA5E9"
-                                    : null)
-                                }
+                                    : null;
+                                })()}
                               />
                             );
                           })}
@@ -3230,19 +3221,25 @@ export function PostHrgClient({
                     >
                       ← Prev
                     </button>
-                    <span className="text-xs tabular-nums">
+                    <span className="text-xs tabular-nums flex items-center gap-1">
                       Page{" "}
-                      <input
-                        type="number"
-                        min={1}
-                        max={totalPages}
+                      <select
                         value={page}
                         onChange={(e) => {
                           const p2 = parseInt(e.target.value);
                           if (p2 > 0 && p2 <= totalPages) handlePageChange(p2);
                         }}
-                        className="w-12 rounded border bg-background px-1 py-0.5 text-xs text-center tabular-nums"
-                      />{" "}
+                        className="rounded border bg-background px-1.5 py-0.5 text-xs tabular-nums cursor-pointer hover:bg-muted/40 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400/60"
+                        aria-label="Jump to page"
+                      >
+                        {Array.from({ length: totalPages }, (_, i) => i + 1).map(
+                          (p) => (
+                            <option key={p} value={p}>
+                              {p}
+                            </option>
+                          ),
+                        )}
+                      </select>{" "}
                       of {totalPages}
                     </span>
                     <button
@@ -3967,12 +3964,14 @@ export function PostHrgClient({
             onHearingPatch={(patch) => {
               const next = { ...postHrgModal } as PostHrgDevRow;
               if (patch.post_hrg_notes !== undefined) {
-                (next as unknown as { post_hrg_notes: string | null }).post_hrg_notes =
-                  patch.post_hrg_notes;
+                (
+                  next as unknown as { post_hrg_notes: string | null }
+                ).post_hrg_notes = patch.post_hrg_notes;
               }
               if (patch.post_hrg_deadline !== undefined) {
-                (next as unknown as { post_hrg_deadline: string | null }).post_hrg_deadline =
-                  patch.post_hrg_deadline;
+                (
+                  next as unknown as { post_hrg_deadline: string | null }
+                ).post_hrg_deadline = patch.post_hrg_deadline;
               }
               handleRecordUpdate(next);
             }}

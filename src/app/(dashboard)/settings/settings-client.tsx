@@ -74,7 +74,7 @@ const CONFIG_TYPES = [
   {
     key: "type_of_docs_needed",
     label: "Type of Docs Needed",
-    hasColor: false,
+    hasColor: true,
   },
 ];
 

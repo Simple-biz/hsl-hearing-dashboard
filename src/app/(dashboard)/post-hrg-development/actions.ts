@@ -93,7 +93,7 @@ export async function fetchPostHrgOptions(): Promise<{
   representatives: RepOption[];
   responsibleOptions: ResponsibleOption[];
   indicatorOptions: IndicatorOption[];
-  docsNeededOptions: { value: string }[];
+  docsNeededOptions: { value: string; color: string | null }[];
 }> {
   const [
     configRes,
@@ -136,7 +136,7 @@ export async function fetchPostHrgOptions(): Promise<{
    ORDER BY display_order`,
     ),
     db.query(
-      `SELECT option_value FROM config_options
+      `SELECT option_value, option_color FROM config_options
        WHERE option_type = 'type_of_docs_needed' AND is_active = true
        ORDER BY display_order`,
     ),
@@ -252,9 +252,12 @@ export async function fetchPostHrgOptions(): Promise<{
       label: r.option_value as string,
       color: (r.option_color as string) || "#9CA3AF",
     })),
-    docsNeededOptions: docsNeededRes.rows.map((r: { option_value: string }) => ({
-      value: r.option_value,
-    })),
+    docsNeededOptions: docsNeededRes.rows.map(
+      (r: { option_value: string; option_color: string | null }) => ({
+        value: r.option_value,
+        color: r.option_color,
+      }),
+    ),
   };
 }
 
