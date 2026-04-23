@@ -1733,14 +1733,62 @@ export async function bulkEmailSelected(hearingIds: number[]) {
 export async function fetchAllHearingsForCompare(
   table: "raw_hearings" | "hearings" = "raw_hearings",
 ) {
+  // When comparing against the hearings table we also union in archived
+  // hearings so the compare modal can call out CSV rows that were previously
+  // archived (they'd otherwise fall through to "new" and get re-imported).
+  // Note: hearings.hearing_time is `time without time zone` while
+  // archived_hearings.hearing_time is `text` — cast both sides to text so
+  // the UNION succeeds.
   const query =
     table === "hearings"
-      ? `SELECT id, LOWER(claimant) as claimant_lower, claimant, ssn_last_4, hearing_date::text, hearing_time, converted_time_est as converted_time
-       FROM hearings ORDER BY hearing_date DESC`
-      : `SELECT id, LOWER(claimant) as claimant_lower, claimant, ssn_last_4, hearing_date::text, hearing_time, converted_time
-       FROM raw_hearings ORDER BY hearing_date DESC`;
+      ? `SELECT id,
+                LOWER(claimant) AS claimant_lower,
+                claimant,
+                ssn_last_4,
+                hearing_date::text,
+                hearing_time::text AS hearing_time,
+                converted_time_est::text AS converted_time,
+                false AS is_archived,
+                NULL::int AS archive_id
+           FROM hearings
+         UNION ALL
+         SELECT hearing_id AS id,
+                LOWER(claimant) AS claimant_lower,
+                claimant,
+                ssn_last_4,
+                hearing_date::text,
+                hearing_time::text AS hearing_time,
+                converted_time_est::text AS converted_time,
+                true AS is_archived,
+                id AS archive_id
+           FROM archived_hearings
+         ORDER BY hearing_date DESC`
+      : `SELECT id,
+                LOWER(claimant) AS claimant_lower,
+                claimant,
+                ssn_last_4,
+                hearing_date::text,
+                hearing_time::text AS hearing_time,
+                converted_time::text AS converted_time,
+                false AS is_archived,
+                NULL::int AS archive_id
+           FROM raw_hearings
+         ORDER BY hearing_date DESC`;
   const { rows } = await db.query(query);
   return { hearings: rows, totalCount: rows.length };
+}
+
+// Look up the archive row id for a given original hearing id so the CSV
+// compare modal can unarchive a hearing without opening the hearings grid.
+export async function unarchiveHearingByHearingId(hearingId: number) {
+  const { rows } = await db.query(
+    "SELECT id FROM archived_hearings WHERE hearing_id = $1",
+    [hearingId],
+  );
+  if (rows.length === 0) {
+    return { success: false, message: "Archive entry not found" };
+  }
+  return unarchiveHearing(rows[0].id);
 }
 
 // ── CSV Compare: import new entries from Chronicle CSV ──

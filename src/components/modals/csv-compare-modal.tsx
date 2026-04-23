@@ -18,6 +18,7 @@ import {
   getArchivedChronicles,
   getArchivedChronicleKeys,
   unarchiveChronicleEntry,
+  unarchiveHearingByHearingId,
 } from "@/app/(dashboard)/actions";
 
 interface ChronicleEntry {
@@ -36,7 +37,7 @@ interface ChronicleEntry {
   enteredDate: string;
 }
 
-type CompareCategory = "new" | "rescheduled" | "duplicate";
+type CompareCategory = "new" | "rescheduled" | "duplicate" | "archived";
 
 export function CsvCompareModal({
   onClose,
@@ -63,6 +64,10 @@ export function CsvCompareModal({
       prevClaimant: string;
     })[];
     duplicates: (ChronicleEntry & { _cat: "duplicate" })[];
+    archivedMatches: (ChronicleEntry & {
+      _cat: "archived";
+      archivedHearingId: number;
+    })[];
   } | null>(null);
   const [activeTab, setActiveTab] = useState<CompareCategory>("new");
   const [newSearch, setNewSearch] = useState("");
@@ -280,14 +285,25 @@ export function CsvCompareModal({
         string,
         { date: string; time: string; claimant: string }[]
       >();
+      // Separate lookups for archived hearings so matches land in the new
+      // "Archived" tab instead of silently becoming "new" entries.
+      const archivedExactMap = new Map<string, number>();
+      const archivedDateMap = new Map<string, number>();
+      const archivedPersonMap = new Map<string, number>();
 
       for (const h of dbHearings) {
         const base = stripSuffix(h.claimant || "").toLowerCase();
         const ssn = (h.ssn_last_4 || "").trim().padStart(4, "0");
         const date = h.hearing_date || "";
         const time = normalizeTime(h.hearing_time || h.converted_time || "");
+        if (!base || !ssn) continue;
 
-        if (base && ssn) {
+        if (h.is_archived) {
+          const hid = Number(h.id);
+          archivedExactMap.set(`${base}|${ssn}|${date}|${time}`, hid);
+          archivedDateMap.set(`${base}|${ssn}|${date}`, hid);
+          archivedPersonMap.set(`${base}|${ssn}`, hid);
+        } else {
           exactMap.set(`${base}|${ssn}|${date}|${time}`, true);
           dateMap.set(`${base}|${ssn}|${date}`, true);
           const pk = `${base}|${ssn}`;
@@ -339,6 +355,10 @@ export function CsvCompareModal({
         prevClaimant: string;
       })[] = [];
       const duplicates: (ChronicleEntry & { _cat: "duplicate" })[] = [];
+      const archivedMatches: (ChronicleEntry & {
+        _cat: "archived";
+        archivedHearingId: number;
+      })[] = [];
 
       for (let i = 1; i < lines.length; i++) {
         if (!lines[i].trim()) continue;
@@ -392,6 +412,21 @@ export function CsvCompareModal({
           continue;
         }
 
+        // Archived check runs before personMap / new so previously-archived
+        // hearings don't silently get re-imported.
+        const archivedHid =
+          archivedExactMap.get(`${nameLower}|${ssn}|${normDate}|${normTime}`) ??
+          archivedDateMap.get(`${nameLower}|${ssn}|${normDate}`) ??
+          archivedPersonMap.get(`${nameLower}|${ssn}`);
+        if (archivedHid !== undefined) {
+          archivedMatches.push({
+            ...entry,
+            _cat: "archived",
+            archivedHearingId: archivedHid,
+          });
+          continue;
+        }
+
         const pk = `${nameLower}|${ssn}`;
         if (personMap.has(pk)) {
           const prev = personMap
@@ -410,10 +445,14 @@ export function CsvCompareModal({
         newEntries.push({ ...entry, _cat: "new" });
       }
 
-      setResults({ newEntries, rescheduled, duplicates });
-      const total = newEntries.length + rescheduled.length + duplicates.length;
+      setResults({ newEntries, rescheduled, duplicates, archivedMatches });
+      const total =
+        newEntries.length +
+        rescheduled.length +
+        duplicates.length +
+        archivedMatches.length;
       setStatus({
-        msg: `Compared ${total} entries: ${newEntries.length} new, ${rescheduled.length} rescheduled, ${duplicates.length} duplicates`,
+        msg: `Compared ${total} entries: ${newEntries.length} new, ${rescheduled.length} rescheduled, ${duplicates.length} duplicates, ${archivedMatches.length} archived`,
         type: "success",
       });
       setActiveTab(
@@ -421,7 +460,9 @@ export function CsvCompareModal({
           ? "new"
           : rescheduled.length > 0
             ? "rescheduled"
-            : "duplicate",
+            : archivedMatches.length > 0
+              ? "archived"
+              : "duplicate",
       );
     } catch (e: unknown) {
       setStatus({
@@ -962,8 +1003,9 @@ export function CsvCompareModal({
                         (e) => !isArchived(e),
                       ).length;
                       const visibleDupes = results.duplicates.length;
+                      const visibleArchived = results.archivedMatches.length;
                       return (
-                        <div className="grid grid-cols-3 gap-3">
+                        <div className="grid grid-cols-4 gap-3">
                           <button
                             onClick={() => setActiveTab("new")}
                             className={cn(
@@ -994,6 +1036,22 @@ export function CsvCompareModal({
                             </p>
                             <p className="text-xs text-muted-foreground font-medium">
                               Rescheduled
+                            </p>
+                          </button>
+                          <button
+                            onClick={() => setActiveTab("archived")}
+                            className={cn(
+                              "rounded-lg border p-3 text-center transition-all",
+                              activeTab === "archived"
+                                ? "border-violet-400 ring-1 ring-violet-400 bg-violet-50/50 dark:bg-violet-950/20"
+                                : "hover:bg-muted/40",
+                            )}
+                          >
+                            <p className="text-2xl font-bold text-violet-700 dark:text-violet-400 tabular-nums">
+                              {visibleArchived}
+                            </p>
+                            <p className="text-xs text-muted-foreground font-medium">
+                              Archived
                             </p>
                           </button>
                           <button
@@ -1511,10 +1569,112 @@ export function CsvCompareModal({
                         </div>
                       )}
 
+                    {/* Archived — CSV rows that match a hearing in
+                        archived_hearings. The team deliberately removed those
+                        hearings, so we skip them from import by default and
+                        offer a per-row Unarchive action. */}
+                    {(activeTab === "archived" || activeTab === null) &&
+                      results.archivedMatches.length > 0 && (
+                        <div className="rounded-lg border overflow-hidden">
+                          <div className="flex items-center gap-2 px-3 py-2 bg-violet-50 dark:bg-violet-950/20 border-b">
+                            <span className="h-2 w-2 rounded-full bg-violet-500" />
+                            <p className="text-xs font-semibold text-violet-800 dark:text-violet-300">
+                              Previously archived ({results.archivedMatches.length})
+                            </p>
+                            <p className="text-[10px] text-violet-600 dark:text-violet-400">
+                              — These hearings were archived from the dashboard.
+                              Skipped from import. Click &quot;Unarchive&quot; to restore.
+                            </p>
+                          </div>
+                          <div className="overflow-auto max-h-80">
+                            <table className="w-full text-xs">
+                              <thead className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10">
+                                <tr>
+                                  <th className="px-2 py-1.5 text-left font-semibold">
+                                    Claimant
+                                  </th>
+                                  <th className="px-2 py-1.5 text-left font-semibold">
+                                    SSN
+                                  </th>
+                                  <th className="px-2 py-1.5 text-left font-semibold">
+                                    Hearing Date
+                                  </th>
+                                  <th className="px-2 py-1.5 text-left font-semibold">
+                                    Time
+                                  </th>
+                                  <th className="px-2 py-1.5 text-left font-semibold">
+                                    ALJ
+                                  </th>
+                                  <th className="px-2 py-1.5 text-right font-semibold">
+                                    Action
+                                  </th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y">
+                                {results.archivedMatches.map((e, i) => (
+                                  <tr
+                                    key={`${e.archivedHearingId}-${i}`}
+                                    className="hover:bg-muted/30"
+                                  >
+                                    <td className="px-2 py-1.5 font-medium">
+                                      {e.claimant}
+                                    </td>
+                                    <td className="px-2 py-1.5 text-muted-foreground tabular-nums">
+                                      {e.ssn || "—"}
+                                    </td>
+                                    <td className="px-2 py-1.5 tabular-nums">
+                                      {e.hearingDate}
+                                    </td>
+                                    <td className="px-2 py-1.5 tabular-nums">
+                                      {e.time || "—"}
+                                    </td>
+                                    <td className="px-2 py-1.5">
+                                      {e.alj || "—"}
+                                    </td>
+                                    <td className="px-2 py-1.5 text-right">
+                                      <button
+                                        type="button"
+                                        onClick={async () => {
+                                          const hid = e.archivedHearingId;
+                                          const r =
+                                            await unarchiveHearingByHearingId(
+                                              hid,
+                                            );
+                                          if (r.success) {
+                                            setResults((prev) =>
+                                              prev
+                                                ? {
+                                                    ...prev,
+                                                    archivedMatches:
+                                                      prev.archivedMatches.filter(
+                                                        (m) =>
+                                                          m.archivedHearingId !==
+                                                          hid,
+                                                      ),
+                                                  }
+                                                : prev,
+                                            );
+                                          }
+                                        }}
+                                        className="h-6 px-2 text-[10px] rounded-md border border-violet-300 text-violet-700 hover:bg-violet-100 dark:border-violet-700 dark:text-violet-300 dark:hover:bg-violet-900/40 transition-colors"
+                                      >
+                                        <ArchiveRestore className="inline h-3 w-3 mr-1" />
+                                        Unarchive
+                                      </button>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+
                     {/* All empty */}
                     {results.newEntries.length === 0 &&
                       results.rescheduled.length === 0 &&
-                      results.duplicates.length === 0 && (
+                      results.duplicates.length === 0 &&
+                      results.archivedMatches.length === 0 && (
                         <div className="rounded-lg border p-8 text-center text-muted-foreground">
                           No entries found in the Chronicles CSV.
                         </div>
