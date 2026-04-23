@@ -16,5 +16,11 @@ export default async function MedicalRecordsPage() {
   }
 
   const data = await getMrPivotPageData(userRole);
-  return <MrPivotClient {...data} userRole={userRole} />;
+  return (
+    <MrPivotClient
+      {...data}
+      userRole={userRole}
+      userName={session.user.name || "Unknown"}
+    />
+  );
 }

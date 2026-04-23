@@ -4,9 +4,12 @@ import { db } from "@/lib/db";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+export type PostHrgRecordType = "MR" | "POST_HRG" | "REP";
+
 export interface PostHrgDevRow {
   id: number;
   hearing_id: number | null;
+  record_type: PostHrgRecordType;
   claimant: string;
   hearing_date: string | null;
   assigned_rep: string | null;
@@ -50,6 +53,13 @@ export interface PostHrgDevStats {
   overdue: number;
 }
 
+export interface PostHrgRecordTypeCounts {
+  all: number;
+  mr: number;
+  postHrg: number;
+  rep: number;
+}
+
 // ─── Config options & representatives ───────────────────────────────────────
 
 export interface ConfigOption {
@@ -83,6 +93,7 @@ export async function fetchPostHrgOptions(): Promise<{
   representatives: RepOption[];
   responsibleOptions: ResponsibleOption[];
   indicatorOptions: IndicatorOption[];
+  docsNeededOptions: { value: string; color: string | null }[];
 }> {
   const [
     configRes,
@@ -91,6 +102,7 @@ export async function fetchPostHrgOptions(): Promise<{
     mrSpecRes,
     mrTeamsRes,
     indicatorRes,
+    docsNeededRes,
   ] = await Promise.all([
     db.query(
       `SELECT option_value, option_color, COALESCE(team_scope, 'shared') AS team_scope
@@ -122,6 +134,11 @@ export async function fetchPostHrgOptions(): Promise<{
       `SELECT option_value, option_color FROM config_options
    WHERE option_type = 'post_hrg_indicator' AND is_active = true
    ORDER BY display_order`,
+    ),
+    db.query(
+      `SELECT option_value, option_color FROM config_options
+       WHERE option_type = 'type_of_docs_needed' AND is_active = true
+       ORDER BY display_order`,
     ),
   ]);
 
@@ -235,6 +252,12 @@ export async function fetchPostHrgOptions(): Promise<{
       label: r.option_value as string,
       color: (r.option_color as string) || "#9CA3AF",
     })),
+    docsNeededOptions: docsNeededRes.rows.map(
+      (r: { option_value: string; option_color: string | null }) => ({
+        value: r.option_value,
+        color: r.option_color,
+      }),
+    ),
   };
 }
 
@@ -247,6 +270,9 @@ export interface FetchPostHrgPageParams {
   status?: string;
   phStatus?: string;
   indicator?: string;
+  recordType?: PostHrgRecordType | "all";
+  hearingDateFrom?: string | null;
+  hearingDateTo?: string | null;
   sortKey?: string;
   sortDir?: "asc" | "desc";
 }
@@ -290,6 +316,24 @@ export async function fetchPostHrgDevPage(
     }
   }
 
+  if (params.recordType && params.recordType !== "all") {
+    conditions.push(`p.record_type = $${idx}`);
+    values.push(params.recordType);
+    idx++;
+  }
+
+  if (params.hearingDateFrom) {
+    conditions.push(`p.hearing_date >= $${idx}::date`);
+    values.push(params.hearingDateFrom);
+    idx++;
+  }
+
+  if (params.hearingDateTo) {
+    conditions.push(`p.hearing_date <= $${idx}::date`);
+    values.push(params.hearingDateTo);
+    idx++;
+  }
+
   const where =
     conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
@@ -322,7 +366,7 @@ export async function fetchPostHrgDevPage(
     ),
     db.query(
       `SELECT
-        p.id, p.hearing_id, p.claimant, p.hearing_date::text,
+        p.id, p.hearing_id, p.record_type, p.claimant, p.hearing_date::text,
         p.assigned_rep, p.post_hearing_status, p.type_of_docs_needed,
         p.details, p.person_responsible,
         p.em_sent_task_created, p.ext_letter_sent,
@@ -362,7 +406,7 @@ export async function fetchPostHrgDevPage(
 export async function fetchPostHrgDevRecords(): Promise<PostHrgDevRow[]> {
   const { rows } = await db.query(`
     SELECT
-      p.id, p.hearing_id, p.claimant, p.hearing_date::text,
+      p.id, p.hearing_id, p.record_type, p.claimant, p.hearing_date::text,
       p.assigned_rep, p.post_hearing_status, p.type_of_docs_needed,
       p.details, p.person_responsible,
       p.em_sent_task_created, p.ext_letter_sent,
@@ -394,8 +438,14 @@ export async function fetchPostHrgDevRecords(): Promise<PostHrgDevRow[]> {
 
 // ─── Fetch stats ────────────────────────────────────────────────────────────
 
-export async function fetchPostHrgDevStats(): Promise<PostHrgDevStats> {
-  const { rows } = await db.query(`
+export async function fetchPostHrgDevStats(
+  recordType?: PostHrgRecordType | "all",
+): Promise<PostHrgDevStats> {
+  const where =
+    recordType && recordType !== "all" ? `WHERE record_type = $1` : ``;
+  const values = recordType && recordType !== "all" ? [recordType] : [];
+  const { rows } = await db.query(
+    `
     SELECT
       COUNT(*)::int AS total,
       COUNT(*) FILTER (WHERE LOWER(status) = 'pending')::int AS pending,
@@ -407,7 +457,10 @@ export async function fetchPostHrgDevStats(): Promise<PostHrgDevStats> {
         AND (LOWER(status) IS DISTINCT FROM 'cancelled')
       )::int AS overdue
     FROM post_hrg_development
-  `);
+    ${where}
+  `,
+    values,
+  );
   const s = rows[0];
   return {
     total: s.total,
@@ -415,6 +468,24 @@ export async function fetchPostHrgDevStats(): Promise<PostHrgDevStats> {
     inProgress: s.in_progress,
     completed: s.completed,
     overdue: s.overdue,
+  };
+}
+
+export async function fetchPostHrgRecordTypeCounts(): Promise<PostHrgRecordTypeCounts> {
+  const { rows } = await db.query(`
+    SELECT
+      COUNT(*)::int AS all_count,
+      COUNT(*) FILTER (WHERE record_type = 'MR')::int AS mr,
+      COUNT(*) FILTER (WHERE record_type = 'POST_HRG')::int AS post_hrg,
+      COUNT(*) FILTER (WHERE record_type = 'REP')::int AS rep
+    FROM post_hrg_development
+  `);
+  const r = rows[0];
+  return {
+    all: r.all_count,
+    mr: r.mr,
+    postHrg: r.post_hrg,
+    rep: r.rep,
   };
 }
 
@@ -435,6 +506,7 @@ export async function createPostHrgDevRecord(data: {
   new_due_date?: string | null;
   remarks?: string | null;
   created_by?: number | null;
+  record_type?: PostHrgRecordType;
 }) {
   if (!data.claimant?.trim()) {
     return { success: false, message: "Claimant name is required" };
@@ -470,12 +542,12 @@ export async function createPostHrgDevRecord(data: {
       hearing_id, claimant, hearing_date, assigned_rep,
       post_hearing_status, type_of_docs_needed, details,
       person_responsible, em_sent_task_created, ext_letter_sent,
-      status, deadline, new_due_date, remarks, created_by
+      status, deadline, new_due_date, remarks, created_by, record_type
     ) VALUES (
       $1, $2, NULLIF($3, '')::date, $4,
       $5, $6, $7,
       $8, $9, $10,
-      $11, NULLIF($12, '')::date, NULLIF($13, '')::date, $14, $15
+      $11, NULLIF($12, '')::date, NULLIF($13, '')::date, $14, $15, $16
     ) RETURNING id`,
     [
       hearingId,
@@ -493,6 +565,7 @@ export async function createPostHrgDevRecord(data: {
       data.new_due_date || null,
       data.remarks || null,
       data.created_by || null,
+      data.record_type || "POST_HRG",
     ],
   );
 
@@ -503,6 +576,105 @@ export async function createPostHrgDevRecord(data: {
   );
 
   return { success: true, id: rows[0].id, hearingId };
+}
+
+// ─── Bulk-create from hearings (one row per (hearing, type)) ────────────────
+
+export interface BulkCreatePostHrgResult {
+  created: number;
+  skipped: {
+    hearingId: number;
+    recordType: PostHrgRecordType;
+    reason: "already_exists" | "hearing_not_found";
+  }[];
+}
+
+export async function bulkCreatePostHrgFromHearings(
+  hearingIds: number[],
+  types: PostHrgRecordType[],
+  createdBy: number | null,
+): Promise<BulkCreatePostHrgResult> {
+  if (hearingIds.length === 0 || types.length === 0) {
+    return { created: 0, skipped: [] };
+  }
+
+  // CROSS JOIN hearings × types → one INSERT per pair. Legit duplicates (same
+  // hearing, same record_type) are now allowed at the schema level, so the
+  // bulk button guards against accidental re-clicks with a NOT EXISTS subquery
+  // rather than ON CONFLICT. Manual duplicates created from the post-hrg page
+  // are unaffected.
+  const insertRes = await db.query(
+    `INSERT INTO post_hrg_development (
+       hearing_id, claimant, hearing_date, assigned_rep, status, record_type, created_by
+     )
+     SELECT
+       h.id,
+       h.claimant,
+       h.hearing_date,
+       r.name,
+       'Pending',
+       t.record_type,
+       $3
+     FROM hearings h
+     LEFT JOIN representatives r ON r.id = h.assigned_rep_id
+     CROSS JOIN unnest($2::post_hrg_record_type[]) AS t(record_type)
+     WHERE h.id = ANY($1::int[])
+       AND NOT EXISTS (
+         SELECT 1
+         FROM post_hrg_development p
+         WHERE p.hearing_id = h.id
+           AND p.record_type = t.record_type
+       )
+     RETURNING hearing_id, record_type`,
+    [hearingIds, types, createdBy],
+  );
+
+  const insertedKeys = new Set(
+    (insertRes.rows as { hearing_id: number; record_type: string }[]).map(
+      (r) => `${r.hearing_id}:${r.record_type}`,
+    ),
+  );
+
+  const foundHearingIdsRes = await db.query(
+    `SELECT id FROM hearings WHERE id = ANY($1::int[])`,
+    [hearingIds],
+  );
+  const foundHearingIds = new Set(
+    (foundHearingIdsRes.rows as { id: number }[]).map((r) => r.id),
+  );
+
+  const skipped: BulkCreatePostHrgResult["skipped"] = [];
+  for (const hid of hearingIds) {
+    if (!foundHearingIds.has(hid)) {
+      for (const t of types) {
+        skipped.push({
+          hearingId: hid,
+          recordType: t,
+          reason: "hearing_not_found",
+        });
+      }
+      continue;
+    }
+    for (const t of types) {
+      if (!insertedKeys.has(`${hid}:${t}`)) {
+        skipped.push({
+          hearingId: hid,
+          recordType: t,
+          reason: "already_exists",
+        });
+      }
+    }
+  }
+
+  if (insertRes.rows.length > 0) {
+    const { logAction } = await import("@/lib/activity-log");
+    await logAction(
+      "post_hrg_dev_bulk_created",
+      `Created ${insertRes.rows.length} post-hrg records from ${hearingIds.length} hearing(s) across ${types.length} type(s): ${types.join(", ")}`,
+    );
+  }
+
+  return { created: insertRes.rows.length, skipped };
 }
 
 // ─── Update a record ────────────────────────────────────────────────────────
@@ -684,6 +856,35 @@ export async function deletePostHrgDevRecord(id: number) {
   return { success: true };
 }
 
+// ─── Record-type categorization (mirrors the SQL backfill migrations) ──────
+// Keep these rules in sync with:
+//   20260421_backfill_post_hrg_record_type.sql
+//   20260421_categorize_post_hrg_residuals.sql
+function deriveRecordTypeFromDocs(
+  typeOfDocsNeeded: string | null | undefined,
+): PostHrgRecordType {
+  if (!typeOfDocsNeeded) return "POST_HRG";
+  const s = typeOfDocsNeeded.toLowerCase();
+
+  // MR — medical records / consultative examinations
+  if (s.includes("medical")) return "MR";
+  if (s.includes("ce") && !s.includes("proffer")) return "MR";
+
+  // REP — rep-side / claimant-supplied evidence
+  if (
+    s.includes("third party") ||
+    s.includes("closing statement") ||
+    s.includes("tax return") ||
+    s.includes("pay stub") ||
+    s.includes("earning")
+  ) {
+    return "REP";
+  }
+
+  // Default — post-hearing legal docs (letter / brief / memo / unmatched)
+  return "POST_HRG";
+}
+
 // ─── Bulk import from XLSX ──────────────────────────────────────────────────
 
 export async function importPostHrgDevRecords(data: {
@@ -699,6 +900,14 @@ export async function importPostHrgDevRecords(data: {
   let imported = 0;
   let matched = 0;
   const errors: string[] = [];
+  // Rows that did NOT make it into the table — surfaced in the UI preview.
+  // Includes both silent skips (missing claimant) and INSERT failures.
+  const skipped: {
+    row: number;
+    claimant: string;
+    hearingDate: string | null;
+    reason: string;
+  }[] = [];
 
   // Parse helpers
   const parseDate = (raw: unknown): string | null => {
@@ -824,7 +1033,16 @@ export async function importPostHrgDevRecords(data: {
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i] as string[];
     const claimant = getVal(row, "claimant");
-    if (!claimant) continue;
+    const sheetRowNum = data.rowOffset + i + 2;
+    if (!claimant) {
+      skipped.push({
+        row: sheetRowNum,
+        claimant: "",
+        hearingDate: null,
+        reason: "Missing claimant",
+      });
+      continue;
+    }
 
     const hearingDate = parseDate(getVal(row, "hearing_date"));
 
@@ -860,6 +1078,9 @@ export async function importPostHrgDevRecords(data: {
     }
 
     try {
+      const typeOfDocsValue = getVal(row, "type_of_docs_needed") || null;
+      const derivedRecordType = deriveRecordTypeFromDocs(typeOfDocsValue);
+
       await db.query(
         `INSERT INTO post_hrg_development (
           hearing_id, claimant, hearing_date, assigned_rep,
@@ -867,13 +1088,15 @@ export async function importPostHrgDevRecords(data: {
           person_responsible, em_sent_task_created, ext_letter_sent,
           status, deadline, new_due_date, remarks, created_by,
           details_notes, person_responsible_notes,
-          em_sent_task_created_notes, ext_letter_sent_notes, status_notes
+          em_sent_task_created_notes, ext_letter_sent_notes, status_notes,
+          record_type
         ) VALUES (
           $1, $2, $3::date, $4,
           $5, $6, $7,
           $8, $9, $10,
           $11, $12::date, $13::date, $14, $15,
-          $16, $17, $18, $19, $20
+          $16, $17, $18, $19, $20,
+          $21::post_hrg_record_type
         )`,
         [
           hearingId,
@@ -881,7 +1104,7 @@ export async function importPostHrgDevRecords(data: {
           hearingDate,
           repName,
           getVal(row, "post_hearing_status") || null,
-          getVal(row, "type_of_docs_needed") || null,
+          typeOfDocsValue,
           getVal(row, "details") || null,
           resolveNameFromDb(
             getVal(row, "person_responsible") || null,
@@ -907,13 +1130,19 @@ export async function importPostHrgDevRecords(data: {
           notesData.em_sent_task_created_notes,
           notesData.ext_letter_sent_notes,
           notesData.status_notes,
+          derivedRecordType,
         ],
       );
       imported++;
     } catch (err) {
-      errors.push(
-        `Row ${data.rowOffset + i + 2}: ${err instanceof Error ? err.message : "Unknown error"}`,
-      );
+      const reason = err instanceof Error ? err.message : "Unknown error";
+      errors.push(`Row ${sheetRowNum}: ${reason}`);
+      skipped.push({
+        row: sheetRowNum,
+        claimant,
+        hearingDate,
+        reason,
+      });
     }
   }
 
@@ -925,7 +1154,7 @@ export async function importPostHrgDevRecords(data: {
     );
   }
 
-  return { success: true, imported, matched, errors };
+  return { success: true, imported, matched, errors, skipped };
 }
 
 // ─── Create from hearing (called when decision set to "Pending Decision") ───
@@ -1117,14 +1346,16 @@ export interface PostHrgActivityLog {
   createdAt: string;
 }
 
-export async function fetchPostHrgActivityLog(
-  params: {
-    page?: number;
-    pageSize?: number;
-    search?: string;
-  } = {},
-): Promise<{ logs: PostHrgActivityLog[]; total: number }> {
-  const POST_HRG_ACTIONS = [
+export type PostHrgActivityCategory =
+  | "all"
+  | "created"
+  | "updated"
+  | "notes"
+  | "deleted"
+  | "imported";
+
+const ACTIONS_BY_CATEGORY: Record<PostHrgActivityCategory, string[]> = {
+  all: [
     "post_hrg_dev_created",
     "post_hrg_dev_updated",
     "post_hrg_dev_field_updated",
@@ -1133,10 +1364,34 @@ export async function fetchPostHrgActivityLog(
     "post_hrg_dev_note_added",
     "post_hrg_dev_note_deleted",
     "post_hrg_dev_auto_created",
-  ];
+    "post_hrg_dev_bulk_created",
+  ],
+  created: [
+    "post_hrg_dev_created",
+    "post_hrg_dev_auto_created",
+    "post_hrg_dev_bulk_created",
+  ],
+  updated: ["post_hrg_dev_updated", "post_hrg_dev_field_updated"],
+  notes: ["post_hrg_dev_note_added", "post_hrg_dev_note_deleted"],
+  deleted: ["post_hrg_dev_deleted"],
+  imported: ["post_hrg_dev_import"],
+};
+
+export async function fetchPostHrgActivityLog(
+  params: {
+    page?: number;
+    pageSize?: number;
+    search?: string;
+    category?: PostHrgActivityCategory;
+    fromDate?: string | null;
+    toDate?: string | null;
+  } = {},
+): Promise<{ logs: PostHrgActivityLog[]; total: number }> {
+  const category: PostHrgActivityCategory = params.category ?? "all";
+  const actions = ACTIONS_BY_CATEGORY[category] ?? ACTIONS_BY_CATEGORY.all;
 
   const conditions: string[] = [`a.action = ANY($1)`];
-  const values: unknown[] = [POST_HRG_ACTIONS];
+  const values: unknown[] = [actions];
   let idx = 2;
 
   if (params.search?.trim()) {
@@ -1144,6 +1399,19 @@ export async function fetchPostHrgActivityLog(
       `(a.description ILIKE $${idx} OR u.full_name ILIKE $${idx})`,
     );
     values.push(`%${params.search.trim()}%`);
+    idx++;
+  }
+
+  if (params.fromDate) {
+    conditions.push(`a.created_at >= $${idx}::date`);
+    values.push(params.fromDate);
+    idx++;
+  }
+
+  if (params.toDate) {
+    // Inclusive: include the whole end day.
+    conditions.push(`a.created_at < ($${idx}::date + INTERVAL '1 day')`);
+    values.push(params.toDate);
     idx++;
   }
 
