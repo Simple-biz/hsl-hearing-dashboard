@@ -58,6 +58,9 @@ export const PAGE_ACCESS: Record<string, UserRole[]> = {
     "mr_admin",
     "mr_agent",
     "mr_lead",
+    // View-only — has no entry in MR_PIVOT_EDITABLE / derivePermissions
+    // whitelists, so every editable cell renders as a read-only span.
+    "post_hearing_admin",
   ],
   patient_portal: [
     "system_admin",

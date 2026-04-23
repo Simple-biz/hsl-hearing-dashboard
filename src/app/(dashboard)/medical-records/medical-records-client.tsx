@@ -1498,6 +1498,9 @@ export function MrPivotClient({ userRole, userName, ...data }: Props) {
   const canViewAdminCards = (
     ["system_admin", "admin", "mr_admin", "mr_lead"] as UserRole[]
   ).includes(userRole);
+  // Post HRG admin gets read-only access; hide cross-page navigation
+  // (Patient Portal, RFC Docs) since those pages aren't in their scope.
+  const isPostHearingAdmin = userRole === "post_hearing_admin";
   const [isPending, startTransition] = useTransition();
 
   // ── Portal mount guard ────────────────────────────────────────────────────
@@ -2152,22 +2155,26 @@ export function MrPivotClient({ userRole, userName, ...data }: Props) {
                 </button>
               )}
               {/* Patient Portal */}
-              <a
-                href="/patient-portal"
-                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-semibold transition-colors"
-              >
-                🏥 Patient Portal
-              </a>
+              {!isPostHearingAdmin && (
+                <a
+                  href="/patient-portal"
+                  className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-semibold transition-colors"
+                >
+                  🏥 Patient Portal
+                </a>
+              )}
 
               {/* RFC Documents */}
-              <button
-                onClick={() => router.push("/rfc")}
-                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-[#6A4C93] hover:bg-[#5a3d80] text-white font-semibold transition-colors"
-              >
-                <ClipboardList size={12} />
-                <span className="hidden sm:inline">RFC Docs</span>
-                <span className="sm:hidden">RFC</span>
-              </button>
+              {!isPostHearingAdmin && (
+                <button
+                  onClick={() => router.push("/rfc")}
+                  className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-[#6A4C93] hover:bg-[#5a3d80] text-white font-semibold transition-colors"
+                >
+                  <ClipboardList size={12} />
+                  <span className="hidden sm:inline">RFC Docs</span>
+                  <span className="sm:hidden">RFC</span>
+                </button>
+              )}
               <button
                 onClick={() => setShowActivityLog(true)}
                 className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground font-semibold transition-colors"
