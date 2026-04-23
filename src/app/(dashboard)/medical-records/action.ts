@@ -194,6 +194,222 @@ async function recordHearingUpdateEvent(
   });
 }
 
+
+type SyncMutationResult<T> = {
+  payload: HearingSyncPayloadRow;
+  oldValue: T | null;
+};
+
+// IMPORTANT:
+// - only pass hardcoded SQL fragments from this file
+// - never pass user-provided column names or SQL into this helper
+async function updateSingleFieldAndRecordEvent<T>({
+  client,
+  hearingId,
+  oldValueColumnSql,
+  updateSetSql,
+  updateParams,
+  changedField,
+  newValue,
+}: {
+  client: SyncEventQueryRunner;
+  hearingId: number;
+  oldValueColumnSql: string;
+  updateSetSql: string;
+  updateParams: unknown[];
+  changedField: string;
+  newValue: unknown;
+}): Promise<SyncMutationResult<T>> {
+  type Row = HearingSyncPayloadRow & { old_value: T | null };
+
+  const { rows } = await client.query<Row>(
+    `
+      WITH previous AS (
+        SELECT
+          h.id,
+          ${oldValueColumnSql} AS old_value
+        FROM hearings h
+        WHERE h.id = $1
+        FOR UPDATE
+      ),
+      updated AS (
+        UPDATE hearings h
+        SET
+          ${updateSetSql},
+          updated_at = NOW()
+        FROM previous p
+        WHERE h.id = p.id
+        RETURNING
+          h.id,
+          h.claimant,
+          h.claim_type,
+          h.hearing_date,
+          h.hearing_time,
+          h.time_zone,
+          h.converted_time_est,
+          h.alj,
+          h.medical_expert,
+          h.vocational_expert,
+          h.hearing_decision_status,
+          h.medical_record_status,
+          h.manner_of_appearance,
+          h.post_hrg_deadline,
+          h.task_assigned,
+          h.five_day_notice,
+          h.medical_record_link,
+          h.mr_team_id,
+          p.old_value
+      )
+      SELECT
+        u.id::text                               AS id,
+        COALESCE(u.claimant, '')                 AS claimant,
+        COALESCE(u.claim_type, '')               AS claim_type,
+        COALESCE(u.hearing_date::text, '')       AS hearing_date,
+        COALESCE(u.hearing_time::text, '')       AS hearing_time,
+        COALESCE(u.time_zone, '')                AS time_zone,
+        COALESCE(u.converted_time_est::text, '') AS converted_time_est,
+        COALESCE(u.alj, '')                      AS alj,
+        COALESCE(u.medical_expert, '')           AS medical_expert,
+        COALESCE(u.vocational_expert, '')        AS vocational_expert,
+        COALESCE(u.hearing_decision_status, '')  AS hearing_decision_status,
+        COALESCE(u.medical_record_status, '')    AS medical_record_status,
+        COALESCE(t.team_name, '')                AS mr_team_name,
+        COALESCE(u.manner_of_appearance, '')     AS manner_of_appearance,
+        COALESCE(u.post_hrg_deadline::text, '')  AS post_hrg_deadline,
+        COALESCE(u.task_assigned, false)         AS task_assigned,
+        COALESCE(u.five_day_notice, false)       AS five_day_notice,
+        COALESCE(u.medical_record_link, '')      AS medical_record_link,
+        u.old_value                              AS old_value
+      FROM updated u
+      LEFT JOIN mr_teams t ON u.mr_team_id = t.id
+    `,
+    [hearingId, ...updateParams],
+  )
+
+  const row = rows[0];
+  if (!row) {
+    throw new Error(`Failed to update hearing #${hearingId}`);
+  }
+
+  const { old_value, ...payload } = row;
+
+  await recordHearingSyncEvent(client, {
+    hearingId,
+    eventType: "update",
+    payload,
+    changedFields: {
+      [changedField]: {
+        old: old_value ?? null,
+        new: newValue,
+      },
+    },
+  });
+
+  return {
+    payload,
+    oldValue: old_value ?? null,
+  };
+}
+
+async function updateMrTeamAndRecordEvent(
+  client: SyncEventQueryRunner,
+  hearingId: number,
+  teamId: number | null,
+): Promise<{ payload: HearingSyncPayloadRow; oldTeamName: string | null }> {
+  type Row = HearingSyncPayloadRow & { old_team_name: string | null };
+
+  const { rows } = await client.query<Row>(
+    `
+      WITH previous AS (
+        SELECT
+          h.id,
+          t.team_name AS old_team_name
+        FROM hearings h
+        LEFT JOIN mr_teams t ON h.mr_team_id = t.id
+        WHERE h.id = $1
+        FOR UPDATE
+      ),
+      updated AS (
+        UPDATE hearings h
+        SET
+          mr_team_id = $2,
+          mr_team_assigned_at = CASE WHEN $2::int IS NULL THEN NULL ELSE NOW() END,
+          updated_at = NOW()
+        FROM previous p
+        WHERE h.id = p.id
+        RETURNING
+          h.id,
+          h.claimant,
+          h.claim_type,
+          h.hearing_date,
+          h.hearing_time,
+          h.time_zone,
+          h.converted_time_est,
+          h.alj,
+          h.medical_expert,
+          h.vocational_expert,
+          h.hearing_decision_status,
+          h.medical_record_status,
+          h.manner_of_appearance,
+          h.post_hrg_deadline,
+          h.task_assigned,
+          h.five_day_notice,
+          h.medical_record_link,
+          h.mr_team_id,
+          p.old_team_name
+      )
+      SELECT
+        u.id::text                               AS id,
+        COALESCE(u.claimant, '')                 AS claimant,
+        COALESCE(u.claim_type, '')               AS claim_type,
+        COALESCE(u.hearing_date::text, '')       AS hearing_date,
+        COALESCE(u.hearing_time::text, '')       AS hearing_time,
+        COALESCE(u.time_zone, '')                AS time_zone,
+        COALESCE(u.converted_time_est::text, '') AS converted_time_est,
+        COALESCE(u.alj, '')                      AS alj,
+        COALESCE(u.medical_expert, '')           AS medical_expert,
+        COALESCE(u.vocational_expert, '')        AS vocational_expert,
+        COALESCE(u.hearing_decision_status, '')  AS hearing_decision_status,
+        COALESCE(u.medical_record_status, '')    AS medical_record_status,
+        COALESCE(t.team_name, '')                AS mr_team_name,
+        COALESCE(u.manner_of_appearance, '')     AS manner_of_appearance,
+        COALESCE(u.post_hrg_deadline::text, '')  AS post_hrg_deadline,
+        COALESCE(u.task_assigned, false)         AS task_assigned,
+        COALESCE(u.five_day_notice, false)       AS five_day_notice,
+        COALESCE(u.medical_record_link, '')      AS medical_record_link,
+        u.old_team_name                          AS old_team_name
+      FROM updated u
+      LEFT JOIN mr_teams t ON u.mr_team_id = t.id
+    `,
+    [hearingId, teamId],
+  );
+
+  const row = rows[0];
+  if (!row) {
+    throw new Error(`Failed to update MR team for hearing #${hearingId}`);
+  }
+
+  const { old_team_name, ...payload } = row;
+  const newTeamName = payload.mr_team_name || null;
+
+  await recordHearingSyncEvent(client, {
+    hearingId,
+    eventType: "update",
+    payload,
+    changedFields: {
+      mr_team_name: {
+        old: old_team_name ?? null,
+        new: newTeamName,
+      },
+    },
+  });
+
+  return {
+    payload,
+    oldTeamName: old_team_name ?? null,
+  };
+}
+
 // ─── Shared SQL fragment — excludes withdrawn/dismissed records ───────────────
 const WITHDRAWN_FILTER = `
   (h.medical_record_status != 'WITHDRAWAL' OR h.medical_record_status IS NULL)
@@ -831,26 +1047,14 @@ export async function updateMrStatus(
   status: string,
 ): Promise<{ success: boolean }> {
   await db.transaction(async (client) => {
-    const { rows } = await client.query<{ medical_record_status: string | null }>(
-      `SELECT medical_record_status FROM hearings WHERE id = $1`,
-      [hearingId],
-    );
-
-    const oldStatus = rows[0]?.medical_record_status ?? null;
-
-    await client.query(
-      `UPDATE hearings SET medical_record_status = $1, updated_at = NOW() WHERE id = $2`,
-      [status, hearingId],
-    );
-
-    await recordHearingUpdateEvent(client, {
+    await updateSingleFieldAndRecordEvent<string>({
+      client,
       hearingId,
-      changedFields: {
-        medical_record_status: {
-          old: oldStatus,
-          new: status || null,
-        },
-      },
+      oldValueColumnSql: "medical_record_status",
+      updateSetSql: "medical_record_status = $2",
+      updateParams: [status],
+      changedField: "medical_record_status",
+      newValue: status || null,
     });
   });
 
@@ -863,33 +1067,19 @@ export async function updateHearingDecisionStatus(
   status: string,
 ): Promise<{ success: boolean }> {
   const txResult = await db.transaction<{ claimant: string }>(async (client) => {
-    const { rows } = await client.query<{
-      hearing_decision_status: string | null;
-      claimant: string | null;
-    }>(
-      `SELECT hearing_decision_status, claimant FROM hearings WHERE id = $1`,
-      [hearingId],
-    );
-
-    const oldStatus = rows[0]?.hearing_decision_status ?? null;
-    const claimant = rows[0]?.claimant || `Hearing #${hearingId}`;
-
-    await client.query(
-      `UPDATE hearings SET hearing_decision_status = $1, updated_at = NOW() WHERE id = $2`,
-      [status, hearingId],
-    );
-
-    await recordHearingUpdateEvent(client, {
+    const { payload } = await updateSingleFieldAndRecordEvent<string>({
+      client,
       hearingId,
-      changedFields: {
-        hearing_decision_status: {
-          old: oldStatus,
-          new: status || null,
-        },
-      },
+      oldValueColumnSql: "hearing_decision_status",
+      updateSetSql: "hearing_decision_status = $2",
+      updateParams: [status],
+      changedField: "hearing_decision_status",
+      newValue: status || null,
     });
 
-    return { claimant };
+    return {
+      claimant: payload.claimant || `Hearing #${hearingId}`,
+    };
   });
 
   await logActivity("decision_status_updated", `Decision status updated to "${status}" for hearing #${hearingId}`);
@@ -908,41 +1098,11 @@ export async function updateMrTeam(
   teamId: number | null,
 ): Promise<{ success: boolean }> {
   const txResult = await db.transaction<{ newTeamName: string | null }>(async (client) => {
-    const { rows } = await client.query<{ mr_team_name: string | null }>(
-      `
-        SELECT t.team_name AS mr_team_name
-        FROM hearings h
-        LEFT JOIN mr_teams t ON h.mr_team_id = t.id
-        WHERE h.id = $1
-      `,
-      [hearingId],
-    );
+    const { payload } = await updateMrTeamAndRecordEvent(client, hearingId, teamId);
 
-    const oldTeamName = rows[0]?.mr_team_name ?? null;
-
-    await client.query(
-      `UPDATE hearings SET mr_team_id = $1, mr_team_assigned_at = $2, updated_at = NOW() WHERE id = $3`,
-      [teamId, teamId ? new Date().toISOString() : null, hearingId],
-    );
-
-    const payload = await fetchHearingSyncPayload(client, hearingId);
-    const newTeamName = payload?.mr_team_name || null;
-
-    if (payload) {
-      await recordHearingSyncEvent(client, {
-        hearingId,
-        eventType: "update",
-        payload,
-        changedFields: {
-          mr_team_name: {
-            old: oldTeamName,
-            new: newTeamName,
-          },
-        },
-      });
-    }
-
-    return { newTeamName };
+    return {
+      newTeamName: payload.mr_team_name || null,
+    };
   });
 
   await logActivity(
@@ -959,26 +1119,14 @@ export async function toggleTaskAssigned(
   value: boolean,
 ): Promise<{ success: boolean }> {
   await db.transaction(async (client) => {
-    const { rows } = await client.query<{ task_assigned: boolean | null }>(
-      `SELECT task_assigned FROM hearings WHERE id = $1`,
-      [hearingId],
-    );
-
-    const oldValue = rows[0]?.task_assigned ?? null;
-
-    await client.query(
-      `UPDATE hearings SET task_assigned = $1, updated_at = NOW() WHERE id = $2`,
-      [value, hearingId],
-    );
-
-    await recordHearingUpdateEvent(client, {
+    await updateSingleFieldAndRecordEvent<boolean>({
+      client,
       hearingId,
-      changedFields: {
-        task_assigned: {
-          old: oldValue,
-          new: value,
-        },
-      },
+      oldValueColumnSql: "task_assigned",
+      updateSetSql: "task_assigned = $2",
+      updateParams: [value],
+      changedField: "task_assigned",
+      newValue: value,
     });
   });
 
@@ -1003,26 +1151,14 @@ export async function toggleFiveDayNotice(
   value: boolean,
 ): Promise<{ success: boolean }> {
   await db.transaction(async (client) => {
-    const { rows } = await client.query<{ five_day_notice: boolean | null }>(
-      `SELECT five_day_notice FROM hearings WHERE id = $1`,
-      [hearingId],
-    );
-
-    const oldValue = rows[0]?.five_day_notice ?? null;
-
-    await client.query(
-      `UPDATE hearings SET five_day_notice = $1, updated_at = NOW() WHERE id = $2`,
-      [value, hearingId],
-    );
-
-    await recordHearingUpdateEvent(client, {
+    await updateSingleFieldAndRecordEvent<boolean>({
+      client,
       hearingId,
-      changedFields: {
-        five_day_notice: {
-          old: oldValue,
-          new: value,
-        },
-      },
+      oldValueColumnSql: "five_day_notice",
+      updateSetSql: "five_day_notice = $2",
+      updateParams: [value],
+      changedField: "five_day_notice",
+      newValue: value,
     });
   });
 
@@ -1035,26 +1171,14 @@ export async function updateMoa(
   manner: string,
 ): Promise<{ success: boolean }> {
   await db.transaction(async (client) => {
-    const { rows } = await client.query<{ manner_of_appearance: string | null }>(
-      `SELECT manner_of_appearance FROM hearings WHERE id = $1`,
-      [hearingId],
-    );
-
-    const oldManner = rows[0]?.manner_of_appearance ?? null;
-
-    await client.query(
-      `UPDATE hearings SET manner_of_appearance = $1, updated_at = NOW() WHERE id = $2`,
-      [manner, hearingId],
-    );
-
-    await recordHearingUpdateEvent(client, {
+    await updateSingleFieldAndRecordEvent<string>({
+      client,
       hearingId,
-      changedFields: {
-        manner_of_appearance: {
-          old: oldManner,
-          new: manner || null,
-        },
-      },
+      oldValueColumnSql: "manner_of_appearance",
+      updateSetSql: "manner_of_appearance = $2",
+      updateParams: [manner],
+      changedField: "manner_of_appearance",
+      newValue: manner || null,
     });
   });
 
@@ -1067,26 +1191,14 @@ export async function updateWorksheetLink(
   link: string,
 ): Promise<{ success: boolean }> {
   await db.transaction(async (client) => {
-    const { rows } = await client.query<{ medical_record_link: string | null }>(
-      `SELECT medical_record_link FROM hearings WHERE id = $1`,
-      [hearingId],
-    );
-
-    const oldLink = rows[0]?.medical_record_link ?? null;
-
-    await client.query(
-      `UPDATE hearings SET medical_record_link = $1, updated_at = NOW() WHERE id = $2`,
-      [link, hearingId],
-    );
-
-    await recordHearingUpdateEvent(client, {
+    await updateSingleFieldAndRecordEvent<string>({
+      client,
       hearingId,
-      changedFields: {
-        medical_record_link: {
-          old: oldLink,
-          new: link || null,
-        },
-      },
+      oldValueColumnSql: "medical_record_link",
+      updateSetSql: "medical_record_link = $2",
+      updateParams: [link],
+      changedField: "medical_record_link",
+      newValue: link || null,
     });
   });
 
@@ -1560,26 +1672,14 @@ export async function updatePostHrgDeadline(
   deadline: string,
 ): Promise<{ success: boolean }> {
   await db.transaction(async (client) => {
-    const { rows } = await client.query<{ post_hrg_deadline: string | null }>(
-      `SELECT post_hrg_deadline::text AS post_hrg_deadline FROM hearings WHERE id = $1`,
-      [hearingId],
-    );
-
-    const oldDeadline = rows[0]?.post_hrg_deadline ?? null;
-
-    await client.query(
-      `UPDATE hearings SET post_hrg_deadline = $1, updated_at = NOW() WHERE id = $2`,
-      [deadline, hearingId],
-    );
-
-    await recordHearingUpdateEvent(client, {
+    await updateSingleFieldAndRecordEvent<string>({
+      client,
       hearingId,
-      changedFields: {
-        post_hrg_deadline: {
-          old: oldDeadline,
-          new: deadline || null,
-        },
-      },
+      oldValueColumnSql: "post_hrg_deadline::text",
+      updateSetSql: "post_hrg_deadline = $2",
+      updateParams: [deadline],
+      changedField: "post_hrg_deadline",
+      newValue: deadline || null,
     });
   });
 

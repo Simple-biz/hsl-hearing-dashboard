@@ -1875,7 +1875,10 @@ export function MrPivotClient({ userRole, ...data }: Props) {
   // ── Row update handler ────────────────────────────────────────────────────
   async function handleUpdate(id: number, field: string, value: unknown) {
     const hearing = hearings.find((h) => h.id === id);
-    const claimant = hearing?.claimant ?? "";
+    if (!hearing) return;
+
+    const claimant = hearing.claimant ?? "";
+    const previous = { ...hearing };
 
     const actions: Record<string, (v: unknown) => Promise<unknown>> = {
       medical_record_status: (v) => updateMrStatus(id, v as string),
@@ -1888,17 +1891,14 @@ export function MrPivotClient({ userRole, ...data }: Props) {
       medical_record_link: (v) => updateWorksheetLink(id, v as string),
       five_day_notice: (v) => toggleFiveDayNotice(id, v as boolean),
     };
-    await actions[field]?.(value);
 
-    // Show feedback toast
-    showToast(field, value, claimant);
-
-    // mr_team needs to update mr_team_id + derive mr_team_name/color from teams list
+    // Optimistic update first so inline edits feel instant.
     if (field === "mr_team") {
       const teamId = value as number | null;
       const team = teamId
         ? data.medical_teams.find((t) => t.id === teamId)
         : null;
+
       setHearings((prev) =>
         prev.map((h) =>
           h.id === id
@@ -1912,12 +1912,32 @@ export function MrPivotClient({ userRole, ...data }: Props) {
             : h,
         ),
       );
-      // Refresh round robin immediately so the indicator reflects the new assignment
-      getRoundRobinState().then(setRoundRobin);
     } else {
       setHearings((prev) =>
         prev.map((h) => (h.id === id ? { ...h, [field]: value } : h)),
       );
+    }
+
+    try {
+      await actions[field]?.(value);
+      showToast(field, value, claimant);
+
+      if (field === "mr_team") {
+        // Refresh round robin after a successful team assignment.
+        getRoundRobinState().then(setRoundRobin).catch(() => {});
+      }
+    } catch (error) {
+      // Roll back the row if the save fails.
+      setHearings((prev) => prev.map((h) => (h.id === id ? previous : h)));
+
+      const label = TOAST_LABELS[field] ?? field.replace(/_/g, " ");
+      const msg = `${label} failed to save${claimant ? ` • ${claimant}` : ""}`;
+
+      if (updateToastTimer.current) clearTimeout(updateToastTimer.current);
+      setUpdateToast(msg);
+      updateToastTimer.current = setTimeout(() => setUpdateToast(null), 3000);
+
+      console.error(`Failed to update ${field} for hearing #${id}`, error);
     }
   }
 
