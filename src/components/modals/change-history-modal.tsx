@@ -31,14 +31,13 @@ export type ChangeType = "created" | "updated" | "deleted";
 
 export interface FieldDiff {
   field: string;
-  old: string | null;
-  new: string | null;
+  old: string | boolean | null;
+  new: string | boolean | null;
 }
 
 export interface ChangeEntry {
   type: ChangeType;
   record: string;      // Claimant name
-  ssnLast4?: string | null;
   sheetRow: number;
   diffs: FieldDiff[];  // Empty for created/deleted — use note instead
   note?: string;
@@ -53,10 +52,6 @@ export interface SyncBackup {
   fileName?: string;
   url?: string;
   createdAt?: string | null;
-  triggeredBy?: string;
-  triggeredByRole?: string;
-  createdBy?: string;
-  createdByRole?: string;
 }
 
 export interface SyncResult {
@@ -130,6 +125,37 @@ const TYPE_ICON_BG: Record<ChangeType, string> = {
   deleted: "bg-red-100   text-red-600   dark:bg-red-900/40   dark:text-red-400",
 };
 
+const CHECKBOX_DIFF_FIELDS = new Set([
+  "task assigned",
+  "5-day letter sent",
+  "credited",
+  "task_assigned",
+  "five_day_notice",
+  "credited",
+]);
+
+function formatDiffValue(field: string, value: string | boolean | null): string {
+  if (value === null || value === undefined) return "—";
+
+  const normalizedField = field.trim().toLowerCase();
+  const isCheckboxField = CHECKBOX_DIFF_FIELDS.has(normalizedField);
+
+  if (typeof value === "boolean") {
+    if (isCheckboxField) return value ? "checked" : "unchecked";
+    return String(value);
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) return "—";
+
+  if (isCheckboxField) {
+    if (/^(true|1|yes|checked)$/i.test(trimmed)) return "checked";
+    if (/^(false|0|no|unchecked)$/i.test(trimmed)) return "unchecked";
+  }
+
+  return trimmed;
+}
+
 function ChangeRow({ entry }: { entry: ChangeEntry }) {
   const localTime = new Date(entry.time).toLocaleTimeString("en-US", {
     hour: "numeric",
@@ -151,7 +177,7 @@ function ChangeRow({ entry }: { entry: ChangeEntry }) {
       {/* Body */}
       <div className="flex-1 min-w-0">
         {/* Record name + badge */}
-        <div className="flex items-center gap-2 mb-1">
+        <div className="flex items-center gap-2 mb-1.5">
           <span className="text-sm font-medium text-foreground truncate">
             {entry.record}
           </span>
@@ -165,12 +191,6 @@ function ChangeRow({ entry }: { entry: ChangeEntry }) {
           </span>
         </div>
 
-        {entry.ssnLast4 ? (
-          <p className="mb-1.5 text-[11px] text-muted-foreground">
-            SSN last 4: <span className="font-medium text-foreground">{entry.ssnLast4}</span>
-          </p>
-        ) : null}
-
         {/* Field diffs (updated rows) */}
         {entry.diffs.length > 0 && (
           <div className="flex flex-col gap-1 mb-1.5">
@@ -180,11 +200,11 @@ function ChangeRow({ entry }: { entry: ChangeEntry }) {
                   {d.field}
                 </span>
                 <span className="text-muted-foreground/60 line-through truncate max-w-32.5">
-                  {d.old ?? "—"}
+                  {formatDiffValue(d.field, d.old)}
                 </span>
                 <span className="text-muted-foreground/50 shrink-0">→</span>
                 <span className="font-medium text-foreground truncate max-w-37.5">
-                  {d.new ?? "—"}
+                  {formatDiffValue(d.field, d.new)}
                 </span>
               </div>
             ))}
@@ -345,7 +365,6 @@ function ChangeHistoryModal({ result, onClose }: ChangeHistoryModalProps) {
     const searchOk =
       !q ||
       e.record.toLowerCase().includes(q) ||
-      (e.ssnLast4 ?? "").toLowerCase().includes(q) ||
       e.diffs.some((d) => d.field.toLowerCase().includes(q));
     return typeOk && searchOk;
   });
@@ -375,29 +394,9 @@ function ChangeHistoryModal({ result, onClose }: ChangeHistoryModalProps) {
       })
     : null;
 
-  const backupActorName =
-    result.backup?.triggeredBy || result.backup?.createdBy || null;
-  const backupActorRole =
-    result.backup?.triggeredByRole || result.backup?.createdByRole || null;
-
   const showingLatestCompletedSession =
     result.historySource === "latest_completed_session" &&
     (result.changes.length > 0 || Boolean(result.historyCompletedAt));
-
-  const isSystemAdminRun = result.triggeredByRole === "system_admin";
-  const hideBackupActor =
-    isSystemAdminRun || backupActorRole === "system_admin";
-
-  const backupDisplayName = (() => {
-    const raw = result.backup?.fileName?.trim();
-    if (!raw) return null;
-
-    if (isSystemAdminRun) {
-      return raw.replace(/\s*-\s*System Administrator\s*$/i, "").trim();
-    }
-
-    return raw;
-  })();
 
   const headerBadge = showingLatestCompletedSession
     ? {
@@ -418,11 +417,11 @@ function ChangeHistoryModal({ result, onClose }: ChangeHistoryModalProps) {
         };
 
   function exportCSV() {
-    const header = ["Type", "Record", "SSN Last 4", "Field", "Old Value", "New Value", "Sheet Row"];
+    const header = ["Type", "Record", "Field", "Old Value", "New Value", "Sheet Row"];
     const rows = result.changes.flatMap((e) =>
       e.diffs.length > 0
-        ? e.diffs.map((d) => [e.type, e.record, e.ssnLast4 ?? "", d.field, d.old ?? "", d.new ?? "", String(e.sheetRow)])
-        : [[e.type, e.record, e.ssnLast4 ?? "", "", "", e.note ?? "", String(e.sheetRow)]]
+        ? e.diffs.map((d) => [e.type, e.record, d.field, d.old ?? "", d.new ?? "", String(e.sheetRow)])
+        : [[e.type, e.record, "", "", e.note ?? "", String(e.sheetRow)]]
     );
     const csv = [header, ...rows].map((r) => r.map((v) => `"${v}"`).join(",")).join("\n");
     const a = document.createElement("a");
@@ -462,26 +461,15 @@ function ChangeHistoryModal({ result, onClose }: ChangeHistoryModalProps) {
               </span>
             </div>
             <p className="text-xs text-muted-foreground flex items-center flex-wrap gap-x-2 gap-y-0.5">
-              {isSystemAdminRun ? (
-                <>
-                  <span>
-                    Ran on <span className="font-medium text-foreground">{runAt}</span>
-                  </span>
-                  <span className="opacity-40">·</span>
-                </>
-              ) : (
-                <>
-                  <span>
-                    Run by{" "}
-                    <span className="font-medium text-foreground">
-                      {result.triggeredBy}
-                    </span>
-                  </span>
-                  <span className="opacity-40">·</span>
-                  <span>{runAt}</span>
-                  <span className="opacity-40">·</span>
-                </>
-              )}
+              <span>
+                Run by{" "}
+                <span className="font-medium text-foreground">
+                  {result.triggeredBy}
+                </span>
+              </span>
+              <span className="opacity-40">·</span>
+              <span>{runAt}</span>
+              <span className="opacity-40">·</span>
               <a
                 href={result.sheetUrl}
                 target="_blank"
@@ -529,18 +517,13 @@ function ChangeHistoryModal({ result, onClose }: ChangeHistoryModalProps) {
           </div>
         )}
 
-        {result.backup && (result.backup.url || backupDisplayName || backupCreatedAt) ? (
+        {result.backup && (result.backup.url || result.backup.fileName || backupCreatedAt) ? (
           <div className="mx-5 mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
             <span className="font-medium text-emerald-900">Pre-sync backup saved</span>
             {backupCreatedAt ? <span>{" "}at {backupCreatedAt}.</span> : <span>.</span>}
-            {backupDisplayName ? (
-              <span className="mt-1 block text-[11px] text-emerald-700/90 break-all">
-                {backupDisplayName}
-              </span>
-            ) : null}
-            {!hideBackupActor && backupActorName ? (
-              <span className="mt-1 block text-[11px] text-emerald-700/90">
-                {backupActorName}
+            {result.backup.fileName ? (
+              <span className="block mt-1 text-[11px] text-emerald-700/90">
+                {result.backup.fileName}
               </span>
             ) : null}
             {result.backup.url ? (
@@ -820,7 +803,6 @@ export function GoogleSheetsSyncButton({ userRole }: SyncButtonProps) {
 
   if (!canSyncGoogleSheets(userRole)) return null;
 
-  const isSystemAdminRun = result?.triggeredByRole === "system_admin";
   const lastSyncAt = result?.historyCompletedAt ?? result?.runAt ?? null;
   const lastSyncLabel = lastSyncAt
     ? new Date(lastSyncAt).toLocaleString("en-US", {
@@ -889,7 +871,7 @@ export function GoogleSheetsSyncButton({ userRole }: SyncButtonProps) {
         {result && lastSyncLabel && !notice && (
           <p className="text-[11px] text-muted-foreground">
             Last completed sync: <span className="font-medium text-foreground">{lastSyncLabel}</span>
-            {!isSystemAdminRun && result.triggeredBy ? (
+            {result.triggeredBy ? (
               <>
                 {" "}by <span className="font-medium text-foreground">{result.triggeredBy}</span>
               </>
