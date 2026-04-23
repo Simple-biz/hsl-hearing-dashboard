@@ -2,6 +2,7 @@ BEGIN;
 
 -- Migration: persist latest Google Sheets backup metadata for MR sync
 -- Date: 2026-04-17
+-- Author: Jvincec
 -- Context:
 --   Each completed sync can optionally create a pre-sync backup copy of the
 --   Google Sheet before any append/update/delete operations run.

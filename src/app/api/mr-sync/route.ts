@@ -16,9 +16,8 @@ import { db } from "@/lib/db";
 
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_SYNC_URL;
 const N8N_WEBHOOK_SECRET = process.env.N8N_WEBHOOK_SECRET;
-// replace URL with the actual sheet from the client team
 const DEFAULT_SHEET_URL =
-  "https://docs.google.com/spreadsheets/d/1kqbJ70Sfz04p5cP4LaWHLg_uAkUSRwfDLBagZE-H9W4/edit?gid=1264115306#gid=1264115306";
+  "https://docs.google.com/spreadsheets/d/1zbztk8oFKUWSDYg1WB2KHXRpL3TDis35PTsodKvBFXg/edit#gid=1264115306";
 
 // Raised from 25 s → 55 s to accommodate 6000+ row syncs.
 // Stay under the 60 s Vercel Pro hard limit with a 5 s safety buffer.
@@ -51,13 +50,16 @@ type DbLatestSyncRow = {
   last_triggered_by_id: string | number | null;
   last_triggered_by_name: string | null;
   last_triggered_by_role: string | null;
-  id: number | string | null;
-  hearing_id: number | string | null;
-  event_type: DbEventType | null;
   last_backup_file_id: string | null;
   last_backup_file_name: string | null;
   last_backup_url: string | null;
   last_backup_created_at: string | null;
+  last_sheet_url: string | null;
+  last_sheet_document_id: string | null;
+  last_sheet_gid: string | null;
+  id: number | string | null;
+  hearing_id: number | string | null;
+  event_type: DbEventType | null;
   payload: unknown;
   changed_fields: unknown;
   created_at: string | null;
@@ -118,6 +120,10 @@ function parseMaybeJson<T>(value: unknown, fallback: T): T {
     }
   }
   return value as T;
+}
+
+function resolveSheetUrl(value: string | null | undefined) {
+  return value || DEFAULT_SHEET_URL;
 }
 
 function buildLatestSyncResult(rows: DbLatestSyncRow[]): SyncResult | null {
@@ -279,7 +285,7 @@ function buildLatestSyncResult(rows: DbLatestSyncRow[]): SyncResult | null {
       sessionMeta.last_triggered_by_id !== null && sessionMeta.last_triggered_by_id !== undefined
         ? String(sessionMeta.last_triggered_by_id)
         : "",
-    sheetUrl: DEFAULT_SHEET_URL,
+    sheetUrl: resolveSheetUrl(sessionMeta.last_sheet_url),
     syncStatus: "completed",
     historySource: "latest_completed_session",
     historyCompletedAt,
@@ -339,6 +345,9 @@ export async function GET() {
         w.last_backup_file_name,
         w.last_backup_url,
         w.last_backup_created_at,
+        w.last_sheet_url,
+        w.last_sheet_document_id,
+        w.last_sheet_gid,
         e.id,
         e.hearing_id,
         e.event_type,
@@ -387,7 +396,14 @@ export async function POST(request: Request) {
   }
 
   const auth = await requireSyncUser();
-  if (auth.error || !auth.session) return auth.error;
+  if (auth.error) return auth.error;
+  if (!auth.session) {
+    return errorResponse(
+      401,
+      "SYNC_UNAUTHORIZED",
+      "Please sign in again before running the Google Sheets sync.",
+    );
+  }
   const { session } = auth;
 
   const controller = new AbortController();
@@ -437,8 +453,11 @@ export async function POST(request: Request) {
   }
 
   try {
-    const data = await n8nRes.json();
-    return NextResponse.json({ ok: true, ...data });
+    const data = (await n8nRes.json()) as Partial<SyncResult> & Record<string, unknown>;
+    const sheetUrl =
+      typeof data.sheetUrl === "string" && data.sheetUrl ? data.sheetUrl : DEFAULT_SHEET_URL;
+
+    return NextResponse.json({ ok: true, ...data, sheetUrl });
   } catch (error) {
     console.error("[api/mr-sync] Invalid JSON response from N8N →", error);
 

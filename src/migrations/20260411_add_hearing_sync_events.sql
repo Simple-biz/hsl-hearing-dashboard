@@ -1,3 +1,7 @@
+-- Migration: add event-session bounds for latest-sync history reuse
+-- Date: 2026-04-11
+-- Author: Jvincec
+
 BEGIN;
 
 -- Event outbox for scalable Google Sheets sync.

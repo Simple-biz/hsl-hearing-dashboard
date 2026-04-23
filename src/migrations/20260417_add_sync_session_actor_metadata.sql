@@ -2,6 +2,7 @@ BEGIN;
 
 -- Migration: persist latest completed sync actor metadata
 -- Date: 2026-04-17
+-- Author: Jvincec
 -- Context:
 --   The UI can already reconstruct the latest completed sync session from
 --   last_session_start_event_id .. last_event_id, but it cannot reliably show
