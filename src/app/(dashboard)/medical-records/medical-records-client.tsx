@@ -33,7 +33,7 @@ import {
   Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { UserRole, Permissions } from "./types";
+import type { UserRole } from "./types";
 
 import {
   getHearingsPaginated,
@@ -47,9 +47,6 @@ import {
   updateWorksheetLink,
   assignJeromeUrgent,
   getRoundRobinState,
-  getPostHrgNotes,
-  addPostHrgNote,
-  updatePostHrgDeadline,
 } from "./action";
 import type {
   MrPivotPageData,
@@ -58,11 +55,11 @@ import type {
   RoundRobinState,
   MrStatusByTeam,
   AssignedByMonthRow,
-  PostHrgNote,
 } from "./action";
 
 import { HearingsModal } from "@/components/modals/hearings-modal";
 import { PostHrgModal } from "@/components/modals/post-hrg-modal";
+import { PostHrgReviewModal } from "@/components/modals/post-hrg-review-modal";
 import { TeamStatsModal } from "@/components/modals/team-stats-modal";
 import { ActivityLogModal } from "@/components/modals/activity-log-modal";
 
@@ -758,246 +755,6 @@ function WorksheetLinkModal({
   );
 }
 
-// ─── PostHrgReviewModal ───────────────────────────────────────────────────────
-
-function PostHrgReviewModal({
-  hearing,
-  onClose,
-  onUpdated,
-  permissions,
-}: {
-  hearing: Hearing;
-  onClose: () => void;
-  onUpdated: (id: number, patch: Partial<Hearing>) => void;
-  permissions?: Permissions;
-}) {
-  // Per HSL Permissions matrix: Post HRG Notes Edit = admin, manager, mr_admin, mr_lead, mr_agent, post_admin, post_staff, sys_admin
-  // canManage covers sys_admin | admin | manager | mr_admin | mr_lead
-  // When permissions not passed (e.g. from WithdrawnModal), default to true for safety —
-  // the page-level access control already limits who can reach this modal
-  const canEditNotes = permissions ? permissions.canManage : true;
-
-  const [notes, setNotes] = useState<PostHrgNote[]>([]);
-  const [newNote, setNewNote] = useState("");
-  const [deadline, setDeadline] = useState(hearing.post_hrg_deadline ?? "");
-  const [saving, setSaving] = useState(false);
-  const [loading, setLoading] = useState(true);
-
-  // Initial fetch
-  useEffect(() => {
-    getPostHrgNotes(hearing.id).then((n) => {
-      setNotes(n);
-      setLoading(false);
-    });
-  }, [hearing.id]);
-
-  // Poll for fresh notes every 8s while modal is open.
-  // Skips while saving to avoid overwriting optimistic state mid-write.
-  const savingRef = useRef(false);
-  useEffect(() => {
-    savingRef.current = saving;
-  }, [saving]);
-  useEffect(() => {
-    let active = true;
-    const poll = async () => {
-      if (!active || savingRef.current) return;
-      try {
-        const fresh = await getPostHrgNotes(hearing.id);
-        if (active && !savingRef.current) setNotes(fresh);
-      } catch {
-        /* skip this cycle */
-      }
-    };
-    const id = setInterval(poll, 8000);
-    return () => {
-      active = false;
-      clearInterval(id);
-    };
-  }, [hearing.id]);
-
-  async function handleAddNote() {
-    if (!newNote.trim()) return;
-    setSaving(true);
-    const r = await addPostHrgNote(hearing.id, newNote.trim());
-    if (r.success) {
-      const updated = await getPostHrgNotes(hearing.id);
-      setNotes(updated);
-      onUpdated(hearing.id, { post_hrg_review: "true" });
-      setNewNote("");
-    }
-    setSaving(false);
-  }
-
-  async function handleUpdateDeadline() {
-    await updatePostHrgDeadline(hearing.id, deadline);
-    onUpdated(hearing.id, { post_hrg_deadline: deadline || null });
-  }
-
-  async function handleClearDeadline() {
-    setDeadline("");
-    await updatePostHrgDeadline(hearing.id, "");
-    onUpdated(hearing.id, { post_hrg_deadline: null });
-  }
-
-  return (
-    <div
-      className="fixed inset-0 z-60 flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-lg rounded-xl border bg-card shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between border-b px-5 py-4">
-          <h2 className="text-sm font-semibold">Post HRG Review</h2>
-          <button onClick={onClose} className="rounded-md p-1 hover:bg-muted">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        <div className="max-h-[70vh] overflow-y-auto px-5 py-4 space-y-4">
-          {/* Hearing info */}
-          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-            <span>
-              Claimant:{" "}
-              <span className="font-medium text-foreground">
-                {hearing.claimant}
-              </span>
-            </span>
-            <span>
-              Hearing:{" "}
-              <span className="font-medium text-foreground">
-                {new Date(
-                  hearing.hearing_date + "T00:00:00",
-                ).toLocaleDateString("en-US", {
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                })}
-              </span>
-            </span>
-          </div>
-
-          {/* Deadline */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium">Deadline Date</label>
-            <div className="flex items-center gap-2">
-              <input
-                type="date"
-                value={deadline}
-                onChange={(e) => setDeadline(e.target.value)}
-                className="h-8 w-auto text-xs rounded-md border bg-transparent px-2 py-1 text-foreground focus:outline-none focus:border-ring"
-              />
-              <button
-                onClick={handleUpdateDeadline}
-                className="h-8 text-xs px-3 rounded-md border hover:bg-muted transition-colors"
-              >
-                Update
-              </button>
-              <button
-                onClick={handleClearDeadline}
-                className="h-8 text-xs px-3 rounded-md hover:bg-muted transition-colors text-muted-foreground"
-              >
-                Clear
-              </button>
-            </div>
-          </div>
-
-          {/* Add note */}
-          {canEditNotes ? (
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium">Add New Note</label>
-              <textarea
-                value={newNote}
-                onChange={(e) => setNewNote(e.target.value)}
-                rows={3}
-                placeholder="Enter your note..."
-                className="w-full rounded-md border bg-transparent px-3 py-2 text-xs placeholder:text-muted-foreground focus:border-ring focus:outline-none"
-              />
-              <button
-                onClick={handleAddNote}
-                disabled={saving || !newNote.trim()}
-                className="h-8 text-xs px-3 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1"
-              >
-                {saving && <Loader2 size={10} className="animate-spin" />}
-                Add Note
-              </button>
-            </div>
-          ) : (
-            <p className="text-xs text-muted-foreground italic py-2">
-              You do not have permission to add notes.
-            </p>
-          )}
-
-          {/* Notes history */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium">
-              Notes History{" "}
-              <span className="text-muted-foreground">({notes.length})</span>
-            </label>
-            {loading ? (
-              <div className="py-4 text-center">
-                <Loader2
-                  size={16}
-                  className="animate-spin mx-auto text-muted-foreground"
-                />
-              </div>
-            ) : notes.length === 0 ? (
-              <p className="py-4 text-center text-xs text-muted-foreground">
-                No notes yet
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {notes.map((note, i) => (
-                  <div
-                    key={i}
-                    className="rounded-lg border bg-muted/30 p-3 space-y-1"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                        <span className="font-medium text-foreground">
-                          {note.author_name ?? "System"}
-                        </span>
-                        {note.created_at && (
-                          <span>
-                            {new Date(note.created_at).toLocaleDateString(
-                              "en-US",
-                              {
-                                month: "short",
-                                day: "numeric",
-                                hour: "numeric",
-                                minute: "2-digit",
-                              },
-                            )}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <p className="text-xs whitespace-pre-wrap">
-                      {note.content}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="border-t px-5 py-3 flex justify-end">
-          <button
-            onClick={onClose}
-            className="h-8 text-xs px-4 rounded-md border hover:bg-muted transition-colors"
-          >
-            Close
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ─── WithdrawnModal ────────────────────────────────────────────────────────────
 
 function WithdrawnModal({
@@ -1005,11 +762,15 @@ function WithdrawnModal({
   count,
   // teams,
   onClose,
+  userName,
+  userRole,
 }: {
   open: boolean;
   count: number;
   teams: MrPivotPageData["medical_teams"];
   onClose: () => void;
+  userName: string;
+  userRole: UserRole;
 }) {
   const [entries, setEntries] = useState<Hearing[]>([]);
   const [total, setTotal] = useState(count);
@@ -1349,16 +1110,40 @@ function WithdrawnModal({
       </div>
       {postHrgHearing && (
         <PostHrgReviewModal
-          hearing={postHrgHearing}
+          mode="hearing"
+          hearingId={postHrgHearing.id}
+          claimant={postHrgHearing.claimant ?? ""}
+          hearingDateText={new Date(
+            postHrgHearing.hearing_date + "T00:00:00",
+          ).toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          })}
+          assignedRep={postHrgHearing.rep_name}
+          userName={userName}
+          userRole={userRole}
+          initialNotes={null}
+          initialDeadline={postHrgHearing.post_hrg_deadline}
+          initialRequirements={null}
+          initialDeadlinePrev={null}
+          initialDeadlineChangedBy={null}
           onClose={() => setPostHrgHearing(null)}
-          onUpdated={(id, patch) => {
+          onHearingPatch={(patch) => {
+            const mrPatch: Partial<Hearing> = {};
+            if (patch.post_hrg_deadline !== undefined) {
+              mrPatch.post_hrg_deadline = patch.post_hrg_deadline;
+            }
+            if (patch.post_hrg_review !== undefined) {
+              mrPatch.post_hrg_review = patch.post_hrg_review ? "true" : null;
+            }
             setEntries((prev) =>
               prev.map((h) =>
-                h.id === id ? ({ ...h, ...patch } as Hearing) : h,
+                h.id === postHrgHearing.id ? { ...h, ...mrPatch } : h,
               ),
             );
             setPostHrgHearing((h) =>
-              h && h.id === id ? ({ ...h, ...patch } as Hearing) : h,
+              h && h.id === postHrgHearing.id ? { ...h, ...mrPatch } : h,
             );
           }}
         />
@@ -1702,11 +1487,11 @@ function HearingRow({
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
-type Props = MrPivotPageData & { userRole: UserRole };
+type Props = MrPivotPageData & { userRole: UserRole; userName: string };
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export function MrPivotClient({ userRole, ...data }: Props) {
+export function MrPivotClient({ userRole, userName, ...data }: Props) {
   const router = useRouter();
 
   // Only sys admin, mr_admin, and mr_lead may see No Specialist / No Task Assigned cards
@@ -2735,24 +2520,48 @@ export function MrPivotClient({ userRole, ...data }: Props) {
         availableMonths={data.availableMonths}
         permissions={data.permissions}
         userRole={userRole}
+        userName={userName}
       />
 
       {/* Per-row Post HRG modal — opened from the 📝 button in each row */}
       {postHrgHearing && (
         <PostHrgReviewModal
-          hearing={postHrgHearing}
+          mode="hearing"
+          hearingId={postHrgHearing.id}
+          claimant={postHrgHearing.claimant ?? ""}
+          hearingDateText={new Date(
+            postHrgHearing.hearing_date + "T00:00:00",
+          ).toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          })}
+          assignedRep={postHrgHearing.rep_name}
+          userName={userName}
+          userRole={userRole}
+          initialNotes={null}
+          initialDeadline={postHrgHearing.post_hrg_deadline}
+          initialRequirements={null}
+          initialDeadlinePrev={null}
+          initialDeadlineChangedBy={null}
           onClose={() => setPostHrgHearing(null)}
-          onUpdated={(id, patch) => {
+          onHearingPatch={(patch) => {
+            const mrPatch: Partial<Hearing> = {};
+            if (patch.post_hrg_deadline !== undefined) {
+              mrPatch.post_hrg_deadline = patch.post_hrg_deadline;
+            }
+            if (patch.post_hrg_review !== undefined) {
+              mrPatch.post_hrg_review = patch.post_hrg_review ? "true" : null;
+            }
             setHearings((prev) =>
               prev.map((h) =>
-                h.id === id ? ({ ...h, ...patch } as Hearing) : h,
+                h.id === postHrgHearing.id ? { ...h, ...mrPatch } : h,
               ),
             );
             setPostHrgHearing((h) =>
-              h && h.id === id ? ({ ...h, ...patch } as Hearing) : h,
+              h && h.id === postHrgHearing.id ? { ...h, ...mrPatch } : h,
             );
           }}
-          permissions={data.permissions}
         />
       )}
 
@@ -2795,6 +2604,8 @@ export function MrPivotClient({ userRole, ...data }: Props) {
         count={data.withdrawnCount}
         teams={data.medical_teams}
         onClose={() => setShowWithdrawn(false)}
+        userName={userName}
+        userRole={userRole}
       />
 
       {/* ── Field update toast ── */}

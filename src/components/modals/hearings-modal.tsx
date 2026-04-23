@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ModalShell } from "@/components/modals/modal-shell";
+import { PostHrgReviewModal } from "@/components/modals/post-hrg-review-modal";
 import {
   getHearingsPaginated,
   updateMrStatus,
@@ -21,16 +22,12 @@ import {
   toggleCredited,
   updateMoa,
   toggleFiveDayNotice,
-  getPostHrgNotes,
-  addPostHrgNote,
-  updatePostHrgDeadline,
 } from "@/app/(dashboard)/medical-records/action";
 import type {
   Hearing,
   MrTeam,
   HearingFilters,
   Permissions,
-  PostHrgNote,
 } from "@/app/(dashboard)/medical-records/action";
 
 // ─── Colour helpers ───────────────────────────────────────────────────────────
@@ -135,6 +132,7 @@ interface Props {
   availableMonths: Array<{ month_value: string; month_label: string }>;
   permissions: Permissions;
   userRole: string;
+  userName: string;
 }
 
 const DATE_RANGE_OPTIONS = [
@@ -502,6 +500,7 @@ export function HearingsModal({
   availableMonths,
   permissions,
   userRole,
+  userName,
 }: Props) {
   const [isPending, startTransition] = useTransition();
   const [hearings, setHearings] = useState<Hearing[]>([]);
@@ -892,235 +891,46 @@ export function HearingsModal({
 
       {/* Post HRG Review modal — opened from the 📝 button in each row */}
       {postHrgHearing && (
-        <PostHrgInlineModal
-          hearing={postHrgHearing}
+        <PostHrgReviewModal
+          mode="hearing"
+          hearingId={postHrgHearing.id}
+          claimant={postHrgHearing.claimant ?? ""}
+          hearingDateText={new Date(
+            postHrgHearing.hearing_date + "T00:00:00",
+          ).toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          })}
+          assignedRep={postHrgHearing.rep_name}
+          userName={userName}
+          userRole={userRole}
+          initialNotes={null}
+          initialDeadline={postHrgHearing.post_hrg_deadline}
+          initialRequirements={null}
+          initialDeadlinePrev={null}
+          initialDeadlineChangedBy={null}
           onClose={() => setPostHrgHearing(null)}
-          onUpdated={(id, patch) => {
+          onHearingPatch={(patch) => {
+            const mrPatch: Partial<Hearing> = {};
+            if (patch.post_hrg_deadline !== undefined) {
+              mrPatch.post_hrg_deadline = patch.post_hrg_deadline;
+            }
+            if (patch.post_hrg_review !== undefined) {
+              mrPatch.post_hrg_review = patch.post_hrg_review ? "true" : null;
+            }
             setHearings((prev) =>
-              prev.map((h) => (h.id === id ? { ...h, ...patch } : h)),
+              prev.map((h) =>
+                h.id === postHrgHearing.id ? { ...h, ...mrPatch } : h,
+              ),
             );
             setPostHrgHearing((h) =>
-              h && h.id === id ? ({ ...h, ...patch } as Hearing) : h,
+              h && h.id === postHrgHearing.id ? { ...h, ...mrPatch } : h,
             );
           }}
-          permissions={permissions}
-          userRole={userRole}
         />
       )}
     </>
   );
 }
 
-// ─── Inline Post HRG Review Modal ─────────────────────────────────────────────
-// Self-contained so we don't need to export PostHrgReviewModal from MR page.
-
-function PostHrgInlineModal({
-  hearing,
-  onClose,
-  onUpdated,
-  userRole,
-}: {
-  hearing: Hearing;
-  onClose: () => void;
-  onUpdated: (id: number, patch: Partial<Hearing>) => void;
-  permissions: Permissions;
-  userRole: string;
-}) {
-  // Matches server-side allowed list in addPostHrgNote (action.ts)
-  const canEditNotes = [
-    "system_admin",
-    "admin",
-    "manager",
-    "mr_admin",
-    "mr_lead",
-    "mr_agent",
-    "post_hearing_admin",
-    "post_hearing_staff",
-  ].includes(userRole);
-  const [notes, setNotes] = useState<PostHrgNote[]>([]);
-  const [newNote, setNewNote] = useState("");
-  const [deadline, setDeadline] = useState(hearing.post_hrg_deadline ?? "");
-  const [saving, setSaving] = useState(false);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    getPostHrgNotes(hearing.id).then((n) => {
-      setNotes(n);
-      setLoading(false);
-    });
-  }, [hearing.id]);
-
-  async function handleAddNote() {
-    if (!newNote.trim()) return;
-    setSaving(true);
-    const r = await addPostHrgNote(hearing.id, newNote.trim());
-    if (r.success) {
-      const updated = await getPostHrgNotes(hearing.id);
-      setNotes(updated);
-      onUpdated(hearing.id, { post_hrg_review: "true" });
-      setNewNote("");
-    }
-    setSaving(false);
-  }
-
-  async function handleUpdateDeadline() {
-    await updatePostHrgDeadline(hearing.id, deadline);
-    onUpdated(hearing.id, { post_hrg_deadline: deadline || null });
-  }
-
-  async function handleClearDeadline() {
-    setDeadline("");
-    await updatePostHrgDeadline(hearing.id, "");
-    onUpdated(hearing.id, { post_hrg_deadline: null });
-  }
-
-  return (
-    <div
-      className="fixed inset-0 z-70 flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-lg rounded-xl border bg-card shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between border-b px-5 py-4">
-          <h2 className="text-sm font-semibold">Post HRG Review</h2>
-          <button onClick={onClose} className="rounded-md p-1 hover:bg-muted">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        <div className="max-h-[70vh] overflow-y-auto px-5 py-4 space-y-4">
-          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-            <span>
-              Claimant:{" "}
-              <span className="font-medium text-foreground">
-                {hearing.claimant}
-              </span>
-            </span>
-            <span>
-              Hearing:{" "}
-              <span className="font-medium text-foreground">
-                {new Date(
-                  hearing.hearing_date + "T00:00:00",
-                ).toLocaleDateString("en-US", {
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                })}
-              </span>
-            </span>
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium">Deadline Date</label>
-            <div className="flex items-center gap-2">
-              <input
-                type="date"
-                value={deadline}
-                onChange={(e) => setDeadline(e.target.value)}
-                className="h-8 w-auto text-xs rounded-md border bg-transparent px-2 py-1 text-foreground focus:outline-none focus:border-ring"
-              />
-              <button
-                onClick={handleUpdateDeadline}
-                className="h-8 text-xs px-3 rounded-md border hover:bg-muted transition-colors"
-              >
-                Update
-              </button>
-              <button
-                onClick={handleClearDeadline}
-                className="h-8 text-xs px-3 rounded-md hover:bg-muted transition-colors text-muted-foreground"
-              >
-                Clear
-              </button>
-            </div>
-          </div>
-
-          {canEditNotes ? (
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium">Add New Note</label>
-              <textarea
-                value={newNote}
-                onChange={(e) => setNewNote(e.target.value)}
-                rows={3}
-                placeholder="Enter your note..."
-                className="w-full rounded-md border bg-transparent px-3 py-2 text-xs placeholder:text-muted-foreground focus:border-ring focus:outline-none"
-              />
-              <button
-                onClick={handleAddNote}
-                disabled={saving || !newNote.trim()}
-                className="h-8 text-xs px-3 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1"
-              >
-                {saving && <Loader2 size={10} className="animate-spin" />} Add
-                Note
-              </button>
-            </div>
-          ) : (
-            <p className="text-xs text-muted-foreground italic py-2">
-              You do not have permission to add notes.
-            </p>
-          )}
-
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium">
-              Notes History{" "}
-              <span className="text-muted-foreground">({notes.length})</span>
-            </label>
-            {loading ? (
-              <div className="py-4 text-center">
-                <Loader2
-                  size={16}
-                  className="animate-spin mx-auto text-muted-foreground"
-                />
-              </div>
-            ) : notes.length === 0 ? (
-              <p className="py-4 text-center text-xs text-muted-foreground">
-                No notes yet
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {notes.map((note, i) => (
-                  <div
-                    key={i}
-                    className="rounded-lg border bg-muted/30 p-3 space-y-1"
-                  >
-                    <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                      <span className="font-medium text-foreground">
-                        {note.author_name ?? "System"}
-                      </span>
-                      {note.created_at && (
-                        <span>
-                          {new Date(note.created_at).toLocaleDateString(
-                            "en-US",
-                            {
-                              month: "short",
-                              day: "numeric",
-                              hour: "numeric",
-                              minute: "2-digit",
-                            },
-                          )}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-xs whitespace-pre-wrap">
-                      {note.content}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="border-t px-5 py-3 flex justify-end">
-          <button
-            onClick={onClose}
-            className="h-8 text-xs px-4 rounded-md border hover:bg-muted transition-colors"
-          >
-            Close
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}

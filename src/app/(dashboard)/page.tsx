@@ -29,6 +29,7 @@ export default async function DashboardPage() {
       userRole={(session.user.role || "staff") as UserRole}
       userEmail={session.user.email || ""}
       userName={session.user.name || "Unknown"}
+      userId={session.user.id}
     />
   );
 }
