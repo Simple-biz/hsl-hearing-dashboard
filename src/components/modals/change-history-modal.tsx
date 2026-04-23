@@ -38,6 +38,7 @@ export interface FieldDiff {
 export interface ChangeEntry {
   type: ChangeType;
   record: string;      // Claimant name
+  ssnLast4?: string | null;
   sheetRow: number;
   diffs: FieldDiff[];  // Empty for created/deleted — use note instead
   note?: string;
@@ -150,7 +151,7 @@ function ChangeRow({ entry }: { entry: ChangeEntry }) {
       {/* Body */}
       <div className="flex-1 min-w-0">
         {/* Record name + badge */}
-        <div className="flex items-center gap-2 mb-1.5">
+        <div className="flex items-center gap-2 mb-1">
           <span className="text-sm font-medium text-foreground truncate">
             {entry.record}
           </span>
@@ -163,6 +164,12 @@ function ChangeRow({ entry }: { entry: ChangeEntry }) {
             {entry.type}
           </span>
         </div>
+
+        {entry.ssnLast4 ? (
+          <p className="mb-1.5 text-[11px] text-muted-foreground">
+            SSN last 4: <span className="font-medium text-foreground">{entry.ssnLast4}</span>
+          </p>
+        ) : null}
 
         {/* Field diffs (updated rows) */}
         {entry.diffs.length > 0 && (
@@ -338,6 +345,7 @@ function ChangeHistoryModal({ result, onClose }: ChangeHistoryModalProps) {
     const searchOk =
       !q ||
       e.record.toLowerCase().includes(q) ||
+      (e.ssnLast4 ?? "").toLowerCase().includes(q) ||
       e.diffs.some((d) => d.field.toLowerCase().includes(q));
     return typeOk && searchOk;
   });
@@ -410,11 +418,11 @@ function ChangeHistoryModal({ result, onClose }: ChangeHistoryModalProps) {
         };
 
   function exportCSV() {
-    const header = ["Type", "Record", "Field", "Old Value", "New Value", "Sheet Row"];
+    const header = ["Type", "Record", "SSN Last 4", "Field", "Old Value", "New Value", "Sheet Row"];
     const rows = result.changes.flatMap((e) =>
       e.diffs.length > 0
-        ? e.diffs.map((d) => [e.type, e.record, d.field, d.old ?? "", d.new ?? "", String(e.sheetRow)])
-        : [[e.type, e.record, "", "", e.note ?? "", String(e.sheetRow)]]
+        ? e.diffs.map((d) => [e.type, e.record, e.ssnLast4 ?? "", d.field, d.old ?? "", d.new ?? "", String(e.sheetRow)])
+        : [[e.type, e.record, e.ssnLast4 ?? "", "", "", e.note ?? "", String(e.sheetRow)]]
     );
     const csv = [header, ...rows].map((r) => r.map((v) => `"${v}"`).join(",")).join("\n");
     const a = document.createElement("a");

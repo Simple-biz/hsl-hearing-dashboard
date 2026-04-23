@@ -83,6 +83,7 @@ type HearingDatePreview = {
 type HearingSyncPayloadRow = {
   id: string;
   claimant: string;
+  ssn_last_4: string;
   claim_type: string;
   hearing_date: string;
   hearing_time: string;
@@ -147,6 +148,7 @@ async function fetchHearingSyncPayload(
       SELECT
         h.id::text                               AS id,
         COALESCE(h.claimant, '')                 AS claimant,
+        COALESCE(h.ssn_last_4, '')               AS ssn_last_4,
         COALESCE(h.claim_type, '')               AS claim_type,
         COALESCE(h.hearing_date::text, '')       AS hearing_date,
         COALESCE(h.hearing_time::text, '')       AS hearing_time,
@@ -242,6 +244,7 @@ async function updateSingleFieldAndRecordEvent<T>({
         RETURNING
           h.id,
           h.claimant,
+          h.ssn_last_4,
           h.claim_type,
           h.hearing_date,
           h.hearing_time,
@@ -263,6 +266,7 @@ async function updateSingleFieldAndRecordEvent<T>({
       SELECT
         u.id::text                               AS id,
         COALESCE(u.claimant, '')                 AS claimant,
+        COALESCE(u.ssn_last_4, '')               AS ssn_last_4,
         COALESCE(u.claim_type, '')               AS claim_type,
         COALESCE(u.hearing_date::text, '')       AS hearing_date,
         COALESCE(u.hearing_time::text, '')       AS hearing_time,
@@ -340,6 +344,7 @@ async function updateMrTeamAndRecordEvent(
         RETURNING
           h.id,
           h.claimant,
+          h.ssn_last_4,
           h.claim_type,
           h.hearing_date,
           h.hearing_time,
@@ -361,6 +366,7 @@ async function updateMrTeamAndRecordEvent(
       SELECT
         u.id::text                               AS id,
         COALESCE(u.claimant, '')                 AS claimant,
+        COALESCE(u.ssn_last_4, '')               AS ssn_last_4,
         COALESCE(u.claim_type, '')               AS claim_type,
         COALESCE(u.hearing_date::text, '')       AS hearing_date,
         COALESCE(u.hearing_time::text, '')       AS hearing_time,
