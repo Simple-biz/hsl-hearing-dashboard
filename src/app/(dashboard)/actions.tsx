@@ -510,6 +510,27 @@ export async function fetchPostHrgNotes(hearingId: number): Promise<{
   );
 }
 
+export interface PostHrgDeadlineHistoryEntry {
+  deadline: string;
+  set_at: string;
+  set_by: string | null;
+}
+
+export async function fetchPostHrgDeadlineHistory(
+  hearingId: number,
+): Promise<PostHrgDeadlineHistoryEntry[]> {
+  const { rows } = await db.query(
+    `SELECT deadline::text AS deadline,
+            set_at::text  AS set_at,
+            set_by
+       FROM post_hrg_deadline_history
+      WHERE hearing_id = $1
+      ORDER BY set_at DESC, id DESC`,
+    [hearingId],
+  );
+  return rows as PostHrgDeadlineHistoryEntry[];
+}
+
 export async function updateHearing(
   hearingId: number,
   field: string,
@@ -614,7 +635,10 @@ export async function updateHearing(
   const oldValue = oldRows[0]?.[field];
   const claimant = oldRows[0]?.claimant || `Hearing #${hearingId}`;
 
-  // When deadline changes, track the previous date and who changed it
+  // When deadline changes, track the previous date and who changed it.
+  // Also append a row to post_hrg_deadline_history for the full audit trail
+  // (the `_prev` / `_changed_by` columns above only retain the immediately
+  // previous value).
   if (field === "post_hrg_deadline" && oldValue !== value) {
     let changedBy = "Unknown";
     try {
@@ -628,6 +652,13 @@ export async function updateHearing(
       `UPDATE hearings SET post_hrg_deadline = $1, post_hrg_deadline_prev = $2, post_hrg_deadline_changed_by = $3 WHERE id = $4`,
       [value, oldValue || null, changedBy, hearingId],
     );
+    if (value) {
+      await db.query(
+        `INSERT INTO post_hrg_deadline_history (hearing_id, deadline, set_by)
+         VALUES ($1, $2::date, $3)`,
+        [hearingId, value, changedBy],
+      );
+    }
   } else {
     // Perform the standard update
     await db.query(`UPDATE hearings SET ${field} = $1 WHERE id = $2`, [
