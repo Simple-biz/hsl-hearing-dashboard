@@ -135,6 +135,10 @@ function HearingReview({
   const [isEditingReq, setIsEditingReq] = useState(!initialRequirements);
   const [hasSavedReq, setHasSavedReq] = useState(!!initialRequirements);
   const [saving, setSaving] = useState(false);
+  const [deadlineHistory, setDeadlineHistory] = useState<
+    { deadline: string; set_at: string; set_by: string | null }[]
+  >([]);
+  const [showDeadlineHistory, setShowDeadlineHistory] = useState(false);
 
   const isEditingReqRef = useRef(isEditingReq);
   useEffect(() => {
@@ -151,18 +155,26 @@ function HearingReview({
     const poll = async () => {
       if (!active || savingRef.current) return;
       try {
-        const { fetchPostHrgNotes } = await import("@/app/(dashboard)/actions");
-        const data = (await fetchPostHrgNotes(hearingId)) as
-          | string
-          | {
-              post_hrg_notes: string | null;
-              post_hrg_deadline: string | null;
-              post_hrg_requirements: string | null;
-              post_hrg_deadline_prev: string | null;
-              post_hrg_deadline_changed_by: string | null;
-            }
-          | null;
-        if (!active || !data) return;
+        const { fetchPostHrgNotes, fetchPostHrgDeadlineHistory } = await import(
+          "@/app/(dashboard)/actions"
+        );
+        const [data, history] = await Promise.all([
+          fetchPostHrgNotes(hearingId) as Promise<
+            | string
+            | {
+                post_hrg_notes: string | null;
+                post_hrg_deadline: string | null;
+                post_hrg_requirements: string | null;
+                post_hrg_deadline_prev: string | null;
+                post_hrg_deadline_changed_by: string | null;
+              }
+            | null
+          >,
+          fetchPostHrgDeadlineHistory(hearingId),
+        ]);
+        if (!active) return;
+        setDeadlineHistory(history);
+        if (!data) return;
         if (typeof data === "string") {
           setNotes(parseNotes(data));
         } else {
@@ -308,6 +320,55 @@ function HearingReview({
               <span className="font-medium">Changed by:</span>{" "}
               <span className="font-semibold">{deadlineChangedBy}</span>
             </p>
+          )}
+        </div>
+      )}
+      {deadlineHistory.length > 1 && (
+        <div className="rounded-md border bg-muted/20">
+          <button
+            type="button"
+            onClick={() => setShowDeadlineHistory((p) => !p)}
+            className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <span>
+              Deadline History{" "}
+              <span className="text-muted-foreground/70">
+                ({deadlineHistory.length})
+              </span>
+            </span>
+            <span className="text-[10px]">
+              {showDeadlineHistory ? "▾ Hide" : "▸ Show"}
+            </span>
+          </button>
+          {showDeadlineHistory && (
+            <div className="max-h-56 overflow-y-auto pr-1 px-3 pb-2 space-y-1.5">
+              {deadlineHistory.map((h, i) => (
+                <div
+                  key={i}
+                  className="flex items-center justify-between gap-2 text-[11px] border-t border-border/40 pt-1.5 first:border-t-0 first:pt-0"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="font-semibold tabular-nums">
+                      {h.deadline}
+                    </span>
+                    {h.set_by && (
+                      <span className="text-muted-foreground truncate">
+                        by {h.set_by}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">
+                    {new Date(h.set_at).toLocaleString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                      hour: "numeric",
+                      minute: "2-digit",
+                    })}
+                  </span>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       )}
