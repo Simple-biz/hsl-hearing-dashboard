@@ -1102,6 +1102,19 @@ const ACTION_COLORS: Record<string, string> = {
     "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300",
   post_hrg_note_deleted:
     "bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300",
+  // Post HRG Development lifecycle
+  post_hrg_dev_created:
+    "bg-emerald-100 text-emerald-800 dark:bg-emerald-800/40 dark:text-emerald-300",
+  post_hrg_dev_auto_created:
+    "bg-emerald-100 text-emerald-800 dark:bg-emerald-800/40 dark:text-emerald-300",
+  post_hrg_dev_acknowledged:
+    "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
+  post_hrg_dev_deleted:
+    "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
+  post_hrg_dev_import:
+    "bg-cyan-100 text-cyan-800 dark:bg-cyan-900/40 dark:text-cyan-300",
+  post_hrg_dev_phstatus_synced:
+    "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-300",
   // Hearings
   hearing_updated:
     "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",

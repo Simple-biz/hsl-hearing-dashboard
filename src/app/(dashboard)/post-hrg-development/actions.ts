@@ -43,6 +43,9 @@ export interface PostHrgDevRow {
   updated_by: number | null;
   post_hrg_notes: string | null;
   post_hrg_deadline: string | null;
+  // NULL = unacknowledged ("NEW" pill, pinned to top of grid)
+  // Timestamp = acknowledged, sorts in normal date order
+  acknowledged_at: string | null;
 }
 
 export interface PostHrgDevStats {
@@ -275,6 +278,13 @@ export interface FetchPostHrgPageParams {
   hearingDateTo?: string | null;
   sortKey?: string;
   sortDir?: "asc" | "desc";
+  // When true, restrict results to rows that have not yet been acknowledged.
+  // Used by the "Show NEW only" filter chip.
+  unacknowledgedOnly?: boolean;
+  // When true, INCLUDE Completed rows in the result. Default false — the
+  // main grid hides Completed rows; the team views them via a dedicated
+  // "Completed" modal that calls fetchPostHrgCompletedRecords directly.
+  includeCompleted?: boolean;
 }
 
 export async function fetchPostHrgDevPage(
@@ -334,6 +344,20 @@ export async function fetchPostHrgDevPage(
     idx++;
   }
 
+  if (params.unacknowledgedOnly) {
+    conditions.push(`p.acknowledged_at IS NULL`);
+  }
+
+  // Hide Completed rows from the main grid by default. The Completed modal
+  // passes includeCompleted=true via fetchPostHrgCompletedRecords below.
+  // EXCEPTION: when the user runs a text search, surface Completed rows too
+  // so nothing appears "missing" when they search for a known claimant.
+  // Those rows render read-only on the client.
+  const searchActive = !!params.search?.trim();
+  if (!params.includeCompleted && !searchActive) {
+    conditions.push(`(p.status IS NULL OR LOWER(p.status) <> 'completed')`);
+  }
+
   const where =
     conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
@@ -351,7 +375,10 @@ export async function fetchPostHrgDevPage(
 
   const sortCol = SORT_MAP[params.sortKey || ""] || "p.deadline";
   const dir = params.sortDir === "desc" ? "DESC" : "ASC";
-  const orderBy = `ORDER BY CASE WHEN p.status = 'Completed' THEN 1 ELSE 0 END ASC, ${sortCol} ${dir} NULLS LAST, p.created_at DESC`;
+  // Pin unacknowledged ("NEW") rows to the very top, regardless of the
+  // user's chosen sort. Within the unacknowledged group, newest first.
+  // Then completed rows sink to the bottom of the rest, then user sort.
+  const orderBy = `ORDER BY (p.acknowledged_at IS NULL) DESC, CASE WHEN p.status = 'Completed' THEN 1 ELSE 0 END ASC, ${sortCol} ${dir} NULLS LAST, p.created_at DESC`;
 
   const limit = params.pageSize;
   const offset = (params.page - 1) * params.pageSize;
@@ -377,6 +404,7 @@ export async function fetchPostHrgDevPage(
         p.status_notes,
         p.created_at::text, p.updated_at::text,
         p.created_by, p.updated_by,
+        p.acknowledged_at::text AS acknowledged_at,
         r.name AS representative_name,
         r.rep_type,
         h.claimant_link,
@@ -417,6 +445,7 @@ export async function fetchPostHrgDevRecords(): Promise<PostHrgDevRow[]> {
       p.status_notes,
       p.created_at::text, p.updated_at::text,
       p.created_by, p.updated_by,
+      p.acknowledged_at::text AS acknowledged_at,
       r.name AS representative_name,
       r.rep_type,
       h.claimant_link,
@@ -429,6 +458,7 @@ export async function fetchPostHrgDevRecords(): Promise<PostHrgDevRow[]> {
     LEFT JOIN hearings h ON h.id = p.hearing_id
     LEFT JOIN representatives r ON r.id = h.assigned_rep_id
     ORDER BY
+      (p.acknowledged_at IS NULL) DESC,
       CASE WHEN p.status = 'Completed' THEN 1 ELSE 0 END ASC,
       p.deadline ASC NULLS LAST,
       p.created_at DESC
@@ -472,6 +502,8 @@ export async function fetchPostHrgDevStats(
 }
 
 export async function fetchPostHrgRecordTypeCounts(): Promise<PostHrgRecordTypeCounts> {
+  // Counts mirror what the main grid actually displays — Completed rows
+  // are hidden by default and live in the dedicated Completed modal.
   const { rows } = await db.query(`
     SELECT
       COUNT(*)::int AS all_count,
@@ -479,6 +511,7 @@ export async function fetchPostHrgRecordTypeCounts(): Promise<PostHrgRecordTypeC
       COUNT(*) FILTER (WHERE record_type = 'POST_HRG')::int AS post_hrg,
       COUNT(*) FILTER (WHERE record_type = 'REP')::int AS rep
     FROM post_hrg_development
+    WHERE status IS NULL OR LOWER(status) <> 'completed'
   `);
   const r = rows[0];
   return {
@@ -487,6 +520,83 @@ export async function fetchPostHrgRecordTypeCounts(): Promise<PostHrgRecordTypeC
     postHrg: r.post_hrg,
     rep: r.rep,
   };
+}
+
+// Lightweight count used to drive the "Completed (N)" badge on the page
+// header without pulling the full row payload.
+export async function fetchPostHrgCompletedCount(): Promise<number> {
+  const { rows } = await db.query(
+    `SELECT COUNT(*)::int AS n
+       FROM post_hrg_development
+      WHERE LOWER(status) = 'completed'`,
+  );
+  return rows[0]?.n ?? 0;
+}
+
+// Returns every Completed row, optionally filtered by record_type.
+// Used by the Completed modal — most teams have a manageable number of
+// Completed entries so we don't paginate.
+export async function fetchPostHrgCompletedRecords(
+  recordType?: PostHrgRecordType | "all",
+): Promise<PostHrgDevRow[]> {
+  const conditions: string[] = [`LOWER(p.status) = 'completed'`];
+  const values: unknown[] = [];
+  if (recordType && recordType !== "all") {
+    conditions.push(`p.record_type = $1`);
+    values.push(recordType);
+  }
+  const { rows } = await db.query(
+    `SELECT
+        p.id, p.hearing_id, p.record_type, p.claimant, p.hearing_date::text,
+        p.assigned_rep, p.post_hearing_status, p.type_of_docs_needed,
+        p.details, p.person_responsible,
+        p.em_sent_task_created, p.ext_letter_sent,
+        p.status, p.deadline::text, p.new_due_date::text,
+        p.remarks, p.indicator,
+        p.details_notes, p.person_responsible_notes,
+        p.em_sent_task_created_notes, p.ext_letter_sent_notes,
+        p.status_notes,
+        p.created_at::text, p.updated_at::text,
+        p.created_by, p.updated_by,
+        p.acknowledged_at::text AS acknowledged_at,
+        r.name AS representative_name,
+        r.rep_type,
+        h.claimant_link,
+        h.chronicle_link,
+        h.claim_type,
+        h.ssn_last_4,
+        h.post_hrg_notes,
+        h.post_hrg_deadline::text AS post_hrg_deadline
+      FROM post_hrg_development p
+      LEFT JOIN hearings h ON h.id = p.hearing_id
+      LEFT JOIN representatives r ON r.id = h.assigned_rep_id
+      WHERE ${conditions.join(" AND ")}
+      ORDER BY p.updated_at DESC, p.id DESC`,
+    values,
+  );
+  return rows as PostHrgDevRow[];
+}
+
+// Reopen a Completed row — flips status back to "In Progress" so it
+// reappears in the main grid. Logged for audit.
+export async function reopenPostHrgDevRecord(id: number) {
+  const { rows } = await db.query(
+    `UPDATE post_hrg_development
+        SET status = 'In Progress', updated_at = NOW()
+      WHERE id = $1
+        AND LOWER(status) = 'completed'
+      RETURNING claimant`,
+    [id],
+  );
+  if (rows.length === 0) {
+    return { success: false, message: "Record not found or not completed" };
+  }
+  const { logAction } = await import("@/lib/activity-log");
+  await logAction(
+    "post_hrg_dev_reopened",
+    `Reopened completed post-hrg record: ${rows[0].claimant}`,
+  );
+  return { success: true };
 }
 
 // ─── Create a single record ─────────────────────────────────────────────────
@@ -542,12 +652,14 @@ export async function createPostHrgDevRecord(data: {
       hearing_id, claimant, hearing_date, assigned_rep,
       post_hearing_status, type_of_docs_needed, details,
       person_responsible, em_sent_task_created, ext_letter_sent,
-      status, deadline, new_due_date, remarks, created_by, record_type
+      status, deadline, new_due_date, remarks, created_by, record_type,
+      acknowledged_at
     ) VALUES (
       $1, $2, NULLIF($3, '')::date, $4,
       $5, $6, $7,
       $8, $9, $10,
-      $11, NULLIF($12, '')::date, NULLIF($13, '')::date, $14, $15, $16
+      $11, NULLIF($12, '')::date, NULLIF($13, '')::date, $14, $15, $16,
+      NOW()  -- manual create: user just made it, auto-acknowledge
     ) RETURNING id`,
     [
       hearingId,
@@ -836,6 +948,36 @@ export async function updatePostHrgDevField(
   );
 }
 
+// ─── Acknowledge a "NEW" record ────────────────────────────────────────────
+// Stamps acknowledged_at so the row drops out of the "pinned to top"
+// group on next render. Shared across the team — first user to click
+// clears it for everyone.
+
+export async function acknowledgePostHrgDevRecord(id: number) {
+  const { rows } = await db.query(
+    `UPDATE post_hrg_development
+        SET acknowledged_at = NOW()
+      WHERE id = $1
+        AND acknowledged_at IS NULL
+      RETURNING claimant, acknowledged_at::text AS acknowledged_at`,
+    [id],
+  );
+  if (rows.length === 0) {
+    // Either the row doesn't exist or was already acknowledged by a
+    // teammate — no-op success either way.
+    return { success: true, acknowledged_at: null };
+  }
+  const { logAction } = await import("@/lib/activity-log");
+  await logAction(
+    "post_hrg_dev_acknowledged",
+    `Acknowledged new post-hrg record: ${rows[0].claimant}`,
+  );
+  return {
+    success: true,
+    acknowledged_at: rows[0].acknowledged_at as string,
+  };
+}
+
 // ─── Delete a record ────────────────────────────────────────────────────────
 
 export async function deletePostHrgDevRecord(id: number) {
@@ -1089,14 +1231,14 @@ export async function importPostHrgDevRecords(data: {
           status, deadline, new_due_date, remarks, created_by,
           details_notes, person_responsible_notes,
           em_sent_task_created_notes, ext_letter_sent_notes, status_notes,
-          record_type
+          record_type, acknowledged_at
         ) VALUES (
           $1, $2, $3::date, $4,
           $5, $6, $7,
           $8, $9, $10,
           $11, $12::date, $13::date, $14, $15,
           $16, $17, $18, $19, $20,
-          $21::post_hrg_record_type
+          $21::post_hrg_record_type, NOW()  -- bulk historical load: auto-ack
         )`,
         [
           hearingId,
@@ -1351,6 +1493,7 @@ export type PostHrgActivityCategory =
   | "created"
   | "updated"
   | "notes"
+  | "acknowledged"
   | "deleted"
   | "imported";
 
@@ -1365,14 +1508,23 @@ const ACTIONS_BY_CATEGORY: Record<PostHrgActivityCategory, string[]> = {
     "post_hrg_dev_note_deleted",
     "post_hrg_dev_auto_created",
     "post_hrg_dev_bulk_created",
+    "post_hrg_dev_acknowledged",
+    "post_hrg_dev_reopened",
+    "post_hrg_dev_phstatus_synced",
   ],
   created: [
     "post_hrg_dev_created",
     "post_hrg_dev_auto_created",
     "post_hrg_dev_bulk_created",
   ],
-  updated: ["post_hrg_dev_updated", "post_hrg_dev_field_updated"],
+  updated: [
+    "post_hrg_dev_updated",
+    "post_hrg_dev_field_updated",
+    "post_hrg_dev_reopened",
+    "post_hrg_dev_phstatus_synced",
+  ],
   notes: ["post_hrg_dev_note_added", "post_hrg_dev_note_deleted"],
+  acknowledged: ["post_hrg_dev_acknowledged"],
   deleted: ["post_hrg_dev_deleted"],
   imported: ["post_hrg_dev_import"],
 };
