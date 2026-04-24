@@ -84,6 +84,7 @@ type HearingSyncPayloadRow = {
   id: string;
   claimant: string;
   ssn_last_4: string;
+  claimant_key: string;
   claim_type: string;
   hearing_date: string;
   hearing_time: string;
@@ -149,6 +150,11 @@ async function fetchHearingSyncPayload(
         h.id::text                               AS id,
         COALESCE(h.claimant, '')                 AS claimant,
         COALESCE(h.ssn_last_4, '')               AS ssn_last_4,
+        CASE
+          WHEN NULLIF(TRIM(COALESCE(h.ssn_last_4, '')), '') IS NULL THEN ''
+          ELSE regexp_replace(lower(trim(COALESCE(h.claimant, ''))), '[[:space:]]+', ' ', 'g')
+            || '|' || trim(COALESCE(h.ssn_last_4, ''))
+        END                                      AS claimant_key,
         COALESCE(h.claim_type, '')               AS claim_type,
         COALESCE(h.hearing_date::text, '')       AS hearing_date,
         COALESCE(h.hearing_time::text, '')       AS hearing_time,
@@ -267,6 +273,11 @@ async function updateSingleFieldAndRecordEvent<T>({
         u.id::text                               AS id,
         COALESCE(u.claimant, '')                 AS claimant,
         COALESCE(u.ssn_last_4, '')               AS ssn_last_4,
+        CASE
+          WHEN NULLIF(TRIM(COALESCE(u.ssn_last_4, '')), '') IS NULL THEN ''
+          ELSE regexp_replace(lower(trim(COALESCE(u.claimant, ''))), '[[:space:]]+', ' ', 'g')
+            || '|' || trim(COALESCE(u.ssn_last_4, ''))
+        END                                      AS claimant_key,
         COALESCE(u.claim_type, '')               AS claim_type,
         COALESCE(u.hearing_date::text, '')       AS hearing_date,
         COALESCE(u.hearing_time::text, '')       AS hearing_time,
@@ -288,7 +299,7 @@ async function updateSingleFieldAndRecordEvent<T>({
       LEFT JOIN mr_teams t ON u.mr_team_id = t.id
     `,
     [hearingId, ...updateParams],
-  )
+  );
 
   const row = rows[0];
   if (!row) {
@@ -367,6 +378,11 @@ async function updateMrTeamAndRecordEvent(
         u.id::text                               AS id,
         COALESCE(u.claimant, '')                 AS claimant,
         COALESCE(u.ssn_last_4, '')               AS ssn_last_4,
+        CASE
+          WHEN NULLIF(TRIM(COALESCE(u.ssn_last_4, '')), '') IS NULL THEN ''
+          ELSE regexp_replace(lower(trim(COALESCE(u.claimant, ''))), '[[:space:]]+', ' ', 'g')
+            || '|' || trim(COALESCE(u.ssn_last_4, ''))
+        END                                      AS claimant_key,
         COALESCE(u.claim_type, '')               AS claim_type,
         COALESCE(u.hearing_date::text, '')       AS hearing_date,
         COALESCE(u.hearing_time::text, '')       AS hearing_time,
