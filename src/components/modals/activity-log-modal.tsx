@@ -26,6 +26,7 @@ const CATEGORIES = [
   { key: "hearings", label: "📅 Hearings" },
   { key: "schedule", label: "🗓️ Schedule" },
   { key: "reps", label: "👥 Reps" },
+  { key: "acknowledged", label: "✓ Acknowledged" },
   { key: "archived", label: "📦 Archived" },
   { key: "all", label: "📋 All" },
 ];
@@ -50,6 +51,16 @@ const ACTION_COLORS: Record<string, string> = {
   post_hrg_note_added: "bg-sky-100 text-sky-700 dark:bg-sky-900/30",
   post_hrg_deadline_updated: "bg-sky-100 text-sky-700 dark:bg-sky-900/30",
   post_hrg_note_deleted: "bg-orange-100 text-orange-700 dark:bg-orange-900/30",
+  // Post HRG Development lifecycle
+  post_hrg_dev_created: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30",
+  post_hrg_dev_auto_created:
+    "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30",
+  post_hrg_dev_acknowledged:
+    "bg-blue-100 text-blue-700 dark:bg-blue-900/30",
+  post_hrg_dev_deleted: "bg-red-100 text-red-700 dark:bg-red-900/30",
+  post_hrg_dev_import: "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30",
+  post_hrg_dev_phstatus_synced:
+    "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30",
   // Hearings
   hearing_updated: "bg-blue-100 text-blue-700 dark:bg-blue-900/30",
   hearing_created: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30",

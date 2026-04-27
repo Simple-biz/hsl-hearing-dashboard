@@ -85,13 +85,25 @@ type PhdInternalModeProps = CommonProps & {
   mode: "phd-internal";
   phdRowId: number;
   initialNotes: string | null;
+  // Per-PHD-row deadline + requirements, read/written via updatePostHrgDevField.
+  // Independent of the parent hearing's post_hrg_deadline / post_hrg_requirements.
+  initialDeadline?: string | null;
+  initialRequirements?: string | null;
   // If the PHD row links to a hearing, pass the hearing id here. The modal
   // will additionally fetch & display the hearing's `post_hrg_notes` as a
   // read-only "Notes from MR / Dashboard" section so the post-hearing team
   // has visibility into the MR thread. Their own notes still only write to
   // PHD's `details_notes`.
   linkedHearingId?: number | null;
-  onPhdPatch: (patch: { details_notes?: string | null }) => void;
+  // Current row's record_type — drives which "Also apply to" checkboxes
+  // appear (the other types for the same hearing). Required to surface
+  // the cascade UI; omitted when the caller opts out.
+  currentRecordType?: "MR" | "POST_HRG" | "REP";
+  onPhdPatch: (patch: {
+    details_notes?: string | null;
+    deadline?: string | null;
+    requirements?: string | null;
+  }) => void;
 };
 
 type Props = HearingModeProps | PhdInternalModeProps;
@@ -139,6 +151,18 @@ function HearingReview({
     { deadline: string; set_at: string; set_by: string | null }[]
   >([]);
   const [showDeadlineHistory, setShowDeadlineHistory] = useState(false);
+  // Cascade UI — which other record types to also update on Update/Clear
+  const [availableCascadeTypes, setAvailableCascadeTypes] = useState<{
+    MR: boolean;
+    POST_HRG: boolean;
+    REP: boolean;
+  } | null>(null);
+  const [cascadeDeadlineTargets, setCascadeDeadlineTargets] = useState<
+    Set<"MR" | "POST_HRG" | "REP">
+  >(new Set());
+  const [cascadeReqTargets, setCascadeReqTargets] = useState<
+    Set<"MR" | "POST_HRG" | "REP">
+  >(new Set());
 
   const isEditingReqRef = useRef(isEditingReq);
   useEffect(() => {
@@ -206,6 +230,44 @@ function HearingReview({
   const canEditNotes = ROLES_CAN_EDIT_NOTES.includes(userRole);
   const canEditReq = ROLES_CAN_EDIT_REQUIREMENTS.includes(userRole);
 
+  // Fetch which record types the hearing has PHD rows for — drives the
+  // "Also apply to" checkbox list. MR is always true (maps to hearings.*).
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const { fetchPhdRelatedRecordTypes } = await import(
+          "@/app/(dashboard)/post-hrg-development/actions"
+        );
+        const data = await fetchPhdRelatedRecordTypes(hearingId);
+        if (active) setAvailableCascadeTypes(data);
+      } catch {
+        /* ignore — checkboxes stay hidden */
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [hearingId]);
+
+  // Cascade the chosen value to the checked record types. Runs AFTER the
+  // primary update so primary state never gets rolled back if cascade fails.
+  const runCascade = async (
+    field: "deadline" | "requirements",
+    value: string | null,
+    targets: Set<"MR" | "POST_HRG" | "REP">,
+  ) => {
+    if (targets.size === 0) return;
+    try {
+      const { cascadePhdField } = await import(
+        "@/app/(dashboard)/post-hrg-development/actions"
+      );
+      await cascadePhdField(hearingId, field, value, Array.from(targets));
+    } catch {
+      /* best-effort — primary already saved */
+    }
+  };
+
   const handleAddNote = async () => {
     const trimmed = newNote.trim();
     if (!trimmed || !canEditNotes) return;
@@ -258,9 +320,12 @@ function HearingReview({
   };
 
   const handleUpdateDeadline = async () => {
+    const value = deadline || null;
     const { updateHearing } = await import("@/app/(dashboard)/actions");
-    await updateHearing(hearingId, "post_hrg_deadline", deadline || null);
-    onHearingPatch({ post_hrg_deadline: deadline || null });
+    await updateHearing(hearingId, "post_hrg_deadline", value);
+    onHearingPatch({ post_hrg_deadline: value });
+    await runCascade("deadline", value, cascadeDeadlineTargets);
+    setCascadeDeadlineTargets(new Set());
   };
 
   const handleClearDeadline = async () => {
@@ -268,20 +333,21 @@ function HearingReview({
     const { updateHearing } = await import("@/app/(dashboard)/actions");
     await updateHearing(hearingId, "post_hrg_deadline", null);
     onHearingPatch({ post_hrg_deadline: null });
+    await runCascade("deadline", null, cascadeDeadlineTargets);
+    setCascadeDeadlineTargets(new Set());
   };
 
   const handleSaveRequirements = async () => {
     const trimmed = requirements.trim();
+    const value = trimmed || null;
     const { updateHearing } = await import("@/app/(dashboard)/actions");
-    await updateHearing(
-      hearingId,
-      "post_hrg_requirements",
-      trimmed || null,
-    );
-    onHearingPatch({ post_hrg_requirements: trimmed || null });
+    await updateHearing(hearingId, "post_hrg_requirements", value);
+    onHearingPatch({ post_hrg_requirements: value });
     setRequirements(trimmed);
     setHasSavedReq(!!trimmed);
     setIsEditingReq(false);
+    await runCascade("requirements", value, cascadeReqTargets);
+    setCascadeReqTargets(new Set());
   };
 
   return (
@@ -306,6 +372,19 @@ function HearingReview({
         onChange={setDeadline}
         onUpdate={handleUpdateDeadline}
         onClear={handleClearDeadline}
+      />
+      <CascadeCheckboxes
+        available={availableCascadeTypes}
+        excludeType="MR"
+        selected={cascadeDeadlineTargets}
+        onToggle={(t) =>
+          setCascadeDeadlineTargets((prev) => {
+            const next = new Set(prev);
+            if (next.has(t)) next.delete(t);
+            else next.add(t);
+            return next;
+          })
+        }
       />
       {(deadlinePrev || deadlineChangedBy) && (
         <div className="rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20 px-3 py-1.5 text-[11px] text-amber-800 dark:text-amber-300 space-y-0.5">
@@ -416,6 +495,19 @@ function HearingReview({
             No requirements set.
           </p>
         )}
+        <CascadeCheckboxes
+          available={availableCascadeTypes}
+          excludeType="MR"
+          selected={cascadeReqTargets}
+          onToggle={(t) =>
+            setCascadeReqTargets((prev) => {
+              const next = new Set(prev);
+              if (next.has(t)) next.delete(t);
+              else next.add(t);
+              return next;
+            })
+          }
+        />
       </div>
 
       {/* Add note */}
@@ -448,7 +540,10 @@ function PhdInternalReview({
   onClose,
   phdRowId,
   initialNotes,
+  initialDeadline,
+  initialRequirements,
   linkedHearingId,
+  currentRecordType,
   onPhdPatch,
 }: PhdInternalModeProps) {
   const [notes, setNotes] = useState<PostHrgNote[]>(() =>
@@ -457,6 +552,37 @@ function PhdInternalReview({
   const [hearingNotes, setHearingNotes] = useState<PostHrgNote[]>([]);
   const [newNote, setNewNote] = useState("");
   const [saving, setSaving] = useState(false);
+
+  // Deadline + Requirements (per-PHD-row, independent of hearings.post_hrg_*)
+  const [deadline, setDeadline] = useState<string>(initialDeadline ?? "");
+  const [requirements, setRequirements] = useState<string>(
+    initialRequirements ?? "",
+  );
+  const [isEditingReq, setIsEditingReq] = useState<boolean>(
+    !initialRequirements,
+  );
+  const [hasSavedReq, setHasSavedReq] = useState<boolean>(!!initialRequirements);
+
+  // Cascade UI (only meaningful when a linked hearing exists).
+  const [availableCascadeTypes, setAvailableCascadeTypes] = useState<{
+    MR: boolean;
+    POST_HRG: boolean;
+    REP: boolean;
+  } | null>(null);
+  const [cascadeDeadlineTargets, setCascadeDeadlineTargets] = useState<
+    Set<"MR" | "POST_HRG" | "REP">
+  >(new Set());
+  const [cascadeReqTargets, setCascadeReqTargets] = useState<
+    Set<"MR" | "POST_HRG" | "REP">
+  >(new Set());
+  const isEditingReqRef = useRef(isEditingReq);
+  useEffect(() => {
+    isEditingReqRef.current = isEditingReq;
+  }, [isEditingReq]);
+  const savingRef = useRef(saving);
+  useEffect(() => {
+    savingRef.current = saving;
+  }, [saving]);
 
   useEffect(() => {
     let active = true;
@@ -470,6 +596,36 @@ function PhdInternalReview({
         if (active) setNotes(parseNotes(raw));
       } catch {
         /* */
+      }
+    };
+    poll();
+    const id = setInterval(poll, 8000);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, [phdRowId]);
+
+  // Poll deadline + requirements so concurrent edits from another user
+  // surface within the 8s window. Skip while saving to avoid clobbering
+  // the local draft mid-keystroke.
+  useEffect(() => {
+    let active = true;
+    const poll = async () => {
+      if (!active || savingRef.current) return;
+      try {
+        const { fetchPostHrgDevDeadlineAndRequirements } = await import(
+          "@/app/(dashboard)/post-hrg-development/actions"
+        );
+        const data = await fetchPostHrgDevDeadlineAndRequirements(phdRowId);
+        if (!active) return;
+        if (data.deadline != null) setDeadline(data.deadline);
+        if (!isEditingReqRef.current) {
+          setRequirements(data.requirements ?? "");
+          setHasSavedReq(!!data.requirements);
+        }
+      } catch {
+        /* ignore */
       }
     };
     poll();
@@ -515,6 +671,103 @@ function PhdInternalReview({
   }, [linkedHearingId]);
 
   const canEditNotes = ROLES_CAN_EDIT_NOTES.includes(userRole);
+  const canEditReq = ROLES_CAN_EDIT_REQUIREMENTS.includes(userRole);
+
+  // Fetch which record types exist for the linked hearing so the modal can
+  // offer "Also apply to" cascade checkboxes. No-op for orphan PHD rows.
+  useEffect(() => {
+    if (!linkedHearingId) {
+      setAvailableCascadeTypes(null);
+      return;
+    }
+    let active = true;
+    (async () => {
+      try {
+        const { fetchPhdRelatedRecordTypes } = await import(
+          "@/app/(dashboard)/post-hrg-development/actions"
+        );
+        const data = await fetchPhdRelatedRecordTypes(linkedHearingId);
+        if (active) setAvailableCascadeTypes(data);
+      } catch {
+        /* ignore — checkboxes stay hidden */
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [linkedHearingId]);
+
+  const runCascade = async (
+    field: "deadline" | "requirements",
+    value: string | null,
+    targets: Set<"MR" | "POST_HRG" | "REP">,
+  ) => {
+    if (!linkedHearingId || targets.size === 0) return;
+    try {
+      const { cascadePhdField } = await import(
+        "@/app/(dashboard)/post-hrg-development/actions"
+      );
+      await cascadePhdField(
+        linkedHearingId,
+        field,
+        value,
+        Array.from(targets),
+      );
+    } catch {
+      /* best-effort — primary already saved */
+    }
+  };
+
+  const handleUpdateDeadline = async () => {
+    setSaving(true);
+    try {
+      const { updatePostHrgDevField } = await import(
+        "@/app/(dashboard)/post-hrg-development/actions"
+      );
+      const next = deadline || null;
+      await updatePostHrgDevField(phdRowId, "deadline", next);
+      onPhdPatch({ deadline: next });
+      await runCascade("deadline", next, cascadeDeadlineTargets);
+      setCascadeDeadlineTargets(new Set());
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleClearDeadline = async () => {
+    setSaving(true);
+    try {
+      const { updatePostHrgDevField } = await import(
+        "@/app/(dashboard)/post-hrg-development/actions"
+      );
+      await updatePostHrgDevField(phdRowId, "deadline", null);
+      setDeadline("");
+      onPhdPatch({ deadline: null });
+      await runCascade("deadline", null, cascadeDeadlineTargets);
+      setCascadeDeadlineTargets(new Set());
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSaveRequirements = async () => {
+    if (!canEditReq) return;
+    setSaving(true);
+    try {
+      const { updatePostHrgDevField } = await import(
+        "@/app/(dashboard)/post-hrg-development/actions"
+      );
+      const next = requirements.trim() || null;
+      await updatePostHrgDevField(phdRowId, "requirements", next);
+      setIsEditingReq(false);
+      setHasSavedReq(!!next);
+      onPhdPatch({ requirements: next });
+      await runCascade("requirements", next, cascadeReqTargets);
+      setCascadeReqTargets(new Set());
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleAddNote = async () => {
     const trimmed = newNote.trim();
@@ -563,6 +816,89 @@ function PhdInternalReview({
         </div>
       }
     >
+      {/* Deadline (per-PHD-row) */}
+      <DeadlineRow
+        deadline={deadline}
+        onChange={setDeadline}
+        onUpdate={handleUpdateDeadline}
+        onClear={handleClearDeadline}
+      />
+      {currentRecordType && (
+        <CascadeCheckboxes
+          available={availableCascadeTypes}
+          excludeType={currentRecordType}
+          selected={cascadeDeadlineTargets}
+          onToggle={(t) =>
+            setCascadeDeadlineTargets((prev) => {
+              const next = new Set(prev);
+              if (next.has(t)) next.delete(t);
+              else next.add(t);
+              return next;
+            })
+          }
+        />
+      )}
+
+      {/* Requirements (per-PHD-row) */}
+      <div className="space-y-1.5">
+        <label className="text-xs font-medium text-red-700 dark:text-red-400">
+          Requirements
+        </label>
+        {canEditReq ? (
+          <>
+            <textarea
+              value={requirements}
+              onChange={(e) => setRequirements(e.target.value)}
+              rows={3}
+              placeholder="Enter requirements..."
+              disabled={!isEditingReq}
+              className="w-full rounded-md border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/20 px-3 py-2 text-xs text-red-700 dark:text-red-300 placeholder:text-red-400 dark:placeholder:text-red-600 focus:border-red-400 focus:outline-none focus:ring-1 focus:ring-red-400 disabled:opacity-80 disabled:cursor-not-allowed"
+            />
+            <div className="flex gap-2">
+              {isEditingReq ? (
+                <button
+                  className="h-7 text-xs px-3 rounded-md border border-red-300 text-red-700 hover:bg-red-100 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30"
+                  onClick={handleSaveRequirements}
+                  disabled={saving}
+                >
+                  {hasSavedReq ? "Update" : "Save Requirements"}
+                </button>
+              ) : (
+                <button
+                  className="h-7 text-xs px-3 rounded-md border border-red-300 text-red-700 hover:bg-red-100 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30"
+                  onClick={() => setIsEditingReq(true)}
+                >
+                  Edit
+                </button>
+              )}
+            </div>
+          </>
+        ) : requirements ? (
+          <div className="w-full rounded-md border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/20 px-3 py-2 text-xs text-red-700 dark:text-red-300 whitespace-pre-wrap min-h-15">
+            {requirements}
+          </div>
+        ) : (
+          <p className="text-xs text-red-400 dark:text-red-600 italic py-1">
+            No requirements set.
+          </p>
+        )}
+        {currentRecordType && (
+          <CascadeCheckboxes
+            available={availableCascadeTypes}
+            excludeType={currentRecordType}
+            selected={cascadeReqTargets}
+            onToggle={(t) =>
+              setCascadeReqTargets((prev) => {
+                const next = new Set(prev);
+                if (next.has(t)) next.delete(t);
+                else next.add(t);
+                return next;
+              })
+            }
+          />
+        )}
+      </div>
+
       <AddNote
         canEdit={canEditNotes}
         value={newNote}
@@ -666,6 +1002,51 @@ function ModalShell({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Shared cascade-target checkbox row. Rendered below Deadline / Requirements
+// in both hearing and phd-internal modes. Shows at most 2 checkboxes (the
+// other record types present for the same hearing, minus the current type).
+function CascadeCheckboxes({
+  available,
+  excludeType,
+  selected,
+  onToggle,
+  disabled,
+}: {
+  available: { MR: boolean; POST_HRG: boolean; REP: boolean } | null;
+  excludeType: "MR" | "POST_HRG" | "REP";
+  selected: Set<"MR" | "POST_HRG" | "REP">;
+  onToggle: (t: "MR" | "POST_HRG" | "REP") => void;
+  disabled?: boolean;
+}) {
+  if (!available) return null;
+  const all: ("MR" | "POST_HRG" | "REP")[] = ["MR", "POST_HRG", "REP"];
+  const visible = all.filter((t) => t !== excludeType && available[t]);
+  if (visible.length === 0) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+      <span className="font-medium">Also apply to:</span>
+      {visible.map((t) => {
+        const label = t === "POST_HRG" ? "Post HRG" : t;
+        return (
+          <label
+            key={t}
+            className="inline-flex items-center gap-1.5 cursor-pointer select-none"
+          >
+            <input
+              type="checkbox"
+              checked={selected.has(t)}
+              onChange={() => onToggle(t)}
+              disabled={disabled}
+              className="h-3.5 w-3.5 rounded border-border cursor-pointer accent-blue-600 disabled:opacity-40 disabled:cursor-not-allowed"
+            />
+            <span className="text-foreground/80">{label}</span>
+          </label>
+        );
+      })}
     </div>
   );
 }

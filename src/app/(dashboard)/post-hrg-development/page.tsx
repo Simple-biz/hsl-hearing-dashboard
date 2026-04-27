@@ -5,6 +5,7 @@ import {
   fetchPostHrgDevStats,
   fetchPostHrgOptions,
   fetchPostHrgRecordTypeCounts,
+  fetchPostHrgCompletedCount,
   type PostHrgRecordType,
 } from "./actions";
 
@@ -35,20 +36,24 @@ export default async function PostHrgDevelopmentPage({
 
   const sp = await searchParams;
   const rawTab = (sp.tab || "").toUpperCase();
+  // Default to "all" so the team sees everything on first load.
+  // A specific tab is honoured only when an explicit ?tab= URL param is set.
   const initialTab: PostHrgRecordType | "all" = (
     VALID_TABS as string[]
   ).includes(rawTab === "ALL" ? "all" : rawTab)
     ? rawTab === "ALL"
       ? "all"
       : (rawTab as PostHrgRecordType)
-    : "POST_HRG";
+    : "all";
 
-  const [initialPage, stats, options, recordTypeCounts] = await Promise.all([
-    fetchPostHrgDevPage({ page: 1, pageSize: 100, recordType: initialTab }),
-    fetchPostHrgDevStats(initialTab),
-    fetchPostHrgOptions(),
-    fetchPostHrgRecordTypeCounts(),
-  ]);
+  const [initialPage, stats, options, recordTypeCounts, completedCount] =
+    await Promise.all([
+      fetchPostHrgDevPage({ page: 1, pageSize: 100, recordType: initialTab }),
+      fetchPostHrgDevStats(initialTab),
+      fetchPostHrgOptions(),
+      fetchPostHrgRecordTypeCounts(),
+      fetchPostHrgCompletedCount(),
+    ]);
 
   return (
     <PostHrgClient
@@ -65,6 +70,7 @@ export default async function PostHrgDevelopmentPage({
       initialDocsNeededOptions={options.docsNeededOptions}
       initialRecordType={initialTab}
       initialRecordTypeCounts={recordTypeCounts}
+      initialCompletedCount={completedCount}
     />
   );
 }
