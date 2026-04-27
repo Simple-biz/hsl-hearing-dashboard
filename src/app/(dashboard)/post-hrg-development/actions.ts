@@ -23,6 +23,7 @@ export interface PostHrgDevRow {
   deadline: string | null;
   new_due_date: string | null;
   remarks: string | null;
+  requirements: string | null;
   indicator: string | null;
   // Notes (JSON) for fields that have comment sections
   details_notes: string | null;
@@ -397,7 +398,7 @@ export async function fetchPostHrgDevPage(
         p.assigned_rep, p.post_hearing_status, p.type_of_docs_needed,
         p.details, p.person_responsible,
         p.em_sent_task_created, p.ext_letter_sent,
-        p.status, p.deadline::text, p.new_due_date::text,
+        p.status, p.deadline::text, p.new_due_date::text, p.requirements,
         p.remarks, p.indicator,
         p.details_notes, p.person_responsible_notes,
         p.em_sent_task_created_notes, p.ext_letter_sent_notes,
@@ -438,7 +439,7 @@ export async function fetchPostHrgDevRecords(): Promise<PostHrgDevRow[]> {
       p.assigned_rep, p.post_hearing_status, p.type_of_docs_needed,
       p.details, p.person_responsible,
       p.em_sent_task_created, p.ext_letter_sent,
-      p.status, p.deadline::text, p.new_due_date::text,
+      p.status, p.deadline::text, p.new_due_date::text, p.requirements,
       p.remarks,
       p.details_notes, p.person_responsible_notes,
       p.em_sent_task_created_notes, p.ext_letter_sent_notes,
@@ -551,7 +552,7 @@ export async function fetchPostHrgCompletedRecords(
         p.assigned_rep, p.post_hearing_status, p.type_of_docs_needed,
         p.details, p.person_responsible,
         p.em_sent_task_created, p.ext_letter_sent,
-        p.status, p.deadline::text, p.new_due_date::text,
+        p.status, p.deadline::text, p.new_due_date::text, p.requirements,
         p.remarks, p.indicator,
         p.details_notes, p.person_responsible_notes,
         p.em_sent_task_created_notes, p.ext_letter_sent_notes,
@@ -697,7 +698,7 @@ export interface BulkCreatePostHrgResult {
   skipped: {
     hearingId: number;
     recordType: PostHrgRecordType;
-    reason: "already_exists" | "hearing_not_found";
+    reason: "hearing_not_found";
   }[];
 }
 
@@ -710,11 +711,12 @@ export async function bulkCreatePostHrgFromHearings(
     return { created: 0, skipped: [] };
   }
 
-  // CROSS JOIN hearings × types → one INSERT per pair. Legit duplicates (same
-  // hearing, same record_type) are now allowed at the schema level, so the
-  // bulk button guards against accidental re-clicks with a NOT EXISTS subquery
-  // rather than ON CONFLICT. Manual duplicates created from the post-hrg page
-  // are unaffected.
+  // CROSS JOIN hearings × types → one INSERT per pair. The `types` array
+  // may contain duplicates (e.g. ['MR', 'MR', 'REP']) when the modal asks
+  // for multiple records of the same type per hearing — that's intentional
+  // and now produces multiple rows. The unique index on (hearing_id,
+  // record_type) was relaxed in 20260421_relax_phd_unique_index.sql, so
+  // duplicates are first-class.
   const insertRes = await db.query(
     `INSERT INTO post_hrg_development (
        hearing_id, claimant, hearing_date, assigned_rep, status, record_type, created_by
@@ -731,20 +733,8 @@ export async function bulkCreatePostHrgFromHearings(
      LEFT JOIN representatives r ON r.id = h.assigned_rep_id
      CROSS JOIN unnest($2::post_hrg_record_type[]) AS t(record_type)
      WHERE h.id = ANY($1::int[])
-       AND NOT EXISTS (
-         SELECT 1
-         FROM post_hrg_development p
-         WHERE p.hearing_id = h.id
-           AND p.record_type = t.record_type
-       )
      RETURNING hearing_id, record_type`,
     [hearingIds, types, createdBy],
-  );
-
-  const insertedKeys = new Set(
-    (insertRes.rows as { hearing_id: number; record_type: string }[]).map(
-      (r) => `${r.hearing_id}:${r.record_type}`,
-    ),
   );
 
   const foundHearingIdsRes = await db.query(
@@ -763,16 +753,6 @@ export async function bulkCreatePostHrgFromHearings(
           hearingId: hid,
           recordType: t,
           reason: "hearing_not_found",
-        });
-      }
-      continue;
-    }
-    for (const t of types) {
-      if (!insertedKeys.has(`${hid}:${t}`)) {
-        skipped.push({
-          hearingId: hid,
-          recordType: t,
-          reason: "already_exists",
         });
       }
     }
@@ -894,6 +874,7 @@ export async function updatePostHrgDevField(
     "deadline",
     "new_due_date",
     "remarks",
+    "requirements",
     "indicator",
   ];
 
@@ -1379,6 +1360,115 @@ export async function fetchPostHrgDevNotes(
   return rows[0]?.[col] ?? null;
 }
 
+// Lightweight read used by the PHD-internal modal to keep its Deadline
+// + Requirements fields in sync if a teammate edits them concurrently.
+export async function fetchPostHrgDevDeadlineAndRequirements(
+  recordId: number,
+): Promise<{ deadline: string | null; requirements: string | null }> {
+  const { rows } = await db.query(
+    `SELECT deadline::text AS deadline, requirements
+       FROM post_hrg_development WHERE id = $1`,
+    [recordId],
+  );
+  return {
+    deadline: rows[0]?.deadline ?? null,
+    requirements: rows[0]?.requirements ?? null,
+  };
+}
+
+// Which record types exist for a hearing — used by the Post HRG Review
+// modal to decide which "Also apply to" cascade checkboxes to offer.
+// MR is always treated as present (it maps to the hearing's own
+// post_hrg_* columns, not an MR PHD row), but POST_HRG / REP only
+// surface as checkboxes when an actual PHD row of that type exists.
+export async function fetchPhdRelatedRecordTypes(
+  hearingId: number,
+): Promise<{ MR: boolean; POST_HRG: boolean; REP: boolean }> {
+  const { rows } = await db.query(
+    `SELECT DISTINCT record_type
+       FROM post_hrg_development
+      WHERE hearing_id = $1`,
+    [hearingId],
+  );
+  const set = new Set<string>(rows.map((r) => String(r.record_type)));
+  return {
+    MR: true,
+    POST_HRG: set.has("POST_HRG"),
+    REP: set.has("REP"),
+  };
+}
+
+// Apply a deadline or requirements value across selected record types
+// for the same hearing. "MR" maps to the hearing-level column; POST_HRG
+// and REP map to their PHD rows. Skips targets that don't exist so the
+// caller can pass a superset safely.
+export async function cascadePhdField(
+  hearingId: number,
+  field: "deadline" | "requirements",
+  value: string | null,
+  targets: PostHrgRecordType[],
+): Promise<{ success: true; updated: number }> {
+  if (!hearingId || targets.length === 0) {
+    return { success: true, updated: 0 };
+  }
+
+  let updated = 0;
+
+  // MR target → hearings.post_hrg_* (the canonical source for MR-mode modal).
+  if (targets.includes("MR")) {
+    if (field === "deadline") {
+      const res = await db.query(
+        `UPDATE hearings
+            SET post_hrg_deadline = NULLIF($1, '')::date
+          WHERE id = $2`,
+        [value, hearingId],
+      );
+      updated += res.rowCount ?? 0;
+    } else {
+      const res = await db.query(
+        `UPDATE hearings SET post_hrg_requirements = $1 WHERE id = $2`,
+        [value, hearingId],
+      );
+      updated += res.rowCount ?? 0;
+    }
+  }
+
+  // POST_HRG / REP targets → post_hrg_development.(deadline|requirements)
+  const phdTargets = targets.filter((t) => t !== "MR");
+  if (phdTargets.length > 0) {
+    if (field === "deadline") {
+      const res = await db.query(
+        `UPDATE post_hrg_development
+            SET deadline = NULLIF($1, '')::date, updated_at = NOW()
+          WHERE hearing_id = $2
+            AND record_type = ANY($3::post_hrg_record_type[])`,
+        [value, hearingId, phdTargets],
+      );
+      updated += res.rowCount ?? 0;
+    } else {
+      const res = await db.query(
+        `UPDATE post_hrg_development
+            SET requirements = $1, updated_at = NOW()
+          WHERE hearing_id = $2
+            AND record_type = ANY($3::post_hrg_record_type[])`,
+        [value, hearingId, phdTargets],
+      );
+      updated += res.rowCount ?? 0;
+    }
+  }
+
+  if (updated > 0) {
+    const { logAction } = await import("@/lib/activity-log");
+    const label = field === "deadline" ? "Deadline" : "Requirements";
+    await logAction(
+      "post_hrg_dev_cascade",
+      `Cascaded ${label} to ${targets.join(", ")} on hearing #${hearingId}: '${value ?? "(cleared)"}' (${updated} row${updated === 1 ? "" : "s"})`,
+    );
+  }
+
+  return { success: true, updated };
+}
+
 export async function addPostHrgDevNote(
   recordId: number,
   field: string,
@@ -1511,6 +1601,7 @@ const ACTIONS_BY_CATEGORY: Record<PostHrgActivityCategory, string[]> = {
     "post_hrg_dev_acknowledged",
     "post_hrg_dev_reopened",
     "post_hrg_dev_phstatus_synced",
+    "post_hrg_dev_cascade",
   ],
   created: [
     "post_hrg_dev_created",
@@ -1522,6 +1613,7 @@ const ACTIONS_BY_CATEGORY: Record<PostHrgActivityCategory, string[]> = {
     "post_hrg_dev_field_updated",
     "post_hrg_dev_reopened",
     "post_hrg_dev_phstatus_synced",
+    "post_hrg_dev_cascade",
   ],
   notes: ["post_hrg_dev_note_added", "post_hrg_dev_note_deleted"],
   acknowledged: ["post_hrg_dev_acknowledged"],

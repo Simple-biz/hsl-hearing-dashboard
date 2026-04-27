@@ -735,7 +735,12 @@ function PostHrgCell({
   const noteCount = usesHearingNotes
     ? hearingNotes.length
     : detailsNotes.length + (record.hearing_id ? hearingNotes.length : 0);
-  const deadline = record.post_hrg_deadline ?? null;
+  // Same routing for the deadline display: MR-with-hearing reads the
+  // hearing's deadline (h.post_hrg_deadline). POST_HRG/REP/orphan MR show
+  // the PHD row's own column (p.deadline) since the modal writes there.
+  const deadline = usesHearingNotes
+    ? (record.post_hrg_deadline ?? null)
+    : (record.deadline ?? null);
 
   let badgeClass = "bg-muted/50 text-muted-foreground hover:bg-muted";
   let text = "+ Add";
@@ -4195,6 +4200,7 @@ export function PostHrgClient({
             mode="phd-internal"
             phdRowId={postHrgModal.id}
             linkedHearingId={postHrgModal.hearing_id}
+            currentRecordType={postHrgModal.record_type}
             claimant={postHrgModal.claimant}
             hearingDateText={
               postHrgModal.hearing_date
@@ -4211,6 +4217,8 @@ export function PostHrgClient({
             userName={userName}
             userRole={userRole}
             initialNotes={postHrgModal.details_notes}
+            initialDeadline={postHrgModal.deadline}
+            initialRequirements={postHrgModal.requirements}
             onClose={() => setPostHrgModal(null)}
             onPhdPatch={(patch) => {
               handleRecordUpdate({
@@ -4219,6 +4227,14 @@ export function PostHrgClient({
                   patch.details_notes !== undefined
                     ? patch.details_notes
                     : postHrgModal.details_notes,
+                deadline:
+                  patch.deadline !== undefined
+                    ? patch.deadline
+                    : postHrgModal.deadline,
+                requirements:
+                  patch.requirements !== undefined
+                    ? patch.requirements
+                    : postHrgModal.requirements,
               });
             }}
           />

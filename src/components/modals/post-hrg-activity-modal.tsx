@@ -112,6 +112,10 @@ const ACTION_LABELS: Record<string, { label: string; cls: string }> = {
     label: "PH Status Synced",
     cls: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400",
   },
+  post_hrg_dev_cascade: {
+    label: "Cascaded",
+    cls: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
+  },
 };
 
 function formatDateTime(iso: string) {
