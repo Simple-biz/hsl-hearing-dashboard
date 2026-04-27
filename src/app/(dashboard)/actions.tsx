@@ -692,6 +692,26 @@ export async function updateHearing(
         [repDocsStatus, hearingId],
       );
     }
+
+    // Sync decision → every linked Post HRG Development row's PH Status.
+    // The PHD cell is read-only in the UI — this is the only way the
+    // post-hearing team sees the latest decision on their rows. Runs even
+    // when the incoming value is NULL so clearing the decision on the
+    // dashboard also clears PH Status on PHD (matches the user's pick).
+    const syncRes = await db.query(
+      `UPDATE post_hrg_development
+          SET post_hearing_status = $1,
+              updated_at = NOW()
+        WHERE hearing_id = $2
+        RETURNING id`,
+      [value ?? null, hearingId],
+    );
+    if ((syncRes.rowCount ?? 0) > 0) {
+      await logAction(
+        "post_hrg_dev_phstatus_synced",
+        `Synced PH Status on ${syncRes.rowCount} Post HRG record(s) for ${claimant}: '${oldValue ?? "(empty)"}' → '${value ?? "(empty)"}'`,
+      );
+    }
   }
 
   // Resolve display values for ID fields
@@ -1432,9 +1452,16 @@ export async function fetchActivityLog(params: {
         "post_hrg_note_added",
         "post_hrg_deadline_updated",
         "post_hrg_note_deleted",
+        "post_hrg_dev_created",
+        "post_hrg_dev_auto_created",
+        "post_hrg_dev_deleted",
+        "post_hrg_dev_import",
+        "post_hrg_dev_phstatus_synced",
         "rep_docs_field_updated",
         "rep_docs_imported",
       ],
+      // Dedicated bucket for "user marked NEW row as seen" events
+      acknowledged: ["post_hrg_dev_acknowledged"],
       hearings: [
         "hearing_updated",
         "hearing_created",

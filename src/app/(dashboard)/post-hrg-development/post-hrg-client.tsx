@@ -15,6 +15,7 @@ import {
   fetchPostHrgRecordTypeCounts,
   createPostHrgDevRecord,
   updatePostHrgDevField,
+  acknowledgePostHrgDevRecord,
   importPostHrgDevRecords,
   addPostHrgDevNote,
   deletePostHrgDevNote,
@@ -30,7 +31,8 @@ import {
 import { PostHrgDetailPanel } from "./post-hrg-detail-panel";
 import { PostHrgActivityModal } from "@/components/modals/post-hrg-activity-modal";
 import { PostHrgReviewModal } from "@/components/modals/post-hrg-review-modal";
-import { ClipboardList } from "lucide-react";
+import { PostHrgCompletedModal } from "@/components/modals/post-hrg-completed-modal";
+import { ClipboardList, Check } from "lucide-react";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -631,9 +633,11 @@ function RecordTypeBadge({ type }: { type: PostHrgRecordType }) {
 function ClaimantCell({
   record,
   showTypeBadge,
+  isCompleted,
 }: {
   record: PostHrgDevRow;
   showTypeBadge?: boolean;
+  isCompleted?: boolean;
 }) {
   const chronicleLink = record.chronicle_link ?? null;
   const isNew = isCreatedToday(record.created_at);
@@ -671,6 +675,14 @@ function ClaimantCell({
             title="Added today"
           >
             NEW
+          </span>
+        )}
+        {isCompleted && (
+          <span
+            className="shrink-0 inline-flex items-center gap-0.5 rounded-full bg-emerald-600 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-white shadow-sm"
+            title="Completed — view only, reopen from the Completed modal to edit"
+          >
+            ✓ Completed
           </span>
         )}
       </div>
@@ -723,7 +735,12 @@ function PostHrgCell({
   const noteCount = usesHearingNotes
     ? hearingNotes.length
     : detailsNotes.length + (record.hearing_id ? hearingNotes.length : 0);
-  const deadline = record.post_hrg_deadline ?? null;
+  // Same routing for the deadline display: MR-with-hearing reads the
+  // hearing's deadline (h.post_hrg_deadline). POST_HRG/REP/orphan MR show
+  // the PHD row's own column (p.deadline) since the modal writes there.
+  const deadline = usesHearingNotes
+    ? (record.post_hrg_deadline ?? null)
+    : (record.deadline ?? null);
 
   let badgeClass = "bg-muted/50 text-muted-foreground hover:bg-muted";
   let text = "+ Add";
@@ -1464,7 +1481,7 @@ const COLUMNS: {
   sortable?: boolean;
   frozen?: boolean;
 }[] = [
-  { key: "indicator", label: "", w: 32, frozen: true },
+  { key: "indicator", label: "", w: 80, frozen: true },
   { key: "claimant", label: "Claimant", w: 175, sortable: true, frozen: true },
   { key: "ssn_last_4", label: "SSN", w: 62, frozen: true },
   {
@@ -1475,7 +1492,13 @@ const COLUMNS: {
     frozen: true,
   },
   { key: "assigned_rep", label: "Rep", w: 120, sortable: true, frozen: true },
-  { key: "post_hearing_status", label: "PH Status", w: 130, sortable: true },
+  {
+    key: "post_hearing_status",
+    label: "PH Status",
+    w: 130,
+    sortable: true,
+    frozen: true,
+  },
   { key: "type_of_docs_needed", label: "Docs Needed", w: 120 },
   { key: "details", label: "Details", w: 240 },
   { key: "person_responsible", label: "Responsible", w: 160, sortable: true },
@@ -1555,6 +1578,8 @@ interface MemoRowProps {
   overdue: boolean;
   onRowClick: () => void;
   tintColor: string | null;
+  unacknowledged: boolean;
+  completed: boolean;
 }
 
 const MemoRow = memo(
@@ -1570,6 +1595,8 @@ const MemoRow = memo(
     overdue,
     onRowClick,
     tintColor,
+    unacknowledged,
+    completed,
   }: MemoRowProps) {
     const rb = ri % 2 === 0 ? evenBg : oddBg;
     // Translucent fill (~24% alpha) so text stays readable on any indicator color
@@ -1580,6 +1607,9 @@ const MemoRow = memo(
           "group border-b border-border/40 last:border-0 cursor-pointer transition-colors duration-150",
           !tintBg && "hover:bg-muted/50",
           overdue && "bg-red-50/50! dark:bg-red-950/10!",
+          // Completed rows surface during search but are view-only — dim
+          // them so the team can see at a glance that they're historical.
+          completed && "opacity-60",
         )}
         onClick={onRowClick}
       >
@@ -1598,7 +1628,6 @@ const MemoRow = memo(
               onClick={(e) => {
                 const INTERACTIVE_COLS = [
                   "indicator",
-                  "post_hearing_status",
                   "type_of_docs_needed",
                   "person_responsible",
                   "em_sent_task_created",
@@ -1634,6 +1663,13 @@ const MemoRow = memo(
                       }
                     : { backgroundColor: tintBg }
                   : {}),
+                // Blue left edge on the indicator cell of unacknowledged
+                // rows. <tr> border-left is unreliable under
+                // border-collapse: collapse, so we paint it via inset shadow
+                // on the leftmost (indicator) cell instead.
+                ...(unacknowledged && col.key === "indicator"
+                  ? { boxShadow: "inset 4px 0 0 0 #3B82F6" }
+                  : {}),
               }}
             >
               {renderCellFn(record, col)}
@@ -1647,7 +1683,9 @@ const MemoRow = memo(
     prev.record === next.record &&
     prev.ri === next.ri &&
     prev.overdue === next.overdue &&
-    prev.tintColor === next.tintColor,
+    prev.tintColor === next.tintColor &&
+    prev.unacknowledged === next.unacknowledged &&
+    prev.completed === next.completed,
 );
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -1666,6 +1704,7 @@ export function PostHrgClient({
   initialDocsNeededOptions,
   initialRecordType,
   initialRecordTypeCounts,
+  initialCompletedCount,
 }: {
   userRole: string;
   userId: number;
@@ -1680,6 +1719,7 @@ export function PostHrgClient({
   initialDocsNeededOptions: { value: string; color: string | null }[];
   initialRecordType: PostHrgRecordType | "all";
   initialRecordTypeCounts: PostHrgRecordTypeCounts;
+  initialCompletedCount: number;
 }) {
   const [viewMode, setViewMode] = useState<ViewMode>("dashboard");
   const [records, setRecords] = useState<PostHrgDevRow[]>(initialRecords);
@@ -1691,6 +1731,10 @@ export function PostHrgClient({
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [phStatusFilter, setPhStatusFilter] = useState<string>("all");
   const [indicatorFilter, setIndicatorFilter] = useState<string>("all");
+  // "Show NEW only" toggle — when ON, only unacknowledged rows are returned.
+  // Threaded via ref so the existing fetchPage signature stays stable.
+  const [showNewOnly, setShowNewOnly] = useState<boolean>(false);
+  const showNewOnlyRef = useRef<boolean>(false);
   // Hearing-date filter: preset drives from/to. Threaded via ref so the
   // existing positional fetchPage signature stays stable.
   const [datePreset, setDatePreset] = useState<string>("");
@@ -1742,7 +1786,8 @@ export function PostHrgClient({
       setPage(1);
       try {
         const url = new URL(window.location.href);
-        if (next === "POST_HRG") url.searchParams.delete("tab");
+        // "all" is the default — omit the tab param for a clean URL.
+        if (next === "all") url.searchParams.delete("tab");
         else url.searchParams.set("tab", next.toLowerCase());
         window.history.replaceState(null, "", url.toString());
       } catch {
@@ -1776,6 +1821,10 @@ export function PostHrgClient({
   const [remarksModal, setRemarksModal] = useState<PostHrgDevRow | null>(null);
   const [detailPanel, setDetailPanel] = useState<PostHrgDevRow | null>(null);
   const [showActivityLog, setShowActivityLog] = useState(false);
+  const [showCompletedModal, setShowCompletedModal] = useState(false);
+  const [completedCount, setCompletedCount] = useState<number>(
+    initialCompletedCount,
+  );
 
   // Import state
   const [importStep, setImportStep] = useState(1);
@@ -1919,6 +1968,7 @@ export function PostHrgClient({
           recordType: recordTypeRef.current,
           hearingDateFrom: dateRangeRef.current.from || undefined,
           hearingDateTo: dateRangeRef.current.to || undefined,
+          unacknowledgedOnly: showNewOnlyRef.current || undefined,
           sortKey: sk,
           sortDir: sd,
         });
@@ -2086,6 +2136,20 @@ export function PostHrgClient({
     refetchWithCurrentFilters();
   }, [refetchWithCurrentFilters]);
 
+  // Toggle the "Show NEW only" filter — restricts results to unacknowledged
+  // rows. State + ref kept in sync so the next fetchPage call picks it up.
+  // Side effects (setPage, refetch) live OUTSIDE the setShowNewOnly updater
+  // because state updater functions must be pure — calling other setStates
+  // from inside an updater triggers the "setState during render" warning
+  // under React 18 strict mode.
+  const toggleShowNewOnly = useCallback(() => {
+    const next = !showNewOnlyRef.current;
+    showNewOnlyRef.current = next;
+    setShowNewOnly(next);
+    setPage(1);
+    refetchWithCurrentFilters();
+  }, [refetchWithCurrentFilters]);
+
   const handlePageChange = useCallback(
     (p: number) => {
       setPage(p);
@@ -2172,11 +2236,24 @@ export function PostHrgClient({
 
   const handleFieldUpdate = useCallback(
     async (id: number, field: string, value: string | boolean | null) => {
-      setRecords((prev) =>
-        prev.map((r) =>
-          r.id === id ? ({ ...r, [field]: value } as PostHrgDevRow) : r,
-        ),
-      );
+      // Special-case: when status flips to "Completed", drop the row from
+      // the visible list and bump the Completed badge count. The main grid
+      // hides Completed rows; users access them via the Completed modal.
+      const becameCompleted =
+        field === "status" &&
+        typeof value === "string" &&
+        value.toLowerCase() === "completed";
+      if (becameCompleted) {
+        setRecords((prev) => prev.filter((r) => r.id !== id));
+        setTotalFiltered((n) => Math.max(0, n - 1));
+        setCompletedCount((n) => n + 1);
+      } else {
+        setRecords((prev) =>
+          prev.map((r) =>
+            r.id === id ? ({ ...r, [field]: value } as PostHrgDevRow) : r,
+          ),
+        );
+      }
       try {
         await updatePostHrgDevField(id, field, value);
         refreshStats();
@@ -2214,6 +2291,32 @@ export function PostHrgClient({
     // Keep open modal in sync
     setPostHrgModal((prev) => (prev?.id === updated.id ? updated : prev));
   }, []);
+
+  // Acknowledge a "NEW" row — drops it out of the pinned-to-top group on
+  // the next render. Optimistic: stamp acknowledged_at locally, fire the
+  // server call; on failure roll back.
+  const handleAcknowledge = useCallback(
+    async (id: number) => {
+      const stamp = new Date().toISOString();
+      setRecords((prev) =>
+        prev.map((r) =>
+          r.id === id ? { ...r, acknowledged_at: stamp } : r,
+        ),
+      );
+      try {
+        const result = await acknowledgePostHrgDevRecord(id);
+        if (!result.success) throw new Error("Acknowledge failed");
+      } catch {
+        setRecords((prev) =>
+          prev.map((r) =>
+            r.id === id ? { ...r, acknowledged_at: null } : r,
+          ),
+        );
+        toast("Failed to acknowledge");
+      }
+    },
+    [toast],
+  );
 
   const saveNewRecord = useCallback(async () => {
     if (!addData.claimant?.trim()) {
@@ -2528,18 +2631,76 @@ export function PostHrgClient({
   // ── Render Cell ──
   const renderCell = useCallback(
     (r: PostHrgDevRow, col: { key: string }) => {
+      // Completed rows surface in the grid via search but must remain
+      // view-only — every editable cell renders as a static badge below.
+      const isCompletedRow = (r.status || "").toLowerCase() === "completed";
+      // Small helper: render a read-only badge using the same color map
+      // as the live dropdown so completed rows still look at-a-glance
+      // consistent with active ones, just non-interactive.
+      const readOnlyBadge = (
+        value: string | null,
+        hexMap?: Record<string, { bg: string; color: string }>,
+      ) => {
+        if (!value) {
+          return <span className="text-xs text-muted-foreground">—</span>;
+        }
+        const hex = hexMap?.[value];
+        return (
+          <span
+            className="inline-flex items-center h-6 rounded border border-transparent px-1.5 text-[11px] font-semibold"
+            style={
+              hex ? { backgroundColor: hex.bg, color: hex.color } : undefined
+            }
+          >
+            {value}
+          </span>
+        );
+      };
       switch (col.key) {
         case "indicator":
           return (
-            <IndicatorDot
-              value={r.indicator}
-              onChange={(v) => handleFieldUpdate(r.id, "indicator", v)}
-              isAdmin={isAdmin}
-            />
+            <div className="flex items-center gap-1.5">
+              <IndicatorDot
+                value={r.indicator}
+                onChange={(v) => handleFieldUpdate(r.id, "indicator", v)}
+                isAdmin={isAdmin && !isCompletedRow}
+              />
+              {!r.acknowledged_at && !isCompletedRow && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleAcknowledge(r.id);
+                  }}
+                  title="Click to acknowledge — moves this row into normal date order"
+                  className={cn(
+                    "group/ack inline-flex items-center gap-1 h-5 pl-1 pr-1.5 rounded-full",
+                    "text-[10px] font-semibold tracking-tight",
+                    "bg-blue-50 text-blue-700 border border-blue-300",
+                    "dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-700",
+                    "hover:bg-blue-600 hover:text-white hover:border-blue-600",
+                    "dark:hover:bg-blue-500 dark:hover:text-white dark:hover:border-blue-500",
+                    "shadow-[0_0_0_2px_rgba(59,130,246,0.15)]",
+                    "transition-all duration-150 cursor-pointer",
+                    "focus:outline-none focus:ring-2 focus:ring-blue-400/60",
+                  )}
+                >
+                  <Check
+                    className="h-3 w-3 shrink-0"
+                    strokeWidth={3}
+                  />
+                  <span>NEW</span>
+                </button>
+              )}
+            </div>
           );
         case "claimant":
           return (
-            <ClaimantCell record={r} showTypeBadge={recordType === "all"} />
+            <ClaimantCell
+              record={r}
+              showTypeBadge={recordType === "all"}
+              isCompleted={isCompletedRow}
+            />
           );
         case "ssn_last_4":
           return (
@@ -2559,15 +2720,12 @@ export function PostHrgClient({
             </span>
           );
         case "post_hearing_status":
-          return (
-            <InlineDropdown
-              value={r.post_hearing_status}
-              options={PH_STATUS_OPTIONS}
-              onSave={(v) => handleFieldUpdate(r.id, "post_hearing_status", v)}
-              hexColorMap={phStatusHexMap}
-            />
-          );
+          // PH Status is sourced from the hearing decision upstream — always
+          // render as a read-only badge here so it isn't edited from PHD.
+          return readOnlyBadge(r.post_hearing_status, phStatusHexMap);
         case "type_of_docs_needed":
+          if (isCompletedRow)
+            return readOnlyBadge(r.type_of_docs_needed, docsNeededHexMap);
           return (
             <InlineDropdown
               value={r.type_of_docs_needed}
@@ -2585,6 +2743,8 @@ export function PostHrgClient({
         case "assigned_rep":
           return <RepBadge record={r} />;
         case "person_responsible":
+          if (isCompletedRow)
+            return readOnlyBadge(r.person_responsible, responsibleHexMap);
           return (
             <div className="flex items-center gap-1">
               <InlineDropdown
@@ -2608,6 +2768,13 @@ export function PostHrgClient({
             </div>
           );
         case "em_sent_task_created":
+          if (isCompletedRow) {
+            return (
+              <span className="inline-flex items-center justify-center text-xs text-muted-foreground">
+                {r.em_sent_task_created ? "✓" : "—"}
+              </span>
+            );
+          }
           return (
             <div className="flex items-center gap-1">
               <InlineCheck
@@ -2630,6 +2797,13 @@ export function PostHrgClient({
             </div>
           );
         case "ext_letter_sent":
+          if (isCompletedRow) {
+            return (
+              <span className="inline-flex items-center justify-center text-xs text-muted-foreground">
+                {r.ext_letter_sent ? "✓" : "—"}
+              </span>
+            );
+          }
           return (
             <div className="flex items-center gap-1">
               <InlineCheck
@@ -2650,6 +2824,7 @@ export function PostHrgClient({
             </div>
           );
         case "status":
+          if (isCompletedRow) return readOnlyBadge(r.status, statusHexMap);
           return (
             <div className="flex items-center gap-1">
               <InlineDropdown
@@ -2678,7 +2853,6 @@ export function PostHrgClient({
       }
     },
     [
-      PH_STATUS_OPTIONS,
       phStatusHexMap,
       DYNAMIC_STATUS_OPTIONS,
       DYNAMIC_DOCS_NEEDED_OPTIONS,
@@ -2687,6 +2861,7 @@ export function PostHrgClient({
       RESPONSIBLE_OPTIONS,
       responsibleHexMap,
       handleFieldUpdate,
+      handleAcknowledge,
       isAdmin,
       recordType,
     ],
@@ -2748,6 +2923,18 @@ export function PostHrgClient({
           </div>
           {viewMode === "dashboard" && (
             <div className="flex items-center gap-2">
+              <button
+                className={cn(
+                  "flex items-center gap-1.5 text-xs sm:text-sm px-3 py-1.5 rounded-lg transition-colors font-semibold border",
+                  completedCount > 0
+                    ? "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700"
+                    : "bg-card hover:bg-muted text-muted-foreground border-border",
+                )}
+                onClick={() => setShowCompletedModal(true)}
+                title="View completed records (hidden from main grid)"
+              >
+                ✅ Completed ({completedCount})
+              </button>
               <button
                 className={cn(BTN_OUTLINE, "text-xs sm:text-sm gap-1.5")}
                 onClick={() => setShowActivityLog(true)}
@@ -2990,6 +3177,31 @@ export function PostHrgClient({
                       </button>
                     )}
 
+                    {/* Show NEW only — restricts results to unacknowledged rows */}
+                    <button
+                      type="button"
+                      onClick={toggleShowNewOnly}
+                      title={
+                        showNewOnly
+                          ? "Showing only unacknowledged rows. Click to show all."
+                          : "Show only unacknowledged (NEW) rows."
+                      }
+                      className={cn(
+                        "h-8 px-2.5 rounded-md text-xs font-semibold border transition-colors shrink-0 inline-flex items-center gap-1.5",
+                        showNewOnly
+                          ? "border-blue-500 bg-blue-600 text-white hover:bg-blue-700 shadow-sm"
+                          : "border-border bg-card text-foreground hover:bg-muted/50",
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "inline-block w-2 h-2 rounded-full",
+                          showNewOnly ? "bg-white" : "bg-blue-500",
+                        )}
+                      />
+                      Show NEW only
+                    </button>
+
                     {/* Legacy display toggle — tints the entire row by indicator color (sheet style) */}
                     <button
                       type="button"
@@ -3183,6 +3395,10 @@ export function PostHrgClient({
                                     ? "#0EA5E9"
                                     : null;
                                 })()}
+                                unacknowledged={!r.acknowledged_at}
+                                completed={
+                                  (r.status || "").toLowerCase() === "completed"
+                                }
                               />
                             );
                           })}
@@ -3984,6 +4200,7 @@ export function PostHrgClient({
             mode="phd-internal"
             phdRowId={postHrgModal.id}
             linkedHearingId={postHrgModal.hearing_id}
+            currentRecordType={postHrgModal.record_type}
             claimant={postHrgModal.claimant}
             hearingDateText={
               postHrgModal.hearing_date
@@ -4000,6 +4217,8 @@ export function PostHrgClient({
             userName={userName}
             userRole={userRole}
             initialNotes={postHrgModal.details_notes}
+            initialDeadline={postHrgModal.deadline}
+            initialRequirements={postHrgModal.requirements}
             onClose={() => setPostHrgModal(null)}
             onPhdPatch={(patch) => {
               handleRecordUpdate({
@@ -4008,6 +4227,14 @@ export function PostHrgClient({
                   patch.details_notes !== undefined
                     ? patch.details_notes
                     : postHrgModal.details_notes,
+                deadline:
+                  patch.deadline !== undefined
+                    ? patch.deadline
+                    : postHrgModal.deadline,
+                requirements:
+                  patch.requirements !== undefined
+                    ? patch.requirements
+                    : postHrgModal.requirements,
               });
             }}
           />
@@ -4032,6 +4259,26 @@ export function PostHrgClient({
       <PostHrgActivityModal
         open={showActivityLog}
         onClose={() => setShowActivityLog(false)}
+      />
+      <PostHrgCompletedModal
+        open={showCompletedModal}
+        recordType={recordType}
+        onClose={() => setShowCompletedModal(false)}
+        onReopen={() => {
+          // Reopened row now lives back in the main grid as "In Progress" —
+          // refetch + decrement the badge.
+          setCompletedCount((n) => Math.max(0, n - 1));
+          fetchPage(
+            page,
+            pageSize,
+            sortKey,
+            sortDir,
+            searchTerm,
+            statusFilter,
+            phStatusFilter,
+            indicatorFilter,
+          );
+        }}
       />
     </>
   );
