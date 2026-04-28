@@ -575,6 +575,7 @@ export async function updateHearing(
 
   const SYNC_EVENT_FIELDS = new Set([
     "claimant",
+    "ssn_last_4",
     "claim_type",
     "hearing_date",
     "hearing_time",
@@ -711,6 +712,7 @@ export async function updateHearing(
           SELECT
             h.id::text                               AS id,
             COALESCE(h.claimant, '')                 AS claimant,
+            COALESCE(h.ssn_last_4, '')               AS ssn_last_4,
             COALESCE(h.claim_type, '')               AS claim_type,
             COALESCE(h.hearing_date::text, '')       AS hearing_date,
             COALESCE(h.hearing_time::text, '')       AS hearing_time,
@@ -737,10 +739,18 @@ export async function updateHearing(
       const payload = payloadRows[0] ?? null;
 
       if (payload) {
+        const syncPayload = {
+          ...payload,
+          claimant_key: claimantKeyForSyncPayload(
+            String(payload.claimant ?? ""),
+            String(payload.ssn_last_4 ?? ""),
+          ),
+        };
+
         await recordHearingSyncEvent(client, {
           hearingId,
           eventType: "update",
-          payload,
+          payload: syncPayload,
           changedFields: {
             [field]: {
               old: oldValue ?? null,
@@ -939,6 +949,7 @@ export async function deleteHearing(hearingId: number) {
   }>(async (client) => {
     const { rows } = await client.query<{
       claimant: string | null;
+      ssn_last_4: string | null;
       claim_type: string | null;
       hearing_date: string | null;
       hearing_time: string | null;
@@ -958,6 +969,7 @@ export async function deleteHearing(hearingId: number) {
       `
         SELECT
           claimant,
+          ssn_last_4,
           claim_type,
           hearing_date::text AS hearing_date,
           hearing_time::text AS hearing_time,
@@ -992,6 +1004,8 @@ export async function deleteHearing(hearingId: number) {
       payload: {
         id: String(hearingId),
         claimant: row.claimant || "",
+        ssn_last_4: row.ssn_last_4 || "",
+        claimant_key: claimantKeyForSyncPayload(row.claimant, row.ssn_last_4),
         claim_type: row.claim_type || "",
         hearing_date: row.hearing_date || "",
         hearing_time: row.hearing_time || "",
@@ -1055,6 +1069,43 @@ function convertToEST(time: string, tz: string): string {
   const [h, m] = time.split(":").map(Number);
   const estH = h + offset;
   return `${String(estH).padStart(2, "0")}:${String(m).padStart(2, "0")}:00`;
+}
+
+function normalizeClaimantForSyncKey(value: string | null | undefined): string {
+  let raw = String(value ?? "")
+    .replace(/\s*\((?:re-?scheduled|rescheduled)\)\s*$/i, "")
+    .replace(/\s*-\s*(?:re-?scheduled|rescheduled)\s*$/i, "")
+    .replace(/\s+(?:re-?scheduled|rescheduled)\s*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // Normalize "Last, First Middle" into "First Middle Last" so both
+  // "Jeffrey Dolle" and "Dolle, Jeffrey" produce the same sync key.
+  if (raw.includes(",")) {
+    const parts = raw
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    if (parts.length >= 2) {
+      const lastName = parts[0];
+      const givenNames = parts.slice(1).join(" ");
+      raw = `${givenNames} ${lastName}`;
+    }
+  }
+
+  return raw.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function claimantKeyForSyncPayload(
+  claimant: string | null | undefined,
+  ssnLast4: string | null | undefined,
+): string {
+  const normalizedClaimant = normalizeClaimantForSyncKey(claimant);
+  const normalizedSsnLast4 = String(ssnLast4 ?? "").trim();
+
+  if (!normalizedClaimant || !normalizedSsnLast4) return "";
+  return `${normalizedClaimant}|${normalizedSsnLast4}`;
 }
 
 type HearingSyncEventType = "create" | "update" | "delete";
@@ -1169,6 +1220,8 @@ export async function addHearing(form: {
       payload: {
         id: String(newHearingId),
         claimant: form.claimant || "",
+        ssn_last_4: form.ssn_last_4 || "",
+        claimant_key: claimantKeyForSyncPayload(form.claimant, form.ssn_last_4),
         claim_type: form.claim_type || "",
         hearing_date: form.hearing_date || "",
         hearing_time: form.hearing_time || "",
