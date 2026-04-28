@@ -586,6 +586,26 @@ export async function updateHearing(
     throw new Error(`Field "${field}" is not allowed for inline update`);
   }
 
+  // ── Per-user field-access gate ────────────────────────────────────────
+  // Falls through to role default when no override row exists; bypasses
+  // entirely for `rep` users. See src/lib/field-access.ts.
+  {
+    const { requireAuth } = await import("@/lib/session");
+    const { canUserEditField } = await import("@/lib/field-access");
+    const session = await requireAuth();
+    const allowed = await canUserEditField(
+      Number(session.user.id),
+      session.user.role as import("@/lib/roles").UserRole,
+      "dashboard",
+      field,
+    );
+    if (!allowed) {
+      throw new Error(
+        `You do not have permission to edit "${field}" on the dashboard.`,
+      );
+    }
+  }
+
   // Human-readable field labels matching PHP dashboard
   const FIELD_LABELS: Record<string, string> = {
     assigned_rep_id: "Representative",
