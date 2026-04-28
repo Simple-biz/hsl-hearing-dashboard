@@ -13,12 +13,16 @@
 // `user_field_access` table created in 20260427_create_user_field_access.sql.
 
 import { db } from "@/lib/db";
-import { canEditField, type UserRole } from "@/lib/roles";
+import {
+  canEditField,
+  MR_PIVOT_EDITABLE,
+  PAGE_ACCESS,
+  type UserRole,
+} from "@/lib/roles";
 import type { FieldAccessPageKey } from "@/lib/field-access-catalog";
 
-// Per-page role-default resolvers. Phase 1 only wires the dashboard.
-// Add a branch when you wire a new page in subsequent phases.
-function resolveRoleDefault(
+// Per-page role-default resolvers. Add a branch when wiring a new page.
+export function resolveRoleDefault(
   role: UserRole,
   pageKey: FieldAccessPageKey,
   fieldKey: string,
@@ -26,6 +30,17 @@ function resolveRoleDefault(
   switch (pageKey) {
     case "dashboard":
       return canEditField(role, fieldKey);
+    case "medical_records":
+      // MR pivot has explicit per-field whitelists in MR_PIVOT_EDITABLE.
+      // Anything not in the map = not editable on the pivot.
+      return (MR_PIVOT_EDITABLE[fieldKey] ?? []).includes(role);
+    case "post_hrg_development":
+      // Post HRG Dev: page-level access only, no per-field gating today.
+      // If the role can access the page, it can edit any field on it.
+      return PAGE_ACCESS.post_hrg_development.includes(role);
+    case "representative_docs":
+      // Same flat model as PHD.
+      return PAGE_ACCESS.representative_docs.includes(role);
     default:
       return false;
   }
@@ -50,6 +65,30 @@ export async function canUserEditField(
   );
   if (rows.length > 0) return rows[0].can_edit === true;
   return resolveRoleDefault(role, pageKey, fieldKey);
+}
+
+/**
+ * One-line gate for use at the top of a server action. Resolves the
+ * current session, runs canUserEditField, throws if denied. Throwing is
+ * the existing convention for "Update failed" surfaces in the client.
+ */
+export async function requireFieldAccess(
+  pageKey: FieldAccessPageKey,
+  fieldKey: string,
+): Promise<void> {
+  const { requireAuth } = await import("@/lib/session");
+  const session = await requireAuth();
+  const allowed = await canUserEditField(
+    Number(session.user.id),
+    session.user.role as UserRole,
+    pageKey,
+    fieldKey,
+  );
+  if (!allowed) {
+    throw new Error(
+      `You do not have permission to edit "${fieldKey}" on ${pageKey}.`,
+    );
+  }
 }
 
 /**

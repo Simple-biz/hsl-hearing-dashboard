@@ -14,12 +14,11 @@
 
 export type FieldAccessPageKey =
   | "dashboard"
-  // | "medical_records"   // phase 2
-  // | "post_hrg"          // phase 2
-  // | "rfc"               // phase 2
-  // | "patient_portal"    // phase 2
-  // | "representative_docs" // phase 2
-  ;
+  | "medical_records"
+  | "post_hrg_development"
+  | "representative_docs";
+  // | "rfc"               // future
+  // | "patient_portal"    // future
 
 export interface FieldAccessField {
   /** DB-level field key — must match what server-side gate uses. */
@@ -82,6 +81,89 @@ export const FIELD_ACCESS_CATALOG: FieldAccessPage[] = [
         key: "post_hrg_dev_status",
         label: "Post HRG Dev Status",
         group: "Post HRG",
+      },
+    ],
+  },
+  // ── Medical Records (MR Pivot) ────────────────────────────────────────
+  // Per-field whitelists already exist in MR_PIVOT_EDITABLE — see roles.ts.
+  {
+    key: "medical_records",
+    label: "Medical Records (MR Pivot)",
+    fields: [
+      { key: "mr_team_id", label: "MR Team Assignment" },
+      { key: "medical_record_status", label: "MR Status" },
+      { key: "medical_record_link", label: "MR Worksheet Link" },
+      { key: "hearing_decision_status", label: "Decision Status" },
+      { key: "manner_of_appearance", label: "MOA" },
+      { key: "five_day_notice", label: "5-Day Notice" },
+      { key: "claimant_link", label: "Claimant Link" },
+      { key: "task_assigned", label: "Task Assigned" },
+      { key: "credited", label: "Credited" },
+    ],
+  },
+  // ── Post HRG Development ───────────────────────────────────────────────
+  // Today: page-level access only — anyone on the page can edit anything.
+  // The override layer adds per-user, per-field control.
+  {
+    key: "post_hrg_development",
+    label: "Post HRG Development",
+    fields: [
+      { key: "indicator", label: "Indicator", group: "Status" },
+      { key: "type_of_docs_needed", label: "Docs Needed", group: "Status" },
+      { key: "person_responsible", label: "Responsible", group: "Status" },
+      {
+        key: "em_sent_task_created",
+        label: "EM / Task Created",
+        group: "Status",
+      },
+      { key: "ext_letter_sent", label: "EXT Letter Sent", group: "Status" },
+      { key: "status", label: "Status", group: "Status" },
+      { key: "deadline", label: "Deadline", group: "Dates" },
+      { key: "new_due_date", label: "New Due Date", group: "Dates" },
+      { key: "requirements", label: "Requirements", group: "Notes" },
+      { key: "remarks", label: "Remarks", group: "Notes" },
+      { key: "details", label: "Details", group: "Notes" },
+    ],
+  },
+  // ── Representative Docs ────────────────────────────────────────────────
+  // Today: page-level access only.
+  {
+    key: "representative_docs",
+    label: "Representative Docs",
+    fields: [
+      { key: "assigned_to", label: "Assigned To", group: "Assignment" },
+      { key: "oho_assigned_to", label: "OHO Assigned To", group: "Assignment" },
+      { key: "overall_status", label: "Overall Status", group: "Assignment" },
+      { key: "uploaded_noh", label: "Uploaded NOH", group: "Workflow" },
+      {
+        key: "sent_repdocs_to_cl",
+        label: "Sent RepDocs to CL",
+        group: "Workflow",
+      },
+      { key: "repdocs_signed", label: "RepDocs Signed", group: "Workflow" },
+      { key: "contact_ltr", label: "Contact Letter", group: "Workflow" },
+      { key: "repdocs_split", label: "RepDocs Split", group: "Workflow" },
+      {
+        key: "repdocs_uploaded_chronicle",
+        label: "Uploaded to Chronicle",
+        group: "Workflow",
+      },
+      {
+        key: "oho_confirmation",
+        label: "OHO Confirmation",
+        group: "Workflow",
+      },
+      { key: "checker_calendar", label: "Checker — Calendar", group: "Checker" },
+      {
+        key: "checker_chronicle_claim",
+        label: "Checker — Chronicle / Claim",
+        group: "Checker",
+      },
+      { key: "checker_noh", label: "Checker — NOH", group: "Checker" },
+      {
+        key: "checker_contact_ltr",
+        label: "Checker — Contact Letter",
+        group: "Checker",
       },
     ],
   },

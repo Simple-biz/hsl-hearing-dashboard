@@ -2257,8 +2257,12 @@ export function PostHrgClient({
       try {
         await updatePostHrgDevField(id, field, value);
         refreshStats();
-      } catch {
-        toast("Update failed");
+      } catch (e) {
+        const message =
+          e instanceof Error
+            ? e.message
+            : "Update failed — change rolled back";
+        toast(message);
         fetchPage(
           page,
           pageSize,

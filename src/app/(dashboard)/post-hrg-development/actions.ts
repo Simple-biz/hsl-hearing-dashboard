@@ -882,6 +882,12 @@ export async function updatePostHrgDevField(
     throw new Error(`Field "${field}" is not allowed for update`);
   }
 
+  // Per-user field-access gate (override > role default; rep bypassed)
+  {
+    const { requireFieldAccess } = await import("@/lib/field-access");
+    await requireFieldAccess("post_hrg_development", field);
+  }
+
   const DATE_FIELDS = ["hearing_date", "deadline", "new_due_date"];
 
   // Get old value for logging

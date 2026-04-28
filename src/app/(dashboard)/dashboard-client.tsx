@@ -2715,6 +2715,15 @@ export function DashboardClient({
       // Find claimant name for toast
       const hearing = hearings.find((h) => h.id === hearingId);
       const claimantName = hearing?.claimant || "";
+      // Snapshot prior value so we can roll back if the server rejects
+      // (e.g. per-user field-access denial via canUserEditField).
+      const priorValue = hearing
+        ? (hearing as unknown as Record<string, unknown>)[field]
+        : undefined;
+      const priorRepName = hearing?.rep_name ?? null;
+      const priorRepType = hearing?.rep_type ?? null;
+      const priorTeamName = hearing?.mr_team_name ?? null;
+      const priorTeamColor = hearing?.mr_team_color ?? null;
 
       // Resolve display value for toast
       let displayValue = String(value ?? "");
@@ -2790,10 +2799,43 @@ export function DashboardClient({
           prev ? { ...prev, [field]: value } : null,
         );
       }
-      // Server update in background
-      updateHearing(hearingId, field, value).catch((e) =>
-        console.error("Update failed:", e),
-      );
+      // Server update in background. On failure, roll back the optimistic
+      // change and surface the error so the user knows it didn't stick.
+      // Most common cause now: per-user field-access denial.
+      updateHearing(hearingId, field, value).catch((e) => {
+        console.error("Update failed:", e);
+        setHearings((prev) =>
+          prev.map((h) => {
+            if (h.id !== hearingId) return h;
+            const reverted = {
+              ...h,
+              [field]: priorValue as never,
+            } as typeof h;
+            if (field === "assigned_rep_id") {
+              reverted.rep_name = priorRepName;
+              reverted.rep_type = priorRepType;
+            }
+            if (field === "mr_team_id") {
+              reverted.mr_team_name = priorTeamName;
+              reverted.mr_team_color = priorTeamColor;
+            }
+            return reverted;
+          }),
+        );
+        if (postHrgHearing?.id === hearingId) {
+          setPostHrgHearing((p) =>
+            p ? ({ ...p, [field]: priorValue as never } as typeof p) : null,
+          );
+        }
+        const message =
+          e instanceof Error ? e.message : "Update failed — change rolled back";
+        if (updateToastTimer.current) clearTimeout(updateToastTimer.current);
+        setUpdateToast(`⚠️ ${message}`);
+        updateToastTimer.current = setTimeout(
+          () => setUpdateToast(null),
+          5000,
+        );
+      });
     },
     [representatives, mrTeams, postHrgHearing, hearings],
   );

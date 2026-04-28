@@ -14,11 +14,16 @@ import {
   FIELD_ACCESS_CATALOG,
   type FieldAccessPageKey,
 } from "@/lib/field-access-catalog";
-import { canEditField, type UserRole } from "@/lib/roles";
+import {
+  canEditField,
+  MR_PIVOT_EDITABLE,
+  PAGE_ACCESS,
+  type UserRole,
+} from "@/lib/roles";
 
 // Per-page role-default resolver — mirrors lib/field-access.ts so the modal
 // can show "what would the role default be" for each checkbox without an
-// extra round trip.
+// extra round trip. Keep these two switches in sync.
 function resolveRoleDefault(
   role: UserRole,
   pageKey: FieldAccessPageKey,
@@ -27,6 +32,12 @@ function resolveRoleDefault(
   switch (pageKey) {
     case "dashboard":
       return canEditField(role, fieldKey);
+    case "medical_records":
+      return (MR_PIVOT_EDITABLE[fieldKey] ?? []).includes(role);
+    case "post_hrg_development":
+      return PAGE_ACCESS.post_hrg_development.includes(role);
+    case "representative_docs":
+      return PAGE_ACCESS.representative_docs.includes(role);
     default:
       return false;
   }
@@ -54,7 +65,6 @@ export function UserAccessModal({ open, user, onClose }: Props) {
     new Map(),
   );
   const [loading, startLoad] = useTransition();
-  const [savingKey, setSavingKey] = useState<string | null>(null);
 
   const isRep = user?.role === "rep";
   const page = FIELD_ACCESS_CATALOG.find((p) => p.key === pageKey)!;
@@ -83,56 +93,88 @@ export function UserAccessModal({ open, user, onClose }: Props) {
     if (open) loadOverrides();
   }, [open, loadOverrides]);
 
+  // Compute the "saved-effective" map so we can detect dirty fields and
+  // intelligently route Save (insert/update/delete only what changed).
+  const savedEffective = (() => {
+    const m = new Map<string, boolean>();
+    if (!user) return m;
+    for (const f of page.fields) {
+      m.set(
+        f.key,
+        savedOverrides.has(f.key)
+          ? (savedOverrides.get(f.key) as boolean)
+          : resolveRoleDefault(user.role, pageKey, f.key),
+      );
+    }
+    return m;
+  })();
+
+  const dirtyFields: string[] = [];
+  for (const f of page.fields) {
+    const cur = effective.get(f.key) ?? false;
+    const saved = savedEffective.get(f.key) ?? false;
+    if (cur !== saved) dirtyFields.push(f.key);
+  }
+  const isDirty = dirtyFields.length > 0;
+  const [saving, setSaving] = useState(false);
+
   if (!open || !user) return null;
 
-  const toggle = async (fieldKey: string) => {
-    if (savingKey || isRep) return;
+  const toggle = (fieldKey: string) => {
+    if (saving || isRep) return;
     const current = effective.get(fieldKey) ?? false;
-    const next = !current;
-    const roleDefault = resolveRoleDefault(user.role, pageKey, fieldKey);
-
-    // Optimistic local update
     setEffective((prev) => {
       const m = new Map(prev);
-      m.set(fieldKey, next);
+      m.set(fieldKey, !current);
       return m;
     });
-    setSavingKey(fieldKey);
+  };
 
+  const handleSave = async () => {
+    if (!user || isRep || !isDirty) return;
+    setSaving(true);
     try {
-      // Persist as override unless the new value matches role default,
-      // in which case clear the override row (cleaner DB).
-      const persistValue: boolean | null =
-        next === roleDefault ? null : next;
-      await setUserFieldAccess(user.id, pageKey, fieldKey, persistValue);
-      setSavedOverrides((prev) => {
-        const m = new Map(prev);
-        if (persistValue === null) m.delete(fieldKey);
-        else m.set(fieldKey, persistValue);
-        return m;
-      });
-    } catch {
-      // Revert optimistic on failure
-      setEffective((prev) => {
-        const m = new Map(prev);
-        m.set(fieldKey, current);
-        return m;
-      });
+      // Persist each dirty field. If the new value matches the role default,
+      // delete the override row (clean DB). Otherwise upsert.
+      for (const fieldKey of dirtyFields) {
+        const next = effective.get(fieldKey) ?? false;
+        const roleDefault = resolveRoleDefault(user.role, pageKey, fieldKey);
+        const persistValue: boolean | null =
+          next === roleDefault ? null : next;
+        await setUserFieldAccess(user.id, pageKey, fieldKey, persistValue);
+      }
+      // Refresh from server to pick up the new savedOverrides snapshot
+      loadOverrides();
     } finally {
-      setSavingKey(null);
+      setSaving(false);
     }
+  };
+
+  const handleDiscard = () => {
+    if (!isDirty) return;
+    if (!confirm("Discard unsaved changes?")) return;
+    // Revert effective back to savedEffective
+    setEffective(new Map(savedEffective));
   };
 
   const handleResetPage = async () => {
     if (!user || isRep) return;
-    if (
-      !confirm(
-        `Reset all "${page.label}" overrides for ${user.full_name}? Their access will revert to standard ${user.role} permissions for this page.`,
-      )
-    )
-      return;
-    await resetUserFieldAccess(user.id, pageKey);
-    loadOverrides();
+    const warning = isDirty
+      ? `You have unsaved changes — they will be discarded.\n\nReset all "${page.label}" overrides for ${user.full_name}? Their access will revert to standard ${user.role} permissions for this page.`
+      : `Reset all "${page.label}" overrides for ${user.full_name}? Their access will revert to standard ${user.role} permissions for this page.`;
+    if (!confirm(warning)) return;
+    setSaving(true);
+    try {
+      await resetUserFieldAccess(user.id, pageKey);
+      loadOverrides();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleClose = () => {
+    if (isDirty && !confirm("Discard unsaved changes and close?")) return;
+    onClose();
   };
 
   // Group fields by their `group` for display
@@ -148,7 +190,7 @@ export function UserAccessModal({ open, user, onClose }: Props) {
   return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
+      onClick={handleClose}
     >
       <div
         className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-xl border bg-card shadow-2xl"
@@ -168,7 +210,7 @@ export function UserAccessModal({ open, user, onClose }: Props) {
             </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="text-muted-foreground hover:text-foreground"
           >
             <XIcon className="h-5 w-5" />
@@ -247,27 +289,37 @@ export function UserAccessModal({ open, user, onClose }: Props) {
                         {fields.map((f) => {
                           const checked = effective.get(f.key) ?? false;
                           const isOverride = savedOverrides.has(f.key);
-                          const isBusy = savingKey === f.key;
+                          const isDirtyField = dirtyFields.includes(f.key);
                           return (
                             <label
                               key={f.key}
                               className={cn(
                                 "flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors",
                                 "hover:bg-muted/50",
-                                isBusy && "opacity-50 cursor-wait",
+                                isDirtyField &&
+                                  "bg-blue-50 dark:bg-blue-950/30",
+                                saving && "opacity-50 cursor-wait",
                               )}
                             >
                               <input
                                 type="checkbox"
                                 checked={checked}
                                 onChange={() => toggle(f.key)}
-                                disabled={isBusy}
+                                disabled={saving}
                                 className="h-4 w-4 rounded border-border accent-primary cursor-pointer disabled:cursor-not-allowed"
                               />
                               <span className="flex-1 text-xs">
                                 {f.label}
                               </span>
-                              {isOverride && (
+                              {isDirtyField && (
+                                <span
+                                  className="text-[9px] font-bold text-blue-600 dark:text-blue-400"
+                                  title="Unsaved change"
+                                >
+                                  ●
+                                </span>
+                              )}
+                              {!isDirtyField && isOverride && (
                                 <span
                                   className="h-1.5 w-1.5 rounded-full bg-amber-500"
                                   title="Override active (differs from role default)"
@@ -286,10 +338,60 @@ export function UserAccessModal({ open, user, onClose }: Props) {
         )}
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2 border-t px-5 py-3 shrink-0 bg-muted/30">
-          <Button type="button" variant="outline" size="sm" onClick={onClose}>
-            Close
-          </Button>
+        <div className="flex items-center justify-between gap-2 border-t px-5 py-3 shrink-0 bg-muted/30">
+          <p
+            className={cn(
+              "text-[11px] tabular-nums",
+              isDirty
+                ? "text-blue-700 dark:text-blue-400 font-medium"
+                : "text-muted-foreground",
+            )}
+          >
+            {isRep
+              ? ""
+              : isDirty
+                ? `${dirtyFields.length} unsaved change${dirtyFields.length === 1 ? "" : "s"}`
+                : "No unsaved changes"}
+          </p>
+          <div className="flex items-center gap-2">
+            {!isRep && isDirty && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={handleDiscard}
+                disabled={saving}
+              >
+                Discard
+              </Button>
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleClose}
+              disabled={saving}
+            >
+              {isRep ? "Close" : isDirty ? "Cancel" : "Close"}
+            </Button>
+            {!isRep && (
+              <Button
+                type="button"
+                size="sm"
+                onClick={handleSave}
+                disabled={!isDirty || saving}
+              >
+                {saving ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                    Saving...
+                  </>
+                ) : (
+                  "Save Changes"
+                )}
+              </Button>
+            )}
+          </div>
         </div>
       </div>
     </div>,

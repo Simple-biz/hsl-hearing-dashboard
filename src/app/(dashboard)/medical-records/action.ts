@@ -694,6 +694,8 @@ export async function updateMrStatus(
   hearingId: number,
   status: string,
 ): Promise<{ success: boolean }> {
+  const { requireFieldAccess } = await import("@/lib/field-access");
+  await requireFieldAccess("medical_records", "medical_record_status");
   await db.query(
     `UPDATE hearings SET medical_record_status = $1 WHERE id = $2`,
     [status, hearingId],
@@ -706,6 +708,8 @@ export async function updateHearingDecisionStatus(
   hearingId: number,
   status: string,
 ): Promise<{ success: boolean }> {
+  const { requireFieldAccess } = await import("@/lib/field-access");
+  await requireFieldAccess("medical_records", "hearing_decision_status");
   await db.query(
     `UPDATE hearings SET hearing_decision_status = $1 WHERE id = $2`,
     [status, hearingId],
@@ -730,6 +734,8 @@ export async function updateMrTeam(
   hearingId: number,
   teamId: number | null,
 ): Promise<{ success: boolean }> {
+  const { requireFieldAccess } = await import("@/lib/field-access");
+  await requireFieldAccess("medical_records", "mr_team_id");
   await db.query(
     `UPDATE hearings SET mr_team_id = $1, mr_team_assigned_at = $2 WHERE id = $3`,
     [teamId, teamId ? new Date().toISOString() : null, hearingId],
@@ -744,6 +750,8 @@ export async function toggleTaskAssigned(
   hearingId: number,
   value: boolean,
 ): Promise<{ success: boolean }> {
+  const { requireFieldAccess } = await import("@/lib/field-access");
+  await requireFieldAccess("medical_records", "task_assigned");
   await db.query(
     `UPDATE hearings SET task_assigned = $1 WHERE id = $2`,
     [value, hearingId],
@@ -756,6 +764,8 @@ export async function toggleCredited(
   hearingId: number,
   value: boolean,
 ): Promise<{ success: boolean }> {
+  const { requireFieldAccess } = await import("@/lib/field-access");
+  await requireFieldAccess("medical_records", "credited");
   await db.query(
     `UPDATE hearings SET credited = $1 WHERE id = $2`,
     [value, hearingId],
@@ -768,6 +778,8 @@ export async function toggleFiveDayNotice(
   hearingId: number,
   value: boolean,
 ): Promise<{ success: boolean }> {
+  const { requireFieldAccess } = await import("@/lib/field-access");
+  await requireFieldAccess("medical_records", "five_day_notice");
   await db.query(
     `UPDATE hearings SET five_day_notice = $1 WHERE id = $2`,
     [value, hearingId],
@@ -780,6 +792,8 @@ export async function updateMoa(
   hearingId: number,
   manner: string,
 ): Promise<{ success: boolean }> {
+  const { requireFieldAccess } = await import("@/lib/field-access");
+  await requireFieldAccess("medical_records", "manner_of_appearance");
   await db.query(
     `UPDATE hearings SET manner_of_appearance = $1 WHERE id = $2`,
     [manner, hearingId],
@@ -792,6 +806,8 @@ export async function updateWorksheetLink(
   hearingId: number,
   link: string,
 ): Promise<{ success: boolean }> {
+  const { requireFieldAccess } = await import("@/lib/field-access");
+  await requireFieldAccess("medical_records", "medical_record_link");
   await db.query(
     `UPDATE hearings SET medical_record_link = $1 WHERE id = $2`,
     [link, hearingId],
