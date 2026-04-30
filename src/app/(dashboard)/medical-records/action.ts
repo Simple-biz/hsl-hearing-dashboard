@@ -21,8 +21,9 @@ export type {
   TeamStatsData,
 } from "./types";
 
-import { derivePermissions } from "./types";
+import { derivePermissionsWithOverrides } from "./types";
 import type { UserRole } from "./types";
+import { getUserFieldOverridesPlain } from "@/lib/field-access";
 import type {
   MrTeam,
   Hearing,
@@ -75,8 +76,12 @@ const WITHDRAWN_FILTER = `
 
 export async function getMrPivotPageData(
   userRole: UserRole = "mr_agent",
+  userId?: number,
 ): Promise<MrPivotPageData> {
-  const permissions = derivePermissions(userRole);
+  const overrides = userId
+    ? await getUserFieldOverridesPlain(userId, "medical_records")
+    : {};
+  const permissions = derivePermissionsWithOverrides(userRole, overrides);
 
   const [
     statsRow,

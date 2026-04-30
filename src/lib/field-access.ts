@@ -115,18 +115,36 @@ export async function getUserFieldOverrides(
 }
 
 /**
+ * Same as getUserFieldOverrides but returns a plain object — Maps don't
+ * cross the React Server Component → Client Component boundary cleanly.
+ */
+export async function getUserFieldOverridesPlain(
+  userId: number,
+  pageKey: FieldAccessPageKey,
+): Promise<Record<string, boolean>> {
+  const map = await getUserFieldOverrides(userId, pageKey);
+  return Object.fromEntries(map.entries());
+}
+
+/**
  * Synchronous resolver — for client/server-component code that already has
- * the override map in memory. Same fallback logic as canUserEditField.
+ * the override map in memory. Accepts either a Map (server-side) or a plain
+ * Record (after RSC → client serialization). Same fallback logic as
+ * canUserEditField.
  */
 export function resolveFieldAccess(
   role: UserRole,
   pageKey: FieldAccessPageKey,
   fieldKey: string,
-  overrides: Map<string, boolean> | null,
+  overrides: Map<string, boolean> | Record<string, boolean> | null,
 ): boolean {
   if (role === "rep") return resolveRoleDefault(role, pageKey, fieldKey);
-  if (overrides && overrides.has(fieldKey)) {
-    return overrides.get(fieldKey) === true;
+  if (overrides) {
+    if (overrides instanceof Map) {
+      if (overrides.has(fieldKey)) return overrides.get(fieldKey) === true;
+    } else if (Object.prototype.hasOwnProperty.call(overrides, fieldKey)) {
+      return overrides[fieldKey] === true;
+    }
   }
   return resolveRoleDefault(role, pageKey, fieldKey);
 }

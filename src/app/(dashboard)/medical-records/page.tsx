@@ -15,7 +15,7 @@ export default async function MedicalRecordsPage() {
     redirect("/");
   }
 
-  const data = await getMrPivotPageData(userRole);
+  const data = await getMrPivotPageData(userRole, Number(session.user.id));
   return (
     <MrPivotClient
       {...data}
