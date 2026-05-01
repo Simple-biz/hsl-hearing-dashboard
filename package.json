@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:migrate": "dbmate --migrations-dir ./src/dbmate-migrations --no-dump-schema migrate",
+    "db:status": "dbmate --migrations-dir ./src/dbmate-migrations --no-dump-schema status",
+    "db:new": "dbmate --migrations-dir ./src/dbmate-migrations --no-dump-schema new"
   },
   "dependencies": {
     "@base-ui/react": "^1.2.0",
@@ -48,6 +51,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "dbmate": "^2.33.0",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "shadcn": "^3.8.5",
