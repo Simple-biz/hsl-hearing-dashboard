@@ -67,6 +67,8 @@ import {
 } from "@/components/modals";
 import { CsvCompareModal } from "@/components/modals/csv-compare-modal";
 import { RescheduledHistoryModal } from "@/components/modals/rescheduled-history-modal";
+import { AddToPostHrgModal } from "@/components/modals/add-to-post-hrg-modal";
+import { PostHrgReviewModal } from "@/components/modals/post-hrg-review-modal";
 import {
   updateHearing,
   deleteHearing,
@@ -1163,450 +1165,6 @@ function ClaimantCell({
           onClose={() => setEditingField(null)}
         />
       )}
-    </div>
-  );
-}
-
-// ══════════════════════════════════════════════════════════════
-// POST HRG MODAL
-// ══════════════════════════════════════════════════════════════
-function PostHrgModal({
-  hearing,
-  onClose,
-  onSave,
-  userName,
-  userRole,
-}: {
-  hearing: HearingRow;
-  onClose: () => void;
-  onSave: (id: number, field: string, value: UpdateValue) => void;
-  userName: string;
-  userRole: string;
-}) {
-  const [notes, setNotes] = useState<PostHrgNote[]>(() =>
-    parseNotes(hearing.post_hrg_notes),
-  );
-
-  // Hide only true system-generated notes
-  const visibleNotes = notes.filter(
-    (n) => noteAuthor(n) !== "System Administrator",
-  );
-
-  const [newNote, setNewNote] = useState("");
-  const [deadline, setDeadline] = useState(hearing.post_hrg_deadline || "");
-  const [deadlinePrev, setDeadlinePrev] = useState(
-    hearing.post_hrg_deadline_prev || "",
-  );
-  const [deadlineChangedBy, setDeadlineChangedBy] = useState(
-    hearing.post_hrg_deadline_changed_by || "",
-  );
-
-  const [requirements, setRequirements] = useState(
-    hearing.post_hrg_requirements || "",
-  );
-  const [saving, setSaving] = useState(false);
-
-  const [isEditingRequirements, setIsEditingRequirements] = useState(
-    !hearing.post_hrg_requirements,
-  );
-  const isEditingRequirementsRef = useRef(isEditingRequirements);
-
-  useEffect(() => {
-    isEditingRequirementsRef.current = isEditingRequirements;
-  }, [isEditingRequirements]);
-
-  const [hasSavedRequirements, setHasSavedRequirements] = useState(
-    !!hearing.post_hrg_requirements,
-  );
-
-  // Keep local requirements in sync with parent hearing updates,
-  // but never overwrite while user is actively editing
-  useEffect(() => {
-    if (!isEditingRequirements) {
-      setRequirements(hearing.post_hrg_requirements || "");
-      setHasSavedRequirements(!!hearing.post_hrg_requirements);
-    }
-  }, [hearing.post_hrg_requirements, isEditingRequirements]);
-
-  // Poll for fresh notes every 8s while modal is open.
-  const savingRef = useRef(false);
-  useEffect(() => {
-    savingRef.current = saving;
-  }, [saving]);
-
-  useEffect(() => {
-    let active = true;
-
-    const poll = async () => {
-      if (!active || savingRef.current) return;
-
-      try {
-        const { fetchPostHrgNotes } = await import("@/app/(dashboard)/actions");
-        const data = (await fetchPostHrgNotes(hearing.id)) as
-          | string
-          | {
-              post_hrg_notes: string | null;
-              post_hrg_deadline: string | null;
-              post_hrg_dev_status: string | null;
-              post_hrg_requirements: string | null;
-              post_hrg_deadline_prev: string | null;
-              post_hrg_deadline_changed_by: string | null;
-            }
-          | null;
-
-        if (active && !savingRef.current && data) {
-          if (typeof data === "string") {
-            setNotes(parseNotes(data));
-          } else {
-            setNotes(parseNotes(data.post_hrg_notes));
-
-            if (
-              !isEditingRequirementsRef.current &&
-              data.post_hrg_requirements !== undefined
-            ) {
-              setRequirements(data.post_hrg_requirements || "");
-              setHasSavedRequirements(!!data.post_hrg_requirements);
-            }
-
-            if (data.post_hrg_deadline !== null) {
-              setDeadline(data.post_hrg_deadline);
-            }
-
-            if (data.post_hrg_deadline_prev !== undefined) {
-              setDeadlinePrev(data.post_hrg_deadline_prev || "");
-            }
-
-            if (data.post_hrg_deadline_changed_by !== undefined) {
-              setDeadlineChangedBy(data.post_hrg_deadline_changed_by || "");
-            }
-          }
-        }
-      } catch {
-        // ignore transient polling errors
-      }
-    };
-
-    const id = setInterval(poll, 8000);
-    return () => {
-      active = false;
-      clearInterval(id);
-    };
-  }, [hearing.id]);
-
-  const canEditNotes = [
-    "system_admin",
-    "admin",
-    "manager",
-    "mr_admin",
-    "mr_lead",
-    "mr_agent",
-    "post_hearing_admin",
-    "post_hearing_staff",
-  ].includes(userRole);
-
-  const canEditRequirements = [
-    "system_admin",
-    "admin",
-    "post_hearing_admin",
-  ].includes(userRole);
-
-  const handleAddNote = async () => {
-    if (!newNote.trim() || !canEditNotes) return;
-
-    setSaving(true);
-    try {
-      const { addDashboardPostHrgNote } =
-        await import("@/app/(dashboard)/actions");
-
-      const trimmed = newNote.trim();
-      const r = await addDashboardPostHrgNote(hearing.id, trimmed, userName);
-
-      if (r.success) {
-        const added: PostHrgNote = {
-          user: userName,
-          date: new Date().toISOString(),
-          note: trimmed,
-        };
-        setNotes((prev) => [added, ...prev]);
-        onSave(hearing.id, "post_hrg_review", true);
-      }
-
-      if (deadline && deadline !== hearing.post_hrg_deadline) {
-        await onSave(hearing.id, "post_hrg_deadline", deadline);
-      }
-
-      setNewNote("");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleUpdateDeadline = async () => {
-    await onSave(hearing.id, "post_hrg_deadline", deadline || null);
-  };
-
-  const handleClearDeadline = async () => {
-    setDeadline("");
-    await onSave(hearing.id, "post_hrg_deadline", null);
-  };
-
-  const handleDeleteNote = async (visibleIndex: number) => {
-    if (!canEditNotes) return;
-
-    const noteToDelete = visibleNotes[visibleIndex];
-    const fullIndex = notes.findIndex((n) => n === noteToDelete);
-    if (fullIndex === -1) return;
-
-    const { deleteDashboardPostHrgNote } =
-      await import("@/app/(dashboard)/actions");
-    const r = await deleteDashboardPostHrgNote(hearing.id, fullIndex);
-
-    if (r.success) {
-      setNotes((prev) => prev.filter((_, i) => i !== fullIndex));
-      if (r.updatedNotes === null) {
-        onSave(hearing.id, "post_hrg_review", false);
-      }
-    }
-  };
-
-  const handleSaveRequirements = async () => {
-    const trimmed = requirements.trim();
-    await onSave(hearing.id, "post_hrg_requirements", trimmed || null);
-    setRequirements(trimmed);
-    setHasSavedRequirements(!!trimmed);
-    setIsEditingRequirements(false);
-  };
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-lg rounded-xl border bg-card shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between border-b px-5 py-4">
-          <h2 className="text-sm font-semibold">Post HRG Review</h2>
-          <button onClick={onClose} className="rounded-md p-1 hover:bg-muted">
-            <XIcon className="h-4 w-4" />
-          </button>
-        </div>
-
-        <div className="max-h-[70vh] overflow-y-auto px-5 py-4 space-y-4">
-          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-            <span>
-              Claimant:{" "}
-              <span className="font-medium text-foreground">
-                {hearing.claimant}
-              </span>
-            </span>
-            <span>
-              Hearing:{" "}
-              <span className="font-medium text-foreground">
-                {fmtDate(hearing.hearing_date, {
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                })}
-              </span>
-            </span>
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium">Deadline Date</label>
-            <div className="flex items-center gap-2">
-              <Input
-                type="date"
-                value={deadline}
-                onChange={(e) => setDeadline(e.target.value)}
-                className="h-8 w-auto text-xs"
-              />
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 text-xs"
-                onClick={handleUpdateDeadline}
-              >
-                Update
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 text-xs"
-                onClick={handleClearDeadline}
-              >
-                Clear
-              </Button>
-            </div>
-
-            {(deadlinePrev || deadlineChangedBy) && (
-              <div className="rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20 px-3 py-1.5 text-[11px] text-amber-800 dark:text-amber-300 space-y-0.5">
-                {deadlinePrev && (
-                  <p>
-                    <span className="font-medium">Previous date:</span>{" "}
-                    <span className="font-semibold">
-                      {fmtDate(deadlinePrev, {
-                        month: "short",
-                        day: "numeric",
-                        year: "numeric",
-                      })}
-                    </span>
-                  </p>
-                )}
-                {deadlineChangedBy && (
-                  <p>
-                    <span className="font-medium">Changed by:</span>{" "}
-                    <span className="font-semibold">{deadlineChangedBy}</span>
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-red-700 dark:text-red-400">
-              Requirements
-            </label>
-
-            {canEditRequirements ? (
-              <>
-                <textarea
-                  value={requirements}
-                  onChange={(e) => setRequirements(e.target.value)}
-                  rows={3}
-                  placeholder="Enter requirements..."
-                  disabled={!isEditingRequirements}
-                  className="w-full rounded-md border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/20 px-3 py-2 text-xs text-red-700 dark:text-red-300 placeholder:text-red-400 dark:placeholder:text-red-600 focus:border-red-400 focus:outline-none focus:ring-1 focus:ring-red-400 disabled:opacity-80 disabled:cursor-not-allowed"
-                />
-
-                <div className="flex gap-2">
-                  {isEditingRequirements ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-7 text-xs border-red-300 text-red-700 hover:bg-red-100 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30"
-                      onClick={handleSaveRequirements}
-                      disabled={saving}
-                    >
-                      {hasSavedRequirements ? "Update" : "Save Requirements"}
-                    </Button>
-                  ) : (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-7 text-xs border-red-300 text-red-700 hover:bg-red-100 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30"
-                      onClick={() => setIsEditingRequirements(true)}
-                    >
-                      Edit
-                    </Button>
-                  )}
-                </div>
-              </>
-            ) : requirements ? (
-              <div className="w-full rounded-md border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/20 px-3 py-2 text-xs text-red-700 dark:text-red-300 whitespace-pre-wrap min-h-15">
-                {requirements}
-              </div>
-            ) : (
-              <p className="text-xs text-red-400 dark:text-red-600 italic py-1">
-                No requirements set.
-              </p>
-            )}
-          </div>
-
-          {canEditNotes ? (
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium">Add New Note</label>
-              <textarea
-                value={newNote}
-                onChange={(e) => setNewNote(e.target.value)}
-                rows={3}
-                placeholder="Enter your note..."
-                className="w-full rounded-md border bg-transparent px-3 py-2 text-xs placeholder:text-muted-foreground focus:border-ring focus:outline-none"
-              />
-              <Button
-                size="sm"
-                className="h-8 text-xs"
-                onClick={handleAddNote}
-                disabled={saving || !newNote.trim()}
-              >
-                {saving ? "Saving..." : "Add Note"}
-              </Button>
-            </div>
-          ) : (
-            <p className="text-xs text-muted-foreground italic py-2">
-              You do not have permission to add notes.
-            </p>
-          )}
-
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium">
-              Notes History{" "}
-              <span className="text-muted-foreground">
-                ({visibleNotes.length})
-              </span>
-            </label>
-
-            {visibleNotes.length === 0 ? (
-              <p className="py-4 text-center text-xs text-muted-foreground">
-                No notes yet
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {visibleNotes.map((note, i) => (
-                  <div
-                    key={i}
-                    className="rounded-lg border bg-muted/30 p-3 space-y-1"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                        <span className="font-medium text-foreground">
-                          {noteAuthor(note) || "System"}
-                        </span>
-                        {noteDate(note) && (
-                          <span>
-                            {new Date(noteDate(note)).toLocaleDateString(
-                              "en-US",
-                              {
-                                month: "short",
-                                day: "numeric",
-                                hour: "numeric",
-                                minute: "2-digit",
-                              },
-                            )}
-                          </span>
-                        )}
-                      </div>
-                      {canEditNotes && (
-                        <button
-                          onClick={() => handleDeleteNote(i)}
-                          className="rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                        >
-                          <Trash className="h-3 w-3" />
-                        </button>
-                      )}
-                    </div>
-                    <p className="text-xs whitespace-pre-wrap">
-                      {noteContent(note)}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="border-t px-5 py-3">
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 text-xs"
-            onClick={onClose}
-          >
-            Close
-          </Button>
-        </div>
-      </div>
     </div>
   );
 }
@@ -2967,6 +2525,7 @@ interface DashboardClientProps {
   userRole: UserRole;
   userEmail: string;
   userName: string;
+  userId: number;
 }
 
 export function DashboardClient({
@@ -2983,6 +2542,7 @@ export function DashboardClient({
   userRole,
   userEmail,
   userName,
+  userId,
 }: DashboardClientProps) {
   const [filters, setFilters] = useState<HearingFilters>(EMPTY_FILTERS);
   const [page, setPage] = useState(1);
@@ -3317,6 +2877,12 @@ export function DashboardClient({
     state: "loading" | "success" | "error";
     message: string;
   } | null>(null);
+
+  // "Add to Post HRG" bulk modal — populated from selectedIdsRef on open.
+  const [addToPostHrgState, setAddToPostHrgState] = useState<{
+    open: boolean;
+    hearingIds: number[];
+  }>({ open: false, hearingIds: [] });
 
   const handleAutoAssign = useCallback(
     async (hearingId: number) => {
@@ -3872,12 +3438,32 @@ export function DashboardClient({
 
       {/* Post HRG Modal */}
       {postHrgHearing && (
-        <PostHrgModal
-          hearing={postHrgHearing}
-          onClose={() => setPostHrgHearing(null)}
-          onSave={handleUpdate}
+        <PostHrgReviewModal
+          mode="hearing"
+          hearingId={postHrgHearing.id}
+          claimant={postHrgHearing.claimant ?? ""}
+          hearingDateText={fmtDate(postHrgHearing.hearing_date, {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          })}
+          assignedRep={null}
           userName={userName}
           userRole={userRole}
+          initialNotes={postHrgHearing.post_hrg_notes}
+          initialDeadline={postHrgHearing.post_hrg_deadline}
+          initialRequirements={postHrgHearing.post_hrg_requirements}
+          initialDeadlinePrev={postHrgHearing.post_hrg_deadline_prev}
+          initialDeadlineChangedBy={postHrgHearing.post_hrg_deadline_changed_by}
+          onClose={() => setPostHrgHearing(null)}
+          onHearingPatch={(patch) => {
+            setHearings((prev) =>
+              prev.map((h) =>
+                h.id === postHrgHearing.id ? { ...h, ...patch } : h,
+              ),
+            );
+            setPostHrgHearing((prev) => (prev ? { ...prev, ...patch } : null));
+          }}
         />
       )}
 
@@ -3889,6 +3475,24 @@ export function DashboardClient({
         />
       )}
       {showEmailAll && <EmailAllModal onClose={() => setShowEmailAll(false)} />}
+      <AddToPostHrgModal
+        open={addToPostHrgState.open}
+        hearingIds={addToPostHrgState.hearingIds}
+        userId={userId}
+        onClose={() =>
+          setAddToPostHrgState({ open: false, hearingIds: [] })
+        }
+        onDone={(result) => {
+          const skipMsg =
+            result.skipped.length > 0
+              ? ` (${result.skipped.length} skipped — already existed)`
+              : "";
+          alert(
+            `Added ${result.created} record${result.created === 1 ? "" : "s"} to Post HRG${skipMsg}`,
+          );
+          clearSelection();
+        }}
+      />
       {showAutoAssign && (
         <AutoAssignModal
           representatives={representatives}
@@ -4403,6 +4007,22 @@ export function DashboardClient({
                 }}
               >
                 ⚡ Auto-Assign
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn(
+                  "h-7 gap-1.5 text-[11px] text-blue-600 border-blue-300 hover:bg-blue-50 dark:text-blue-400 dark:border-blue-800 dark:hover:bg-blue-950",
+                  BTN_PRESS,
+                )}
+                onClick={() =>
+                  setAddToPostHrgState({
+                    open: true,
+                    hearingIds: Array.from(selectedIdsRef.current),
+                  })
+                }
+              >
+                <ClipboardList className="h-3 w-3" /> Add to Post HRG
               </Button>
               <Button
                 variant="outline"

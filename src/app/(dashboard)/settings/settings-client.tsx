@@ -71,6 +71,11 @@ const CONFIG_TYPES = [
     hasColor: true,
   },
   { key: "post_hrg_indicator", label: "Post HRG Indicators", hasColor: true },
+  {
+    key: "type_of_docs_needed",
+    label: "Type of Docs Needed",
+    hasColor: true,
+  },
 ];
 
 const TEAM_TYPES = [

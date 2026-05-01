@@ -12,22 +12,27 @@ import * as XLSX from "xlsx";
 import {
   fetchPostHrgDevPage,
   fetchPostHrgDevStats,
+  fetchPostHrgRecordTypeCounts,
   createPostHrgDevRecord,
   updatePostHrgDevField,
-  deletePostHrgDevRecord,
+  acknowledgePostHrgDevRecord,
   importPostHrgDevRecords,
   addPostHrgDevNote,
   deletePostHrgDevNote,
   fetchPostHrgDevNotes,
   type PostHrgDevRow,
   type PostHrgDevStats,
+  type PostHrgRecordType,
+  type PostHrgRecordTypeCounts,
   type ConfigOption,
   type RepOption,
   type ResponsibleOption,
 } from "./actions";
 import { PostHrgDetailPanel } from "./post-hrg-detail-panel";
 import { PostHrgActivityModal } from "@/components/modals/post-hrg-activity-modal";
-import { ClipboardList } from "lucide-react";
+import { PostHrgReviewModal } from "@/components/modals/post-hrg-review-modal";
+import { PostHrgCompletedModal } from "@/components/modals/post-hrg-completed-modal";
+import { ClipboardList, Check } from "lucide-react";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -143,6 +148,37 @@ const INDICATOR_OPTIONS: {
 function getIndicatorColor(value: string | null): string | null {
   if (!value) return null;
   return INDICATOR_OPTIONS.find((o) => o.value === value)?.color ?? null;
+}
+
+// Pick a readable text color for a filled badge against `hex`.
+// Uses the perceived-luminance formula (rec. 601 weights). Light fills get
+// dark slate text; dark fills get white. Keeps status pills legible even when
+// the configured option color is itself a pale pastel.
+function deriveBadgeColors(hex: string): { bg: string; color: string } {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  if ([r, g, b].some((n) => Number.isNaN(n))) {
+    return { bg: hex, color: "#111827" };
+  }
+  const isLight = (r * 299 + g * 587 + b * 114) / 1000 > 180;
+  return { bg: hex, color: isLight ? "#1F2937" : "#ffffff" };
+}
+
+// True when `createdAt` is the same calendar day as "now" in the user's local
+// timezone. Drives the NEW badge and the soft-blue row tint for fresh rows.
+// Refreshes naturally on next page load — no midnight timer needed.
+function isCreatedToday(createdAt: string | null | undefined): boolean {
+  if (!createdAt) return false;
+  const created = new Date(createdAt);
+  if (isNaN(created.getTime())) return false;
+  const now = new Date();
+  return (
+    created.getFullYear() === now.getFullYear() &&
+    created.getMonth() === now.getMonth() &&
+    created.getDate() === now.getDate()
+  );
 }
 
 function IndicatorDot({
@@ -424,11 +460,11 @@ function InlineDropdown({
           : undefined
       }
       className={cn(
-        "h-6 w-full rounded border px-1 text-[11px] font-semibold cursor-pointer transition-colors",
-        "focus:outline-none focus:ring-1 focus:ring-blue-400",
+        "h-6 w-full rounded border px-1 text-[11px] font-semibold cursor-pointer",
+        "transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-blue-400/60",
         currentHex
-          ? "border-current"
-          : "border-transparent hover:border-border text-foreground bg-card",
+          ? "border-transparent shadow-sm hover:brightness-110 hover:shadow-md"
+          : "border-transparent hover:border-border hover:bg-muted/40 text-foreground bg-card",
       )}
     >
       <option value="" style={{ backgroundColor: "white", color: "#333" }}>
@@ -460,32 +496,12 @@ function InlineCheck({
         type="checkbox"
         checked={checked}
         onChange={(e) => onToggle(e.target.checked)}
-        className="h-4 w-4 rounded accent-green-600 cursor-pointer"
+        className={cn(
+          "h-4 w-4 rounded accent-green-600 cursor-pointer",
+          "transition-transform duration-100 hover:scale-110 focus:scale-110",
+        )}
       />
     </div>
-  );
-}
-
-function InlineDate({
-  value,
-  onSave,
-  isOverdue,
-}: {
-  value: string | null;
-  onSave: (v: string | null) => void;
-  isOverdue?: boolean;
-}) {
-  return (
-    <input
-      type="date"
-      value={value || ""}
-      onChange={(e) => onSave(e.target.value || null)}
-      className={cn(
-        "h-6 w-full rounded border border-transparent px-1 text-[11px] tabular-nums bg-card cursor-pointer",
-        "hover:border-border focus:outline-none focus:ring-1 focus:ring-blue-400",
-        isOverdue && "text-red-600 font-bold",
-      )}
-    />
   );
 }
 
@@ -575,8 +591,56 @@ function InlineDate({
 
 // ─── Claimant Cell ──────────────────────────────────────────────────────────
 
-function ClaimantCell({ record }: { record: PostHrgDevRow }) {
+const RECORD_TYPE_STYLE: Record<
+  PostHrgRecordType,
+  { label: string; className: string; title: string }
+> = {
+  MR: {
+    label: "MR",
+    className:
+      "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+    title: "Medical / Examination record",
+  },
+  POST_HRG: {
+    label: "POST HRG",
+    className:
+      "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300",
+    title: "Post-hearing legal record (brief, memo, letter)",
+  },
+  REP: {
+    label: "REP",
+    className:
+      "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
+    title: "Rep-side / claimant-supplied evidence",
+  },
+};
+
+function RecordTypeBadge({ type }: { type: PostHrgRecordType }) {
+  const s = RECORD_TYPE_STYLE[type];
+  return (
+    <span
+      className={cn(
+        "shrink-0 rounded-full px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide",
+        s.className,
+      )}
+      title={s.title}
+    >
+      {s.label}
+    </span>
+  );
+}
+
+function ClaimantCell({
+  record,
+  showTypeBadge,
+  isCompleted,
+}: {
+  record: PostHrgDevRow;
+  showTypeBadge?: boolean;
+  isCompleted?: boolean;
+}) {
   const chronicleLink = record.chronicle_link ?? null;
+  const isNew = isCreatedToday(record.created_at);
 
   return (
     <div className="min-w-0 pr-1">
@@ -603,6 +667,23 @@ function ClaimantCell({ record }: { record: PostHrgDevRow }) {
           >
             {record.claimant}
           </p>
+        )}
+        {showTypeBadge && <RecordTypeBadge type={record.record_type} />}
+        {isNew && (
+          <span
+            className="shrink-0 rounded-full bg-sky-500 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-white shadow-sm"
+            title="Added today"
+          >
+            NEW
+          </span>
+        )}
+        {isCompleted && (
+          <span
+            className="shrink-0 inline-flex items-center gap-0.5 rounded-full bg-emerald-600 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-white shadow-sm"
+            title="Completed — view only, reopen from the Completed modal to edit"
+          >
+            ✓ Completed
+          </span>
         )}
       </div>
 
@@ -638,9 +719,28 @@ function PostHrgCell({
   record: PostHrgDevRow;
   onClick: () => void;
 }) {
-  const notes = parseNotes(record.post_hrg_notes ?? null);
-  const noteCount = notes.length;
-  const deadline = record.post_hrg_deadline ?? null;
+  // Count from the same source(s) the modal will surface.
+  // - MR + hearing_id  → modal opens in `hearing` mode against
+  //   `hearings.post_hrg_notes` only.
+  // - POST_HRG / REP / orphan MR → modal opens in `phd-internal` mode against
+  //   `details_notes`, plus a read-only "MR / Dashboard" section pulling from
+  //   `hearings.post_hrg_notes` when the row has a linked hearing.
+  const usesHearingNotes =
+    record.record_type === "MR" && !!record.hearing_id;
+  const detailsNotes = parseNotes(
+    (record as unknown as { details_notes: string | null }).details_notes ??
+      null,
+  );
+  const hearingNotes = parseNotes(record.post_hrg_notes ?? null);
+  const noteCount = usesHearingNotes
+    ? hearingNotes.length
+    : detailsNotes.length + (record.hearing_id ? hearingNotes.length : 0);
+  // Same routing for the deadline display: MR-with-hearing reads the
+  // hearing's deadline (h.post_hrg_deadline). POST_HRG/REP/orphan MR show
+  // the PHD row's own column (p.deadline) since the modal writes there.
+  const deadline = usesHearingNotes
+    ? (record.post_hrg_deadline ?? null)
+    : (record.deadline ?? null);
 
   let badgeClass = "bg-muted/50 text-muted-foreground hover:bg-muted";
   let text = "+ Add";
@@ -673,18 +773,6 @@ function PostHrgCell({
     text = "Notes";
   }
 
-  // No linked hearing — show disabled state
-  if (!record.hearing_id) {
-    return (
-      <span
-        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium bg-muted/30 text-muted-foreground/50 cursor-not-allowed"
-        title="No linked hearing — Post HRG data syncs from hearing record"
-      >
-        🔗 No hearing
-      </span>
-    );
-  }
-
   return (
     <button
       onClick={onClick}
@@ -705,339 +793,6 @@ function PostHrgCell({
         </span>
       )}
     </button>
-  );
-}
-
-// ─── Post HRG Modal (syncs with hearings table via hearing_id) ───────────────
-
-function PostHrgDevModal({
-  record,
-  onClose,
-  onRecordUpdate,
-  userName,
-  userRole,
-}: {
-  record: PostHrgDevRow;
-  onClose: () => void;
-  onRecordUpdate: (r: PostHrgDevRow) => void;
-  userName: string;
-  userRole: string;
-}) {
-  const [notes, setNotes] = useState<PostHrgNote[]>(() =>
-    parseNotes(record.post_hrg_notes ?? null),
-  );
-  const [newNote, setNewNote] = useState("");
-  const [deadline, setDeadline] = useState(record.post_hrg_deadline || "");
-  const [saving, setSaving] = useState(false);
-  const [deadlineSaving, setDeadlineSaving] = useState(false);
-
-  // Poll for updates every 8s (reads from hearings table server-side)
-  useEffect(() => {
-    let active = true;
-    const poll = async () => {
-      if (!active || !record.hearing_id) return;
-      try {
-        const { fetchPostHrgNotes } = await import("@/app/(dashboard)/actions");
-        const data = (await fetchPostHrgNotes(record.hearing_id)) as
-          | string
-          | { post_hrg_notes: string | null; post_hrg_deadline: string | null }
-          | null;
-        if (!active || !data) return;
-        if (typeof data === "string") {
-          setNotes(parseNotes(data));
-        } else {
-          setNotes(parseNotes(data.post_hrg_notes));
-          if (data.post_hrg_deadline != null) {
-            setDeadline(data.post_hrg_deadline);
-          }
-        }
-      } catch {
-        /* ignore */
-      }
-    };
-    const id = setInterval(poll, 8000);
-    return () => {
-      active = false;
-      clearInterval(id);
-    };
-  }, [record.hearing_id]);
-
-  const canEditNotes = [
-    "system_admin",
-    "admin",
-    "manager",
-    "mr_admin",
-    "mr_lead",
-    "mr_agent",
-    "post_hearing_admin",
-    "post_hearing_staff",
-  ].includes(userRole);
-
-  const handleAddNote = async () => {
-    if (!newNote.trim() || !canEditNotes || !record.hearing_id) return;
-    setSaving(true);
-    try {
-      // Write to hearings table — same action as dashboard
-      const { addDashboardPostHrgNote } =
-        await import("@/app/(dashboard)/actions");
-      const trimmed = newNote.trim();
-      const r = await addDashboardPostHrgNote(
-        record.hearing_id,
-        trimmed,
-        userName,
-      );
-      if (r.success) {
-        const added: PostHrgNote = {
-          user: userName,
-          date: new Date().toISOString(),
-          note: trimmed,
-        };
-        const updatedNotes = [added, ...notes];
-        setNotes(updatedNotes);
-        setNewNote("");
-        // Sync back to local record state
-        onRecordUpdate({
-          ...record,
-          post_hrg_notes: JSON.stringify(updatedNotes),
-        } as PostHrgDevRow);
-      }
-    } catch {
-      /* */
-    }
-    setSaving(false);
-  };
-
-  const handleDeleteNote = async (idx: number) => {
-    if (!canEditNotes || !record.hearing_id) return;
-    try {
-      const { deleteDashboardPostHrgNote } =
-        await import("@/app/(dashboard)/actions");
-      const r = await deleteDashboardPostHrgNote(record.hearing_id, idx);
-      if (r.success) {
-        const updatedNotes = notes.filter((_, i) => i !== idx);
-        setNotes(updatedNotes);
-        onRecordUpdate({
-          ...record,
-          post_hrg_notes:
-            updatedNotes.length > 0 ? JSON.stringify(updatedNotes) : null,
-        } as PostHrgDevRow);
-      }
-    } catch {
-      /* */
-    }
-  };
-
-  const handleUpdateDeadline = async () => {
-    if (!record.hearing_id) return;
-    setDeadlineSaving(true);
-    try {
-      const { updateHearing } = await import("@/app/(dashboard)/actions");
-      await updateHearing(
-        record.hearing_id,
-        "post_hrg_deadline",
-        deadline || null,
-      );
-      onRecordUpdate({
-        ...record,
-        post_hrg_deadline: deadline || null,
-      } as PostHrgDevRow);
-    } catch {
-      /* */
-    }
-    setDeadlineSaving(false);
-  };
-
-  const handleClearDeadline = async () => {
-    if (!record.hearing_id) return;
-    setDeadlineSaving(true);
-    try {
-      const { updateHearing } = await import("@/app/(dashboard)/actions");
-      await updateHearing(record.hearing_id, "post_hrg_deadline", null);
-      setDeadline("");
-      onRecordUpdate({ ...record, post_hrg_deadline: null } as PostHrgDevRow);
-    } catch {
-      /* */
-    }
-    setDeadlineSaving(false);
-  };
-
-  const fmtD = (d: string) =>
-    new Date(d + "T12:00:00").toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-lg rounded-xl border bg-card shadow-2xl flex flex-col max-h-[85vh]"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between border-b px-5 py-4 shrink-0">
-          <div>
-            <h2 className="text-sm font-semibold">Post HRG Review</h2>
-            <p className="text-[10px] text-muted-foreground mt-0.5">
-              {record.claimant}
-              {record.hearing_date &&
-                ` • ${new Date(record.hearing_date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`}
-              {record.assigned_rep && ` • ${record.assigned_rep}`}
-            </p>
-          </div>
-          <button
-            onClick={onClose}
-            className="rounded-md p-1 hover:bg-muted text-muted-foreground hover:text-foreground text-lg"
-          >
-            ✕
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-          {/* Sync notice */}
-          <div className="flex items-center gap-2 rounded-lg bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 px-3 py-2">
-            <span className="text-blue-500 text-sm">🔗</span>
-            <p className="text-[11px] text-blue-700 dark:text-blue-400">
-              Synced with hearing record — changes reflect on the main dashboard
-              too.
-            </p>
-          </div>
-
-          {/* Deadline */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium">Deadline Date</label>
-            <div className="flex items-center gap-2 flex-wrap">
-              <input
-                type="date"
-                value={deadline}
-                onChange={(e) => setDeadline(e.target.value)}
-                className="h-8 rounded-lg border bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary w-auto"
-              />
-              <button
-                className={cn(
-                  BTN_OUTLINE,
-                  "px-3 py-1 text-xs h-8 disabled:opacity-50",
-                )}
-                onClick={handleUpdateDeadline}
-                disabled={deadlineSaving}
-              >
-                {deadlineSaving ? "Saving..." : "Update"}
-              </button>
-              {deadline && (
-                <button
-                  className={cn(BTN_SECONDARY, "px-3 py-1 text-xs h-8")}
-                  onClick={handleClearDeadline}
-                  disabled={deadlineSaving}
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-            {record.post_hrg_deadline &&
-              record.post_hrg_deadline !== deadline && (
-                <p className="text-[10px] text-muted-foreground">
-                  Saved:{" "}
-                  <span className="font-medium">
-                    {fmtD(record.post_hrg_deadline)}
-                  </span>
-                </p>
-              )}
-          </div>
-
-          {/* Add note */}
-          {canEditNotes ? (
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium">Add New Note</label>
-              <textarea
-                value={newNote}
-                onChange={(e) => setNewNote(e.target.value)}
-                rows={3}
-                placeholder="Enter your note..."
-                className={cn(INPUT, "resize-none text-xs")}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    handleAddNote();
-                  }
-                }}
-              />
-              <button
-                className={cn(BTN_PRIMARY, "px-3 py-1.5 text-xs")}
-                onClick={handleAddNote}
-                disabled={saving || !newNote.trim()}
-              >
-                {saving ? "Saving..." : "Add Note"}
-              </button>
-            </div>
-          ) : (
-            <p className="text-xs text-muted-foreground italic py-2">
-              You do not have permission to add notes.
-            </p>
-          )}
-
-          {/* Notes history */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium">
-              Notes History{" "}
-              <span className="text-muted-foreground">({notes.length})</span>
-            </label>
-            {notes.length === 0 ? (
-              <p className="py-4 text-center text-xs text-muted-foreground">
-                No notes yet
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {notes.map((n, i) => (
-                  <div
-                    key={i}
-                    className="rounded-lg border bg-muted/30 p-3 space-y-1"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                        <span className="font-medium text-foreground">
-                          {n.user || "Unknown"}
-                        </span>
-                        {n.date && (
-                          <span>
-                            {new Date(n.date).toLocaleDateString("en-US", {
-                              month: "short",
-                              day: "numeric",
-                              hour: "numeric",
-                              minute: "2-digit",
-                            })}
-                          </span>
-                        )}
-                      </div>
-                      {canEditNotes && (
-                        <button
-                          onClick={() => handleDeleteNote(i)}
-                          className="text-xs text-muted-foreground hover:text-red-600"
-                        >
-                          ✕
-                        </button>
-                      )}
-                    </div>
-                    <p className="text-xs whitespace-pre-wrap">{n.note}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="border-t px-5 py-3 shrink-0">
-          <button
-            className={cn(BTN_SECONDARY, "px-3 py-1.5 text-xs")}
-            onClick={onClose}
-          >
-            Close
-          </button>
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -1726,7 +1481,7 @@ const COLUMNS: {
   sortable?: boolean;
   frozen?: boolean;
 }[] = [
-  { key: "indicator", label: "", w: 32, frozen: true },
+  { key: "indicator", label: "", w: 80, frozen: true },
   { key: "claimant", label: "Claimant", w: 175, sortable: true, frozen: true },
   { key: "ssn_last_4", label: "SSN", w: 62, frozen: true },
   {
@@ -1737,18 +1492,22 @@ const COLUMNS: {
     frozen: true,
   },
   { key: "assigned_rep", label: "Rep", w: 120, sortable: true, frozen: true },
-  { key: "post_hearing_status", label: "PH Status", w: 130, sortable: true },
+  {
+    key: "post_hearing_status",
+    label: "PH Status",
+    w: 130,
+    sortable: true,
+    frozen: true,
+  },
   { key: "type_of_docs_needed", label: "Docs Needed", w: 120 },
   { key: "details", label: "Details", w: 240 },
-  { key: "person_responsible", label: "Responsible", w: 120, sortable: true },
+  { key: "person_responsible", label: "Responsible", w: 160, sortable: true },
   { key: "em_sent_task_created", label: "EM/Task", w: 80 },
   { key: "ext_letter_sent", label: "EXT", w: 70 },
-  { key: "status", label: "Status", w: 110, sortable: true },
-  { key: "deadline", label: "Deadline", w: 110, sortable: true },
+  { key: "status", label: "Status", w: 150, sortable: true },
   // new_due_date REMOVED — replaced with post_hrg_review
   { key: "post_hrg_review", label: "Post HRG Review", w: 140 },
   { key: "remarks", label: "Remarks", w: 200 },
-  { key: "actions", label: "", w: 70 },
 ];
 
 const lastFrozenKey = COLUMNS.filter((c) => c.frozen).at(-1)?.key ?? "";
@@ -1818,6 +1577,9 @@ interface MemoRowProps {
   columns: ColumnDef[];
   overdue: boolean;
   onRowClick: () => void;
+  tintColor: string | null;
+  unacknowledged: boolean;
+  completed: boolean;
 }
 
 const MemoRow = memo(
@@ -1832,34 +1594,45 @@ const MemoRow = memo(
     columns,
     overdue,
     onRowClick,
+    tintColor,
+    unacknowledged,
+    completed,
   }: MemoRowProps) {
     const rb = ri % 2 === 0 ? evenBg : oddBg;
+    // Translucent fill (~24% alpha) so text stays readable on any indicator color
+    const tintBg = tintColor ? `${tintColor}3D` : undefined;
     return (
       <tr
         className={cn(
-          "group border-b border-border/40 last:border-0 cursor-pointer hover:bg-muted/40 transition-colors",
-          rb,
+          "group border-b border-border/40 last:border-0 cursor-pointer transition-colors duration-150",
+          !tintBg && "hover:bg-muted/50",
           overdue && "bg-red-50/50! dark:bg-red-950/10!",
+          // Completed rows surface during search but are view-only — dim
+          // them so the team can see at a glance that they're historical.
+          completed && "opacity-60",
         )}
         onClick={onRowClick}
       >
         {columns.map((col) => {
           const lp = getLeftPosFn(col.key);
           const isLF = col.key === lastFrozen;
+          // Apply background per-cell because <tr> backgroundColor is
+          // unreliable under `border-collapse: collapse` (browsers often
+          // skip it). Non-frozen cells get the tint as a flat color over
+          // the transparent body. Frozen cells keep the opaque `rb` surface
+          // (so scrolling content doesn't bleed through) and overlay the
+          // translucent tint via `backgroundImage`.
           return (
             <td
               key={col.key}
               onClick={(e) => {
                 const INTERACTIVE_COLS = [
-                  "actions",
                   "indicator",
-                  "post_hearing_status",
                   "type_of_docs_needed",
                   "person_responsible",
                   "em_sent_task_created",
                   "ext_letter_sent",
                   "status",
-                  "deadline",
                   "post_hrg_review",
                   "remarks",
                   "details",
@@ -1870,7 +1643,11 @@ const MemoRow = memo(
               }}
               className={cn(
                 "px-2 py-1.5",
+                // Frozen cells always paint the opaque row surface
                 col.frozen && cn("sticky z-10 overflow-hidden", rb),
+                // Non-frozen cells need rb only when there's no tint —
+                // otherwise the tint backgroundColor below provides the fill.
+                !col.frozen && !tintBg && rb,
                 isLF &&
                   "border-r-2 border-r-blue-400/40 dark:border-r-blue-500/40",
               )}
@@ -1879,6 +1656,20 @@ const MemoRow = memo(
                 minWidth: col.w,
                 maxWidth: col.frozen ? col.w : undefined,
                 ...(lp !== undefined ? { left: lp } : {}),
+                ...(tintBg
+                  ? col.frozen
+                    ? {
+                        backgroundImage: `linear-gradient(${tintBg}, ${tintBg})`,
+                      }
+                    : { backgroundColor: tintBg }
+                  : {}),
+                // Blue left edge on the indicator cell of unacknowledged
+                // rows. <tr> border-left is unreliable under
+                // border-collapse: collapse, so we paint it via inset shadow
+                // on the leftmost (indicator) cell instead.
+                ...(unacknowledged && col.key === "indicator"
+                  ? { boxShadow: "inset 4px 0 0 0 #3B82F6" }
+                  : {}),
               }}
             >
               {renderCellFn(record, col)}
@@ -1891,7 +1682,10 @@ const MemoRow = memo(
   (prev, next) =>
     prev.record === next.record &&
     prev.ri === next.ri &&
-    prev.overdue === next.overdue,
+    prev.overdue === next.overdue &&
+    prev.tintColor === next.tintColor &&
+    prev.unacknowledged === next.unacknowledged &&
+    prev.completed === next.completed,
 );
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -1907,6 +1701,10 @@ export function PostHrgClient({
   initialStatusOptions,
   initialRepresentatives,
   initialResponsibleOptions,
+  initialDocsNeededOptions,
+  initialRecordType,
+  initialRecordTypeCounts,
+  initialCompletedCount,
 }: {
   userRole: string;
   userId: number;
@@ -1918,6 +1716,10 @@ export function PostHrgClient({
   initialStatusOptions: ConfigOption[];
   initialRepresentatives: RepOption[];
   initialResponsibleOptions: ResponsibleOption[];
+  initialDocsNeededOptions: { value: string; color: string | null }[];
+  initialRecordType: PostHrgRecordType | "all";
+  initialRecordTypeCounts: PostHrgRecordTypeCounts;
+  initialCompletedCount: number;
 }) {
   const [viewMode, setViewMode] = useState<ViewMode>("dashboard");
   const [records, setRecords] = useState<PostHrgDevRow[]>(initialRecords);
@@ -1929,9 +1731,74 @@ export function PostHrgClient({
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [phStatusFilter, setPhStatusFilter] = useState<string>("all");
   const [indicatorFilter, setIndicatorFilter] = useState<string>("all");
+  // "Show NEW only" toggle — when ON, only unacknowledged rows are returned.
+  // Threaded via ref so the existing fetchPage signature stays stable.
+  const [showNewOnly, setShowNewOnly] = useState<boolean>(false);
+  const showNewOnlyRef = useRef<boolean>(false);
+  // Hearing-date filter: preset drives from/to. Threaded via ref so the
+  // existing positional fetchPage signature stays stable.
+  const [datePreset, setDatePreset] = useState<string>("");
+  const [dateFrom, setDateFrom] = useState<string>("");
+  const [dateTo, setDateTo] = useState<string>("");
+  const dateRangeRef = useRef<{ from: string; to: string }>({
+    from: "",
+    to: "",
+  });
+  // Tab state — which record_type bucket is active (MR / POST_HRG / REP / all).
+  // Read by fetchPage via ref so we don't have to thread it through every caller.
+  const [recordType, setRecordType] = useState<PostHrgRecordType | "all">(
+    initialRecordType,
+  );
+  const recordTypeRef = useRef<PostHrgRecordType | "all">(initialRecordType);
+  const [recordTypeCounts, setRecordTypeCounts] =
+    useState<PostHrgRecordTypeCounts>(initialRecordTypeCounts);
+  // Legacy indicator display: tint the entire row (sheet style) by indicator
+  // color. Persisted in localStorage so each user's preference survives reloads.
+  // Default ON — the team prefers the row-tint at-a-glance over the dot.
+  const [legacyIndicator, setLegacyIndicator] = useState<boolean>(true);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("postHrg.legacyIndicator");
+      if (raw === "false") setLegacyIndicator(false);
+      else if (raw === "true") setLegacyIndicator(true);
+    } catch {
+      // localStorage unavailable — keep default
+    }
+  }, []);
+  const toggleLegacyIndicator = useCallback(() => {
+    setLegacyIndicator((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("postHrg.legacyIndicator", String(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }, []);
+
+  // Tab change: update state + ref + URL, then refetch with the new bucket.
+  const handleRecordTypeChange = useCallback(
+    (next: PostHrgRecordType | "all") => {
+      if (next === recordTypeRef.current) return;
+      recordTypeRef.current = next;
+      setRecordType(next);
+      setPage(1);
+      try {
+        const url = new URL(window.location.href);
+        // "all" is the default — omit the tab param for a clean URL.
+        if (next === "all") url.searchParams.delete("tab");
+        else url.searchParams.set("tab", next.toLowerCase());
+        window.history.replaceState(null, "", url.toString());
+      } catch {
+        // ignore
+      }
+    },
+    [],
+  );
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
-  const [sortKey, setSortKey] = useState("deadline");
+  const [sortKey, setSortKey] = useState("hearing_date");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
 
   const phStatusOptions = initialPhStatusOptions;
@@ -1942,7 +1809,6 @@ export function PostHrgClient({
   const [showAddModal, setShowAddModal] = useState(false);
   const [addData, setAddData] = useState<Partial<PostHrgDevRow>>({});
   const [saving, setSaving] = useState(false);
-  const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
 
   // Modals
   const [noteModal, setNoteModal] = useState<{
@@ -1955,6 +1821,10 @@ export function PostHrgClient({
   const [remarksModal, setRemarksModal] = useState<PostHrgDevRow | null>(null);
   const [detailPanel, setDetailPanel] = useState<PostHrgDevRow | null>(null);
   const [showActivityLog, setShowActivityLog] = useState(false);
+  const [showCompletedModal, setShowCompletedModal] = useState(false);
+  const [completedCount, setCompletedCount] = useState<number>(
+    initialCompletedCount,
+  );
 
   // Import state
   const [importStep, setImportStep] = useState(1);
@@ -1971,6 +1841,12 @@ export function PostHrgClient({
     imported: number;
     matched: number;
     errors: string[];
+    skipped: {
+      row: number;
+      claimant: string;
+      hearingDate: string | null;
+      reason: string;
+    }[];
   } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2002,10 +1878,27 @@ export function PostHrgClient({
         : STATUS_OPTIONS,
     [statusOptions],
   );
+  const DYNAMIC_DOCS_NEEDED_OPTIONS = useMemo(
+    () =>
+      initialDocsNeededOptions.length > 0
+        ? initialDocsNeededOptions.map((o) => ({
+            value: o.value,
+            label: o.value,
+          }))
+        : DOCS_NEEDED_OPTIONS,
+    [initialDocsNeededOptions],
+  );
+  const docsNeededHexMap = useMemo(() => {
+    const map: Record<string, { bg: string; color: string }> = {};
+    for (const o of initialDocsNeededOptions) {
+      if (o.color) map[o.value] = deriveBadgeColors(o.color);
+    }
+    return map;
+  }, [initialDocsNeededOptions]);
   const statusHexMap = useMemo(() => {
     const map: Record<string, { bg: string; color: string }> = {};
     for (const o of statusOptions) {
-      if (o.color) map[o.value] = { bg: o.color + "22", color: o.color };
+      if (o.color) map[o.value] = deriveBadgeColors(o.color);
       else if (STATUS_HEX[o.value]) map[o.value] = STATUS_HEX[o.value];
     }
     return map;
@@ -2017,7 +1910,7 @@ export function PostHrgClient({
   const phStatusHexMap = useMemo(() => {
     const map: Record<string, { bg: string; color: string }> = {};
     for (const o of phStatusOptions) {
-      if (o.color) map[o.value] = { bg: o.color + "22", color: o.color };
+      if (o.color) map[o.value] = deriveBadgeColors(o.color);
       else if (PH_STATUS_HEX[o.value]) map[o.value] = PH_STATUS_HEX[o.value];
     }
     return map;
@@ -2033,12 +1926,7 @@ export function PostHrgClient({
   const responsibleHexMap = useMemo(() => {
     const map: Record<string, { bg: string; color: string }> = {};
     for (const o of responsibleOptions) {
-      const hex = o.color.replace("#", "");
-      const r = parseInt(hex.slice(0, 2), 16);
-      const g = parseInt(hex.slice(2, 4), 16);
-      const b = parseInt(hex.slice(4, 6), 16);
-      const isLight = (r * 299 + g * 587 + b * 114) / 1000 > 180;
-      map[o.value] = { bg: o.color, color: isLight ? "#374151" : "#ffffff" };
+      map[o.value] = deriveBadgeColors(o.color);
     }
     return map;
   }, [responsibleOptions]);
@@ -2046,7 +1934,12 @@ export function PostHrgClient({
   // ── Server-side fetch ──
   const refreshStats = useCallback(async () => {
     try {
-      setStats(await fetchPostHrgDevStats());
+      const [s, c] = await Promise.all([
+        fetchPostHrgDevStats(recordTypeRef.current),
+        fetchPostHrgRecordTypeCounts(),
+      ]);
+      setStats(s);
+      setRecordTypeCounts(c);
     } catch {
       /* */
     }
@@ -2072,6 +1965,10 @@ export function PostHrgClient({
           status: status !== "all" ? status : undefined,
           phStatus: phStatus !== "all" ? phStatus : undefined,
           indicator: indicator !== "all" ? indicator : undefined,
+          recordType: recordTypeRef.current,
+          hearingDateFrom: dateRangeRef.current.from || undefined,
+          hearingDateTo: dateRangeRef.current.to || undefined,
+          unacknowledgedOnly: showNewOnlyRef.current || undefined,
           sortKey: sk,
           sortDir: sd,
         });
@@ -2085,6 +1982,25 @@ export function PostHrgClient({
     },
     [toast, refreshStats],
   );
+
+  // Refetch when the active tab changes. Compare against ref to avoid firing
+  // on the initial mount (data is already SSR-rendered).
+  const prevTabRef = useRef<PostHrgRecordType | "all">(initialRecordType);
+  useEffect(() => {
+    if (recordType === prevTabRef.current) return;
+    prevTabRef.current = recordType;
+    fetchPage(
+      1,
+      pageSize,
+      sortKey,
+      sortDir,
+      searchTerm,
+      statusFilter,
+      phStatusFilter,
+      indicatorFilter,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recordType]);
 
   const handleFilterChange = useCallback(
     (
@@ -2114,6 +2030,125 @@ export function PostHrgClient({
     },
     [fetchPage, pageSize, sortKey, sortDir],
   );
+
+  // Forward-looking presets for hearing_date (mirrors dashboard-client).
+  const computeDateRange = useCallback(
+    (preset: string): { from: string; to: string } => {
+      if (!preset || preset === "custom") return { from: "", to: "" };
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const iso = (d: Date) => d.toISOString().slice(0, 10);
+
+      if (preset === "today") return { from: iso(today), to: iso(today) };
+      if (preset === "tomorrow") {
+        const t = new Date(today);
+        t.setDate(t.getDate() + 1);
+        return { from: iso(t), to: iso(t) };
+      }
+      if (preset === "this-week") {
+        const start = new Date(today);
+        start.setDate(today.getDate() - today.getDay());
+        const end = new Date(start);
+        end.setDate(start.getDate() + 6);
+        return { from: iso(start), to: iso(end) };
+      }
+      if (preset === "next-week") {
+        const start = new Date(today);
+        start.setDate(today.getDate() - today.getDay() + 7);
+        const end = new Date(start);
+        end.setDate(start.getDate() + 6);
+        return { from: iso(start), to: iso(end) };
+      }
+      if (preset === "this-month") {
+        const start = new Date(today.getFullYear(), today.getMonth(), 1);
+        const end = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+        return { from: iso(start), to: iso(end) };
+      }
+      if (preset === "next-30") {
+        const end = new Date(today);
+        end.setDate(today.getDate() + 30);
+        return { from: iso(today), to: iso(end) };
+      }
+      return { from: "", to: "" };
+    },
+    [],
+  );
+
+  const refetchWithCurrentFilters = useCallback(() => {
+    setPage(1);
+    fetchPage(
+      1,
+      pageSize,
+      sortKey,
+      sortDir,
+      searchTerm,
+      statusFilter,
+      phStatusFilter,
+      indicatorFilter,
+    );
+  }, [
+    fetchPage,
+    pageSize,
+    sortKey,
+    sortDir,
+    searchTerm,
+    statusFilter,
+    phStatusFilter,
+    indicatorFilter,
+  ]);
+
+  const handleDatePresetChange = useCallback(
+    (preset: string) => {
+      setDatePreset(preset);
+      if (preset === "custom") return; // wait for user to pick from/to
+      const r = computeDateRange(preset);
+      setDateFrom(r.from);
+      setDateTo(r.to);
+      dateRangeRef.current = r;
+      refetchWithCurrentFilters();
+    },
+    [computeDateRange, refetchWithCurrentFilters],
+  );
+
+  const handleDateFromChange = useCallback(
+    (val: string) => {
+      setDateFrom(val);
+      dateRangeRef.current = { from: val, to: dateTo };
+      refetchWithCurrentFilters();
+    },
+    [dateTo, refetchWithCurrentFilters],
+  );
+
+  const handleDateToChange = useCallback(
+    (val: string) => {
+      setDateTo(val);
+      dateRangeRef.current = { from: dateFrom, to: val };
+      refetchWithCurrentFilters();
+    },
+    [dateFrom, refetchWithCurrentFilters],
+  );
+
+  const handleClearDates = useCallback(() => {
+    setDatePreset("");
+    setDateFrom("");
+    setDateTo("");
+    dateRangeRef.current = { from: "", to: "" };
+    refetchWithCurrentFilters();
+  }, [refetchWithCurrentFilters]);
+
+  // Toggle the "Show NEW only" filter — restricts results to unacknowledged
+  // rows. State + ref kept in sync so the next fetchPage call picks it up.
+  // Side effects (setPage, refetch) live OUTSIDE the setShowNewOnly updater
+  // because state updater functions must be pure — calling other setStates
+  // from inside an updater triggers the "setState during render" warning
+  // under React 18 strict mode.
+  const toggleShowNewOnly = useCallback(() => {
+    const next = !showNewOnlyRef.current;
+    showNewOnlyRef.current = next;
+    setShowNewOnly(next);
+    setPage(1);
+    refetchWithCurrentFilters();
+  }, [refetchWithCurrentFilters]);
 
   const handlePageChange = useCallback(
     (p: number) => {
@@ -2201,11 +2236,24 @@ export function PostHrgClient({
 
   const handleFieldUpdate = useCallback(
     async (id: number, field: string, value: string | boolean | null) => {
-      setRecords((prev) =>
-        prev.map((r) =>
-          r.id === id ? ({ ...r, [field]: value } as PostHrgDevRow) : r,
-        ),
-      );
+      // Special-case: when status flips to "Completed", drop the row from
+      // the visible list and bump the Completed badge count. The main grid
+      // hides Completed rows; users access them via the Completed modal.
+      const becameCompleted =
+        field === "status" &&
+        typeof value === "string" &&
+        value.toLowerCase() === "completed";
+      if (becameCompleted) {
+        setRecords((prev) => prev.filter((r) => r.id !== id));
+        setTotalFiltered((n) => Math.max(0, n - 1));
+        setCompletedCount((n) => n + 1);
+      } else {
+        setRecords((prev) =>
+          prev.map((r) =>
+            r.id === id ? ({ ...r, [field]: value } as PostHrgDevRow) : r,
+          ),
+        );
+      }
       try {
         await updatePostHrgDevField(id, field, value);
         refreshStats();
@@ -2244,6 +2292,32 @@ export function PostHrgClient({
     setPostHrgModal((prev) => (prev?.id === updated.id ? updated : prev));
   }, []);
 
+  // Acknowledge a "NEW" row — drops it out of the pinned-to-top group on
+  // the next render. Optimistic: stamp acknowledged_at locally, fire the
+  // server call; on failure roll back.
+  const handleAcknowledge = useCallback(
+    async (id: number) => {
+      const stamp = new Date().toISOString();
+      setRecords((prev) =>
+        prev.map((r) =>
+          r.id === id ? { ...r, acknowledged_at: stamp } : r,
+        ),
+      );
+      try {
+        const result = await acknowledgePostHrgDevRecord(id);
+        if (!result.success) throw new Error("Acknowledge failed");
+      } catch {
+        setRecords((prev) =>
+          prev.map((r) =>
+            r.id === id ? { ...r, acknowledged_at: null } : r,
+          ),
+        );
+        toast("Failed to acknowledge");
+      }
+    },
+    [toast],
+  );
+
   const saveNewRecord = useCallback(async () => {
     if (!addData.claimant?.trim()) {
       toast("Claimant name is required");
@@ -2255,6 +2329,9 @@ export function PostHrgClient({
         ...addData,
         claimant: addData.claimant!,
         created_by: userId,
+        // Default new rows to the active tab so they appear where the user is.
+        // On the "all" tab fall back to POST_HRG.
+        record_type: recordType === "all" ? "POST_HRG" : recordType,
       });
       if (result.success) {
         setShowAddModal(false);
@@ -2278,6 +2355,7 @@ export function PostHrgClient({
   }, [
     addData,
     userId,
+    recordType,
     toast,
     fetchPage,
     page,
@@ -2289,23 +2367,6 @@ export function PostHrgClient({
     phStatusFilter,
     indicatorFilter,
   ]);
-
-  const deleteRecord = useCallback(
-    async (id: number) => {
-      try {
-        const result = await deletePostHrgDevRecord(id);
-        if (result.success) {
-          setRecords((prev) => prev.filter((r) => r.id !== id));
-          setDeleteConfirm(null);
-          toast("Record deleted", "success");
-          refreshStats();
-        }
-      } catch {
-        toast("Delete failed");
-      }
-    },
-    [toast, refreshStats],
-  );
 
   // ── Import ──
   const handleFile = useCallback(
@@ -2509,6 +2570,12 @@ export function PostHrgClient({
     let imported = 0;
     let matchedTotal = 0;
     const errors: string[] = [];
+    const skipped: {
+      row: number;
+      claimant: string;
+      hearingDate: string | null;
+      reason: string;
+    }[] = [];
     for (let i = 0; i < currentSheet.rows.length; i += BATCH) {
       const batch = currentSheet.rows.slice(i, i + BATCH);
       try {
@@ -2524,6 +2591,7 @@ export function PostHrgClient({
           imported += result.imported || 0;
           matchedTotal += result.matched || 0;
           if (result.errors?.length) errors.push(...result.errors);
+          if (result.skipped?.length) skipped.push(...result.skipped);
         } else errors.push(`Batch ${Math.floor(i / BATCH) + 1}: error`);
       } catch {
         errors.push(`Batch ${Math.floor(i / BATCH) + 1}: Network error`);
@@ -2536,7 +2604,7 @@ export function PostHrgClient({
       );
     }
     setImporting(false);
-    setImportResult({ imported, matched: matchedTotal, errors });
+    setImportResult({ imported, matched: matchedTotal, errors, skipped });
     toast(
       `Imported ${imported} records (${matchedTotal} linked)`,
       errors.length > 0 ? "error" : "success",
@@ -2563,17 +2631,77 @@ export function PostHrgClient({
   // ── Render Cell ──
   const renderCell = useCallback(
     (r: PostHrgDevRow, col: { key: string }) => {
+      // Completed rows surface in the grid via search but must remain
+      // view-only — every editable cell renders as a static badge below.
+      const isCompletedRow = (r.status || "").toLowerCase() === "completed";
+      // Small helper: render a read-only badge using the same color map
+      // as the live dropdown so completed rows still look at-a-glance
+      // consistent with active ones, just non-interactive.
+      const readOnlyBadge = (
+        value: string | null,
+        hexMap?: Record<string, { bg: string; color: string }>,
+      ) => {
+        if (!value) {
+          return <span className="text-xs text-muted-foreground">—</span>;
+        }
+        const hex = hexMap?.[value];
+        return (
+          <span
+            className="inline-flex items-center h-6 rounded border border-transparent px-1.5 text-[11px] font-semibold"
+            style={
+              hex ? { backgroundColor: hex.bg, color: hex.color } : undefined
+            }
+          >
+            {value}
+          </span>
+        );
+      };
       switch (col.key) {
         case "indicator":
           return (
-            <IndicatorDot
-              value={r.indicator}
-              onChange={(v) => handleFieldUpdate(r.id, "indicator", v)}
-              isAdmin={isAdmin}
-            />
+            <div className="flex items-center gap-1.5">
+              <IndicatorDot
+                value={r.indicator}
+                onChange={(v) => handleFieldUpdate(r.id, "indicator", v)}
+                isAdmin={isAdmin && !isCompletedRow}
+              />
+              {!r.acknowledged_at && !isCompletedRow && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleAcknowledge(r.id);
+                  }}
+                  title="Click to acknowledge — moves this row into normal date order"
+                  className={cn(
+                    "group/ack inline-flex items-center gap-1 h-5 pl-1 pr-1.5 rounded-full",
+                    "text-[10px] font-semibold tracking-tight",
+                    "bg-blue-50 text-blue-700 border border-blue-300",
+                    "dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-700",
+                    "hover:bg-blue-600 hover:text-white hover:border-blue-600",
+                    "dark:hover:bg-blue-500 dark:hover:text-white dark:hover:border-blue-500",
+                    "shadow-[0_0_0_2px_rgba(59,130,246,0.15)]",
+                    "transition-all duration-150 cursor-pointer",
+                    "focus:outline-none focus:ring-2 focus:ring-blue-400/60",
+                  )}
+                >
+                  <Check
+                    className="h-3 w-3 shrink-0"
+                    strokeWidth={3}
+                  />
+                  <span>NEW</span>
+                </button>
+              )}
+            </div>
           );
         case "claimant":
-          return <ClaimantCell record={r} />;
+          return (
+            <ClaimantCell
+              record={r}
+              showTypeBadge={recordType === "all"}
+              isCompleted={isCompletedRow}
+            />
+          );
         case "ssn_last_4":
           return (
             <span className="text-xs font-mono text-muted-foreground">
@@ -2592,20 +2720,18 @@ export function PostHrgClient({
             </span>
           );
         case "post_hearing_status":
-          return (
-            <InlineDropdown
-              value={r.post_hearing_status}
-              options={PH_STATUS_OPTIONS}
-              onSave={(v) => handleFieldUpdate(r.id, "post_hearing_status", v)}
-              hexColorMap={phStatusHexMap}
-            />
-          );
+          // PH Status is sourced from the hearing decision upstream — always
+          // render as a read-only badge here so it isn't edited from PHD.
+          return readOnlyBadge(r.post_hearing_status, phStatusHexMap);
         case "type_of_docs_needed":
+          if (isCompletedRow)
+            return readOnlyBadge(r.type_of_docs_needed, docsNeededHexMap);
           return (
             <InlineDropdown
               value={r.type_of_docs_needed}
-              options={DOCS_NEEDED_OPTIONS}
+              options={DYNAMIC_DOCS_NEEDED_OPTIONS}
               onSave={(v) => handleFieldUpdate(r.id, "type_of_docs_needed", v)}
+              hexColorMap={docsNeededHexMap}
             />
           );
         case "details":
@@ -2617,6 +2743,8 @@ export function PostHrgClient({
         case "assigned_rep":
           return <RepBadge record={r} />;
         case "person_responsible":
+          if (isCompletedRow)
+            return readOnlyBadge(r.person_responsible, responsibleHexMap);
           return (
             <div className="flex items-center gap-1">
               <InlineDropdown
@@ -2640,6 +2768,13 @@ export function PostHrgClient({
             </div>
           );
         case "em_sent_task_created":
+          if (isCompletedRow) {
+            return (
+              <span className="inline-flex items-center justify-center text-xs text-muted-foreground">
+                {r.em_sent_task_created ? "✓" : "—"}
+              </span>
+            );
+          }
           return (
             <div className="flex items-center gap-1">
               <InlineCheck
@@ -2662,6 +2797,13 @@ export function PostHrgClient({
             </div>
           );
         case "ext_letter_sent":
+          if (isCompletedRow) {
+            return (
+              <span className="inline-flex items-center justify-center text-xs text-muted-foreground">
+                {r.ext_letter_sent ? "✓" : "—"}
+              </span>
+            );
+          }
           return (
             <div className="flex items-center gap-1">
               <InlineCheck
@@ -2682,6 +2824,7 @@ export function PostHrgClient({
             </div>
           );
         case "status":
+          if (isCompletedRow) return readOnlyBadge(r.status, statusHexMap);
           return (
             <div className="flex items-center gap-1">
               <InlineDropdown
@@ -2699,70 +2842,28 @@ export function PostHrgClient({
               />
             </div>
           );
-        case "deadline":
-          return (
-            <InlineDate
-              value={r.deadline}
-              onSave={(v) => handleFieldUpdate(r.id, "deadline", v)}
-              isOverdue={isOverdueCheck(r)}
-            />
-          );
         case "post_hrg_review":
           return <PostHrgCell record={r} onClick={() => setPostHrgModal(r)} />;
         case "remarks":
           return (
             <RemarksCellBadge record={r} onClick={() => setRemarksModal(r)} />
           );
-        case "actions":
-          return isAdmin ? (
-            deleteConfirm === r.id ? (
-              <div className="flex gap-1">
-                <button
-                  className={cn(
-                    BTN,
-                    "px-2 py-0.5 text-[10px] bg-red-600 text-white hover:bg-red-700",
-                  )}
-                  onClick={() => deleteRecord(r.id)}
-                >
-                  Yes
-                </button>
-                <button
-                  className={cn(
-                    BTN,
-                    "px-2 py-0.5 text-[10px] bg-muted text-foreground",
-                  )}
-                  onClick={() => setDeleteConfirm(null)}
-                >
-                  No
-                </button>
-              </div>
-            ) : (
-              <button
-                className={cn(
-                  BTN,
-                  "px-2 py-0.5 text-[10px] text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30",
-                )}
-                onClick={() => setDeleteConfirm(r.id)}
-              >
-                ✕
-              </button>
-            )
-          ) : null;
         default:
           return <span className="text-xs">—</span>;
       }
     },
     [
-      PH_STATUS_OPTIONS,
       phStatusHexMap,
       DYNAMIC_STATUS_OPTIONS,
+      DYNAMIC_DOCS_NEEDED_OPTIONS,
+      docsNeededHexMap,
       statusHexMap,
       RESPONSIBLE_OPTIONS,
       responsibleHexMap,
       handleFieldUpdate,
+      handleAcknowledge,
       isAdmin,
-      deleteConfirm,
-      deleteRecord,
+      recordType,
     ],
   );
 
@@ -2823,6 +2924,18 @@ export function PostHrgClient({
           {viewMode === "dashboard" && (
             <div className="flex items-center gap-2">
               <button
+                className={cn(
+                  "flex items-center gap-1.5 text-xs sm:text-sm px-3 py-1.5 rounded-lg transition-colors font-semibold border",
+                  completedCount > 0
+                    ? "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700"
+                    : "bg-card hover:bg-muted text-muted-foreground border-border",
+                )}
+                onClick={() => setShowCompletedModal(true)}
+                title="View completed records (hidden from main grid)"
+              >
+                ✅ Completed ({completedCount})
+              </button>
+              <button
                 className={cn(BTN_OUTLINE, "text-xs sm:text-sm gap-1.5")}
                 onClick={() => setShowActivityLog(true)}
               >
@@ -2842,6 +2955,103 @@ export function PostHrgClient({
         {viewMode === "dashboard" && (
           <>
             <StatsRow stats={stats} />
+
+            {/* Record-type tabs (All / Post HRG / MR / REP). */}
+            <div className="flex items-center gap-1.5 border-b border-border/60 px-1 overflow-x-auto">
+              {(
+                [
+                  {
+                    key: "all",
+                    label: "All",
+                    count: recordTypeCounts.all,
+                    activeCls:
+                      "border-primary text-foreground bg-primary/15 dark:bg-primary/25 ring-1 ring-primary/40 dark:ring-primary/60",
+                    chipActive: "bg-primary/15 text-primary",
+                    badgeCls:
+                      "bg-slate-200 text-slate-700 ring-slate-300 dark:bg-slate-700/50 dark:text-slate-200 dark:ring-slate-600",
+                    dotCls: "bg-slate-400 dark:bg-slate-500",
+                  },
+                  {
+                    key: "POST_HRG",
+                    label: "Post HRG",
+                    count: recordTypeCounts.postHrg,
+                    activeCls:
+                      "border-violet-500 text-violet-800 dark:text-violet-100 bg-violet-100 dark:bg-violet-500/30 ring-1 ring-violet-300 dark:ring-violet-400/60",
+                    chipActive:
+                      "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300",
+                    badgeCls:
+                      "bg-violet-100 text-violet-700 ring-violet-200 dark:bg-violet-900/40 dark:text-violet-300 dark:ring-violet-800",
+                    dotCls: "bg-violet-500",
+                  },
+                  {
+                    key: "MR",
+                    label: "MR",
+                    count: recordTypeCounts.mr,
+                    activeCls:
+                      "border-amber-500 text-amber-800 dark:text-amber-100 bg-amber-100 dark:bg-amber-500/30 ring-1 ring-amber-300 dark:ring-amber-400/60",
+                    chipActive:
+                      "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+                    badgeCls:
+                      "bg-amber-100 text-amber-800 ring-amber-200 dark:bg-amber-900/40 dark:text-amber-300 dark:ring-amber-800",
+                    dotCls: "bg-amber-500",
+                  },
+                  {
+                    key: "REP",
+                    label: "REP",
+                    count: recordTypeCounts.rep,
+                    activeCls:
+                      "border-emerald-500 text-emerald-800 dark:text-emerald-100 bg-emerald-100 dark:bg-emerald-500/30 ring-1 ring-emerald-300 dark:ring-emerald-400/60",
+                    chipActive:
+                      "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
+                    badgeCls:
+                      "bg-emerald-100 text-emerald-800 ring-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-300 dark:ring-emerald-800",
+                    dotCls: "bg-emerald-500",
+                  },
+                ] as const
+              ).map((t) => {
+                const active = recordType === t.key;
+                return (
+                  <button
+                    key={t.key}
+                    type="button"
+                    onClick={() => handleRecordTypeChange(t.key)}
+                    className={cn(
+                      "group relative flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 -mb-px rounded-t-md transition-all duration-200 whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      active
+                        ? cn("shadow-sm", t.activeCls)
+                        : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50 hover:border-muted-foreground/30 hover:-translate-y-px",
+                    )}
+                  >
+                    {/* Type badge — small colored pill so each tab stays
+                        visually identifiable even when not the active tab. */}
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ring-1 transition-colors",
+                        t.badgeCls,
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "h-1.5 w-1.5 rounded-full",
+                          t.dotCls,
+                        )}
+                      />
+                      {t.label}
+                    </span>
+                    <span
+                      className={cn(
+                        "inline-flex items-center justify-center min-w-[1.25rem] rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums transition-colors",
+                        active
+                          ? t.chipActive
+                          : "bg-muted text-muted-foreground group-hover:bg-muted-foreground/15",
+                      )}
+                    >
+                      {t.count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
 
             <div className={cn(CARD, "p-3 sm:p-4")}>
               <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2 sm:gap-3">
@@ -2919,6 +3129,97 @@ export function PostHrgClient({
                         </option>
                       ))}
                     </select>
+
+                    <select
+                      className={cn(SELECT_CLS, "flex-1 sm:w-40")}
+                      value={datePreset}
+                      onChange={(e) => handleDatePresetChange(e.target.value)}
+                    >
+                      <option value="">All Dates</option>
+                      <option value="today">Today</option>
+                      <option value="tomorrow">Tomorrow</option>
+                      <option value="this-week">This Week</option>
+                      <option value="next-week">Next Week</option>
+                      <option value="this-month">This Month</option>
+                      <option value="next-30">Next 30 Days</option>
+                      <option value="custom">Custom Range...</option>
+                    </select>
+
+                    {datePreset === "custom" && (
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="date"
+                          value={dateFrom}
+                          onChange={(e) => handleDateFromChange(e.target.value)}
+                          max={dateTo || undefined}
+                          className="h-8 w-31.25 rounded-md border bg-card px-2 text-xs"
+                        />
+                        <span className="text-xs text-muted-foreground">
+                          to
+                        </span>
+                        <input
+                          type="date"
+                          value={dateTo}
+                          onChange={(e) => handleDateToChange(e.target.value)}
+                          min={dateFrom || undefined}
+                          className="h-8 w-31.25 rounded-md border bg-card px-2 text-xs"
+                        />
+                      </div>
+                    )}
+
+                    {(datePreset || dateFrom || dateTo) && (
+                      <button
+                        type="button"
+                        onClick={handleClearDates}
+                        className="h-8 px-2 rounded-md text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors shrink-0"
+                      >
+                        Clear Dates
+                      </button>
+                    )}
+
+                    {/* Show NEW only — restricts results to unacknowledged rows */}
+                    <button
+                      type="button"
+                      onClick={toggleShowNewOnly}
+                      title={
+                        showNewOnly
+                          ? "Showing only unacknowledged rows. Click to show all."
+                          : "Show only unacknowledged (NEW) rows."
+                      }
+                      className={cn(
+                        "h-8 px-2.5 rounded-md text-xs font-semibold border transition-colors shrink-0 inline-flex items-center gap-1.5",
+                        showNewOnly
+                          ? "border-blue-500 bg-blue-600 text-white hover:bg-blue-700 shadow-sm"
+                          : "border-border bg-card text-foreground hover:bg-muted/50",
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "inline-block w-2 h-2 rounded-full",
+                          showNewOnly ? "bg-white" : "bg-blue-500",
+                        )}
+                      />
+                      Show NEW only
+                    </button>
+
+                    {/* Legacy display toggle — tints the entire row by indicator color (sheet style) */}
+                    <button
+                      type="button"
+                      onClick={toggleLegacyIndicator}
+                      title={
+                        legacyIndicator
+                          ? "Legacy mode ON — entire row is tinted by indicator color. Click to switch to dot only."
+                          : "Legacy mode OFF — indicator shown as dot only. Click to tint entire row (sheet style)."
+                      }
+                      className={cn(
+                        "h-5 px-2 rounded-full border text-[10px] font-semibold transition-colors shrink-0",
+                        legacyIndicator
+                          ? "border-amber-400 bg-amber-100 text-amber-800 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-200"
+                          : "border-border bg-muted text-muted-foreground hover:bg-muted/80",
+                      )}
+                    >
+                      {legacyIndicator ? "Legacy: ON" : "Legacy"}
+                    </button>
 
                     {/* Legend tooltip */}
                     <div className="group relative shrink-0">
@@ -3080,6 +3381,24 @@ export function PostHrgClient({
                                 columns={COLUMNS}
                                 overdue={isOverdueCheck(r)}
                                 onRowClick={() => setDetailPanel(r)}
+                                tintColor={(() => {
+                                  // When legacy mode is ON, indicator color
+                                  // tints the entire row (sheet style).
+                                  // Otherwise the indicator stays as a dot
+                                  // and the row only gets the soft sky-blue
+                                  // tint for fresh-today rows.
+                                  const indTint = legacyIndicator
+                                    ? getIndicatorColor(r.indicator)
+                                    : null;
+                                  if (indTint) return indTint;
+                                  return isCreatedToday(r.created_at)
+                                    ? "#0EA5E9"
+                                    : null;
+                                })()}
+                                unacknowledged={!r.acknowledged_at}
+                                completed={
+                                  (r.status || "").toLowerCase() === "completed"
+                                }
                               />
                             );
                           })}
@@ -3121,19 +3440,25 @@ export function PostHrgClient({
                     >
                       ← Prev
                     </button>
-                    <span className="text-xs tabular-nums">
+                    <span className="text-xs tabular-nums flex items-center gap-1">
                       Page{" "}
-                      <input
-                        type="number"
-                        min={1}
-                        max={totalPages}
+                      <select
                         value={page}
                         onChange={(e) => {
                           const p2 = parseInt(e.target.value);
                           if (p2 > 0 && p2 <= totalPages) handlePageChange(p2);
                         }}
-                        className="w-12 rounded border bg-background px-1 py-0.5 text-xs text-center tabular-nums"
-                      />{" "}
+                        className="rounded border bg-background px-1.5 py-0.5 text-xs tabular-nums cursor-pointer hover:bg-muted/40 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400/60"
+                        aria-label="Jump to page"
+                      >
+                        {Array.from({ length: totalPages }, (_, i) => i + 1).map(
+                          (p) => (
+                            <option key={p} value={p}>
+                              {p}
+                            </option>
+                          ),
+                        )}
+                      </select>{" "}
                       of {totalPages}
                     </span>
                     <button
@@ -3456,7 +3781,7 @@ export function PostHrgClient({
                 )}
                 {importResult && !importing && (
                   <div className="space-y-4">
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid grid-cols-4 gap-3">
                       <div className="rounded-lg bg-emerald-50 dark:bg-emerald-950/30 p-4 text-center">
                         <div className="text-3xl font-bold text-emerald-700">
                           {importResult.imported}
@@ -3469,6 +3794,12 @@ export function PostHrgClient({
                         </div>
                         <div className="text-sm text-blue-600">Linked</div>
                       </div>
+                      <div className="rounded-lg bg-amber-50 dark:bg-amber-950/30 p-4 text-center">
+                        <div className="text-3xl font-bold text-amber-700">
+                          {importResult.skipped.length}
+                        </div>
+                        <div className="text-sm text-amber-600">Skipped</div>
+                      </div>
                       <div className="rounded-lg bg-red-50 dark:bg-red-950/30 p-4 text-center">
                         <div className="text-3xl font-bold text-red-700">
                           {importResult.errors.length}
@@ -3476,6 +3807,58 @@ export function PostHrgClient({
                         <div className="text-sm text-red-600">Errors</div>
                       </div>
                     </div>
+                    {importResult.skipped.length > 0 && (
+                      <div className="rounded-lg border bg-amber-50/40 dark:bg-amber-950/10">
+                        <div className="px-4 py-2 border-b bg-amber-100/50 dark:bg-amber-900/20 text-sm font-semibold text-amber-800 dark:text-amber-300">
+                          ⚠️ Not Uploaded ({importResult.skipped.length} rows)
+                        </div>
+                        <div className="max-h-64 overflow-y-auto">
+                          <table className="w-full text-xs">
+                            <thead className="sticky top-0 bg-amber-100/80 dark:bg-amber-900/30 text-amber-900 dark:text-amber-200">
+                              <tr>
+                                <th className="px-3 py-2 text-left font-semibold w-16">
+                                  Row
+                                </th>
+                                <th className="px-3 py-2 text-left font-semibold">
+                                  Claimant
+                                </th>
+                                <th className="px-3 py-2 text-left font-semibold w-28">
+                                  Hearing Date
+                                </th>
+                                <th className="px-3 py-2 text-left font-semibold">
+                                  Reason
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {importResult.skipped.map((s, i) => (
+                                <tr
+                                  key={`${s.row}-${i}`}
+                                  className="border-t border-amber-200/60 dark:border-amber-800/40"
+                                >
+                                  <td className="px-3 py-1.5 tabular-nums">
+                                    {s.row}
+                                  </td>
+                                  <td className="px-3 py-1.5">
+                                    {s.claimant || (
+                                      <span className="italic text-muted-foreground">
+                                        (empty)
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="px-3 py-1.5 tabular-nums">
+                                    {s.hearingDate || "—"}
+                                  </td>
+                                  <td className="px-3 py-1.5 text-amber-800 dark:text-amber-300">
+                                    {s.reason}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
                     <div className="flex gap-3">
                       <button
                         className={BTN_PRIMARY}
@@ -3667,7 +4050,7 @@ export function PostHrgClient({
                   }
                 >
                   <option value="">—</option>
-                  {DOCS_NEEDED_OPTIONS.map((o) => (
+                  {DYNAMIC_DOCS_NEEDED_OPTIONS.map((o) => (
                     <option key={o.value} value={o.value}>
                       {o.label}
                     </option>
@@ -3770,16 +4153,92 @@ export function PostHrgClient({
           onRecordUpdate={handleRecordUpdate}
         />
       )}
-      {/* ════════════════ POST HRG MODAL ════════════════ */}
-      {postHrgModal && (
-        <PostHrgDevModal
-          record={postHrgModal}
-          onClose={() => setPostHrgModal(null)}
-          onRecordUpdate={handleRecordUpdate}
-          userName={userName}
-          userRole={userRole}
-        />
-      )}
+      {/* ════════════════ POST HRG REVIEW MODAL ════════════════ */}
+      {postHrgModal &&
+        (postHrgModal.record_type === "MR" && postHrgModal.hearing_id ? (
+          <PostHrgReviewModal
+            mode="hearing"
+            hearingId={postHrgModal.hearing_id}
+            claimant={postHrgModal.claimant}
+            hearingDateText={
+              postHrgModal.hearing_date
+                ? new Date(
+                    postHrgModal.hearing_date + "T12:00:00",
+                  ).toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })
+                : null
+            }
+            assignedRep={postHrgModal.assigned_rep}
+            userName={userName}
+            userRole={userRole}
+            initialNotes={postHrgModal.post_hrg_notes}
+            initialDeadline={postHrgModal.post_hrg_deadline}
+            initialRequirements={null}
+            initialDeadlinePrev={null}
+            initialDeadlineChangedBy={null}
+            onClose={() => setPostHrgModal(null)}
+            onHearingPatch={(patch) => {
+              const next = { ...postHrgModal } as PostHrgDevRow;
+              if (patch.post_hrg_notes !== undefined) {
+                (
+                  next as unknown as { post_hrg_notes: string | null }
+                ).post_hrg_notes = patch.post_hrg_notes;
+              }
+              if (patch.post_hrg_deadline !== undefined) {
+                (
+                  next as unknown as { post_hrg_deadline: string | null }
+                ).post_hrg_deadline = patch.post_hrg_deadline;
+              }
+              handleRecordUpdate(next);
+            }}
+          />
+        ) : (
+          <PostHrgReviewModal
+            mode="phd-internal"
+            phdRowId={postHrgModal.id}
+            linkedHearingId={postHrgModal.hearing_id}
+            currentRecordType={postHrgModal.record_type}
+            claimant={postHrgModal.claimant}
+            hearingDateText={
+              postHrgModal.hearing_date
+                ? new Date(
+                    postHrgModal.hearing_date + "T12:00:00",
+                  ).toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })
+                : null
+            }
+            assignedRep={postHrgModal.assigned_rep}
+            userName={userName}
+            userRole={userRole}
+            initialNotes={postHrgModal.details_notes}
+            initialDeadline={postHrgModal.deadline}
+            initialRequirements={postHrgModal.requirements}
+            onClose={() => setPostHrgModal(null)}
+            onPhdPatch={(patch) => {
+              handleRecordUpdate({
+                ...postHrgModal,
+                details_notes:
+                  patch.details_notes !== undefined
+                    ? patch.details_notes
+                    : postHrgModal.details_notes,
+                deadline:
+                  patch.deadline !== undefined
+                    ? patch.deadline
+                    : postHrgModal.deadline,
+                requirements:
+                  patch.requirements !== undefined
+                    ? patch.requirements
+                    : postHrgModal.requirements,
+              });
+            }}
+          />
+        ))}
       {/* ════════════════ REMARKS MODAL ════════════════ */}
       {remarksModal && (
         <RemarksModal
@@ -3800,6 +4259,26 @@ export function PostHrgClient({
       <PostHrgActivityModal
         open={showActivityLog}
         onClose={() => setShowActivityLog(false)}
+      />
+      <PostHrgCompletedModal
+        open={showCompletedModal}
+        recordType={recordType}
+        onClose={() => setShowCompletedModal(false)}
+        onReopen={() => {
+          // Reopened row now lives back in the main grid as "In Progress" —
+          // refetch + decrement the badge.
+          setCompletedCount((n) => Math.max(0, n - 1));
+          fetchPage(
+            page,
+            pageSize,
+            sortKey,
+            sortDir,
+            searchTerm,
+            statusFilter,
+            phStatusFilter,
+            indicatorFilter,
+          );
+        }}
       />
     </>
   );

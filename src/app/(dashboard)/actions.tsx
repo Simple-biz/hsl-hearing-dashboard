@@ -648,6 +648,7 @@ export async function updateHearing(
   const txResult = await db.transaction<{
     oldValue: unknown;
     claimant: string;
+    phStatusSyncCount: number;
   }>(async (client) => {
     const { rows: oldRows } = await client.query<Record<string, unknown>>(
       `SELECT ${field}, claimant FROM hearings WHERE id = $1`,
@@ -659,6 +660,8 @@ export async function updateHearing(
     const claimant =
       (oldRow.claimant as string | null) || `Hearing #${hearingId}`;
 
+    let phStatusSyncCount = 0;
+
     if (field === "post_hrg_deadline" && oldValue !== value) {
       await client.query(
         `UPDATE hearings
@@ -668,11 +671,34 @@ export async function updateHearing(
          WHERE id = $4`,
         [value, oldValue || null, changedBy, hearingId],
       );
+
+      if (value) {
+        await client.query(
+          `INSERT INTO post_hrg_deadline_history (hearing_id, deadline, set_by)
+           VALUES ($1, $2::date, $3)`,
+          [hearingId, value, changedBy],
+        );
+      }
     } else {
       await client.query(`UPDATE hearings SET ${field} = $1 WHERE id = $2`, [
         value,
         hearingId,
       ]);
+    }
+
+    // Sync decision → every linked Post HRG Development row's PH Status.
+    // The PHD cell is read-only in the UI, so the dashboard decision is the source.
+    if (field === "hearing_decision_status" && value !== oldValue) {
+      const syncRes = await client.query(
+        `UPDATE post_hrg_development
+         SET post_hearing_status = $1,
+             updated_at = NOW()
+         WHERE hearing_id = $2
+         RETURNING id`,
+        [value ?? null, hearingId],
+      );
+
+      phStatusSyncCount = syncRes.rowCount ?? 0;
     }
 
     // Sync decision status → representative_docs overall_status
@@ -764,11 +790,22 @@ export async function updateHearing(
     return {
       oldValue,
       claimant,
+      phStatusSyncCount,
     };
   });
 
   const oldValue = txResult.oldValue;
   const claimant = txResult.claimant;
+
+  if (
+    field === "hearing_decision_status" &&
+    txResult.phStatusSyncCount > 0
+  ) {
+    await logAction(
+      "post_hrg_dev_phstatus_synced",
+      `Synced PH Status on ${txResult.phStatusSyncCount} Post HRG record(s) for ${claimant}: '${oldValue ?? "(empty)"}' → '${value ?? "(empty)"}'`,
+    );
+  }
 
   const fieldLabel =
     FIELD_LABELS[field] ||
