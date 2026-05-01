@@ -519,6 +519,28 @@ export async function fetchPostHrgNotes(hearingId: number): Promise<{
   );
 }
 
+
+export interface PostHrgDeadlineHistoryEntry {
+  deadline: string;
+  set_at: string;
+  set_by: string | null;
+}
+
+export async function fetchPostHrgDeadlineHistory(
+  hearingId: number,
+): Promise<PostHrgDeadlineHistoryEntry[]> {
+  const { rows } = await db.query(
+    `SELECT deadline::text AS deadline,
+            set_at::text  AS set_at,
+            set_by
+       FROM post_hrg_deadline_history
+      WHERE hearing_id = $1
+      ORDER BY set_at DESC, id DESC`,
+    [hearingId],
+  );
+  return rows as PostHrgDeadlineHistoryEntry[];
+}
+
 export async function updateHearing(
   hearingId: number,
   field: string,
@@ -635,6 +657,7 @@ export async function updateHearing(
   };
 
   let changedBy = "Unknown";
+
   if (field === "post_hrg_deadline") {
     try {
       const { requireAuth } = await import("@/lib/session");
@@ -687,7 +710,7 @@ export async function updateHearing(
     }
 
     // Sync decision → every linked Post HRG Development row's PH Status.
-    // The PHD cell is read-only in the UI, so the dashboard decision is the source.
+    // This only applies when the dashboard decision/status field changes.
     if (field === "hearing_decision_status" && value !== oldValue) {
       const syncRes = await client.query(
         `UPDATE post_hrg_development
@@ -1107,6 +1130,7 @@ function convertToEST(time: string, tz: string): string {
   const estH = h + offset;
   return `${String(estH).padStart(2, "0")}:${String(m).padStart(2, "0")}:00`;
 }
+
 
 function normalizeClaimantForSyncKey(value: string | null | undefined): string {
   let raw = String(value ?? "")
@@ -2064,14 +2088,62 @@ export async function bulkEmailSelected(hearingIds: number[]) {
 export async function fetchAllHearingsForCompare(
   table: "raw_hearings" | "hearings" = "raw_hearings",
 ) {
+  // When comparing against the hearings table we also union in archived
+  // hearings so the compare modal can call out CSV rows that were previously
+  // archived (they'd otherwise fall through to "new" and get re-imported).
+  // Note: hearings.hearing_time is `time without time zone` while
+  // archived_hearings.hearing_time is `text` — cast both sides to text so
+  // the UNION succeeds.
   const query =
     table === "hearings"
-      ? `SELECT id, LOWER(claimant) as claimant_lower, claimant, ssn_last_4, hearing_date::text, hearing_time, converted_time_est as converted_time
-       FROM hearings ORDER BY hearing_date DESC`
-      : `SELECT id, LOWER(claimant) as claimant_lower, claimant, ssn_last_4, hearing_date::text, hearing_time, converted_time
-       FROM raw_hearings ORDER BY hearing_date DESC`;
+      ? `SELECT id,
+                LOWER(claimant) AS claimant_lower,
+                claimant,
+                ssn_last_4,
+                hearing_date::text,
+                hearing_time::text AS hearing_time,
+                converted_time_est::text AS converted_time,
+                false AS is_archived,
+                NULL::int AS archive_id
+           FROM hearings
+         UNION ALL
+         SELECT hearing_id AS id,
+                LOWER(claimant) AS claimant_lower,
+                claimant,
+                ssn_last_4,
+                hearing_date::text,
+                hearing_time::text AS hearing_time,
+                converted_time_est::text AS converted_time,
+                true AS is_archived,
+                id AS archive_id
+           FROM archived_hearings
+         ORDER BY hearing_date DESC`
+      : `SELECT id,
+                LOWER(claimant) AS claimant_lower,
+                claimant,
+                ssn_last_4,
+                hearing_date::text,
+                hearing_time::text AS hearing_time,
+                converted_time::text AS converted_time,
+                false AS is_archived,
+                NULL::int AS archive_id
+           FROM raw_hearings
+         ORDER BY hearing_date DESC`;
   const { rows } = await db.query(query);
   return { hearings: rows, totalCount: rows.length };
+}
+
+// Look up the archive row id for a given original hearing id so the CSV
+// compare modal can unarchive a hearing without opening the hearings grid.
+export async function unarchiveHearingByHearingId(hearingId: number) {
+  const { rows } = await db.query(
+    "SELECT id FROM archived_hearings WHERE hearing_id = $1",
+    [hearingId],
+  );
+  if (rows.length === 0) {
+    return { success: false, message: "Archive entry not found" };
+  }
+  return unarchiveHearing(rows[0].id);
 }
 
 // ── CSV Compare: import new entries from Chronicle CSV ──

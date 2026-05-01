@@ -67,9 +67,23 @@ function flattenComments(raw: string | null): string {
   try {
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return parsed
-        .map((n: any) => `[${n.author ?? "Unknown"}] ${n.content ?? ""}`)
+        .map((n: unknown) => {
+          const comment =
+            n && typeof n === "object"
+              ? (n as { author?: unknown; content?: unknown })
+              : {};
+
+          const author =
+            typeof comment.author === "string" && comment.author.trim()
+              ? comment.author
+              : "Unknown";
+
+          const content =
+            typeof comment.content === "string" ? comment.content : "";
+
+          return `[${author}] ${content}`;
+        })
         .join(" | ");
     }
   } catch {
