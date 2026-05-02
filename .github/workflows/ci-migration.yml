@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - develop
+      - feature/mr-pivot-to-google-sheet-sync
     paths:
       - "migrations/**"
       - ".github/workflows/ci-migration.yml"
@@ -22,7 +23,7 @@ jobs:
         with:
           project_id: ${{ vars.NEON_PROJECT_ID }}
           branch_name: pr-${{ github.event.number }}
-          parent_branch: develop
+          parent_branch: develop_testing
           api_key: ${{ secrets.NEON_API_KEY }}
 
       - uses: actions/setup-node@v4
