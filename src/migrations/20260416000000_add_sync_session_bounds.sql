@@ -1,4 +1,4 @@
-BEGIN;
+-- migrate:up
 
 -- Migration: add event-session bounds for latest-sync history reuse
 -- Date: 2026-04-16
@@ -34,7 +34,6 @@ ALTER TABLE sync_watermarks
 ALTER TABLE sync_watermarks
   ADD COLUMN IF NOT EXISTS last_session_start_event_id BIGINT NOT NULL DEFAULT 0;
 
--- Ensure the event-based watermark row exists and is initialized safely.
 INSERT INTO sync_watermarks (
   key,
   watermark,
@@ -54,7 +53,6 @@ SET
   last_event_id = COALESCE(sync_watermarks.last_event_id, 0),
   last_session_start_event_id = COALESCE(sync_watermarks.last_session_start_event_id, 0);
 
--- Verify
 SELECT
   key,
   watermark,
@@ -64,12 +62,9 @@ SELECT
 FROM sync_watermarks
 WHERE key = 'mr_google_sheets_events';
 
-COMMIT;
+-- migrate:down
 
--- ============================================================
--- ROLLBACK:
--- ============================================================
--- ALTER TABLE sync_watermarks DROP COLUMN IF EXISTS last_session_start_event_id;
--- -- Drop last_event_id only if you are fully rolling back the event-driven workflow:
--- -- ALTER TABLE sync_watermarks DROP COLUMN IF EXISTS last_event_id;
--- ============================================================
+ALTER TABLE sync_watermarks DROP COLUMN IF EXISTS last_session_start_event_id;
+-- Note: last_event_id was first added in 20260411000000_add_hearing_sync_events.
+-- Only drop it here if you are fully rolling back the event-driven workflow.
+-- ALTER TABLE sync_watermarks DROP COLUMN IF EXISTS last_event_id;

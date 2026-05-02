@@ -1,3 +1,5 @@
+-- migrate:up
+
 -- Migration: persist active Google Sheet metadata for MR sync
 -- Date: 2026-04-21
 -- Author: Jvincec
@@ -12,3 +14,9 @@ ALTER TABLE sync_watermarks
   ADD COLUMN IF NOT EXISTS last_sheet_url TEXT,
   ADD COLUMN IF NOT EXISTS last_sheet_document_id TEXT,
   ADD COLUMN IF NOT EXISTS last_sheet_gid TEXT;
+
+-- migrate:down
+
+ALTER TABLE sync_watermarks DROP COLUMN IF EXISTS last_sheet_gid;
+ALTER TABLE sync_watermarks DROP COLUMN IF EXISTS last_sheet_document_id;
+ALTER TABLE sync_watermarks DROP COLUMN IF EXISTS last_sheet_url;

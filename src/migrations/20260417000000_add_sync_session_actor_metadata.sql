@@ -1,4 +1,4 @@
-BEGIN;
+-- migrate:up
 
 -- Migration: persist latest completed sync actor metadata
 -- Date: 2026-04-17
@@ -41,4 +41,8 @@ SELECT
 FROM sync_watermarks
 WHERE key = 'mr_google_sheets_events';
 
-COMMIT;
+-- migrate:down
+
+ALTER TABLE sync_watermarks DROP COLUMN IF EXISTS last_triggered_by_role;
+ALTER TABLE sync_watermarks DROP COLUMN IF EXISTS last_triggered_by_name;
+ALTER TABLE sync_watermarks DROP COLUMN IF EXISTS last_triggered_by_id;

@@ -1,0 +1,48 @@
+name: CI Migration Check
+
+on:
+  pull_request:
+    branches:
+      - develop
+    paths:
+      - "migrations/**"
+      - ".github/workflows/ci-migration.yml"
+
+jobs:
+  migration-check:
+    name: Test migrations on Neon branch
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create Neon branch
+        id: create-branch
+        uses: neondatabase/create-branch-action@v6
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch_name: pr-${{ github.event.number }}
+          parent_branch: develop
+          api_key: ${{ secrets.NEON_API_KEY }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Show pending migrations
+        env:
+          DATABASE_URL: ${{ steps.create-branch.outputs.db_url }}
+        run: npm run db:status
+
+      - name: Apply migrations
+        env:
+          DATABASE_URL: ${{ steps.create-branch.outputs.db_url }}
+        run: npm run db:migrate
+
+      - name: Confirm migrations applied
+        env:
+          DATABASE_URL: ${{ steps.create-branch.outputs.db_url }}
+        run: npm run db:status

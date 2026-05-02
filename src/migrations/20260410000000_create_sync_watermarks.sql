@@ -1,3 +1,5 @@
+-- migrate:up
+
 -- Migration: create sync_watermarks table
 -- Date: 2026-04-10
 -- Author: Jvincec
@@ -23,33 +25,20 @@
 --   The initial row is seeded with NOW() - INTERVAL '7 days' so that the
 --   first sync after this migration performs a one-time backfill of any
 --   edits made in the past week before the watermark was introduced.
---
---   Reversible: see rollback below.
-
--- ── Table ─────────────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS sync_watermarks (
   key         TEXT        PRIMARY KEY,
   watermark   TIMESTAMPTZ NOT NULL DEFAULT NOW() - INTERVAL '7 days'
 );
 
--- ── Seed the MR Google Sheets workflow watermark ──────────────────────────────
--- Falls back to 7-day lookback on first sync so recent edits are not skipped.
-
 INSERT INTO sync_watermarks (key, watermark)
 VALUES ('mr_google_sheets', NOW() - INTERVAL '7 days')
 ON CONFLICT (key) DO NOTHING;
 
--- ── Verify ────────────────────────────────────────────────────────────────────
-
 SELECT key, watermark
 FROM sync_watermarks
 WHERE key = 'mr_google_sheets';
--- Expected: one row with watermark ~7 days in the past
 
+-- migrate:down
 
--- ============================================================
--- ROLLBACK:
--- ============================================================
--- DROP TABLE IF EXISTS sync_watermarks;
--- ============================================================
+DROP TABLE IF EXISTS sync_watermarks;

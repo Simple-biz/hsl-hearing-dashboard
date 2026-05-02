@@ -1,4 +1,4 @@
-BEGIN;
+-- migrate:up
 
 -- Migration: persist latest Google Sheets backup metadata for MR sync
 -- Date: 2026-04-17
@@ -34,13 +34,9 @@ SELECT
 FROM sync_watermarks
 WHERE key = 'mr_google_sheets_events';
 
-COMMIT;
+-- migrate:down
 
--- ============================================================
--- ROLLBACK:
--- ============================================================
--- ALTER TABLE sync_watermarks DROP COLUMN IF EXISTS last_backup_created_at;
--- ALTER TABLE sync_watermarks DROP COLUMN IF EXISTS last_backup_url;
--- ALTER TABLE sync_watermarks DROP COLUMN IF EXISTS last_backup_file_name;
--- ALTER TABLE sync_watermarks DROP COLUMN IF EXISTS last_backup_file_id;
--- ============================================================
+ALTER TABLE sync_watermarks DROP COLUMN IF EXISTS last_backup_created_at;
+ALTER TABLE sync_watermarks DROP COLUMN IF EXISTS last_backup_url;
+ALTER TABLE sync_watermarks DROP COLUMN IF EXISTS last_backup_file_name;
+ALTER TABLE sync_watermarks DROP COLUMN IF EXISTS last_backup_file_id;

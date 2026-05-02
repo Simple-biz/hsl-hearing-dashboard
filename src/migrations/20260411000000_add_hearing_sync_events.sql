@@ -1,8 +1,8 @@
+-- migrate:up
+
 -- Migration: add event-session bounds for latest-sync history reuse
 -- Date: 2026-04-11
 -- Author: Jvincec
-
-BEGIN;
 
 -- Event outbox for scalable Google Sheets sync.
 -- This lets the app record create/update/delete events without scanning the
@@ -18,7 +18,6 @@ CREATE TABLE IF NOT EXISTS hearing_sync_events (
   processed_at TIMESTAMPTZ
 );
 
--- Helpful indexes for event processing and troubleshooting.
 CREATE INDEX IF NOT EXISTS idx_hearing_sync_events_hearing_id
   ON hearing_sync_events (hearing_id);
 
@@ -52,4 +51,13 @@ INSERT INTO sync_watermarks (key, last_event_id, updated_at)
 VALUES ('mr_google_sheets_events', 0, NOW())
 ON CONFLICT (key) DO NOTHING;
 
-COMMIT;
+-- migrate:down
+
+DROP TABLE IF EXISTS hearing_sync_events;
+
+-- Note: sync_watermarks table itself is owned by 20260410000000_create_sync_watermarks.
+-- Only remove the columns added by this migration and the seeded event key.
+DELETE FROM sync_watermarks WHERE key = 'mr_google_sheets_events';
+
+ALTER TABLE sync_watermarks DROP COLUMN IF EXISTS updated_at;
+ALTER TABLE sync_watermarks DROP COLUMN IF EXISTS last_event_id;
