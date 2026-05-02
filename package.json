@@ -7,9 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "db:migrate": "dbmate --migrations-dir ./migrations --no-dump-schema migrate",
-    "db:status": "dbmate --migrations-dir ./migrations --no-dump-schema status",
-    "db:new": "dbmate --migrations-dir ./migrations --no-dump-schema new"
+    "db:migrate": "dbmate --migrations-dir ./src/migrations --no-dump-schema migrate",
+    "db:status": "dbmate --migrations-dir ./src/migrations --no-dump-schema status",
+    "db:new": "dbmate --migrations-dir ./src/migrations --no-dump-schema new"
   },
   "dependencies": {
     "@base-ui/react": "^1.2.0",
