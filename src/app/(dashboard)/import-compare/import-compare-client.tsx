@@ -92,12 +92,15 @@ const SORTED_FIELDS = Object.entries(DB_FIELDS).sort(([, a], [, b]) => {
   return a.localeCompare(b);
 });
 
-const FIELD_LABELS: Record<string, string> = Object.fromEntries(
-  Object.entries(DB_FIELDS).map(([k, v]) => [
-    k,
-    v.replace(/\s*\*\s*$/, "").replace(/\s*\(.*\)\s*$/, ""),
-  ]),
-);
+const FIELD_LABELS: Record<string, string> = {
+  ...Object.fromEntries(
+    Object.entries(DB_FIELDS).map(([k, v]) => [
+      k,
+      v.replace(/\s*\*\s*$/, "").replace(/\s*\(.*\)\s*$/, ""),
+    ]),
+  ),
+  assignment_status: "Assignment Status",
+};
 
 const AUTO_MAP: Record<string, string[]> = {
   claimant: ["claimant", "claimant name", "name", "client name", "client"],
@@ -336,7 +339,102 @@ export function ImportCompareClient({ userRole }: { userRole: string }) {
           const data = new Uint8Array(e.target!.result as ArrayBuffer);
           const wb = XLSX.read(data, { type: "array", cellStyles: true });
 
-          const parsed: SheetData[] = wb.SheetNames.map((name) => {
+          // Extract threaded comments (modern Excel) via JSZip
+          const threadedComments: Record<number, Record<string, string>> = {};
+          try {
+            const JSZip = (await import("jszip")).default;
+            const zip = await JSZip.loadAsync(data);
+            const personLookup: Record<string, string> = {};
+            const personFile = zip.file("xl/persons/person.xml");
+            if (personFile) {
+              const pXml = await personFile.async("text");
+              const pDoc = new DOMParser().parseFromString(pXml, "text/xml");
+              const ns =
+                "http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments";
+              let persons = pDoc.getElementsByTagNameNS(ns, "person");
+              if (persons.length === 0)
+                persons = pDoc.getElementsByTagName("person");
+              for (const p of Array.from(persons)) {
+                const pid = p.getAttribute("id") || "";
+                const name = p.getAttribute("displayName") || "";
+                if (pid && name) personLookup[pid] = name;
+              }
+            }
+            for (let si = 0; si < wb.SheetNames.length; si++) {
+              const relsFile = zip.file(
+                `xl/worksheets/_rels/sheet${si + 1}.xml.rels`,
+              );
+              if (!relsFile) continue;
+              const relsDoc = new DOMParser().parseFromString(
+                await relsFile.async("text"),
+                "text/xml",
+              );
+              for (const rel of Array.from(
+                relsDoc.getElementsByTagName("Relationship"),
+              )) {
+                if (!rel.getAttribute("Type")?.includes("threadedComment"))
+                  continue;
+                const filePath = (rel.getAttribute("Target") || "").replace(
+                  /^\.\.\//,
+                  "xl/",
+                );
+                const tcFile = zip.file(filePath);
+                if (!tcFile) continue;
+                const ns =
+                  "http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments";
+                const tcDoc = new DOMParser().parseFromString(
+                  await tcFile.async("text"),
+                  "text/xml",
+                );
+                let tcEls = tcDoc.getElementsByTagNameNS(ns, "threadedComment");
+                if (tcEls.length === 0)
+                  tcEls = tcDoc.getElementsByTagName("threadedComment");
+                const sheetComments: Record<string, string[]> = {};
+                for (const tc of Array.from(tcEls)) {
+                  const ref = tc.getAttribute("ref");
+                  if (!ref) continue;
+                  const author =
+                    personLookup[tc.getAttribute("personId") || ""] || "";
+                  const dateStr = tc.getAttribute("dT") || "";
+                  let datePart = "";
+                  if (dateStr)
+                    try {
+                      datePart = new Date(dateStr).toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
+                      });
+                    } catch {}
+                  let text = "";
+                  const textEls = tc.getElementsByTagNameNS(ns, "text");
+                  if (textEls.length > 0) text = textEls[0].textContent || "";
+                  else {
+                    const fb = tc.getElementsByTagName("text");
+                    if (fb.length > 0) text = fb[0].textContent || "";
+                  }
+                  if (text.trim()) {
+                    if (!sheetComments[ref]) sheetComments[ref] = [];
+                    const prefix =
+                      author && datePart
+                        ? `[${author} - ${datePart}] `
+                        : author
+                          ? `[${author}] `
+                          : datePart
+                            ? `[${datePart}] `
+                            : "";
+                    sheetComments[ref].push(prefix + text.trim());
+                  }
+                }
+                if (!threadedComments[si]) threadedComments[si] = {};
+                for (const [ref, texts] of Object.entries(sheetComments))
+                  threadedComments[si][ref] = texts.join("\n");
+              }
+            }
+          } catch {
+            /* JSZip unavailable or not XLSX */
+          }
+
+          const parsed: SheetData[] = wb.SheetNames.map((name, sheetIdx) => {
             const ws = wb.Sheets[name];
             const json = XLSX.utils.sheet_to_json<unknown[]>(ws, {
               header: 1,
@@ -367,6 +465,14 @@ export function ImportCompareClient({ userRole }: { userRole: string }) {
                   })
                   .filter(Boolean);
                 if (parts.length > 0) comments[cell] = parts.join("\n");
+              }
+            }
+            // Merge threaded comments — take priority over legacy v.c comments
+            if (threadedComments[sheetIdx]) {
+              for (const [ref, text] of Object.entries(
+                threadedComments[sheetIdx],
+              )) {
+                comments[ref] = text;
               }
             }
             return { name, headers, rows, hyperlinks, comments };
@@ -507,6 +613,7 @@ export function ImportCompareClient({ userRole }: { userRole: string }) {
             mapping,
             headers: sheet.headers,
             rows: batchRows,
+            comments: sheet.comments || {},
             crossSheetLookups: {},
             rowOffset: i,
             compare_fields_mode: true, // signal the API to return full field diffs

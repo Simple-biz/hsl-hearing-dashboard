@@ -8,6 +8,7 @@ import {
   fetchPostHrgCompletedCount,
   type PostHrgRecordType,
 } from "./actions";
+import { getUserFieldOverridesPlain } from "@/lib/field-access";
 
 const VALID_TABS: Array<PostHrgRecordType | "all"> = [
   "POST_HRG",
@@ -46,14 +47,24 @@ export default async function PostHrgDevelopmentPage({
       : (rawTab as PostHrgRecordType)
     : "all";
 
-  const [initialPage, stats, options, recordTypeCounts, completedCount] =
-    await Promise.all([
-      fetchPostHrgDevPage({ page: 1, pageSize: 100, recordType: initialTab }),
-      fetchPostHrgDevStats(initialTab),
-      fetchPostHrgOptions(),
-      fetchPostHrgRecordTypeCounts(),
-      fetchPostHrgCompletedCount(),
-    ]);
+  const [
+    initialPage,
+    stats,
+    options,
+    recordTypeCounts,
+    completedCount,
+    fieldOverrides,
+  ] = await Promise.all([
+    fetchPostHrgDevPage({ page: 1, pageSize: 100, recordType: initialTab }),
+    fetchPostHrgDevStats(initialTab),
+    fetchPostHrgOptions(),
+    fetchPostHrgRecordTypeCounts(),
+    fetchPostHrgCompletedCount(),
+    getUserFieldOverridesPlain(
+      Number(session.user.id),
+      "post_hrg_development",
+    ),
+  ]);
 
   return (
     <PostHrgClient
@@ -71,6 +82,7 @@ export default async function PostHrgDevelopmentPage({
       initialRecordType={initialTab}
       initialRecordTypeCounts={recordTypeCounts}
       initialCompletedCount={completedCount}
+      fieldOverrides={fieldOverrides}
     />
   );
 }

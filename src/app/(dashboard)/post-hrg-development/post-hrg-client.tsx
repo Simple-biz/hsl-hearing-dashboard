@@ -8,6 +8,7 @@ import { AppHeader } from "@/components/layout";
 import { DashboardNav } from "@/components/layout/dashboard-nav";
 import { StatCard, StatCardGrid } from "@/components/stat-card";
 import type { UserRole } from "@/lib/roles";
+import { resolveFieldAccess } from "@/lib/field-access";
 import * as XLSX from "xlsx";
 import {
   fetchPostHrgDevPage,
@@ -1705,6 +1706,7 @@ export function PostHrgClient({
   initialRecordType,
   initialRecordTypeCounts,
   initialCompletedCount,
+  fieldOverrides,
 }: {
   userRole: string;
   userId: number;
@@ -1720,7 +1722,21 @@ export function PostHrgClient({
   initialRecordType: PostHrgRecordType | "all";
   initialRecordTypeCounts: PostHrgRecordTypeCounts;
   initialCompletedCount: number;
+  fieldOverrides: Record<string, boolean>;
 }) {
+  // Per-user editability: consult overrides → fall back to role default
+  // (page-level whitelist on PHD — anyone on the page can edit anything).
+  // Memoized so renderCell's useCallback deps stay stable.
+  const canEditFieldFn = useCallback(
+    (fieldKey: string): boolean =>
+      resolveFieldAccess(
+        userRole as UserRole,
+        "post_hrg_development",
+        fieldKey,
+        fieldOverrides,
+      ),
+    [userRole, fieldOverrides],
+  );
   const [viewMode, setViewMode] = useState<ViewMode>("dashboard");
   const [records, setRecords] = useState<PostHrgDevRow[]>(initialRecords);
   const [totalFiltered, setTotalFiltered] = useState(initialTotalFiltered);
@@ -2257,8 +2273,12 @@ export function PostHrgClient({
       try {
         await updatePostHrgDevField(id, field, value);
         refreshStats();
-      } catch {
-        toast("Update failed");
+      } catch (e) {
+        const message =
+          e instanceof Error
+            ? e.message
+            : "Update failed — change rolled back";
+        toast(message);
         fetchPage(
           page,
           pageSize,
@@ -2724,7 +2744,7 @@ export function PostHrgClient({
           // render as a read-only badge here so it isn't edited from PHD.
           return readOnlyBadge(r.post_hearing_status, phStatusHexMap);
         case "type_of_docs_needed":
-          if (isCompletedRow)
+          if (isCompletedRow || !canEditFieldFn("type_of_docs_needed"))
             return readOnlyBadge(r.type_of_docs_needed, docsNeededHexMap);
           return (
             <InlineDropdown
@@ -2743,7 +2763,7 @@ export function PostHrgClient({
         case "assigned_rep":
           return <RepBadge record={r} />;
         case "person_responsible":
-          if (isCompletedRow)
+          if (isCompletedRow || !canEditFieldFn("person_responsible"))
             return readOnlyBadge(r.person_responsible, responsibleHexMap);
           return (
             <div className="flex items-center gap-1">
@@ -2768,7 +2788,7 @@ export function PostHrgClient({
             </div>
           );
         case "em_sent_task_created":
-          if (isCompletedRow) {
+          if (isCompletedRow || !canEditFieldFn("em_sent_task_created")) {
             return (
               <span className="inline-flex items-center justify-center text-xs text-muted-foreground">
                 {r.em_sent_task_created ? "✓" : "—"}
@@ -2797,7 +2817,7 @@ export function PostHrgClient({
             </div>
           );
         case "ext_letter_sent":
-          if (isCompletedRow) {
+          if (isCompletedRow || !canEditFieldFn("ext_letter_sent")) {
             return (
               <span className="inline-flex items-center justify-center text-xs text-muted-foreground">
                 {r.ext_letter_sent ? "✓" : "—"}
@@ -2824,7 +2844,8 @@ export function PostHrgClient({
             </div>
           );
         case "status":
-          if (isCompletedRow) return readOnlyBadge(r.status, statusHexMap);
+          if (isCompletedRow || !canEditFieldFn("status"))
+            return readOnlyBadge(r.status, statusHexMap);
           return (
             <div className="flex items-center gap-1">
               <InlineDropdown
@@ -2862,6 +2883,7 @@ export function PostHrgClient({
       responsibleHexMap,
       handleFieldUpdate,
       handleAcknowledge,
+      canEditFieldFn,
       isAdmin,
       recordType,
     ],

@@ -39,6 +39,7 @@ import {
   type RepDocsFilteredBreakdown,
 } from "./actions";
 import type { UserRole } from "@/lib/roles";
+import { resolveFieldAccess } from "@/lib/field-access";
 import { RepDocsImportModal } from "@/components/modals/rep-docs-import-modal";
 import { ActivityLogModal } from "@/components/modals/activity-log-modal";
 import { RepDocsWithdrawnModal } from "@/components/modals/rep-docs-withdrawn-modal";
@@ -55,6 +56,11 @@ interface Props {
   initialStats: RepDocsStats;
   assignees: RepDocsAssigneeOption[];
   ohoAssignees: RepDocsAssigneeOption[];
+  /**
+   * Plain map of field_key → can_edit override for this user on the
+   * representative_docs page. Empty = inherit role default.
+   */
+  fieldOverrides: Record<string, boolean>;
 }
 
 const WORKFLOW_COLUMNS: {
@@ -510,7 +516,16 @@ export function RepresentativeDocsClient({
   initialStats,
   assignees,
   ohoAssignees,
+  fieldOverrides,
 }: Props) {
+  // Per-user editability for rep_docs fields. Page-level role default
+  // (anyone on the page can edit anything) overlaid with per-user overrides.
+  const canEditRepDocsField = useCallback(
+    (fieldKey: string): boolean =>
+      resolveFieldAccess(userRole, "representative_docs", fieldKey, fieldOverrides),
+    [userRole, fieldOverrides],
+  );
+
   const [records, setRecords] = useState<RepDocsRow[]>(initialRecords);
   const [totalFiltered, setTotalFiltered] = useState(initialTotalFiltered);
   const [breakdown, setBreakdown] = useState<RepDocsFilteredBreakdown | null>(
@@ -741,6 +756,14 @@ export function RepresentativeDocsClient({
   ) {
     const prev = records.find((r) => r.id === id);
     if (!prev) return;
+    // Per-user gate — short-circuits before the network round-trip.
+    // Server still enforces (defense-in-depth via requireFieldAccess).
+    if (!canEditRepDocsField(field)) {
+      toast.error(
+        `You do not have permission to edit "${field}" on Representative Docs.`,
+      );
+      return;
+    }
 
     const patch: Record<string, unknown> = { [field]: value };
     const wf = WORKFLOW_COLUMNS.find((c) => c.key === field);

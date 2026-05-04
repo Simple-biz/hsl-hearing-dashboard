@@ -349,6 +349,12 @@ export async function updateRepDocsField(
 ) {
   const session = await requireAuth();
 
+  // Per-user field-access gate (override > role default; rep bypassed)
+  {
+    const { requireFieldAccess } = await import("@/lib/field-access");
+    await requireFieldAccess("representative_docs", field);
+  }
+
   // Workflow checkbox: auto-timestamp
   if (WORKFLOW_FIELD_SET.has(field)) {
     const boolVal = Boolean(value);

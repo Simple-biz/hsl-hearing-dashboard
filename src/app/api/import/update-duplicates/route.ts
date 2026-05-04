@@ -70,6 +70,7 @@ const COMPARE_UPDATABLE = new Set([
   // Assignment / status fields
   "manner_of_appearance",
   "hearing_decision_status",
+  "assignment_status", // ← added
   "medical_record_status",
   "medical_record_link",
   "claimant_link",
@@ -180,6 +181,25 @@ export async function POST(req: NextRequest) {
   let updated = 0;
   const errors: string[] = [];
 
+  // Pre-fetch lookups once if compare mode might need FK resolution.
+  // Mirror the import-insert path: load all reps/teams (no is_active filter)
+  // so legacy assignments still resolve.
+  let allReps: { id: number; name: string }[] = [];
+  let allTeams: { id: number; team_name: string }[] = [];
+  if (isCompareMode) {
+    const sel = selectedFields as string[];
+    if (sel.includes("representative")) {
+      const { rows } = await db.query("SELECT id, name FROM representatives");
+      allReps = rows;
+    }
+    if (sel.includes("mr_team_id")) {
+      const { rows } = await db.query(
+        "SELECT id, team_name FROM mr_teams",
+      );
+      allTeams = rows;
+    }
+  }
+
   for (const record of records) {
     if (!record.existing_id) continue;
 
@@ -195,9 +215,110 @@ export async function POST(req: NextRequest) {
         const updates: Record<string, unknown> = {};
 
         for (const field of selectedFields as string[]) {
-          if (!COMPARE_UPDATABLE.has(field)) continue;
           const diff = fieldDiffs[field];
           if (!diff) continue;
+
+          // Representative: resolve name → assigned_rep_id FK
+          if (field === "representative") {
+            if (!diff.new) continue;
+            const repName = diff.new.trim().toLowerCase();
+            const match = allReps.find(
+              (r) => r.name.trim().toLowerCase() === repName,
+            );
+            if (match) {
+              updates["assigned_rep_id"] = match.id;
+              updates["assignment_status"] = null; // clear any withdrawal/status
+            }
+            // If no match found, skip — don't write a bad FK
+            continue;
+          }
+
+          // Medical team: resolve team name → mr_team_id FK
+          if (field === "mr_team_id") {
+            if (!diff.new) continue;
+            const teamName = diff.new.trim().toLowerCase();
+            const match = allTeams.find(
+              (t) => t.team_name.trim().toLowerCase() === teamName,
+            );
+            if (match) {
+              updates["mr_team_id"] = match.id;
+            }
+            continue;
+          }
+
+          // assignment_status and other direct-write fields
+          if (!COMPARE_UPDATABLE.has(field)) continue;
+
+          // ── Special case: post_hrg_notes must be stored as JSON array ──
+          // The diff.new value is raw comment text from the sheet.
+          // We need to append it to the existing notes array rather than
+          // overwriting, so the dashboard's parseNotes() can render it correctly.
+          if (field === "post_hrg_notes") {
+            if (!diff.new || !diff.new.trim()) continue;
+
+            const { rows: noteRows } = await db.query(
+              "SELECT post_hrg_notes FROM hearings WHERE id = $1",
+              [record.existing_id],
+            );
+            const rawExisting = noteRows[0]?.post_hrg_notes || "";
+
+            let existingArr: { user: string; date: string; note: string }[] =
+              [];
+            try {
+              const parsed = JSON.parse(rawExisting);
+              if (Array.isArray(parsed)) existingArr = parsed;
+            } catch {
+              if (rawExisting.trim()) {
+                existingArr = [
+                  { user: "System", date: "", note: rawExisting.trim() },
+                ];
+              }
+            }
+
+            // Same normalization as check-duplicates to handle encoding mismatches
+            const normalizeNote = (text: string): string =>
+              text
+                .replace(/\u00A0/g, " ")
+                .replace(/\u00C2\u00A0/g, " ")
+                .replace(/\u00C2/g, "")
+                .replace(/Â/g, "")
+                .replace(/[\u200B-\u200D\uFEFF]/g, "")
+                .replace(/[\u{1F000}-\u{1FFFF}]/gu, "")
+                .replace(/[\uD800-\uDFFF]/g, "")
+                .replace(/ð[\x80-\xBF]{3}/g, "")
+                .replace(/&amp;/g, "&")
+                .replace(/&lt;/g, "<")
+                .replace(/&gt;/g, ">")
+                .replace(/&nbsp;/g, " ")
+                .replace(/&#39;/g, "'")
+                .replace(/&quot;/g, '"')
+                .replace(/\s+/g, " ")
+                .trim()
+                .toLowerCase();
+
+            const existingNoteTexts = new Set(
+              existingArr.map((n) => normalizeNote(n.note)),
+            );
+
+            const newLines = diff.new
+              .split("\n")
+              .map((l: string) => l.trim())
+              .filter(Boolean);
+
+            for (const line of newLines) {
+              if (!existingNoteTexts.has(normalizeNote(line))) {
+                existingArr.push({
+                  user: "Import",
+                  date: new Date().toISOString().split("T")[0],
+                  note: line,
+                });
+                existingNoteTexts.add(normalizeNote(line));
+              }
+            }
+
+            updates["post_hrg_notes"] = JSON.stringify(existingArr);
+            continue;
+          }
 
           const parsed = parseFieldValue(field, diff.new);
           // Allow setting to null (clearing a field) — only skip if parse returned null for non-empty input

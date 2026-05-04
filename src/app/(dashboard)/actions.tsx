@@ -541,11 +541,16 @@ export async function fetchPostHrgDeadlineHistory(
   return rows as PostHrgDeadlineHistoryEntry[];
 }
 
+export type UpdateHearingResult =
+  | { ok: true }
+  | { ok: false; conflict: { field: string; currentValue: string } };
+
 export async function updateHearing(
   hearingId: number,
   field: string,
   value: string | number | boolean | null,
-) {
+  options?: { expectedCurrent?: string | null; override?: boolean },
+): Promise<UpdateHearingResult> {
   const { logAction } = await import("@/lib/activity-log");
 
   const ALLOWED_FIELDS = [
@@ -616,6 +621,27 @@ export async function updateHearing(
     "medical_record_link",
   ]);
 
+  // ── Per-user field-access gate ────────────────────────────────────────
+  // Falls through to role default when no override row exists; bypasses
+  // entirely for `rep` users. See src/lib/field-access.ts.
+  {
+    const { requireAuth } = await import("@/lib/session");
+    const { canUserEditField } = await import("@/lib/field-access");
+    const session = await requireAuth();
+    const allowed = await canUserEditField(
+      Number(session.user.id),
+      session.user.role as import("@/lib/roles").UserRole,
+      "dashboard",
+      field,
+    );
+    if (!allowed) {
+      throw new Error(
+        `You do not have permission to edit "${field}" on the dashboard.`,
+      );
+    }
+  }
+
+  // Human-readable field labels matching PHP dashboard
   const FIELD_LABELS: Record<string, string> = {
     assigned_rep_id: "Representative",
     mr_team_id: "Medical Team",
@@ -672,9 +698,10 @@ export async function updateHearing(
     oldValue: unknown;
     claimant: string;
     phStatusSyncCount: number;
+    conflict?: { field: string; currentValue: string };
   }>(async (client) => {
     const { rows: oldRows } = await client.query<Record<string, unknown>>(
-      `SELECT ${field}, claimant FROM hearings WHERE id = $1`,
+      `SELECT ${field}, claimant FROM hearings WHERE id = $1 FOR UPDATE`,
       [hearingId],
     );
 
@@ -684,6 +711,30 @@ export async function updateHearing(
       (oldRow.claimant as string | null) || `Hearing #${hearingId}`;
 
     let phStatusSyncCount = 0;
+
+    // Concurrency guard for brief_assigned_to: if the DB has a value that the
+    // client didn't know about, refuse the write and surface the actual current
+    // assignee so the user can choose to override. The client retries with
+    // options.override=true after confirming. Returned as data (not thrown) so
+    // the message survives Next.js's production error sanitization.
+    if (field === "brief_assigned_to" && !options?.override) {
+      const currentStr = oldValue ? String(oldValue).trim() : "";
+      const expected = options?.expectedCurrent;
+      const expectedStr = expected ? String(expected).trim() : "";
+      const incomingStr = value ? String(value).trim() : "";
+      if (
+        currentStr &&
+        currentStr !== expectedStr &&
+        currentStr !== incomingStr
+      ) {
+        return {
+          oldValue,
+          claimant,
+          phStatusSyncCount,
+          conflict: { field, currentValue: currentStr },
+        };
+      }
+    }
 
     if (field === "post_hrg_deadline" && oldValue !== value) {
       await client.query(
@@ -817,6 +868,10 @@ export async function updateHearing(
     };
   });
 
+  if (txResult.conflict) {
+    return { ok: false, conflict: txResult.conflict };
+  }
+
   const oldValue = txResult.oldValue;
   const claimant = txResult.claimant;
 
@@ -903,6 +958,8 @@ export async function updateHearing(
       `${fieldLabel}: '${oldDisplay}' → '${newDisplay}' for: ${claimant}`,
     );
   }
+
+  return { ok: true };
 }
 
 // ── Add a post HRG note (server-side read-modify-write to avoid race conditions) ──
