@@ -8,6 +8,9 @@ on:
     types:
       - closed
 
+permissions:
+  contents: read
+
 jobs:
   delete-branch:
     name: Delete Neon PR branch
@@ -15,6 +18,7 @@ jobs:
 
     steps:
       - name: Delete Neon branch
+        continue-on-error: true
         uses: neondatabase/delete-branch-action@v3
         with:
           project_id: ${{ vars.NEON_PROJECT_ID }}

@@ -1,4 +1,4 @@
-name: CI Migration Check
+name: CI
 
 on:
   pull_request:
@@ -6,16 +6,108 @@ on:
       - develop
       - feature/mr-pivot-to-google-sheet-sync
     paths:
-      - "migrations/**"
-      - ".github/workflows/ci-migration.yml"
+      - "src/**"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig.json"
+      - "eslint.config.mjs"
+      - ".sqlfluff"
+      - ".sqlfluffignore"
+      - ".github/workflows/**"
+
+permissions:
+  contents: read
 
 jobs:
-  migration-check:
-    name: Test migrations on Neon branch
+  quality:
+    name: Code quality
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+  security:
+    name: Security scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Gitleaks - secret scan
+        run: |
+          docker run --rm \
+            -v "$PWD:/repo:ro" \
+            ghcr.io/gitleaks/gitleaks:latest \
+            dir /repo --redact --verbose --exit-code=1
+
+      - name: OSV-Scanner - dependency vulnerabilities
+        uses: google/osv-scanner-action@v2
+        with:
+          scan-args: |-
+            --recursive
+            ./
+          upload-sarif: false
+          fail-on-vuln: true
+
+  sql-lint:
+    name: SQL lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install SQLFluff
+        run: python -m pip install sqlfluff
+
+      - name: Lint active migration files
+        run: |
+          mapfile -t files < <(find src/migrations -maxdepth 1 -type f -name "*.sql" | sort)
+
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No active migration files found."
+            exit 0
+          fi
+
+          sqlfluff lint "${files[@]}"
+
+  migration-check:
+    name: Test migrations on Neon branch
+    runs-on: ubuntu-latest
+
+    concurrency:
+      group: migration-check-pr-${{ github.event.number }}
+      cancel-in-progress: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Delete existing Neon PR branch
+        continue-on-error: true
+        uses: neondatabase/delete-branch-action@v3
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch: pr-${{ github.event.number }}
+          api_key: ${{ secrets.NEON_API_KEY }}
 
       - name: Create Neon branch
         id: create-branch

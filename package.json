@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
     "db:migrate": "dbmate --migrations-dir ./src/migrations --no-dump-schema migrate",
     "db:status": "dbmate --migrations-dir ./src/migrations --no-dump-schema status",
     "db:new": "dbmate --migrations-dir ./src/migrations --no-dump-schema new"
