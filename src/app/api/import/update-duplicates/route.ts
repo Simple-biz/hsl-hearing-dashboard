@@ -181,16 +181,23 @@ export async function POST(req: NextRequest) {
   let updated = 0;
   const errors: string[] = [];
 
-  // Pre-fetch reps once if compare mode might need FK resolution
+  // Pre-fetch lookups once if compare mode might need FK resolution.
+  // Mirror the import-insert path: load all reps/teams (no is_active filter)
+  // so legacy assignments still resolve.
   let allReps: { id: number; name: string }[] = [];
-  if (
-    isCompareMode &&
-    (selectedFields as string[]).includes("representative")
-  ) {
-    const { rows } = await db.query(
-      "SELECT id, name FROM representatives WHERE is_active = true",
-    );
-    allReps = rows;
+  let allTeams: { id: number; team_name: string }[] = [];
+  if (isCompareMode) {
+    const sel = selectedFields as string[];
+    if (sel.includes("representative")) {
+      const { rows } = await db.query("SELECT id, name FROM representatives");
+      allReps = rows;
+    }
+    if (sel.includes("mr_team_id")) {
+      const { rows } = await db.query(
+        "SELECT id, team_name FROM mr_teams",
+      );
+      allTeams = rows;
+    }
   }
 
   for (const record of records) {
@@ -223,6 +230,19 @@ export async function POST(req: NextRequest) {
               updates["assignment_status"] = null; // clear any withdrawal/status
             }
             // If no match found, skip — don't write a bad FK
+            continue;
+          }
+
+          // Medical team: resolve team name → mr_team_id FK
+          if (field === "mr_team_id") {
+            if (!diff.new) continue;
+            const teamName = diff.new.trim().toLowerCase();
+            const match = allTeams.find(
+              (t) => t.team_name.trim().toLowerCase() === teamName,
+            );
+            if (match) {
+              updates["mr_team_id"] = match.id;
+            }
             continue;
           }
 
