@@ -42,7 +42,7 @@ import type {
 import { db } from "@/lib/db";
 import { getSession } from "@/lib/session";
 
-// ─── Internal helper — writes to activity_log, matching PHP's logActivity() ──
+// --- Internal helper - writes to activity_log, matching PHP's logActivity() ---
 async function logActivity(
   action: string,
   details: string,
@@ -56,7 +56,7 @@ async function logActivity(
       [userId, action, details],
     );
   } catch {
-    // Never let logging failures break the mutation
+    // Never let logging failures break the mutation.
   }
 }
 
@@ -202,7 +202,6 @@ async function recordHearingUpdateEvent(
     changedFields,
   });
 }
-
 
 type SyncMutationResult<T> = {
   payload: HearingSyncPayloadRow;
@@ -433,7 +432,7 @@ async function updateMrTeamAndRecordEvent(
   };
 }
 
-// ─── Shared SQL fragment — excludes withdrawn/dismissed records ───────────────
+// --- Shared SQL fragment - excludes withdrawn/dismissed records ---
 const WITHDRAWN_FILTER = `
   (h.medical_record_status != 'WITHDRAWAL' OR h.medical_record_status IS NULL)
   AND (
@@ -446,7 +445,7 @@ const WITHDRAWN_FILTER = `
   )
 `.trim();
 
-// ─── Page data loader — all independent queries run in parallel ───────────────
+// --- Page data loader - all independent queries run in parallel ---
 
 export async function getMrPivotPageData(
   userRole: UserRole = "mr_agent",
@@ -480,7 +479,7 @@ export async function getMrPivotPageData(
     rotationTeamsRows,
     lastAssignedRow,
   ] = await Promise.all([
-    // ── Stat cards ────────────────────────────────────────────────────────────
+    // Stat cards
     db.query(`
       SELECT
         COUNT(*)                                                                         AS total,
@@ -495,7 +494,7 @@ export async function getMrPivotPageData(
       WHERE ${WITHDRAWN_FILTER}
     `),
 
-    // ── Withdrawn / dismissed count ───────────────────────────────────────────
+    // Withdrawn / dismissed count
     db.query(`
       SELECT COUNT(*) AS cnt
       FROM hearings
@@ -505,7 +504,7 @@ export async function getMrPivotPageData(
         OR hearing_decision_status = 'Dismissal'
     `),
 
-    // ── Post HRG Review count ─────────────────────────────────────────────────
+    // Post HRG Review count
     db.query(`
       SELECT COUNT(*) AS cnt
       FROM hearings
@@ -517,7 +516,7 @@ export async function getMrPivotPageData(
         AND (hearing_decision_status NOT LIKE 'Withdrawal%' OR hearing_decision_status = 'Post HRG Review/ Dev')
     `),
 
-    // ── No specialist count (upcoming, not withdrawn) ─────────────────────────
+    // No specialist count (upcoming, not withdrawn)
     db.query(`
       SELECT COUNT(*) AS cnt
       FROM hearings
@@ -526,7 +525,7 @@ export async function getMrPivotPageData(
         AND (medical_record_status != 'WITHDRAWAL' OR medical_record_status IS NULL)
     `),
 
-    // ── No task assigned count (upcoming, not withdrawn) ─────────────────────
+    // No task assigned count (upcoming, not withdrawn)
     db.query(`
       SELECT COUNT(*) AS cnt
       FROM hearings
@@ -535,7 +534,7 @@ export async function getMrPivotPageData(
         AND (medical_record_status != 'WITHDRAWAL' OR medical_record_status IS NULL)
     `),
 
-    // ── Next upcoming unassigned hearing ─────────────────────────────────────
+    // Next upcoming unassigned hearing
     db.query<HearingListPreview>(`
       SELECT id, claimant, hearing_date::text
       FROM hearings
@@ -546,7 +545,7 @@ export async function getMrPivotPageData(
       LIMIT 1
     `),
 
-    // ── Next hearing without task assigned ────────────────────────────────────
+    // Next hearing without task assigned
     db.query<HearingListPreview>(`
       SELECT id, claimant, hearing_date::text
       FROM hearings
@@ -557,7 +556,7 @@ export async function getMrPivotPageData(
       LIMIT 1
     `),
 
-    // ── Team grand totals (sidebar) ───────────────────────────────────────────
+    // Team grand totals (sidebar)
     db.query(`
       SELECT
         COALESCE(t.team_name, 'Unassigned') AS team_name,
@@ -571,7 +570,7 @@ export async function getMrPivotPageData(
       ORDER BY COALESCE(t.display_order, 9999) ASC
     `),
 
-    // ── MR status pivot (status breakdown by team) ────────────────────────────
+    // MR status pivot (status breakdown by team)
     db.query(`
       SELECT
         COALESCE(t.team_name, 'Unassigned') AS team,
@@ -586,7 +585,7 @@ export async function getMrPivotPageData(
       ORDER BY COALESCE(t.display_order, 9999) ASC
     `),
 
-    // ── Assigned cases by month / team ────────────────────────────────────────
+    // Assigned cases by month / team
     db.query(`
       SELECT
         TO_CHAR(h.hearing_date, 'YYYY-MM') AS month_key,
@@ -603,7 +602,7 @@ export async function getMrPivotPageData(
       ORDER BY month_key ASC, COALESCE(t.display_order, 9999) ASC
     `),
 
-    // ── Weekly team stats ─────────────────────────────────────────────────────
+    // Weekly team stats
     db.query(`
       SELECT
         TO_CHAR(h.hearing_date, 'IYYY-IW') AS week_key,
@@ -629,7 +628,7 @@ export async function getMrPivotPageData(
       ORDER BY week_key DESC, COALESCE(t.display_order, 9999) ASC
     `),
 
-    // ── Monthly team stats ────────────────────────────────────────────────────
+    // Monthly team stats
     db.query(`
       SELECT
         TO_CHAR(h.hearing_date, 'YYYY-MM') AS month_key,
@@ -652,7 +651,7 @@ export async function getMrPivotPageData(
       ORDER BY month_key DESC, COALESCE(t.display_order, 9999) ASC
     `),
 
-    // ── Available months filter ───────────────────────────────────────────────
+    // Available months filter
     db.query(`
       SELECT DISTINCT
         TO_CHAR(hearing_date, 'YYYY-MM') AS month_value,
@@ -661,7 +660,7 @@ export async function getMrPivotPageData(
       ORDER BY month_value DESC
     `),
 
-    // ── Available years (for assignment card filters) ─────────────────────────
+    // Available years (for assignment card filters)
     db.query(`
       SELECT DISTINCT EXTRACT(YEAR FROM hearing_date)::int AS year
       FROM hearings
@@ -669,7 +668,7 @@ export async function getMrPivotPageData(
       ORDER BY year ASC
     `),
 
-    // ── Active, assignable MR teams ───────────────────────────────────────────
+    // Active, assignable MR teams
     db.query(`
       SELECT id, team_name, team_color, team_type, is_active, is_assignable, display_order
       FROM mr_teams
@@ -677,7 +676,7 @@ export async function getMrPivotPageData(
       ORDER BY display_order ASC
     `),
 
-    // ── Medical record status options from config ─────────────────────────────
+    // Medical record status options from config
     db.query(`
       SELECT option_value
       FROM config_options
@@ -685,7 +684,7 @@ export async function getMrPivotPageData(
       ORDER BY display_order ASC
     `),
 
-    // ── Hearing decision status options from config ───────────────────────────
+    // Hearing decision status options from config
     db.query(`
       SELECT option_value
       FROM config_options
@@ -693,7 +692,7 @@ export async function getMrPivotPageData(
       ORDER BY display_order ASC
     `),
 
-    // ── Manner of appearance options from config ──────────────────────────────
+    // Manner of appearance options from config
     db.query(`
       SELECT option_value
       FROM config_options
@@ -701,7 +700,7 @@ export async function getMrPivotPageData(
       ORDER BY display_order ASC
     `),
 
-    // ── Jerome's team info ────────────────────────────────────────────────────
+    // Jerome's team info
     db.query(`
       SELECT id, team_name, team_color
       FROM mr_teams
@@ -709,7 +708,7 @@ export async function getMrPivotPageData(
       LIMIT 1
     `),
 
-    // ── Round-robin: rotation teams ───────────────────────────────────────────
+    // Round-robin: rotation teams
     db.query(`
       SELECT id, team_name, team_color
       FROM mr_teams
@@ -720,7 +719,7 @@ export async function getMrPivotPageData(
       ORDER BY display_order ASC
     `),
 
-    // ── Round-robin: last assigned team ──────────────────────────────────────
+    // Round-robin: last assigned team
     db.query(`
       SELECT t.id, t.team_name, t.team_color
       FROM hearings h
@@ -735,7 +734,7 @@ export async function getMrPivotPageData(
     `),
   ]);
 
-  // ── Shape: stat cards ───────────────────────────────────────────────────────
+  // Shape: stat cards
   const s = statsRow.rows[0] ?? {};
   const statCards: MrPivotStatCards = {
     totalHearings: Number(s.total           ?? 0),
@@ -750,14 +749,14 @@ export async function getMrPivotPageData(
     nextUnassignedTask: nextUnassignedTaskRow.rows[0] ?? null,
   };
 
-  // ── Shape: team grand totals ────────────────────────────────────────────────
+  // Shape: team grand totals
   const teamGrandTotals = teamGrandTotalsRows.rows.map((r: Record<string, unknown>) => ({
     team_name:  r.team_name as string,
     team_color: r.team_color as string | null,
     total:      Number(r.total),
   }));
 
-  // ── Shape: MR status by team (pivot) ───────────────────────────────────────
+  // Shape: MR status by team (pivot)
   const mrStatusMap: Record<string, { color: string | null; display_order: number; statuses: Record<string, number> }> = {};
   for (const r of mrStatusPivotRows.rows as Record<string, unknown>[]) {
     const team = r.team as string;
@@ -771,7 +770,7 @@ export async function getMrPivotPageData(
     .sort(([, a], [, b]) => a.display_order - b.display_order)
     .map(([team, data]) => ({ team, ...data }));
 
-  // ── Shape: grouped assigned by month ───────────────────────────────────────
+  // Shape: grouped assigned by month
   const assignedMap: Record<string, { month_label: string; teams: { team_name: string; team_color: string | null; case_count: number }[]; total: number }> = {};
   for (const r of groupedAssignedRows.rows as Record<string, unknown>[]) {
     const key = r.month_key as string;
@@ -787,7 +786,7 @@ export async function getMrPivotPageData(
   }
   const groupedAssigned = Object.entries(assignedMap).map(([month_key, v]) => ({ month_key, month_label: v.month_label, teams: v.teams, total: v.total }));
 
-  // ── Shape: weekly stats ─────────────────────────────────────────────────────
+  // Shape: weekly stats
   const weeklyMap: Record<string, { label: string; teams: MonthlyTeamStat["teams"]; totals: MonthlyTeamStat["totals"] }> = {};
   for (const r of weeklyStatsRows.rows as Record<string, unknown>[]) {
     const key = r.week_key as string;
@@ -810,7 +809,7 @@ export async function getMrPivotPageData(
   }
   // const weekly = Object.values(weeklyMap);
 
-  // ── Shape: monthly stats ────────────────────────────────────────────────────
+  // Shape: monthly stats
   const monthlyMap: Record<string, { label: string; teams: MonthlyTeamStat["teams"]; totals: MonthlyTeamStat["totals"] }> = {};
   for (const r of monthlyStatsRows.rows as Record<string, unknown>[]) {
     const key = r.month_key as string;
@@ -833,15 +832,15 @@ export async function getMrPivotPageData(
   }
   // const monthly = Object.values(monthlyMap);
 
-  // ── Shape: round-robin state ────────────────────────────────────────────────
-  // Derive rotation order dynamically from DB — no hardcoded team list
+  // Shape: round-robin state
+  // Derive rotation order dynamically from DB - no hardcoded team list.
   const colorToTeam: Record<string, { id: number; name: string; color: string }> = {};
   for (const rt of rotationTeamsRows.rows as Record<string, unknown>[]) {
     colorToTeam[rt.team_color as string] = { id: Number(rt.id), name: rt.team_name as string, color: rt.team_color as string };
   }
   const ROTATION_ORDER = (rotationTeamsRows.rows as Record<string, unknown>[]).map(r => r.team_color as string);
 
-  // Fallback: if mr_team_assigned_at was null on all rows, try last assigned by id
+  // Fallback: if mr_team_assigned_at was null on all rows, try last assigned by id.
   let lastRow = lastAssignedRow.rows[0] as Record<string, unknown> | undefined;
   if (!lastRow) {
     const fallback = await db.query(`
@@ -894,7 +893,7 @@ export async function getMrPivotPageData(
     urgentUnassignedCount: Number(urgentUnassignedRow.rows[0]?.cnt ?? 0),
   };
 
-  // ── Shape: config options (with fallbacks matching PHP defaults) ────────────
+  // Shape: config options with fallbacks matching PHP defaults.
   const medicalTeams = medicalTeamsRows.rows as MrTeam[];
 
   const mrStatusOptionsList: string[] = mrStatusOptions.rows.length
@@ -933,7 +932,7 @@ export async function getMrPivotPageData(
   };
 }
 
-// ─── Paginated hearings query ─────────────────────────────────────────────────
+// --- Paginated hearings query ---
 
 export async function getHearingsPaginated(
   filters: HearingFilters,
@@ -948,7 +947,7 @@ export async function getHearingsPaginated(
     where.push(`(h.claimant ILIKE $${idx} OR r.name ILIKE $${idx})`);
   }
 
-  // Date range (takes priority over month_filter)
+  // Date range takes priority over month_filter.
   if (filters.date_range && filters.date_range !== "custom") {
     const ranges: Record<string, string> = {
       today: `h.hearing_date = CURRENT_DATE`,
@@ -1005,7 +1004,7 @@ export async function getHearingsPaginated(
   const whereClause = `WHERE ${where.join(" AND ")}`;
   const sortDir = filters.sort_order === "desc" ? "DESC" : "ASC";
 
-  // Count + stats in one pass
+  // Count + stats in one pass.
   const statsResult = await db.query(
     `SELECT
        COUNT(*)                                                                         AS total,
@@ -1067,13 +1066,15 @@ export async function getHearingsPaginated(
   };
 }
 
-// ─── Mutation actions ─────────────────────────────────────────────────────────
+// --- Mutation actions ---
 
 export async function updateMrStatus(
   hearingId: number,
   status: string,
 ): Promise<{ success: boolean }> {
-<<<<<<< HEAD
+  const { requireFieldAccess } = await import("@/lib/field-access");
+  await requireFieldAccess("medical_records", "medical_record_status");
+
   await db.transaction(async (client) => {
     await updateSingleFieldAndRecordEvent<string>({
       client,
@@ -1086,14 +1087,6 @@ export async function updateMrStatus(
     });
   });
 
-=======
-  const { requireFieldAccess } = await import("@/lib/field-access");
-  await requireFieldAccess("medical_records", "medical_record_status");
-  await db.query(
-    `UPDATE hearings SET medical_record_status = $1 WHERE id = $2`,
-    [status, hearingId],
-  );
->>>>>>> 6759f89ffa0255ffc40f1b21909783d6b4bb0f59
   await logActivity("mr_status_updated", `MR status updated to "${status}" for hearing #${hearingId}`);
   return { success: true };
 }
@@ -1102,7 +1095,9 @@ export async function updateHearingDecisionStatus(
   hearingId: number,
   status: string,
 ): Promise<{ success: boolean }> {
-<<<<<<< HEAD
+  const { requireFieldAccess } = await import("@/lib/field-access");
+  await requireFieldAccess("medical_records", "hearing_decision_status");
+
   const txResult = await db.transaction<{ claimant: string }>(async (client) => {
     const { payload } = await updateSingleFieldAndRecordEvent<string>({
       client,
@@ -1119,14 +1114,6 @@ export async function updateHearingDecisionStatus(
     };
   });
 
-=======
-  const { requireFieldAccess } = await import("@/lib/field-access");
-  await requireFieldAccess("medical_records", "hearing_decision_status");
-  await db.query(
-    `UPDATE hearings SET hearing_decision_status = $1 WHERE id = $2`,
-    [status, hearingId],
-  );
->>>>>>> 6759f89ffa0255ffc40f1b21909783d6b4bb0f59
   await logActivity("decision_status_updated", `Decision status updated to "${status}" for hearing #${hearingId}`);
 
   const isWithdrawal = status.startsWith("Withdrawal") || status === "WD CLMT DECEASED" || status === "Dismissal";
@@ -1142,7 +1129,9 @@ export async function updateMrTeam(
   hearingId: number,
   teamId: number | null,
 ): Promise<{ success: boolean }> {
-<<<<<<< HEAD
+  const { requireFieldAccess } = await import("@/lib/field-access");
+  await requireFieldAccess("medical_records", "mr_team_id");
+
   const txResult = await db.transaction<{ newTeamName: string | null }>(async (client) => {
     const { payload } = await updateMrTeamAndRecordEvent(client, hearingId, teamId);
 
@@ -1156,13 +1145,6 @@ export async function updateMrTeam(
     txResult.newTeamName
       ? `MR team "${txResult.newTeamName}" assigned to hearing #${hearingId}`
       : `MR team unassigned from hearing #${hearingId}`,
-=======
-  const { requireFieldAccess } = await import("@/lib/field-access");
-  await requireFieldAccess("medical_records", "mr_team_id");
-  await db.query(
-    `UPDATE hearings SET mr_team_id = $1, mr_team_assigned_at = $2 WHERE id = $3`,
-    [teamId, teamId ? new Date().toISOString() : null, hearingId],
->>>>>>> 6759f89ffa0255ffc40f1b21909783d6b4bb0f59
   );
   return { success: true };
 }
@@ -1171,7 +1153,9 @@ export async function toggleTaskAssigned(
   hearingId: number,
   value: boolean,
 ): Promise<{ success: boolean }> {
-<<<<<<< HEAD
+  const { requireFieldAccess } = await import("@/lib/field-access");
+  await requireFieldAccess("medical_records", "task_assigned");
+
   await db.transaction(async (client) => {
     await updateSingleFieldAndRecordEvent<boolean>({
       client,
@@ -1185,15 +1169,6 @@ export async function toggleTaskAssigned(
   });
 
   await logActivity("task_assigned_updated", `Task assigned set to ${value} for hearing #${hearingId}`);
-=======
-  const { requireFieldAccess } = await import("@/lib/field-access");
-  await requireFieldAccess("medical_records", "task_assigned");
-  await db.query(
-    `UPDATE hearings SET task_assigned = $1 WHERE id = $2`,
-    [value, hearingId],
-  );
-  await logActivity("five_day_notice_updated", `Task assigned set to ${value} for hearing #${hearingId}`);
->>>>>>> 6759f89ffa0255ffc40f1b21909783d6b4bb0f59
   return { success: true };
 }
 
@@ -1215,7 +1190,9 @@ export async function toggleFiveDayNotice(
   hearingId: number,
   value: boolean,
 ): Promise<{ success: boolean }> {
-<<<<<<< HEAD
+  const { requireFieldAccess } = await import("@/lib/field-access");
+  await requireFieldAccess("medical_records", "five_day_notice");
+
   await db.transaction(async (client) => {
     await updateSingleFieldAndRecordEvent<boolean>({
       client,
@@ -1228,14 +1205,6 @@ export async function toggleFiveDayNotice(
     });
   });
 
-=======
-  const { requireFieldAccess } = await import("@/lib/field-access");
-  await requireFieldAccess("medical_records", "five_day_notice");
-  await db.query(
-    `UPDATE hearings SET five_day_notice = $1 WHERE id = $2`,
-    [value, hearingId],
-  );
->>>>>>> 6759f89ffa0255ffc40f1b21909783d6b4bb0f59
   await logActivity("five_day_notice_updated", `5-Day Notice set to ${value} for hearing #${hearingId}`);
   return { success: true };
 }
@@ -1244,7 +1213,9 @@ export async function updateMoa(
   hearingId: number,
   manner: string,
 ): Promise<{ success: boolean }> {
-<<<<<<< HEAD
+  const { requireFieldAccess } = await import("@/lib/field-access");
+  await requireFieldAccess("medical_records", "manner_of_appearance");
+
   await db.transaction(async (client) => {
     await updateSingleFieldAndRecordEvent<string>({
       client,
@@ -1257,14 +1228,6 @@ export async function updateMoa(
     });
   });
 
-=======
-  const { requireFieldAccess } = await import("@/lib/field-access");
-  await requireFieldAccess("medical_records", "manner_of_appearance");
-  await db.query(
-    `UPDATE hearings SET manner_of_appearance = $1 WHERE id = $2`,
-    [manner, hearingId],
-  );
->>>>>>> 6759f89ffa0255ffc40f1b21909783d6b4bb0f59
   await logActivity("moa_updated", `MOA updated to "${manner}" for hearing #${hearingId}`);
   return { success: true };
 }
@@ -1273,7 +1236,9 @@ export async function updateWorksheetLink(
   hearingId: number,
   link: string,
 ): Promise<{ success: boolean }> {
-<<<<<<< HEAD
+  const { requireFieldAccess } = await import("@/lib/field-access");
+  await requireFieldAccess("medical_records", "medical_record_link");
+
   await db.transaction(async (client) => {
     await updateSingleFieldAndRecordEvent<string>({
       client,
@@ -1286,14 +1251,6 @@ export async function updateWorksheetLink(
     });
   });
 
-=======
-  const { requireFieldAccess } = await import("@/lib/field-access");
-  await requireFieldAccess("medical_records", "medical_record_link");
-  await db.query(
-    `UPDATE hearings SET medical_record_link = $1 WHERE id = $2`,
-    [link, hearingId],
-  );
->>>>>>> 6759f89ffa0255ffc40f1b21909783d6b4bb0f59
   await logActivity("mr_link_updated", `Worksheet link updated for hearing #${hearingId}`);
   return { success: true };
 }
@@ -1424,7 +1381,7 @@ export async function getRoundRobinState(): Promise<RoundRobinState> {
     `),
   ]);
 
-  // Derive rotation order from DB result — ordered by display_order, no hardcoded list
+  // Derive rotation order from DB result - ordered by display_order, no hardcoded list.
   const ROTATION_ORDER = (rotationRows.rows as Record<string, unknown>[]).map(r => r.team_color as string);
   const colorToTeam: Record<string, string> = {};
   for (const r of rotationRows.rows as Record<string, unknown>[]) {
@@ -1432,7 +1389,7 @@ export async function getRoundRobinState(): Promise<RoundRobinState> {
   }
 
   const lastRow = lastAssignedRows.rows[0] as Record<string, unknown> | undefined;
-  // Fallback to first team in rotation if no last assigned found
+  // Fallback to first team in rotation if no last assigned found.
   const lastColor = (lastRow?.team_color as string | undefined) ?? ROTATION_ORDER[ROTATION_ORDER.length - 1] ?? "blue";
   const lastTeamName = (lastRow?.team_name  as string | undefined) ?? "None";
   const lastIndex = ROTATION_ORDER.indexOf(lastColor);
@@ -1549,7 +1506,7 @@ export async function getNotifications(): Promise<NotificationItem[]> {
     `);
     return result.rows as NotificationItem[];
   } catch {
-    // sync_notifications table not yet migrated — return empty
+    // sync_notifications table not yet migrated - return empty.
     return [];
   }
 }
@@ -1576,11 +1533,11 @@ export async function createWithdrawalNotification(
       ],
     );
   } catch {
-    // Never let notification creation break the mutation that called it
+    // Never let notification creation break the mutation that called it.
   }
 }
 
-// Called when hearing_decision_status is set to "Post HRG Review/ Dev"
+// Called when hearing_decision_status is set to "Post HRG Review/ Dev".
 export async function createPostHrgNotification(
   hearingId: number,
   claimantName: string,
@@ -1601,7 +1558,7 @@ export async function createPostHrgNotification(
       ],
     );
   } catch {
-    // Never let notification creation break the mutation that called it
+    // Never let notification creation break the mutation that called it.
   }
 }
 
@@ -1624,7 +1581,7 @@ export async function getActivityLog(params: {
   ];
   const qParams: unknown[] = [];
 
-  // Exempt system_admin (user id=1) by default — matches dashboard activity log behaviour
+  // Exempt system_admin (user id=1) by default - matches dashboard activity log behaviour.
   if (params.excludeSystemAdmin !== false) {
     where.push(`u.role != 'system_admin'`);
   }
@@ -1666,7 +1623,7 @@ export async function getActivityLog(params: {
   };
 }
 
-// ─── Post HRG Notes helpers ───────────────────────────────────────────────────
+// --- Post HRG Notes helpers ---
 // Notes are stored as a JSON array in hearings.post_hrg_notes (TEXT column).
 // Canonical shape: [{ author: string; date: string; content: string }]
 // Legacy shape from dashboard: [{ user: string; date: string; note: string }]
@@ -1710,8 +1667,9 @@ export async function addPostHrgNote(
 
   const session = await getSession();
 
-  // Server-side permission check — per PDF matrix, Post HRG Notes Edit:
-  // system_admin, admin, manager, mr_admin, mr_lead, mr_agent, post_hearing_admin, post_hearing_staff
+  // Server-side permission check per PDF matrix, Post HRG Notes Edit:
+  // system_admin, admin, manager, mr_admin, mr_lead, mr_agent,
+  // post_hearing_admin, post_hearing_staff.
   const allowedRoles = [
     "system_admin", "admin", "manager",
     "mr_admin", "mr_lead", "mr_agent",
@@ -1722,7 +1680,7 @@ export async function addPostHrgNote(
     return { success: false, message: "You do not have permission to add notes" };
   }
 
-  // Resolve author name: session.user.name (from auth.ts), fall back to DB lookup
+  // Resolve author name: session.user.name from auth.ts, fall back to DB lookup.
   let authorName = session?.user?.name;
   if (!authorName && session?.user?.id) {
     const { rows: userRows } = await db.query(
@@ -1735,11 +1693,11 @@ export async function addPostHrgNote(
 
   const newNote = JSON.stringify({ author: authorName, date: new Date().toISOString(), content: content.trim() });
 
-  // Atomic prepend — avoids read-modify-write race condition.
+  // Atomic prepend avoids read-modify-write race conditions.
   // The CASE handles all possible states of post_hrg_notes:
-  //   NULL / empty / '[]' → initialize as new single-element array
-  //   Valid JSON array (starts with '[') → prepend by splicing off the leading '[' and inserting new note + comma
-  //   Anything else (legacy plain text, "true", malformed) → start fresh array with new note
+  // NULL / empty / '[]' -> initialize as new single-element array
+  // Valid JSON array starting with '[{' -> prepend by splicing off the leading '['
+  // Anything else -> start fresh array with new note.
   await db.query(
     `UPDATE hearings
         SET post_hrg_notes = CASE
@@ -1857,7 +1815,6 @@ export async function getPostHrgHearings(
 }
 
 // Inverts the WITHDRAWN_FILTER to fetch ONLY withdrawn/dismissed records.
-// ─────────────────────────────────────────────────────────────────────────────
 
 export async function getWithdrawnHearings(filters: {
   page?: number;
