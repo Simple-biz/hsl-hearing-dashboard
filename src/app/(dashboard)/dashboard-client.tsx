@@ -313,6 +313,20 @@ function fmtDate(dateStr: string, opts?: Intl.DateTimeFormatOptions): string {
   );
 }
 
+// Date 14 days before the hearing date — surfaced in the dashboard's "14d Mark"
+// column so the team can see the prep deadline at a glance.
+function fmtMinus14(dateStr: string | null | undefined): string {
+  if (!dateStr) return "";
+  const d = parseDate(dateStr);
+  if (isNaN(d.getTime())) return "";
+  d.setDate(d.getDate() - 14);
+  return d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "2-digit",
+  });
+}
+
 function fmtTime(timeStr: string | null | undefined): string {
   if (!timeStr) return "";
   const parts = timeStr.slice(0, 5).split(":");
@@ -1644,6 +1658,7 @@ const ALL_COLUMNS: ColumnDef[] = [
   { key: "rep_docs_assigned_to", label: "Docs Assigned", w: 110 },
   { key: "rep_docs_complete", label: "Rep Docs", w: 65 },
   { key: "fee_agreement_complete", label: "Fee Agmt", w: 65 },
+  { key: "hearing_minus_14", label: "14d Mark", w: 88 },
   { key: "brief_assigned_to", label: "Brief", w: 100 },
   { key: "phi_sheet_complete", label: "PHI", w: 55 },
   { key: "mr_team_id", label: "Medical Team", w: 110 },
@@ -2292,6 +2307,15 @@ const HearingTable = memo(function HearingTable({
             editable={editable}
             colorMap={RFC_COLORS}
           />
+        );
+      case "hearing_minus_14":
+        return (
+          <span
+            className="text-xs tabular-nums text-muted-foreground"
+            title="14 days before the hearing date — prep deadline marker"
+          >
+            {fmtMinus14(hearing.hearing_date)}
+          </span>
         );
       case "brief_assigned_to":
         return (
