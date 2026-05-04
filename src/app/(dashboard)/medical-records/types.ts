@@ -87,6 +87,45 @@ export function derivePermissions(role: UserRole): Permissions {
   };
 }
 
+/**
+ * Same as derivePermissions but also applies per-user field-access
+ * overrides (from the `user_field_access` table). Each Permissions flag
+ * is independently overridable. REP role bypasses overrides per
+ * resolveFieldAccess.
+ */
+export function derivePermissionsWithOverrides(
+  role: UserRole,
+  overrides: Record<string, boolean> | null,
+): Permissions {
+  const base = derivePermissions(role);
+  if (!overrides) return base;
+  // Map each Permissions flag to the corresponding catalog field_key.
+  const lookup = (
+    flag: keyof Permissions,
+    fieldKey: string | null,
+  ): boolean => {
+    if (!fieldKey) return base[flag];
+    if (Object.prototype.hasOwnProperty.call(overrides, fieldKey)) {
+      return overrides[fieldKey] === true;
+    }
+    return base[flag];
+  };
+  return {
+    canManage: base.canManage, // page-level, not in catalog
+    canEditMrTeam: lookup("canEditMrTeam", "mr_team_id"),
+    canEditMrStatus: lookup("canEditMrStatus", "medical_record_status"),
+    canEditWorksheet: lookup("canEditWorksheet", "medical_record_link"),
+    canEditFiveDay: lookup("canEditFiveDay", "five_day_notice"),
+    canEditDecisionStatus: lookup(
+      "canEditDecisionStatus",
+      "hearing_decision_status",
+    ),
+    canEditMoa: lookup("canEditMoa", "manner_of_appearance"),
+    canEditTask: lookup("canEditTask", "task_assigned"),
+    canEditCredited: lookup("canEditCredited", "credited"),
+  };
+}
+
 // ─── Entity Types ─────────────────────────────────────────────────────────────
 
 export interface MrTeam {

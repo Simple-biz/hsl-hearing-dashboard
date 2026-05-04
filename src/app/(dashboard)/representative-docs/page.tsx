@@ -8,6 +8,7 @@ import {
   fetchRepDocsAssignees,
   fetchOhoAssignees,
 } from "./actions";
+import { getUserFieldOverridesPlain } from "@/lib/field-access";
 
 export default async function RepresentativeDocsPage() {
   const session = await requireAuth();
@@ -17,12 +18,17 @@ export default async function RepresentativeDocsPage() {
     redirect("/");
   }
 
-  const [initialPage, stats, assignees, ohoAssignees] = await Promise.all([
-    fetchRepDocsPage({ page: 1, pageSize: 100 }),
-    fetchRepDocsStats(),
-    fetchRepDocsAssignees(),
-    fetchOhoAssignees(),
-  ]);
+  const [initialPage, stats, assignees, ohoAssignees, fieldOverrides] =
+    await Promise.all([
+      fetchRepDocsPage({ page: 1, pageSize: 100 }),
+      fetchRepDocsStats(),
+      fetchRepDocsAssignees(),
+      fetchOhoAssignees(),
+      getUserFieldOverridesPlain(
+        Number(session.user.id),
+        "representative_docs",
+      ),
+    ]);
 
   return (
     <RepresentativeDocsClient
@@ -33,6 +39,7 @@ export default async function RepresentativeDocsPage() {
       initialStats={stats}
       assignees={assignees}
       ohoAssignees={ohoAssignees}
+      fieldOverrides={fieldOverrides}
     />
   );
 }
