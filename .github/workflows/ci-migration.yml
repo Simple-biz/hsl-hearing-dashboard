@@ -57,13 +57,11 @@ jobs:
             dir /repo --redact --verbose --exit-code=1
 
       - name: OSV-Scanner - dependency vulnerabilities
-        uses: google/osv-scanner-action@v2
-        with:
-          scan-args: |-
-            --recursive
-            ./
-          upload-sarif: false
-          fail-on-vuln: true
+        run: |
+          docker run --rm \
+            -v "$PWD:/src:ro" \
+            ghcr.io/google/osv-scanner:latest \
+            scan source --recursive /src
 
   sql-lint:
     name: SQL lint
