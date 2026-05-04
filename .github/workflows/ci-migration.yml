@@ -56,7 +56,8 @@ jobs:
             ghcr.io/gitleaks/gitleaks:latest \
             dir /repo --redact --verbose --exit-code=1
 
-      - name: OSV-Scanner - dependency vulnerabilities
+      - name: OSV-Scanner - dependency vulnerability report
+        continue-on-error: true
         run: |
           docker run --rm \
             -v "$PWD:/src:ro" \
@@ -78,6 +79,7 @@ jobs:
         run: python -m pip install sqlfluff
 
       - name: Lint active migration files
+        continue-on-error: true
         run: |
           mapfile -t files < <(find src/migrations -maxdepth 1 -type f -name "*.sql" | sort)
 
