@@ -79,6 +79,38 @@ FROM hearings`,
   const byId = new Map<number, Record<string, unknown>>();
   for (const row of existing) byId.set(row.id as number, row);
 
+  // ── Lookups for FK fields (representative, mr_team_id) ──
+  // We resolve the sheet's display name → DB id so we can compare against the
+  // hearing's FK column. Only loaded when the corresponding field is mapped.
+  const repByName = new Map<string, number>(); // lower(name) → id
+  const repById = new Map<number, string>(); // id → name (for diff display)
+  const teamByName = new Map<string, number>(); // lower(team_name) → id
+  const teamById = new Map<number, string>(); // id → team_name
+  if (mapping?.representative !== undefined) {
+    const { rows: repRows } = await db.query(
+      "SELECT id, name FROM representatives",
+    );
+    for (const r of repRows) {
+      const key = String(r.name || "")
+        .toLowerCase()
+        .trim();
+      if (key) repByName.set(key, r.id);
+      repById.set(r.id, String(r.name || ""));
+    }
+  }
+  if (mapping?.mr_team_id !== undefined) {
+    const { rows: teamRows } = await db.query(
+      "SELECT id, team_name FROM mr_teams",
+    );
+    for (const t of teamRows) {
+      const key = String(t.team_name || "")
+        .toLowerCase()
+        .trim();
+      if (key) teamByName.set(key, t.id);
+      teamById.set(t.id, String(t.team_name || ""));
+    }
+  }
+
   // Build 3 lookup maps for three-tier matching
   const tier1 = new Map<string, number>(); // claimant|ssn|date → id
   const tier2 = new Map<string, number>(); // claimant|ssn → id
@@ -505,15 +537,41 @@ FROM hearings`,
                 continue;
               }
 
-              // Real rep name — only flag if DB has no rep assigned
-              if (dbLookupEmpty) {
-                changedFields.push(field);
-                fieldDiffs[field] = { old: "", new: importVal };
-              }
+              // Real rep name → resolve to id and compare against the FK
+              const importRepId = repByName.get(importLower) ?? null;
+              if (importRepId === null) continue; // unknown rep name, don't surface
+              const dbRepId = dbLookupEmpty ? null : Number(dbFkVal);
+              if (dbRepId === importRepId) continue; // same rep, no change
+              const oldDisplay = dbRepId
+                ? repById.get(dbRepId) || ""
+                : "";
+              changedFields.push(field);
+              fieldDiffs[field] = {
+                old: oldDisplay,
+                new: repById.get(importRepId) || importVal,
+              };
               continue;
             }
 
-            // Non-representative lookup fields (mr_team_id etc.)
+            // mr_team_id: resolve team name → id, compare against FK column
+            if (field === "mr_team_id") {
+              const importTeamId =
+                teamByName.get(importVal.toLowerCase().trim()) ?? null;
+              if (importTeamId === null) continue;
+              const dbTeamId = dbLookupEmpty ? null : Number(dbFkVal);
+              if (dbTeamId === importTeamId) continue;
+              const oldDisplay = dbTeamId
+                ? teamById.get(dbTeamId) || ""
+                : "";
+              changedFields.push(field);
+              fieldDiffs[field] = {
+                old: oldDisplay,
+                new: teamById.get(importTeamId) || importVal,
+              };
+              continue;
+            }
+
+            // Other lookup fields (none currently) — fall back to empty-only emission
             if (dbLookupEmpty) {
               changedFields.push(field);
               fieldDiffs[field] = { old: "", new: importVal };
