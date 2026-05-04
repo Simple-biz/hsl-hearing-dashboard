@@ -537,17 +537,17 @@ FROM hearings`,
                 continue;
               }
 
-              // Real rep name → resolve to id and compare against the FK
+              // Real rep name → resolve to id and compare against the FK.
+              // If the sheet name doesn't match any DB rep, skip silently — we
+              // can't write a bad FK and surfacing the diff would be misleading.
               const importRepId = repByName.get(importLower) ?? null;
-              if (importRepId === null) continue; // unknown rep name, don't surface
+              if (importRepId === null) continue;
               const dbRepId = dbLookupEmpty ? null : Number(dbFkVal);
-              if (dbRepId === importRepId) continue; // same rep, no change
-              const oldDisplay = dbRepId
-                ? repById.get(dbRepId) || ""
-                : "";
+              if (dbRepId === importRepId) continue;
+              const dbDisplay = dbRepId ? repById.get(dbRepId) || "" : "";
               changedFields.push(field);
               fieldDiffs[field] = {
-                old: oldDisplay,
+                old: dbDisplay,
                 new: repById.get(importRepId) || importVal,
               };
               continue;
