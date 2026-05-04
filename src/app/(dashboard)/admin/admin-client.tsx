@@ -36,6 +36,7 @@ import { fetchActivityLog } from "@/app/(dashboard)/actions";
 import type { ActivityLogEntry } from "@/app/(dashboard)/actions";
 import type { AdminUser } from "./actions";
 import type { UserRole } from "@/lib/roles";
+import { UserAccessModal } from "@/components/modals/user-access-modal";
 import { BulkCreateModal } from "@/components/modals/bulk-create-modal";
 
 const ALL_ROLES = [
@@ -203,6 +204,7 @@ function UsersTab({
   const [showAddModal, setShowAddModal] = useState(false);
   const [showResetModal, setShowResetModal] = useState<AdminUser | null>(null);
   const [editing, setEditing] = useState<AdminUser | null>(null);
+  const [accessUser, setAccessUser] = useState<AdminUser | null>(null);
 
   const visible = users.filter((u) => u.role !== "system_admin");
   const active = visible.filter((u) => u.is_active);
@@ -445,6 +447,15 @@ function UsersTab({
                       <Button
                         variant="outline"
                         size="sm"
+                        className="h-7 text-xs px-2.5 text-blue-600 border-blue-200 hover:bg-blue-50 dark:text-blue-400 dark:border-blue-800 dark:hover:bg-blue-950/30"
+                        onClick={() => setAccessUser(user)}
+                        title="Per-user field access overrides"
+                      >
+                        Access
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
                         className="h-7 text-xs px-2.5 text-orange-600 border-orange-200 hover:bg-orange-50 dark:text-orange-400 dark:border-orange-800 dark:hover:bg-orange-950/30"
                         onClick={() => setShowResetModal(user)}
                       >
@@ -535,6 +546,19 @@ function UsersTab({
           startTransition={startTransition}
         />
       )}
+      <UserAccessModal
+        open={!!accessUser}
+        user={
+          accessUser
+            ? {
+                id: accessUser.id,
+                full_name: accessUser.full_name,
+                role: accessUser.role as UserRole,
+              }
+            : null
+        }
+        onClose={() => setAccessUser(null)}
+      />
     </div>
   );
 }

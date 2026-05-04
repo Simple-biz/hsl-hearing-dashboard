@@ -169,6 +169,86 @@ export async function deleteUser(userId: number) {
   await logAction("user_deleted", `${rows[0]?.full_name} deleted`);
 }
 
+// ═══════════ FIELD ACCESS OVERRIDES ═══════════
+// Per-user, per-page, per-field edit overrides on top of role defaults.
+// See src/lib/field-access.ts for the resolver and src/lib/field-access-catalog.ts
+// for the available pages + fields.
+
+import { requireAuth } from "@/lib/session";
+import {
+  listUserFieldAccess,
+  setUserFieldAccess as _setUserFieldAccess,
+  resetUserFieldAccessForPage,
+  type UserFieldAccessRow,
+} from "@/lib/field-access";
+import type { FieldAccessPageKey } from "@/lib/field-access-catalog";
+
+/** Admin: load every override for a user on a page (drives the modal). */
+export async function getUserFieldAccess(
+  userId: number,
+  pageKey: FieldAccessPageKey,
+): Promise<UserFieldAccessRow[]> {
+  return listUserFieldAccess(userId, pageKey);
+}
+
+/**
+ * Admin: persist a single checkbox change.
+ * - canEdit = true / false → upsert override row
+ * - canEdit = null         → delete override row (revert that one field
+ *   to role default; cleaner than storing redundant rows that match the
+ *   role's current default)
+ */
+export async function setUserFieldAccess(
+  userId: number,
+  pageKey: FieldAccessPageKey,
+  fieldKey: string,
+  canEdit: boolean | null,
+): Promise<{ success: true }> {
+  const session = await requireAuth();
+  await _setUserFieldAccess(
+    userId,
+    pageKey,
+    fieldKey,
+    canEdit,
+    session.user.id ?? null,
+  );
+  const { rows } = await db.query(
+    "SELECT full_name FROM users WHERE id = $1",
+    [userId],
+  );
+  const target = rows[0]?.full_name || `User #${userId}`;
+  const verb =
+    canEdit === null ? "reset" : canEdit ? "granted" : "revoked";
+  await logAction(
+    "user_access_changed",
+    `${verb} ${pageKey}.${fieldKey} for ${target}`,
+  );
+  return { success: true };
+}
+
+/**
+ * Admin: wipe every override for a user on a page (the modal's
+ * "Apply Role Defaults" button).
+ */
+export async function resetUserFieldAccess(
+  userId: number,
+  pageKey: FieldAccessPageKey,
+): Promise<{ success: true; cleared: number }> {
+  const cleared = await resetUserFieldAccessForPage(userId, pageKey);
+  if (cleared > 0) {
+    const { rows } = await db.query(
+      "SELECT full_name FROM users WHERE id = $1",
+      [userId],
+    );
+    const target = rows[0]?.full_name || `User #${userId}`;
+    await logAction(
+      "user_access_reset",
+      `Reset all ${pageKey} access overrides for ${target} (${cleared} field${cleared === 1 ? "" : "s"})`,
+    );
+  }
+  return { success: true, cleared };
+}
+
 // ═══════════ CONFIG OPTIONS ═══════════
 
 export interface ConfigOption {
