@@ -531,11 +531,16 @@ export async function fetchPostHrgDeadlineHistory(
   return rows as PostHrgDeadlineHistoryEntry[];
 }
 
+export type UpdateHearingResult =
+  | { ok: true }
+  | { ok: false; conflict: { field: string; currentValue: string } };
+
 export async function updateHearing(
   hearingId: number,
   field: string,
   value: string | number | boolean | null,
-) {
+  options?: { expectedCurrent?: string | null; override?: boolean },
+): Promise<UpdateHearingResult> {
   const { logAction } = await import("@/lib/activity-log");
   const ALLOWED_FIELDS = [
     "assigned_rep_id",
@@ -654,6 +659,28 @@ export async function updateHearing(
   );
   const oldValue = oldRows[0]?.[field];
   const claimant = oldRows[0]?.claimant || `Hearing #${hearingId}`;
+
+  // Concurrency guard for brief_assigned_to: if the DB has a value that the
+  // client didn't know about, refuse the write and surface the actual current
+  // assignee so the user can choose to override. The client retries with
+  // options.override=true after confirming. Returned as data (not thrown) so
+  // the message survives Next.js's production error sanitization.
+  if (field === "brief_assigned_to" && !options?.override) {
+    const currentStr = oldValue ? String(oldValue).trim() : "";
+    const expected = options?.expectedCurrent;
+    const expectedStr = expected ? String(expected).trim() : "";
+    const incomingStr = value ? String(value).trim() : "";
+    if (
+      currentStr &&
+      currentStr !== expectedStr &&
+      currentStr !== incomingStr
+    ) {
+      return {
+        ok: false,
+        conflict: { field, currentValue: currentStr },
+      };
+    }
+  }
 
   // When deadline changes, track the previous date and who changed it.
   // Also append a row to post_hrg_deadline_history for the full audit trail
@@ -811,6 +838,8 @@ export async function updateHearing(
       `${fieldLabel}: '${oldDisplay}' → '${newDisplay}' for: ${claimant}`,
     );
   }
+
+  return { ok: true };
 }
 
 // ── Add a post HRG note (server-side read-modify-write to avoid race conditions) ──
