@@ -1645,13 +1645,13 @@ const ALL_COLUMNS: ColumnDef[] = [
   { key: "rep_docs_complete", label: "Rep Docs", w: 65 },
   { key: "fee_agreement_complete", label: "Fee Agmt", w: 65 },
   { key: "brief_assigned_to", label: "Brief", w: 100 },
+  { key: "phi_sheet_complete", label: "PHI", w: 55 },
   { key: "mr_team_id", label: "Medical Team", w: 110 },
   { key: "medical_record_link", label: "MR Worksheet", w: 95 },
   { key: "medical_record_status", label: "MR Status", w: 90 },
   { key: "rfc_status", label: "RFC", w: 80 },
   { key: "five_day_notice", label: "5-Day", w: 55 },
   { key: "task_assigned", label: "Task Assigned", w: 95 },
-  { key: "phi_sheet_complete", label: "PHI", w: 55 },
   { key: "post_hrg_review", label: "Post Hrg Review", w: 130 },
   { key: "post_hrg_dev_status", label: "Post Hrg Dev", w: 120 },
 ];
@@ -2825,8 +2825,17 @@ export function DashboardClient({
       // Server update in background. On failure, roll back the optimistic
       // change and surface the error so the user knows it didn't stick.
       // Most common cause now: per-user field-access denial.
-      updateHearing(hearingId, field, value).catch((e) => {
-        console.error("Update failed:", e);
+      // For brief_assigned_to we send the prior value the client thinks is in
+      // the DB so the server can detect a stale page and reject with a
+      // BRIEF_CONFLICT error carrying the actual current assignee.
+      const updateOptions =
+        field === "brief_assigned_to"
+          ? {
+              expectedCurrent:
+                priorValue == null ? null : String(priorValue),
+            }
+          : undefined;
+      const rollback = () => {
         setHearings((prev) =>
           prev.map((h) => {
             if (h.id !== hearingId) return h;
@@ -2850,12 +2859,92 @@ export function DashboardClient({
             p ? ({ ...p, [field]: priorValue as never } as typeof p) : null,
           );
         }
-        const message =
-          e instanceof Error ? e.message : "Update failed — change rolled back";
-        if (updateToastTimer.current) clearTimeout(updateToastTimer.current);
-        setUpdateToast(`⚠️ ${message}`);
-        updateToastTimer.current = setTimeout(() => setUpdateToast(null), 5000);
-      });
+      };
+
+      updateHearing(hearingId, field, value, updateOptions)
+        .then((result) => {
+          if (!result || result.ok) return;
+
+          // Concurrency conflict — prompt with the real current value and let
+          // the user override.
+          const currentAssignee = result.conflict.currentValue;
+          setHearings((prev) =>
+            prev.map((h) =>
+              h.id === hearingId
+                ? ({ ...h, [field]: currentAssignee } as typeof h)
+                : h,
+            ),
+          );
+          const proceed = window.confirm(
+            `Brief is already assigned to "${currentAssignee}". Override with "${value || "(unassigned)"}"?`,
+          );
+          if (!proceed) {
+            if (updateToastTimer.current) clearTimeout(updateToastTimer.current);
+            setUpdateToast(`Kept current assignee: ${currentAssignee}`);
+            updateToastTimer.current = setTimeout(
+              () => setUpdateToast(null),
+              3000,
+            );
+            return;
+          }
+          // Re-apply optimistic update and retry with override flag
+          setHearings((prev) =>
+            prev.map((h) =>
+              h.id === hearingId ? ({ ...h, [field]: value } as typeof h) : h,
+            ),
+          );
+          updateHearing(hearingId, field, value, { override: true })
+            .then((retry) => {
+              if (retry && !retry.ok) {
+                // Override should never conflict, but guard anyway
+                setHearings((prev) =>
+                  prev.map((h) =>
+                    h.id === hearingId
+                      ? ({
+                          ...h,
+                          [field]: retry.conflict.currentValue,
+                        } as typeof h)
+                      : h,
+                  ),
+                );
+              }
+            })
+            .catch((err) => {
+              console.error("Override update failed:", err);
+              setHearings((prev) =>
+                prev.map((h) =>
+                  h.id === hearingId
+                    ? ({
+                        ...h,
+                        [field]: currentAssignee,
+                      } as typeof h)
+                    : h,
+                ),
+              );
+              if (updateToastTimer.current)
+                clearTimeout(updateToastTimer.current);
+              setUpdateToast(
+                `⚠️ ${err instanceof Error ? err.message : "Override failed"}`,
+              );
+              updateToastTimer.current = setTimeout(
+                () => setUpdateToast(null),
+                5000,
+              );
+            });
+        })
+        .catch((e) => {
+          // Genuine failure (auth, field-access, DB error) — roll back.
+          console.error("Update failed:", e);
+          rollback();
+          const message =
+            e instanceof Error ? e.message : "Update failed — change rolled back";
+          if (updateToastTimer.current) clearTimeout(updateToastTimer.current);
+          setUpdateToast(`⚠️ ${message}`);
+          updateToastTimer.current = setTimeout(
+            () => setUpdateToast(null),
+            5000,
+          );
+        });
     },
     [representatives, mrTeams, postHrgHearing, hearings],
   );
