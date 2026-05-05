@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { logAction } from "@/lib/activity-log";
+import { syncRepDocsStatusForHearingIds } from "@/lib/rep-docs-decision-sync";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -381,6 +382,14 @@ export async function POST(req: NextRequest) {
         }
       }
     }
+  }
+
+  // Seed rep_docs.overall_status for any imported hearings whose decision is
+  // already a Withdrawn / Postponed / Favorable variant — otherwise the rep_docs
+  // row gets created later by ensureRowsForHearings() with a default status and
+  // never picks up the imported decision.
+  if (importedIds.length > 0) {
+    await syncRepDocsStatusForHearingIds(importedIds);
   }
 
   // Log activity
