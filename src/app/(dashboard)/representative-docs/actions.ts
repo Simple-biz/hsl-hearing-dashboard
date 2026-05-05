@@ -726,9 +726,27 @@ export async function fetchRepDocsChanges(params: {
   }
 
   if (params.assignedTo?.trim()) {
-    conditions.push(`a.description ILIKE $${idx}`);
+    // Two ways an activity can be "for" this assignee:
+    //   (a) the actor is the user linked to that assignee row (resolved via
+    //       the rep_docs_assignees.user_id FK we added in the May 2026
+    //       migration). This catches actions Madison *did*.
+    //   (b) the description literally mentions the name (catches assignee
+    //       changes like "assigned_to → 'Madison' for ..."). Fallback for
+    //       unlinked assignees and for "actions about Madison" done by
+    //       someone else.
+    conditions.push(
+      `(
+         a.user_id IN (
+           SELECT user_id FROM rep_docs_assignees
+           WHERE LOWER(TRIM(name)) = LOWER(TRIM($${idx}))
+             AND user_id IS NOT NULL
+         )
+         OR a.description ILIKE $${idx + 1}
+       )`,
+    );
+    values.push(params.assignedTo.trim());
     values.push(`%${params.assignedTo.trim()}%`);
-    idx++;
+    idx += 2;
   }
 
   const where = `WHERE ${conditions.join(" AND ")}`;
