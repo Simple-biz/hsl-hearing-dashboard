@@ -151,8 +151,10 @@ export interface ConfigOption {
 export interface RepDocsAssignee {
   id: number;
   name: string;
+  bg_color: string | null;
   is_active: boolean;
   display_order: number;
+  user_id: number | null;
 }
 
 export interface ActivityLog {

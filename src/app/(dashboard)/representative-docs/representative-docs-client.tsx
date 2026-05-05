@@ -1320,6 +1320,7 @@ export function RepresentativeDocsClient({
               localStorage.setItem("rep-docs-changes-seen-at", ts);
               setChangeCount(0);
             }}
+            assigneeNames={assigneeNames}
           />
         )}
       </div>

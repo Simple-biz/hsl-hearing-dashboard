@@ -593,8 +593,14 @@ export interface RepDocsChange {
 
 export async function fetchRepDocsChanges(params: {
   since?: string;
-  category?: "status" | "field" | "rep" | "all";
+  category?: "status" | "field" | "rep" | "assigned_to" | "all";
   search?: string;
+  /**
+   * Filter activities whose description mentions this assignee name. Substring
+   * match against the activity description, so it catches assignment changes
+   * naming the person, plus any other field updates that reference them.
+   */
+  assignedTo?: string;
   page?: number;
   pageSize?: number;
   dateFrom?: string;
@@ -634,6 +640,12 @@ export async function fetchRepDocsChanges(params: {
     case "rep":
       actionFilter = repActions;
       break;
+    case "assigned_to":
+      // Rep-docs assignee changes are logged as `rep_docs_field_updated` with
+      // a description starting with `assigned_to →`. We narrow on description
+      // below.
+      actionFilter = ["rep_docs_field_updated"];
+      break;
     default:
       actionFilter = allActions;
   }
@@ -647,6 +659,15 @@ export async function fetchRepDocsChanges(params: {
     conditions.push(
       `(a.action != 'field_updated' OR a.description ILIKE '%Decision%')`,
     );
+  }
+
+  // "Assigned To" tab: narrow rep_docs_field_updated to assignee changes only.
+  if (params.category === "assigned_to") {
+    conditions.push(`a.description ILIKE 'assigned_to %'`);
+  }
+  // "Field Updates" tab: exclude assignee changes so the two tabs don't overlap.
+  if (params.category === "field") {
+    conditions.push(`a.description NOT ILIKE 'assigned_to %'`);
   }
 
   // For rep tab, only show changes for hearings tracked in rep docs
@@ -683,6 +704,12 @@ export async function fetchRepDocsChanges(params: {
   if (params.search?.trim()) {
     conditions.push(`a.description ILIKE $${idx}`);
     values.push(`%${params.search.trim()}%`);
+    idx++;
+  }
+
+  if (params.assignedTo?.trim()) {
+    conditions.push(`a.description ILIKE $${idx}`);
+    values.push(`%${params.assignedTo.trim()}%`);
     idx++;
   }
 
