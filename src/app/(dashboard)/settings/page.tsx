@@ -6,6 +6,7 @@ import {
   getRepDocsAssignees,
   getOhoAssignees,
   getMrSpecialists,
+  getUsers,
 } from "@/app/(dashboard)/admin/actions";
 import { SettingsClient } from "./settings-client";
 
@@ -26,6 +27,7 @@ export default async function SettingsPage() {
     assignees,
     ohoAssignees,
     specialists,
+    allUsers,
   ] = await Promise.all([
     getConfigOptions(),
     getMrTeams(),
@@ -33,7 +35,15 @@ export default async function SettingsPage() {
     getRepDocsAssignees(),
     getOhoAssignees(),
     getMrSpecialists(),
+    getUsers(),
   ]);
+
+  // Only surface active users in the assignee-link picker — inactive accounts
+  // shouldn't show up as new options, though existing links to them are still
+  // resolved by the join in getRepDocsAssignees.
+  const activeUsers = allUsers
+    .filter((u) => u.is_active)
+    .map((u) => ({ id: u.id, full_name: u.full_name, email: u.email }));
 
   return (
     <SettingsClient
@@ -44,6 +54,7 @@ export default async function SettingsPage() {
       ohoAssignees={ohoAssignees}
       specialists={specialists}
       userRole={session.user.role}
+      linkableUsers={activeUsers}
     />
   );
 }

@@ -24,13 +24,14 @@ const REP_CHANGE_ACTIONS = new Set([
   "rep_auto_assigned",
 ]);
 
-type Tab = "all" | "status" | "field" | "rep";
+type Tab = "all" | "status" | "field" | "rep" | "assigned_to";
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "all", label: "All Changes" },
   { key: "status", label: "Status / Decision" },
   { key: "field", label: "Field Updates" },
   { key: "rep", label: "Rep Changes" },
+  { key: "assigned_to", label: "Assigned To" },
 ];
 
 const DATE_PRESETS = [
@@ -75,14 +76,18 @@ export function RepDocsChangesModal({
   onRefreshPage,
   lastSeenAt,
   onMarkSeen,
+  assigneeNames,
 }: {
   onClose: () => void;
   onRefreshPage: () => void;
   lastSeenAt: string | null;
   onMarkSeen: (ts: string) => void;
+  /** List of assignee names for the "Assignee" filter dropdown. */
+  assigneeNames: string[];
 }) {
   const [tab, setTab] = useState<Tab>("all");
   const [search, setSearch] = useState("");
+  const [assigneeFilter, setAssigneeFilter] = useState("");
   const [datePreset, setDatePreset] = useState("today");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -143,6 +148,7 @@ export function RepDocsChangesModal({
       preset: string,
       from: string,
       to: string,
+      assignee: string,
     ) => {
       setLoading(true);
       try {
@@ -150,6 +156,7 @@ export function RepDocsChangesModal({
         const res = await fetchRepDocsChanges({
           category: t === "all" ? "all" : t,
           search: s || undefined,
+          assignedTo: assignee || undefined,
           page: p,
           pageSize,
           ...dateRange,
@@ -168,7 +175,7 @@ export function RepDocsChangesModal({
 
   useEffect(() => {
     const init = async () => {
-      await load(tab, search, page, datePreset, dateFrom, dateTo);
+      await load(tab, search, page, datePreset, dateFrom, dateTo, assigneeFilter);
     };
     init();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -177,18 +184,18 @@ export function RepDocsChangesModal({
   const changeTab = (t: Tab) => {
     setTab(t);
     setPage(1);
-    load(t, search, 1, datePreset, dateFrom, dateTo);
+    load(t, search, 1, datePreset, dateFrom, dateTo, assigneeFilter);
   };
 
   const changeSearch = (s: string) => {
     setSearch(s);
     setPage(1);
-    load(tab, s, 1, datePreset, dateFrom, dateTo);
+    load(tab, s, 1, datePreset, dateFrom, dateTo, assigneeFilter);
   };
 
   const changePage = (p: number) => {
     setPage(p);
-    load(tab, search, p, datePreset, dateFrom, dateTo);
+    load(tab, search, p, datePreset, dateFrom, dateTo, assigneeFilter);
   };
 
   const changePreset = (preset: string) => {
@@ -198,7 +205,13 @@ export function RepDocsChangesModal({
       setDateTo("");
     }
     setPage(1);
-    load(tab, search, 1, preset, "", "");
+    load(tab, search, 1, preset, "", "", assigneeFilter);
+  };
+
+  const changeAssignee = (name: string) => {
+    setAssigneeFilter(name);
+    setPage(1);
+    load(tab, search, 1, datePreset, dateFrom, dateTo, name);
   };
 
   const toggleAck = async (activityId: number, next: boolean) => {
@@ -310,6 +323,19 @@ export function RepDocsChangesModal({
             className="h-8 text-xs flex-1 min-w-32"
           />
           <select
+            className={SEL + " min-w-36"}
+            value={assigneeFilter}
+            onChange={(e) => changeAssignee(e.target.value)}
+            title="Filter changes by assignee name (matches anywhere in the description)"
+          >
+            <option value="">All Assignees</option>
+            {assigneeNames.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+          <select
             className={SEL + " min-w-32"}
             value={datePreset}
             onChange={(e) => changePreset(e.target.value)}
@@ -328,7 +354,7 @@ export function RepDocsChangesModal({
                 onChange={(e) => {
                   setDateFrom(e.target.value);
                   setPage(1);
-                  load(tab, search, 1, "custom", e.target.value, dateTo);
+                  load(tab, search, 1, "custom", e.target.value, dateTo, assigneeFilter);
                 }}
                 className="h-8 w-30 text-xs"
               />
@@ -339,7 +365,7 @@ export function RepDocsChangesModal({
                 onChange={(e) => {
                   setDateTo(e.target.value);
                   setPage(1);
-                  load(tab, search, 1, "custom", dateFrom, e.target.value);
+                  load(tab, search, 1, "custom", dateFrom, e.target.value, assigneeFilter);
                 }}
                 className="h-8 w-30 text-xs"
               />

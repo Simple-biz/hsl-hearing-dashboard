@@ -469,11 +469,22 @@ export interface RepDocsAssignee {
   bg_color: string | null;
   is_active: boolean;
   display_order: number;
+  // Optional FK to the linked user account. NULL = unlinked (e.g. contractor,
+  // shared queue, label that doesn't map to a user). Joined name/email are
+  // populated by the LEFT JOIN in getRepDocsAssignees for display in the
+  // settings UI.
+  user_id: number | null;
+  user_full_name: string | null;
+  user_email: string | null;
 }
 
 export async function getRepDocsAssignees(): Promise<RepDocsAssignee[]> {
   const { rows } = await db.query(
-    "SELECT id, name, bg_color, is_active, display_order FROM rep_docs_assignees ORDER BY display_order",
+    `SELECT a.id, a.name, a.bg_color, a.is_active, a.display_order,
+            a.user_id, u.full_name AS user_full_name, u.email AS user_email
+     FROM rep_docs_assignees a
+     LEFT JOIN users u ON u.id = a.user_id
+     ORDER BY a.display_order`,
   );
   return rows as RepDocsAssignee[];
 }
@@ -482,17 +493,33 @@ export async function saveRepDocsAssignee(data: {
   id?: number;
   name: string;
   bg_color?: string;
+  /**
+   * User id to link this assignee to. Pass `null` to clear an existing link,
+   * `undefined` to leave the current value untouched (edits where the picker
+   * isn't surfaced).
+   */
+  user_id?: number | null;
 }) {
   if (data.id) {
-    await db.query(
-      "UPDATE rep_docs_assignees SET name=$1, bg_color=$2 WHERE id=$3",
-      [data.name, data.bg_color || null, data.id],
-    );
+    if (data.user_id === undefined) {
+      await db.query(
+        "UPDATE rep_docs_assignees SET name=$1, bg_color=$2 WHERE id=$3",
+        [data.name, data.bg_color || null, data.id],
+      );
+    } else {
+      await db.query(
+        "UPDATE rep_docs_assignees SET name=$1, bg_color=$2, user_id=$3 WHERE id=$4",
+        [data.name, data.bg_color || null, data.user_id, data.id],
+      );
+    }
     return data.id;
   } else {
     const { rows } = await db.query(
-      "INSERT INTO rep_docs_assignees (name, bg_color, is_active, display_order) VALUES ($1,$2,true, (SELECT COALESCE(MAX(display_order),0)+1 FROM rep_docs_assignees)) RETURNING id",
-      [data.name, data.bg_color || null],
+      `INSERT INTO rep_docs_assignees (name, bg_color, user_id, is_active, display_order)
+       VALUES ($1, $2, $3, true,
+               (SELECT COALESCE(MAX(display_order),0)+1 FROM rep_docs_assignees))
+       RETURNING id`,
+      [data.name, data.bg_color || null, data.user_id ?? null],
     );
     return rows[0].id as number;
   }
