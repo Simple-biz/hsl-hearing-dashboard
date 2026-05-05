@@ -29,24 +29,86 @@ export function mapDecisionToRepDocsStatus(
   return null;
 }
 
+// Statuses that come from the hearing's decision (vs. the workflow checkboxes).
+// When the decision changes away from a value that maps here, the row should
+// fall back to the workflow-derived status — otherwise it'd stay stuck on the
+// stale decision-derived value (e.g. still in the Withdrawn modal).
+const DECISION_DERIVED_STATUSES = new Set([
+  "Withdrawn",
+  "Postponed",
+  "Favorable",
+]);
+
+// Mirror representative-docs/actions.ts:WORKFLOW_FIELDS so the helper can
+// recompute the workflow-derived status without importing from that file
+// (which is a "use server" module).
+const WORKFLOW_FIELDS = [
+  "uploaded_noh",
+  "sent_repdocs_to_cl",
+  "repdocs_signed",
+  "contact_ltr",
+  "repdocs_split",
+  "repdocs_uploaded_chronicle",
+  "oho_confirmation",
+] as const;
+
 /**
- * Sync the rep_docs.overall_status for one hearing.
- * No-op if the decision doesn't map to a tracked status.
- * Returns the status that was written, or null if nothing was synced.
+ * Sync rep_docs.overall_status for one hearing.
+ *
+ * Three branches:
+ *   1. New decision maps to Withdrawn/Postponed/Favorable → write it.
+ *   2. New decision is unmapped (or NULL) AND the current status was decision-
+ *      derived → revert to the workflow-derived status (Not Started /
+ *      Incomplete / Complete) so the row leaves the Withdrawn / etc. modals.
+ *   3. New decision is unmapped AND the current status is already workflow-
+ *      derived → no-op.
+ *
+ * Returns the status that was written, or null if nothing was changed.
  */
 export async function syncRepDocsStatusForHearing(
   hearingId: number,
   decision: string | null | undefined,
 ): Promise<string | null> {
   const status = mapDecisionToRepDocsStatus(decision);
-  if (!status) return null;
+
+  if (status) {
+    await db.query(
+      `UPDATE representative_docs
+       SET overall_status = $1, updated_at = NOW()
+       WHERE hearing_id = $2`,
+      [status, hearingId],
+    );
+    return status;
+  }
+
+  // Unmapped / cleared decision. Only act if we'd be undoing a prior
+  // decision-derived status — otherwise leave the workflow-derived value
+  // alone.
+  const { rows } = await db.query(
+    `SELECT overall_status, ${WORKFLOW_FIELDS.join(", ")}
+     FROM representative_docs WHERE hearing_id = $1`,
+    [hearingId],
+  );
+  if (!rows[0]) return null;
+  const current = (rows[0].overall_status as string | null) ?? "";
+  if (!DECISION_DERIVED_STATUSES.has(current)) return null;
+
+  const flags = WORKFLOW_FIELDS.map((f) => Boolean(rows[0][f]));
+  const truthy = flags.filter(Boolean).length;
+  const reverted =
+    truthy === 0
+      ? "Not Started"
+      : truthy === flags.length
+        ? "Complete"
+        : "Incomplete";
+
   await db.query(
     `UPDATE representative_docs
      SET overall_status = $1, updated_at = NOW()
      WHERE hearing_id = $2`,
-    [status, hearingId],
+    [reverted, hearingId],
   );
-  return status;
+  return reverted;
 }
 
 /**
