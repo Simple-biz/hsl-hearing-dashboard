@@ -33,6 +33,7 @@ import {
   fetchRepDocsPage,
   updateRepDocsField,
   updateHearingLink,
+  acknowledgeRepDocs,
   type RepDocsRow,
   type RepDocsStats,
   type RepDocsAssigneeOption,
@@ -522,7 +523,12 @@ export function RepresentativeDocsClient({
   // (anyone on the page can edit anything) overlaid with per-user overrides.
   const canEditRepDocsField = useCallback(
     (fieldKey: string): boolean =>
-      resolveFieldAccess(userRole, "representative_docs", fieldKey, fieldOverrides),
+      resolveFieldAccess(
+        userRole,
+        "representative_docs",
+        fieldKey,
+        fieldOverrides,
+      ),
     [userRole, fieldOverrides],
   );
 
@@ -822,6 +828,58 @@ export function RepresentativeDocsClient({
     [],
   );
 
+  const handleAcknowledge = useCallback(
+    async (id: number) => {
+      // Optimistic — set timestamp + caller's name immediately so the badge
+      // swaps to "Acknowledged" without waiting on the server.
+      const nowIso = new Date().toISOString();
+      setRecords((prev) =>
+        prev.map((r) =>
+          r.id === id
+            ? {
+                ...r,
+                rep_docs_acknowledged_at: nowIso,
+                rep_docs_acknowledged_by_name: userName,
+              }
+            : r,
+        ),
+      );
+      try {
+        const result = await acknowledgeRepDocs(id);
+        // Reconcile with server timestamp/user id/display name
+        setRecords((prev) =>
+          prev.map((r) =>
+            r.id === id
+              ? {
+                  ...r,
+                  rep_docs_acknowledged_at: result.acknowledgedAt,
+                  rep_docs_acknowledged_by: result.acknowledgedBy,
+                  rep_docs_acknowledged_by_name:
+                    result.acknowledgedByName ?? userName,
+                }
+              : r,
+          ),
+        );
+        toast.success("Acknowledged");
+      } catch (e) {
+        // Roll back optimistic change
+        setRecords((prev) =>
+          prev.map((r) =>
+            r.id === id
+              ? {
+                  ...r,
+                  rep_docs_acknowledged_at: null,
+                  rep_docs_acknowledged_by_name: null,
+                }
+              : r,
+          ),
+        );
+        toast.error(e instanceof Error ? e.message : "Acknowledge failed");
+      }
+    },
+    [userName],
+  );
+
   const hasActiveFilters =
     search ||
     statusFilter !== "all" ||
@@ -989,6 +1047,7 @@ export function RepresentativeDocsClient({
               <option value="custom">Custom Range...</option>
             </select>
 
+
             {/* Custom date range */}
             {dateFilters.preset === "custom" && (
               <div className="flex items-center gap-1.5">
@@ -1144,6 +1203,7 @@ export function RepresentativeDocsClient({
           isPending={isPending}
           onField={handleField}
           onLink={handleLink}
+          onAcknowledge={handleAcknowledge}
           onRowClick={(row) => setSelectedRow(row)}
           onNotesClick={(row, rect) => {
             setNotesRow(row);
@@ -1222,7 +1282,12 @@ export function RepresentativeDocsClient({
           onOpenNotes={(r) => {
             // Position notes panel to the left of the detail panel
             const panelLeft = window.innerWidth - 448; // max-w-md ≈ 448px
-            const rect = new DOMRect(panelLeft - 8, window.innerHeight / 2 - 120, 0, 0);
+            const rect = new DOMRect(
+              panelLeft - 8,
+              window.innerHeight / 2 - 120,
+              0,
+              0,
+            );
             setNotesRow(r);
             setNotesAnchorRect(rect);
           }}
@@ -1255,6 +1320,7 @@ export function RepresentativeDocsClient({
               localStorage.setItem("rep-docs-changes-seen-at", ts);
               setChangeCount(0);
             }}
+            assigneeNames={assigneeNames}
           />
         )}
       </div>
@@ -1290,6 +1356,27 @@ const OHO_W = 110;
 const CHECKER_STATUS_W = 100;
 const WORKFLOW_CELL_W = 72;
 const CHECKER_CELL_W = 72;
+// Width of the "14d Mark" column (date 14 days before hearing_date) — sits at
+// the start of the scrollable area, right after the frozen Status column.
+const TFOURTEEN_W = 88;
+
+// Compute the date string 14 days before the given hearing date. Returns "" if
+// the input is invalid.
+function fmtMinus14(dateStr: string | null): string {
+  if (!dateStr) return "";
+  // Pin to noon to avoid timezone drift on date-only strings.
+  const input = /^\d{4}-\d{2}-\d{2}$/.test(dateStr)
+    ? dateStr + "T12:00:00"
+    : dateStr;
+  const d = new Date(input);
+  if (isNaN(d.getTime())) return "";
+  d.setDate(d.getDate() - 14);
+  return d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "2-digit",
+  });
+}
 
 function RepDocsTable({
   records,
@@ -1298,6 +1385,7 @@ function RepDocsTable({
   isPending,
   onField,
   onLink,
+  onAcknowledge,
   onRowClick,
   onNotesClick,
 }: {
@@ -1307,10 +1395,13 @@ function RepDocsTable({
   isPending: boolean;
   onField: (id: number, field: string, value: string | boolean | null) => void;
   onLink: (id: number, field: string, value: string | null) => void;
+  onAcknowledge: (id: number) => void;
   onRowClick: (row: RepDocsRow) => void;
   onNotesClick: (row: RepDocsRow, rect: DOMRect) => void;
 }) {
   const parentRef = useRef<HTMLDivElement>(null);
+  // 44 (original) — acknowledge badge sits beside the assignee dropdown,
+  // with name/date stacked compactly inside the badge itself.
   const ROW_H = 44;
 
   const virtualizer = useVirtualizer({
@@ -1322,6 +1413,7 @@ function RepDocsTable({
 
   const totalWidth =
     FROZEN_TOTAL_W +
+    TFOURTEEN_W +
     WORKFLOW_COLUMNS.length * WORKFLOW_CELL_W +
     OHO_W +
     CHECKER_COLUMNS.length * CHECKER_CELL_W +
@@ -1349,7 +1441,7 @@ function RepDocsTable({
       >
         <table
           className="border-collapse text-sm"
-          style={{ width: "100%", minWidth: totalWidth }}
+          style={{ width: "max(100%, " + totalWidth + "px)" }}
         >
           <thead className="sticky top-0 z-30">
             <tr>
@@ -1372,6 +1464,16 @@ function RepDocsTable({
                   {col.label}
                 </th>
               ))}
+              <th
+                className={cn(
+                  "h-10 whitespace-nowrap border-b-2 border-border px-2 text-left text-[11px] font-bold uppercase tracking-wide text-foreground/80",
+                  headerBg,
+                )}
+                style={{ width: TFOURTEEN_W, minWidth: TFOURTEEN_W }}
+                title="14 days before the hearing date — prep deadline marker"
+              >
+                14d Mark
+              </th>
               {WORKFLOW_COLUMNS.map((c) => (
                 <th
                   key={c.key as string}
@@ -1416,11 +1518,20 @@ function RepDocsTable({
               >
                 Chk Status
               </th>
-              <th
-                className={cn("h-10 border-b-2 border-border", headerBg)}
-                style={{ width: "auto" }}
+              {/* <th
+                className={cn("h-10 border-b-2 border-border w-full", headerBg)}
+                style={{ minWidth: 0 }}
                 aria-hidden="true"
-              />
+              /> */}
+              <th
+                className={cn(
+                  "h-10 whitespace-nowrap border-b-2 border-border px-2 text-left text-[11px] font-bold uppercase tracking-wide text-foreground/80 w-full",
+                  headerBg,
+                )}
+                style={{ minWidth: 32 }}
+              >
+                Notes
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -1429,6 +1540,7 @@ function RepDocsTable({
                 <td
                   colSpan={
                     FROZEN_COLS.length +
+                    1 + // 14d Mark
                     WORKFLOW_COLUMNS.length +
                     1 +
                     CHECKER_COLUMNS.length +
@@ -1470,6 +1582,7 @@ function RepDocsTable({
                       ohoAssignees={ohoAssignees}
                       onField={onField}
                       onLink={onLink}
+                      onAcknowledge={onAcknowledge}
                       onRowClick={onRowClick}
                       onNotesClick={onNotesClick}
                     />
@@ -1516,6 +1629,7 @@ const RepDocsRowView = memo(
     ohoAssignees,
     onField,
     onLink,
+    onAcknowledge,
     onRowClick,
     onNotesClick,
   }: {
@@ -1529,6 +1643,7 @@ const RepDocsRowView = memo(
       value: string | boolean | null,
     ) => void;
     onLink: (id: number, field: string, value: string | null) => void;
+    onAcknowledge: (id: number) => void;
     onRowClick: (row: RepDocsRow) => void;
     onNotesClick: (row: RepDocsRow, rect: DOMRect) => void;
   }) {
@@ -1569,7 +1684,18 @@ const RepDocsRowView = memo(
         )}
         onClick={(e) => {
           const tag = (e.target as HTMLElement).tagName;
-          if (["INPUT", "SELECT", "OPTION", "BUTTON", "A", "SVG", "PATH"].includes(tag)) return;
+          if (
+            [
+              "INPUT",
+              "SELECT",
+              "OPTION",
+              "BUTTON",
+              "A",
+              "SVG",
+              "PATH",
+            ].includes(tag)
+          )
+            return;
           onRowClick(row);
         }}
       >
@@ -1600,44 +1726,96 @@ const RepDocsRowView = memo(
               (a) => a.name === row.assigned_to,
             );
             const bgColor = selectedAssignee?.bg_color;
+            const isAcknowledged = !!row.rep_docs_acknowledged_at;
+            const ackName = row.rep_docs_acknowledged_by_name?.trim() || "";
+            const ackDate = row.rep_docs_acknowledged_at
+              ? formatDate(row.rep_docs_acknowledged_at)
+              : "";
+            // Acknowledgement only applies to hearings from May 2026 onwards;
+            // older rows don't show a button or badge in this slot.
+            const ackEligible =
+              !!row.hearing_date && row.hearing_date >= "2026-05-01";
             return (
-              <select
-                className="h-6 w-full rounded border border-transparent px-1 text-[11px] cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-400 hover:border-border"
-                value={row.assigned_to ?? ""}
-                style={
-                  bgColor
-                    ? {
-                        backgroundColor: bgColor,
-                        color: isLight(bgColor) ? "#1f2937" : "#fff",
-                      }
-                    : undefined
-                }
-                onChange={(e) =>
-                  onField(row.id, "assigned_to", e.target.value || null)
-                }
-              >
-                <option
-                  value=""
-                  style={{ backgroundColor: "white", color: "#333" }}
+              <div className="flex items-start gap-1">
+                <select
+                  className="h-6 min-w-0 flex-1 rounded border border-transparent px-1 text-[11px] cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-400 hover:border-border"
+                  value={row.assigned_to ?? ""}
+                  style={
+                    bgColor
+                      ? {
+                          backgroundColor: bgColor,
+                          color: isLight(bgColor) ? "#1f2937" : "#fff",
+                        }
+                      : undefined
+                  }
+                  onChange={(e) =>
+                    onField(row.id, "assigned_to", e.target.value || null)
+                  }
                 >
-                  —
-                </option>
-                {assignees.map((a) => (
                   <option
-                    key={a.name}
-                    value={a.name}
+                    value=""
                     style={{ backgroundColor: "white", color: "#333" }}
                   >
-                    {a.name}
+                    —
                   </option>
-                ))}
-              </select>
+                  {assignees.map((a) => (
+                    <option
+                      key={a.name}
+                      value={a.name}
+                      style={{ backgroundColor: "white", color: "#333" }}
+                    >
+                      {a.name}
+                    </option>
+                  ))}
+                </select>
+                {!ackEligible ? null : isAcknowledged ? (
+                  <div
+                    title={`Acknowledged by ${ackName || "Unknown"}${ackDate ? ` on ${ackDate}` : ""}`}
+                    className="flex w-14 shrink-0 flex-col items-center rounded-sm bg-green-100 px-0.5 py-0.5 leading-tight text-green-800 dark:bg-green-900/40 dark:text-green-300"
+                  >
+                    <span className="text-[10px] font-bold leading-none">
+                      ✓
+                    </span>
+                    <span className="w-full truncate text-center text-[8px] leading-tight">
+                      {ackName || "Acked"}
+                    </span>
+                    {ackDate && (
+                      <span className="w-full truncate text-center text-[8px] leading-tight opacity-80">
+                        {ackDate}
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onAcknowledge(row.id);
+                    }}
+                    title="Acknowledge — confirms you've seen this and will start"
+                    className="h-6 shrink-0 rounded-sm border border-blue-400 bg-blue-50 px-1.5 text-[9px] font-semibold uppercase tracking-wide text-blue-700 hover:bg-blue-100 dark:border-blue-600 dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-900/50"
+                  >
+                    Ack
+                  </button>
+                )}
+              </div>
             );
           })()}
         </td>
         {/* Status */}
         <td {...stickyCell("overall_status")}>
           <StatusBadge status={row.overall_status} />
+        </td>
+
+        {/* 14d Mark — date 14 days before the hearing date */}
+        <td
+          className={cn("px-2 py-1.5", evenBg)}
+          style={{ width: TFOURTEEN_W, minWidth: TFOURTEEN_W }}
+          title="14 days before the hearing date — prep deadline marker"
+        >
+          <span className="text-xs tabular-nums text-muted-foreground">
+            {fmtMinus14(row.hearing_date)}
+          </span>
         </td>
 
         {/* Workflow checkboxes */}
@@ -1773,14 +1951,24 @@ const RepDocsRowView = memo(
                 ? "text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30"
                 : "text-muted-foreground hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30",
             )}
-            title={row.notes && Array.isArray(row.notes) && row.notes.length > 0 ? "View / edit notes" : "Add notes"}
+            title={
+              row.notes && Array.isArray(row.notes) && row.notes.length > 0
+                ? "View / edit notes"
+                : "Add notes"
+            }
           >
             <MessageSquare className="h-3.5 w-3.5" />
           </button>
         </td>
 
-        {/* Filler — absorbs extra width so columns stay fixed */}
-        <td style={{ width: "auto" }} aria-hidden="true" />
+        {/* Filler — absorbs extra width so columns stay fixed.
+            Carry the row's zebra stripe so the right gap doesn't show as a
+            white slab when the container is wider than the table content. */}
+        <td
+          className={cn(evenBg, "w-full")}
+          style={{ minWidth: 0 }}
+          aria-hidden="true"
+        />
       </tr>
     );
   },

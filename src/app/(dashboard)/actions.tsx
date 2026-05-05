@@ -759,6 +759,17 @@ export async function updateHearing(
         hearingId,
       ]);
     }
+  // Sync decision status → representative_docs overall_status. Logic lives
+  // in src/lib/rep-docs-decision-sync.ts so import paths share the same rules.
+  if (field === "hearing_decision_status" && value !== oldValue) {
+    const { syncRepDocsStatusForHearing } = await import(
+      "@/lib/rep-docs-decision-sync"
+    );
+    await syncRepDocsStatusForHearing(
+      hearingId,
+      value === null || value === undefined ? null : String(value),
+    );
+  }
 
     // Sync decision → every linked Post HRG Development row's PH Status.
     // This only applies when the dashboard decision/status field changes.

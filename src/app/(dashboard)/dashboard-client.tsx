@@ -4,6 +4,7 @@ import {
   useState,
   memo,
   useCallback,
+  useMemo,
   useTransition,
   useRef,
   useEffect,
@@ -311,6 +312,20 @@ function fmtDate(dateStr: string, opts?: Intl.DateTimeFormatOptions): string {
     "en-US",
     opts || { month: "short", day: "numeric", year: "2-digit" },
   );
+}
+
+// Date 14 days before the hearing date — surfaced in the dashboard's "14d Mark"
+// column so the team can see the prep deadline at a glance.
+function fmtMinus14(dateStr: string | null | undefined): string {
+  if (!dateStr) return "";
+  const d = parseDate(dateStr);
+  if (isNaN(d.getTime())) return "";
+  d.setDate(d.getDate() - 14);
+  return d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "2-digit",
+  });
 }
 
 function fmtTime(timeStr: string | null | undefined): string {
@@ -1360,6 +1375,7 @@ const FilterBar = memo(function FilterBar({
   onFilterChange,
   repCounts,
   nextUnassigned,
+  decisionOptions,
   showRepFilter: showRepFilterProp,
   showNextUnassigned: showNextUnassignedProp,
 }: {
@@ -1367,6 +1383,8 @@ const FilterBar = memo(function FilterBar({
   onFilterChange: (f: HearingFilters) => void;
   repCounts: RepWithCount[];
   nextUnassigned: NextUnassignedRow | null;
+  /** Distinct hearing_decision_status values from config_options. */
+  decisionOptions: { value: string; label: string }[];
   showRepFilter: boolean;
   showNextUnassigned: boolean;
 }) {
@@ -1536,6 +1554,20 @@ const FilterBar = memo(function FilterBar({
             <option value="custom">Custom Range...</option>
           </select>
 
+          <select
+            className={SEL + " min-w-37.5"}
+            value={filters.decisionStatus || ""}
+            onChange={(e) => update("decisionStatus", e.target.value)}
+            title="Filter by hearing decision (Withdrawal, Favorable, etc.)"
+          >
+            <option value="">All Decisions</option>
+            {decisionOptions.map((d) => (
+              <option key={d.value} value={d.value}>
+                {d.label}
+              </option>
+            ))}
+          </select>
+
           {filters.datePreset === "custom" && (
             <div className="flex items-center gap-1.5">
               <Input
@@ -1644,6 +1676,7 @@ const ALL_COLUMNS: ColumnDef[] = [
   { key: "rep_docs_assigned_to", label: "Docs Assigned", w: 110 },
   { key: "rep_docs_complete", label: "Rep Docs", w: 65 },
   { key: "fee_agreement_complete", label: "Fee Agmt", w: 65 },
+  { key: "hearing_minus_14", label: "14d Mark", w: 88 },
   { key: "brief_assigned_to", label: "Brief", w: 100 },
   { key: "phi_sheet_complete", label: "PHI", w: 55 },
   { key: "mr_team_id", label: "Medical Team", w: 110 },
@@ -1798,9 +1831,30 @@ const MemoRow = memo(
     renderCell,
     columns,
   }: MemoRowProps) {
-    const rb = ri % 2 === 0 ? evenBg : oddBg;
+    // Mirror the rep-docs page: any withdrawal/dismissal decision tints the
+    // whole row red so users can spot dropped hearings at a glance. Predicate
+    // matches src/lib/rep-docs-decision-sync.ts:mapDecisionToRepDocsStatus.
+    const decision = (hearing.hearing_decision_status || "")
+      .toLowerCase()
+      .trim();
+    const isWithdrawn =
+      decision.startsWith("withdrawal") ||
+      decision === "dismissed" ||
+      decision === "dismissal";
+
+    const rb = isWithdrawn
+      ? "bg-red-50 dark:bg-red-950/30"
+      : ri % 2 === 0
+        ? evenBg
+        : oddBg;
     return (
-      <tr className={cn("group border-b border-border/40 last:border-0", rb)}>
+      <tr
+        className={cn(
+          "group border-b border-border/40 last:border-0",
+          rb,
+          isWithdrawn && "text-red-900 dark:text-red-300",
+        )}
+      >
         {columns.map((col) => {
           const lp = getLeftPos(col.key);
           const isLF = col.key === lastFrozenKey;
@@ -2293,6 +2347,15 @@ const HearingTable = memo(function HearingTable({
             colorMap={RFC_COLORS}
           />
         );
+      case "hearing_minus_14":
+        return (
+          <span
+            className="text-xs tabular-nums text-muted-foreground"
+            title="14 days before the hearing date — prep deadline marker"
+          >
+            {fmtMinus14(hearing.hearing_date)}
+          </span>
+        );
       case "brief_assigned_to":
         return (
           <InlineDropdown
@@ -2580,6 +2643,17 @@ export function DashboardClient({
     const s = await fetchDashboardStats(userRole, userEmail);
     setStats(s);
   }, [userRole, userEmail]);
+
+  // Decision-status options for the FilterBar dropdown. The cell-level table
+  // also computes these (it needs the values for the inline edit dropdown);
+  // memoising at this level avoids a fresh array on every render.
+  const decisionOptions = useMemo(
+    () =>
+      configOptions
+        .filter((o) => o.option_type === "hearing_decision_status")
+        .map((o) => ({ value: o.option_value, label: o.option_value })),
+    [configOptions],
+  );
   // Always start as `false` — matches SSR exactly. Switched to the real
   // value in the useEffect below after hydration completes. Lazy-initing
   // from window.matchMedia would diverge SSR vs first client render on
@@ -3394,6 +3468,7 @@ export function DashboardClient({
           onFilterChange={handleFilterChange}
           repCounts={repCounts}
           nextUnassigned={nextUnassigned}
+          decisionOptions={decisionOptions}
           showRepFilter={canSeeRepFilter(effectiveRole)}
           showNextUnassigned={canSeeNextUnassigned(effectiveRole)}
         />
