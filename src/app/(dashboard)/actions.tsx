@@ -714,31 +714,16 @@ export async function updateHearing(
     ]);
   }
 
-  // Sync decision status → representative_docs overall_status
+  // Sync decision status → representative_docs overall_status. Logic lives
+  // in src/lib/rep-docs-decision-sync.ts so import paths share the same rules.
   if (field === "hearing_decision_status" && value !== oldValue) {
-    const decision = String(value ?? "").toLowerCase();
-    let repDocsStatus: string | null = null;
-
-    if (decision.startsWith("withdrawal") || decision === "dismissed" || decision === "dismissal") {
-      repDocsStatus = "Withdrawn";
-    } else if (decision === "continued") {
-      repDocsStatus = "Postponed";
-    } else if (
-      decision === "favorable" ||
-      decision === "fully favorable" ||
-      decision === "partially favorable"
-    ) {
-      repDocsStatus = "Favorable";
-    }
-
-    if (repDocsStatus) {
-      await db.query(
-        `UPDATE representative_docs
-         SET overall_status = $1, updated_at = NOW()
-         WHERE hearing_id = $2`,
-        [repDocsStatus, hearingId],
-      );
-    }
+    const { syncRepDocsStatusForHearing } = await import(
+      "@/lib/rep-docs-decision-sync"
+    );
+    await syncRepDocsStatusForHearing(
+      hearingId,
+      value === null || value === undefined ? null : String(value),
+    );
 
     // Sync decision → every linked Post HRG Development row's PH Status.
     // The PHD cell is read-only in the UI — this is the only way the

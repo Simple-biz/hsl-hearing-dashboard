@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { logAction } from "@/lib/activity-log";
+import { syncRepDocsStatusForHearing } from "@/lib/rep-docs-decision-sync";
 
 function formatSSN(raw: string): string | null {
   if (!raw) return null;
@@ -337,6 +338,17 @@ export async function POST(req: NextRequest) {
           `UPDATE hearings SET ${setClauses.join(", ")} WHERE id = $${values.length}`,
           values,
         );
+
+        // Mirror the dashboard's hearing_decision_status → rep_docs.overall_status
+        // sync so import-compare changes (e.g. "Withdrawal - SGA") flow into the
+        // Withdrawn modal automatically.
+        if ("hearing_decision_status" in updates) {
+          await syncRepDocsStatusForHearing(
+            record.existing_id,
+            updates.hearing_decision_status as string | null,
+          );
+        }
+
         updated++;
       } else {
         // ── Legacy import mode ──
@@ -414,6 +426,15 @@ export async function POST(req: NextRequest) {
           `UPDATE hearings SET ${setClauses.join(", ")} WHERE id = $${values.length}`,
           values,
         );
+
+        // Same sync as above — legacy-mode imports also need it.
+        if ("hearing_decision_status" in updates) {
+          await syncRepDocsStatusForHearing(
+            record.existing_id,
+            updates.hearing_decision_status as string | null,
+          );
+        }
+
         updated++;
       }
     } catch (e) {

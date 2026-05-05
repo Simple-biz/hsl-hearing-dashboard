@@ -4,6 +4,7 @@ import {
   useState,
   memo,
   useCallback,
+  useMemo,
   useTransition,
   useRef,
   useEffect,
@@ -1374,6 +1375,7 @@ const FilterBar = memo(function FilterBar({
   onFilterChange,
   repCounts,
   nextUnassigned,
+  decisionOptions,
   showRepFilter: showRepFilterProp,
   showNextUnassigned: showNextUnassignedProp,
 }: {
@@ -1381,6 +1383,8 @@ const FilterBar = memo(function FilterBar({
   onFilterChange: (f: HearingFilters) => void;
   repCounts: RepWithCount[];
   nextUnassigned: NextUnassignedRow | null;
+  /** Distinct hearing_decision_status values from config_options. */
+  decisionOptions: { value: string; label: string }[];
   showRepFilter: boolean;
   showNextUnassigned: boolean;
 }) {
@@ -1548,6 +1552,20 @@ const FilterBar = memo(function FilterBar({
             <option value="this-month">This Month</option>
             <option value="next-30">Next 30 Days</option>
             <option value="custom">Custom Range...</option>
+          </select>
+
+          <select
+            className={SEL + " min-w-37.5"}
+            value={filters.decisionStatus || ""}
+            onChange={(e) => update("decisionStatus", e.target.value)}
+            title="Filter by hearing decision (Withdrawal, Favorable, etc.)"
+          >
+            <option value="">All Decisions</option>
+            {decisionOptions.map((d) => (
+              <option key={d.value} value={d.value}>
+                {d.label}
+              </option>
+            ))}
           </select>
 
           {filters.datePreset === "custom" && (
@@ -1813,9 +1831,30 @@ const MemoRow = memo(
     renderCell,
     columns,
   }: MemoRowProps) {
-    const rb = ri % 2 === 0 ? evenBg : oddBg;
+    // Mirror the rep-docs page: any withdrawal/dismissal decision tints the
+    // whole row red so users can spot dropped hearings at a glance. Predicate
+    // matches src/lib/rep-docs-decision-sync.ts:mapDecisionToRepDocsStatus.
+    const decision = (hearing.hearing_decision_status || "")
+      .toLowerCase()
+      .trim();
+    const isWithdrawn =
+      decision.startsWith("withdrawal") ||
+      decision === "dismissed" ||
+      decision === "dismissal";
+
+    const rb = isWithdrawn
+      ? "bg-red-50 dark:bg-red-950/30"
+      : ri % 2 === 0
+        ? evenBg
+        : oddBg;
     return (
-      <tr className={cn("group border-b border-border/40 last:border-0", rb)}>
+      <tr
+        className={cn(
+          "group border-b border-border/40 last:border-0",
+          rb,
+          isWithdrawn && "text-red-900 dark:text-red-300",
+        )}
+      >
         {columns.map((col) => {
           const lp = getLeftPos(col.key);
           const isLF = col.key === lastFrozenKey;
@@ -2604,6 +2643,17 @@ export function DashboardClient({
     const s = await fetchDashboardStats(userRole, userEmail);
     setStats(s);
   }, [userRole, userEmail]);
+
+  // Decision-status options for the FilterBar dropdown. The cell-level table
+  // also computes these (it needs the values for the inline edit dropdown);
+  // memoising at this level avoids a fresh array on every render.
+  const decisionOptions = useMemo(
+    () =>
+      configOptions
+        .filter((o) => o.option_type === "hearing_decision_status")
+        .map((o) => ({ value: o.option_value, label: o.option_value })),
+    [configOptions],
+  );
   // Always start as `false` — matches SSR exactly. Switched to the real
   // value in the useEffect below after hydration completes. Lazy-initing
   // from window.matchMedia would diverge SSR vs first client render on
@@ -3418,6 +3468,7 @@ export function DashboardClient({
           onFilterChange={handleFilterChange}
           repCounts={repCounts}
           nextUnassigned={nextUnassigned}
+          decisionOptions={decisionOptions}
           showRepFilter={canSeeRepFilter(effectiveRole)}
           showNextUnassigned={canSeeNextUnassigned(effectiveRole)}
         />
