@@ -356,6 +356,24 @@ async function recomputeOverallStatus(id: number) {
   );
 }
 
+// Resolve a rep_docs row to a human-readable label for activity-log entries.
+// Joins through to `hearings.claimant` so the changes modal shows
+// "Smith, John (rep-docs #1887)" instead of an opaque "rep-docs #1887".
+// Falls back to the raw id-only format if the row has no claimant or doesn't
+// exist (defensive — shouldn't happen in practice since callers just updated
+// or read the row).
+async function repDocsLabel(id: number): Promise<string> {
+  const { rows } = await db.query(
+    `SELECT h.claimant
+     FROM representative_docs rd
+     JOIN hearings h ON h.id = rd.hearing_id
+     WHERE rd.id = $1`,
+    [id],
+  );
+  const claimant = (rows[0]?.claimant as string | undefined)?.trim();
+  return claimant ? `${claimant} (rep-docs #${id})` : `rep-docs #${id}`;
+}
+
 // ─── Update a single field (inline edit) ────────────────────────────────────
 
 export async function updateRepDocsField(
@@ -389,7 +407,7 @@ export async function updateRepDocsField(
 
     await logAction(
       "rep_docs_field_updated",
-      `${field} → ${boolVal ? "checked" : "unchecked"} for rep-docs #${id}`,
+      `${field} → ${boolVal ? "checked" : "unchecked"} for ${await repDocsLabel(id)}`,
     );
     return { success: true };
   }
@@ -436,7 +454,7 @@ export async function updateRepDocsField(
 
     await logAction(
       "rep_docs_field_updated",
-      `${field} → ${boolVal ? "checked" : "unchecked"} for rep-docs #${id}`,
+      `${field} → ${boolVal ? "checked" : "unchecked"} for ${await repDocsLabel(id)}`,
     );
     return { success: true };
   }
@@ -470,7 +488,7 @@ export async function updateRepDocsField(
 
     await logAction(
       "rep_docs_field_updated",
-      `${field} → '${value ?? "(empty)"}' for rep-docs #${id}`,
+      `${field} → '${value ?? "(empty)"}' for ${await repDocsLabel(id)}`,
     );
     return { success: true };
   }
@@ -520,7 +538,7 @@ export async function acknowledgeRepDocs(id: number) {
     [userId, id],
   );
 
-  await logAction("rep_docs_acknowledged", `Acknowledged rep-docs #${id}`);
+  await logAction("rep_docs_acknowledged", `Acknowledged ${await repDocsLabel(id)}`);
 
   return {
     success: true,
@@ -548,7 +566,7 @@ export async function updateHearingLink(
   );
   await logAction(
     "hearing_link_updated_from_repdocs",
-    `${field} → '${value ?? "(empty)"}' for rep-docs #${repDocsId}`,
+    `${field} → '${value ?? "(empty)"}' for ${await repDocsLabel(repDocsId)}`,
   );
   return { success: true };
 }
