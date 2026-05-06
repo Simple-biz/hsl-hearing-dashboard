@@ -101,6 +101,7 @@ type HearingSyncPayloadRow = {
   post_hrg_deadline: string;
   task_assigned: boolean;
   five_day_notice: boolean;
+  credited: boolean;
   medical_record_link: string;
 };
 
@@ -171,6 +172,7 @@ async function fetchHearingSyncPayload(
         COALESCE(h.post_hrg_deadline::text, '')  AS post_hrg_deadline,
         COALESCE(h.task_assigned, false)         AS task_assigned,
         COALESCE(h.five_day_notice, false)       AS five_day_notice,
+        COALESCE(h.credited, false)              AS credited,
         COALESCE(h.medical_record_link, '')      AS medical_record_link
       FROM hearings h
       LEFT JOIN mr_teams t ON h.mr_team_id = t.id
@@ -265,6 +267,7 @@ async function updateSingleFieldAndRecordEvent<T>({
           h.post_hrg_deadline,
           h.task_assigned,
           h.five_day_notice,
+          h.credited,
           h.medical_record_link,
           h.mr_team_id,
           p.old_value
@@ -293,6 +296,7 @@ async function updateSingleFieldAndRecordEvent<T>({
         COALESCE(u.post_hrg_deadline::text, '')  AS post_hrg_deadline,
         COALESCE(u.task_assigned, false)         AS task_assigned,
         COALESCE(u.five_day_notice, false)       AS five_day_notice,
+        COALESCE(u.credited, false)              AS credited,
         COALESCE(u.medical_record_link, '')      AS medical_record_link,
         u.old_value                              AS old_value
       FROM updated u
@@ -342,7 +346,7 @@ async function updateMrTeamAndRecordEvent(
         FROM hearings h
         LEFT JOIN mr_teams t ON h.mr_team_id = t.id
         WHERE h.id = $1
-        FOR UPDATE
+        FOR UPDATE OF h
       ),
       updated AS (
         UPDATE hearings h
@@ -370,6 +374,7 @@ async function updateMrTeamAndRecordEvent(
           h.post_hrg_deadline,
           h.task_assigned,
           h.five_day_notice,
+          h.credited,
           h.medical_record_link,
           h.mr_team_id,
           p.old_team_name
@@ -398,6 +403,7 @@ async function updateMrTeamAndRecordEvent(
         COALESCE(u.post_hrg_deadline::text, '')  AS post_hrg_deadline,
         COALESCE(u.task_assigned, false)         AS task_assigned,
         COALESCE(u.five_day_notice, false)       AS five_day_notice,
+        COALESCE(u.credited, false)              AS credited,
         COALESCE(u.medical_record_link, '')      AS medical_record_link,
         u.old_team_name                          AS old_team_name
       FROM updated u
@@ -1178,10 +1184,19 @@ export async function toggleCredited(
 ): Promise<{ success: boolean }> {
   const { requireFieldAccess } = await import("@/lib/field-access");
   await requireFieldAccess("medical_records", "credited");
-  await db.query(
-    `UPDATE hearings SET credited = $1, updated_at = NOW() WHERE id = $2`,
-    [value, hearingId],
-  );
+
+  await db.transaction(async (client) => {
+    await updateSingleFieldAndRecordEvent<boolean>({
+      client,
+      hearingId,
+      oldValueColumnSql: "credited",
+      updateSetSql: "credited = $2",
+      updateParams: [value],
+      changedField: "credited",
+      newValue: value,
+    });
+  });
+
   await logActivity("credited_updated", `Credited set to ${value} for hearing #${hearingId}`);
   return { success: true };
 }

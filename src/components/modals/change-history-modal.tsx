@@ -772,6 +772,8 @@ export function GoogleSheetsSyncButton({ userRole }: SyncButtonProps) {
     const sleep = (ms: number) =>
       new Promise((resolve) => window.setTimeout(resolve, ms));
 
+    const syncStartedAt = Date.now();
+
     try {
       for (let attempt = 0; attempt <= MAX_BUSY_RETRIES; attempt += 1) {
         const res = await fetch("/api/mr-sync", {
@@ -839,6 +841,53 @@ export function GoogleSheetsSyncButton({ userRole }: SyncButtonProps) {
               message:
                 "We could not complete the Google Sheets sync. Please try again.",
             };
+
+      if (error.code === "SYNC_TIMEOUT") {
+        setPhase("syncing");
+        setStepIndex(LOADING_STEPS.length - 1);
+        setModalOpen(true);
+        setNotice({
+          tone: "amber",
+          message:
+            error.message ??
+            "Sync is still running. Waiting for the latest completed sync history…",
+        });
+
+        for (let attempt = 0; attempt < MAX_BUSY_RETRIES; attempt += 1) {
+          await sleep(BUSY_RETRY_DELAY_MS);
+
+          try {
+            const latestRes = await fetch("/api/mr-sync", {
+              method: "GET",
+              cache: "no-store",
+            });
+
+            const latestPayload = (await latestRes.json().catch(() => null)) as
+              | (Partial<SyncResult> & { ok?: boolean; hasLatestSync?: boolean })
+              | null;
+
+            if (!latestRes.ok || !latestPayload?.ok || !latestPayload.hasLatestSync) {
+              continue;
+            }
+
+            const latestResult = latestPayload as SyncResult;
+            const latestCompletedAt = latestResult.historyCompletedAt ?? latestResult.runAt;
+            const latestCompletedTime = latestCompletedAt
+              ? new Date(latestCompletedAt).getTime()
+              : 0;
+
+            if (Number.isFinite(latestCompletedTime) && latestCompletedTime >= syncStartedAt - 5000) {
+              setNotice(null);
+              setResult(latestResult);
+              setPhase("done");
+              setModalOpen(true);
+              return;
+            }
+          } catch {
+            // Keep polling. A transient GET failure should not stop timeout recovery.
+          }
+        }
+      }
 
       showErrorToast(error);
       setPhase("idle");

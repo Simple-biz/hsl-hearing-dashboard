@@ -151,6 +151,7 @@ function buildLatestSyncResult(rows: DbLatestSyncRow[]): SyncResult | null {
     vocational_expert: "Vocational Expert",
     task_assigned: "Task Assigned",
     five_day_notice: "5-Day Letter Sent",
+    credited: "Credited",
     post_hrg_deadline: "Post HRG Review Deadline",
   };
 
