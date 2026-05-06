@@ -28,6 +28,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { convertTimeFromEST } from "@/lib/timezone";
 import type { UserRole } from "@/lib/roles";
 import {
   getAvailability,
@@ -170,7 +171,10 @@ export function ScheduleClient({
   const isAdmin = !["rep", "staff"].includes(userRole);
   const isLocked = availability.some((a) => a.schedule_locked);
   const selectedRep = reps.find((r) => r.id === selectedRepId);
-  const repTz = selectedRep?.timezone || "America/New_York";
+  // const repTz = selectedRep?.timezone || "America/New_York";
+  const [repTz, setRepTz] = useState(
+    selectedRep?.timezone || "America/New_York",
+  );
 
   const [year, month] = selectedMonth.split("-").map(Number);
   const daysInMonth = new Date(year, month, 0).getDate();
@@ -222,6 +226,8 @@ export function ScheduleClient({
   const handleSelectRep = async (repId: number) => {
     setSelectedRepId(repId);
     setRepLoaded(true);
+    const rep = reps.find((r) => r.id === repId);
+    setRepTz(rep?.timezone || "America/New_York");
     await loadData(repId, selectedMonth);
   };
   const handleMonthNav = async (dir: number) => {
@@ -234,7 +240,9 @@ export function ScheduleClient({
     setSelectedMonth(ym);
     await loadData(selectedRepId, ym);
   };
+
   const handleTimezoneChange = async (tz: string) => {
+    setRepTz(tz); // ← add this line
     await updateRepTimezone(selectedRepId, tz);
     setTzSaved(true);
     setTimeout(() => setTzSaved(false), 2000);
@@ -869,7 +877,7 @@ export function ScheduleClient({
                       className="mt-0.5 rounded bg-blue-100 dark:bg-blue-900/40 px-1 py-0.5"
                     >
                       <p className="text-[8px] font-medium text-blue-700 dark:text-blue-300 truncate">
-                        {h.time?.slice(0, 5)} {h.claimant}
+                        {convertTimeFromEST(h.time, h.date, repTz)} {h.claimant}
                       </p>
                     </div>
                   ))}
@@ -1168,7 +1176,9 @@ function LockStatusModal({
         setLoading(false);
       }
     });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [month]);
 
   const handleMonthChange = (ym: string) => {
