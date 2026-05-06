@@ -856,35 +856,51 @@ export function ScheduleClient({
                     )}
                   </div>
                   {isHoliday && (
-                    <p className="text-[9px] text-muted-foreground mt-0.5 leading-tight">
+                    <span className="block text-[9px] text-muted-foreground mt-0.5 leading-tight">
                       {holidays[dateStr]}
-                    </p>
+                    </span>
                   )}
                   {!isHoliday && !isWeekend && !isPast && type !== "unset" && (
-                    <p className="text-[9px] font-medium mt-0.5">{lbl[type]}</p>
+                    <span className="block text-[9px] font-medium mt-0.5">
+                      {lbl[type]}
+                    </span>
                   )}
                   {edit?.timeSlots?.map((s, si) => (
-                    <p
+                    <span
                       key={si}
-                      className="text-[8px] text-purple-600 dark:text-purple-400"
+                      className="block text-[8px] text-purple-600 dark:text-purple-400"
                     >
                       {s.start}-{s.end}
-                    </p>
+                    </span>
                   ))}
                   {dayHearings.slice(0, 2).map((h, hi) => (
                     <div
                       key={hi}
                       className="mt-0.5 rounded bg-blue-100 dark:bg-blue-900/40 px-1 py-0.5"
                     >
-                      <p className="text-[8px] font-medium text-blue-700 dark:text-blue-300 truncate">
-                        {convertTimeFromEST(h.time, h.date, repTz)} {h.claimant}
-                      </p>
+                      <span className="block text-[8px] font-medium text-blue-700 dark:text-blue-300 truncate">
+                        {convertTimeFromEST(h.time, h.date, "America/New_York")}{" "}
+                        ET
+                        {repTz !== "America/New_York" && (
+                          <span className="text-purple-600 dark:text-purple-400">
+                            {" "}
+                            ({convertTimeFromEST(h.time, h.date, repTz)}{" "}
+                            {TZ_OPTIONS.find(
+                              (t) => t.value === repTz,
+                            )?.label.match(/\((\w+)\)/)?.[1] ?? ""}
+                            )
+                          </span>
+                        )}
+                      </span>
+                      <span className="block text-[8px] text-blue-600 dark:text-blue-400 truncate">
+                        {h.claimant}
+                      </span>
                     </div>
                   ))}
                   {dayHearings.length > 2 && (
-                    <p className="text-[8px] text-blue-500 dark:text-blue-400">
+                    <span className="block text-[8px] text-blue-500 dark:text-blue-400">
                       +{dayHearings.length - 2} more
-                    </p>
+                    </span>
                   )}
                 </div>
               );

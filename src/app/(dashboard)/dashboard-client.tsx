@@ -2905,8 +2905,7 @@ export function DashboardClient({
       const updateOptions =
         field === "brief_assigned_to"
           ? {
-              expectedCurrent:
-                priorValue == null ? null : String(priorValue),
+              expectedCurrent: priorValue == null ? null : String(priorValue),
             }
           : undefined;
       const rollback = () => {
@@ -2953,7 +2952,8 @@ export function DashboardClient({
             `Brief is already assigned to "${currentAssignee}". Override with "${value || "(unassigned)"}"?`,
           );
           if (!proceed) {
-            if (updateToastTimer.current) clearTimeout(updateToastTimer.current);
+            if (updateToastTimer.current)
+              clearTimeout(updateToastTimer.current);
             setUpdateToast(`Kept current assignee: ${currentAssignee}`);
             updateToastTimer.current = setTimeout(
               () => setUpdateToast(null),
@@ -3011,7 +3011,9 @@ export function DashboardClient({
           console.error("Update failed:", e);
           rollback();
           const message =
-            e instanceof Error ? e.message : "Update failed — change rolled back";
+            e instanceof Error
+              ? e.message
+              : "Update failed — change rolled back";
           if (updateToastTimer.current) clearTimeout(updateToastTimer.current);
           setUpdateToast(`⚠️ ${message}`);
           updateToastTimer.current = setTimeout(
@@ -3049,6 +3051,8 @@ export function DashboardClient({
     try {
       const fd = new FormData(editFormRef.current);
       const original = editHearing as unknown as Record<string, unknown>;
+      // ⚠️ If you add a field here, also add it to EDIT_MODAL_ONLY_FIELDS
+      // in updateHearing() inside actions.tsx to avoid permission errors
       const textFields = [
         "claimant",
         "ssn_last_4",
@@ -3075,11 +3079,38 @@ export function DashboardClient({
         "phi_sheet_complete",
       ];
 
+      const changes: Record<string, string | null> = {};
       for (const key of textFields) {
         const val = fd.get(key) as string | null;
         const newVal = val === "" ? null : val;
-        if (original[key] !== newVal)
+        if (String(original[key] ?? "") !== String(newVal ?? "")) {
+          changes[key] = newVal;
           await updateHearing(editHearing.id, key, newVal);
+        }
+      }
+
+      // Recalculate converted_time_est if hearing_time or time_zone changed
+      if (
+        changes.hearing_time !== undefined ||
+        changes.time_zone !== undefined
+      ) {
+        const TZ_MAP: Record<string, number> = {
+          ET: 0,
+          CT: 1,
+          MT: 2,
+          PT: 3,
+          HA: 5,
+          MSTA: 2,
+        };
+        const newTime = (
+          changes.hearing_time ?? String(original.hearing_time ?? "")
+        ).slice(0, 5);
+        const newTz = changes.time_zone ?? String(original.time_zone ?? "ET");
+        const offset = TZ_MAP[newTz] ?? 0;
+        const [h, m] = newTime.split(":").map(Number);
+        const estH = h + offset;
+        const converted = `${String(estH).padStart(2, "0")}:${String(m || 0).padStart(2, "0")}:00`;
+        await updateHearing(editHearing.id, "converted_time_est", converted);
       }
       for (const key of boolFields) {
         const checked = fd.get(key) === "on";
