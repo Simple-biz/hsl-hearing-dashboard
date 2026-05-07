@@ -57,8 +57,10 @@ DATABASE_URL=postgresql://user:pass@ep-xxx.us-east-2.aws.neon.tech/hsl_hearings?
 NEXTAUTH_SECRET=<random-32-char-string>
 NEXTAUTH_URL=http://localhost:3000
 
-# n8n email webhook
+# n8n Webhook (for email notifications)
 N8N_WEBHOOK_URL=https://auto.simple.biz/webhook/hsl-email
+# n8n Webhook (for MR Pivot to Google Sheet sync)
+N8N_WEBHOOK_SYNC_URL=https://auto.simple.biz/webhook/web-app-sync
 N8N_WEBHOOK_SECRET=<webhook-secret>
 
 # Cron job protection

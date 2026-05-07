@@ -47,6 +47,7 @@ import {
   updateWorksheetLink,
   assignJeromeUrgent,
   getRoundRobinState,
+  toggleFiveDayNotice,
 } from "./action";
 import type {
   MrPivotPageData,
@@ -62,6 +63,7 @@ import { PostHrgModal } from "@/components/modals/post-hrg-modal";
 import { PostHrgReviewModal } from "@/components/modals/post-hrg-review-modal";
 import { TeamStatsModal } from "@/components/modals/team-stats-modal";
 import { ActivityLogModal } from "@/components/modals/activity-log-modal";
+import { GoogleSheetsSyncButton } from "@/components/modals/change-history-modal";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -779,6 +781,7 @@ function WithdrawnModal({
   const [search, setSearch] = useState("");
   const [loading, startTransition] = useTransition();
   const [postHrgHearing, setPostHrgHearing] = useState<Hearing | null>(null);
+  const [worksheetHearing, setWorksheetHearing] = useState<Hearing | null>(null);
   const searchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback((p: number, q: string) => {
@@ -1050,18 +1053,31 @@ function WithdrawnModal({
                       </td>
                       <td className="px-3 py-1.5 text-center whitespace-nowrap">
                         {h.medical_record_link ? (
-                          <a
-                            href={h.medical_record_link}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-[9px] bg-blue-600 text-white px-1.5 py-0.5 rounded hover:bg-blue-700"
-                          >
-                            📋
-                          </a>
+                          <div className="inline-flex items-center justify-center gap-1">
+                            <a
+                              href={h.medical_record_link}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-[9px] bg-blue-600 text-white px-1.5 py-0.5 rounded hover:bg-blue-700"
+                              title="Open MR Worksheet"
+                            >
+                              📋
+                            </a>
+                            <button
+                              onClick={() => setWorksheetHearing(h)}
+                              className="text-[9px] px-1.5 py-0.5 rounded border border-border hover:bg-muted text-foreground"
+                              title="Edit MR Worksheet link"
+                            >
+                              ✏️
+                            </button>
+                          </div>
                         ) : (
-                          <span className="text-[10px] text-muted-foreground hover:text-foreground cursor-default">
+                          <button
+                            onClick={() => setWorksheetHearing(h)}
+                            className="text-[10px] text-muted-foreground hover:text-foreground"
+                          >
                             + Link
-                          </span>
+                          </button>
                         )}
                       </td>
                     </tr>
@@ -1144,6 +1160,24 @@ function WithdrawnModal({
             );
             setPostHrgHearing((h) =>
               h && h.id === postHrgHearing.id ? { ...h, ...mrPatch } : h,
+            );
+          }}
+        />
+      )}
+      {worksheetHearing && (
+        <WorksheetLinkModal
+          hearing={worksheetHearing}
+          onClose={() => setWorksheetHearing(null)}
+          onSaved={(id, link) => {
+            setEntries((prev) =>
+              prev.map((h) =>
+                h.id === id ? ({ ...h, medical_record_link: link || null } as Hearing) : h,
+              ),
+            );
+            setWorksheetHearing((current) =>
+              current && current.id === id
+                ? ({ ...current, medical_record_link: link || null } as Hearing)
+                : current,
             );
           }}
         />
@@ -1629,7 +1663,10 @@ export function MrPivotClient({ userRole, userName, ...data }: Props) {
   // ── Row update handler ────────────────────────────────────────────────────
   async function handleUpdate(id: number, field: string, value: unknown) {
     const hearing = hearings.find((h) => h.id === id);
-    const claimant = hearing?.claimant ?? "";
+    if (!hearing) return;
+
+    const claimant = hearing.claimant ?? "";
+    const previous = { ...hearing };
 
     const actions: Record<string, (v: unknown) => Promise<unknown>> = {
       medical_record_status: (v) => updateMrStatus(id, v as string),
@@ -1640,18 +1677,16 @@ export function MrPivotClient({ userRole, userName, ...data }: Props) {
       credited: (v) => toggleCredited(id, v as boolean),
       manner_of_appearance: (v) => updateMoa(id, v as string),
       medical_record_link: (v) => updateWorksheetLink(id, v as string),
+      five_day_notice: (v) => toggleFiveDayNotice(id, v as boolean),
     };
-    await actions[field]?.(value);
 
-    // Show feedback toast
-    showToast(field, value, claimant);
-
-    // mr_team needs to update mr_team_id + derive mr_team_name/color from teams list
+    // Optimistic update first so inline edits feel instant.
     if (field === "mr_team") {
       const teamId = value as number | null;
       const team = teamId
         ? data.medical_teams.find((t) => t.id === teamId)
         : null;
+
       setHearings((prev) =>
         prev.map((h) =>
           h.id === id
@@ -1665,12 +1700,32 @@ export function MrPivotClient({ userRole, userName, ...data }: Props) {
             : h,
         ),
       );
-      // Refresh round robin immediately so the indicator reflects the new assignment
-      getRoundRobinState().then(setRoundRobin);
     } else {
       setHearings((prev) =>
         prev.map((h) => (h.id === id ? { ...h, [field]: value } : h)),
       );
+    }
+
+    try {
+      await actions[field]?.(value);
+      showToast(field, value, claimant);
+
+      if (field === "mr_team") {
+        // Refresh round robin after a successful team assignment.
+        getRoundRobinState().then(setRoundRobin).catch(() => {});
+      }
+    } catch (error) {
+      // Roll back the row if the save fails.
+      setHearings((prev) => prev.map((h) => (h.id === id ? previous : h)));
+
+      const label = TOAST_LABELS[field] ?? field.replace(/_/g, " ");
+      const msg = `${label} failed to save${claimant ? ` • ${claimant}` : ""}`;
+
+      if (updateToastTimer.current) clearTimeout(updateToastTimer.current);
+      setUpdateToast(msg);
+      updateToastTimer.current = setTimeout(() => setUpdateToast(null), 3000);
+
+      console.error(`Failed to update ${field} for hearing #${id}`, error);
     }
   }
 
@@ -1807,7 +1862,9 @@ export function MrPivotClient({ userRole, userName, ...data }: Props) {
         subtitle="MR Status Tracking &amp; Analytics"
       />
       <div className="flex min-w-0 flex-col gap-3 p-3 sm:gap-4 sm:p-4 lg:p-6">
-        <DashboardNav userRole={userRole} />
+        <DashboardNav userRole={userRole}>
+          <GoogleSheetsSyncButton userRole={userRole} />
+        </DashboardNav>
         {/* ── Summary Section ──────────────────────────────────────────────── */}
         {/* Admin view  → 4 columns:
               Col 1: Total Hearings / In Progress / Ready   (compact)

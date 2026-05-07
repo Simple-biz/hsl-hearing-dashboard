@@ -1,4 +1,5 @@
-import { Pool } from "@neondatabase/serverless";
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { Pool, type QueryResultRow } from "@neondatabase/serverless";
 
 // Shared pool instance (reused across requests in serverless)
 let pool: Pool | null = null;
@@ -14,43 +15,32 @@ function getPool(): Pool {
   return pool;
 }
 
-/**
- * Run a query without RLS context (uses DB owner, bypasses RLS).
- * Use for: admin operations, imports, cron jobs, migrations.
- *
- * Usage:
- *   const { rows } = await db.query('SELECT * FROM users')
- *   const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [userId])
- */
-export const db = {
-  query: (text: string, params?: unknown[]) => getPool().query(text, params),
+type DbQueryResult<T = any> = {
+  rows: T[];
+  rowCount: number | null;
+  command?: string;
+  oid?: number;
+  fields?: unknown[];
 };
 
-/**
- * Run a query WITH RLS context.
- * Sets app.current_user_id and app.current_user_role as session variables
- * inside a transaction so RLS policies enforce access control.
- *
- * Usage:
- *   const rows = await dbWithRLS(userId, userRole, 'SELECT * FROM hearings')
- *   const rows = await dbWithRLS(userId, userRole, 'SELECT * FROM hearings WHERE id = $1', [123])
- */
-export async function dbWithRLS(
-  userId: number,
-  userRole: string,
-  text: string,
-  params?: unknown[],
-) {
+type DbClient = {
+  query: <T = any>(
+    text: string,
+    params?: unknown[],
+  ) => Promise<DbQueryResult<T>>;
+};
+
+// Compatibility mode:
+// - keeps transaction support for atomic sync-event writes
+// - still allows explicit db.query<RowType>(...) where needed
+// - preserves rowCount for older code paths
+async function transaction<T>(
+  callback: (client: DbClient) => Promise<T>,
+): Promise<T> {
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
-    await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [
-      String(userId),
-    ]);
-    await client.query(`SELECT set_config('app.current_user_role', $1, true)`, [
-      userRole,
-    ]);
-    const result = await client.query(text, params);
+    const result = await callback(client as unknown as DbClient);
     await client.query("COMMIT");
     return result;
   } catch (error) {
@@ -62,21 +52,51 @@ export async function dbWithRLS(
 }
 
 /**
+ * Run a query without RLS context.
+ */
+export const db = {
+  query: <T = any>(text: string, params?: unknown[]) =>
+    getPool().query(text, params) as unknown as Promise<DbQueryResult<T>>,
+  connect: () => getPool().connect(),
+  transaction,
+};
+
+/**
+ * Run a query WITH RLS context.
+ */
+export async function dbWithRLS<T = any>(
+  userId: number,
+  userRole: string,
+  text: string,
+  params?: unknown[],
+): Promise<DbQueryResult<T>> {
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`SELECT set_config('app.current_user_id', $1, true)`, [
+      String(userId),
+    ]);
+    await client.query(`SELECT set_config('app.current_user_role', $1, true)`, [
+      userRole,
+    ]);
+    const result = await client.query(text, params);
+    await client.query("COMMIT");
+    return result as unknown as DbQueryResult<T>;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
  * Run multiple queries in a single RLS-scoped transaction.
- *
- * Usage:
- *   const results = await dbTransaction(userId, userRole, async (client) => {
- *     const hearings = await client.query('SELECT * FROM hearings WHERE id = $1', [id])
- *     await client.query('UPDATE hearings SET ... WHERE id = $1', [id])
- *     return hearings.rows[0]
- *   })
  */
 export async function dbTransaction<T>(
   userId: number,
   userRole: string,
-  callback: (client: {
-    query: (text: string, params?: unknown[]) => Promise<{ rows: T[] }>;
-  }) => Promise<T>,
+  callback: (client: DbClient) => Promise<T>,
 ): Promise<T> {
   const client = await getPool().connect();
   try {
@@ -87,7 +107,7 @@ export async function dbTransaction<T>(
     await client.query(`SELECT set_config('app.current_user_role', $1, true)`, [
       userRole,
     ]);
-    const result = await callback(client);
+    const result = await callback(client as unknown as DbClient);
     await client.query("COMMIT");
     return result;
   } catch (error) {
