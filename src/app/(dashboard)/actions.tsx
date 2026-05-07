@@ -597,17 +597,52 @@ export async function updateHearing(
   {
     const { requireAuth } = await import("@/lib/session");
     const { canUserEditField } = await import("@/lib/field-access");
+    const { canManage } = await import("@/lib/roles");
     const session = await requireAuth();
-    const allowed = await canUserEditField(
-      Number(session.user.id),
-      session.user.role as import("@/lib/roles").UserRole,
-      "dashboard",
-      field,
-    );
-    if (!allowed) {
-      throw new Error(
-        `You do not have permission to edit "${field}" on the dashboard.`,
+
+    // Edit modal fields are structural hearing fields not normally
+    // editable inline — gate them by canManage role only, not per-field access.
+    // ⚠️ Keep in sync with textFields in handleEditSave() in dashboard-client.tsx
+    const EDIT_MODAL_ONLY_FIELDS = [
+      "claimant",
+      "ssn_last_4",
+      "claim_type",
+      "hearing_date",
+      "hearing_time",
+      "time_zone",
+      "converted_time_est",
+      "alj",
+      "city",
+      "state",
+      "claimant_location",
+      "representative_location",
+      "medical_expert",
+      "vocational_expert",
+      "status_date",
+      "entered_hearing_level_date",
+      "download_type",
+    ];
+
+    if (EDIT_MODAL_ONLY_FIELDS.includes(field)) {
+      // Only admins/managers can edit these fields
+      if (!canManage(session.user.role as import("@/lib/roles").UserRole)) {
+        throw new Error(
+          `You do not have permission to edit "${field}" on the dashboard.`,
+        );
+      }
+    } else {
+      // All other fields go through the normal per-field access gate
+      const allowed = await canUserEditField(
+        Number(session.user.id),
+        session.user.role as import("@/lib/roles").UserRole,
+        "dashboard",
+        field,
       );
+      if (!allowed) {
+        throw new Error(
+          `You do not have permission to edit "${field}" on the dashboard.`,
+        );
+      }
     }
   }
 
@@ -717,9 +752,8 @@ export async function updateHearing(
   // Sync decision status → representative_docs overall_status. Logic lives
   // in src/lib/rep-docs-decision-sync.ts so import paths share the same rules.
   if (field === "hearing_decision_status" && value !== oldValue) {
-    const { syncRepDocsStatusForHearing } = await import(
-      "@/lib/rep-docs-decision-sync"
-    );
+    const { syncRepDocsStatusForHearing } =
+      await import("@/lib/rep-docs-decision-sync");
     await syncRepDocsStatusForHearing(
       hearingId,
       value === null || value === undefined ? null : String(value),
@@ -745,6 +779,10 @@ export async function updateHearing(
       );
     }
   }
+
+  // ── Computed fields — skip activity log (they're side effects of other fields) ──
+  const SILENT_FIELDS = ["converted_time_est"];
+  if (SILENT_FIELDS.includes(field)) return { ok: true };
 
   // Resolve display values for ID fields
   const fieldLabel =
@@ -1577,7 +1615,12 @@ export async function fetchActivityLog(params: {
       : "";
   const dataValues =
     params.ackScope === "rep_docs"
-      ? [...values, params.pageSize, (params.page - 1) * params.pageSize, currentUserId]
+      ? [
+          ...values,
+          params.pageSize,
+          (params.page - 1) * params.pageSize,
+          currentUserId,
+        ]
       : [...values, params.pageSize, (params.page - 1) * params.pageSize];
 
   const [countRes, dataRes, usersRes] = await Promise.all([
