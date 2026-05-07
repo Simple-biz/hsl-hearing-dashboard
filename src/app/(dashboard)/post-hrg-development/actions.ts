@@ -47,6 +47,7 @@ export interface PostHrgDevRow {
   // NULL = unacknowledged ("NEW" pill, pinned to top of grid)
   // Timestamp = acknowledged, sorts in normal date order
   acknowledged_at: string | null;
+  acknowledged_by_name: string | null; // ← add this line after acknowledged_at
 }
 
 export interface PostHrgDevStats {
@@ -406,6 +407,7 @@ export async function fetchPostHrgDevPage(
         p.created_at::text, p.updated_at::text,
         p.created_by, p.updated_by,
         p.acknowledged_at::text AS acknowledged_at,
+        p.acknowledged_by_name,
         r.name AS representative_name,
         r.rep_type,
         h.claimant_link,
@@ -447,6 +449,7 @@ export async function fetchPostHrgDevRecords(): Promise<PostHrgDevRow[]> {
       p.created_at::text, p.updated_at::text,
       p.created_by, p.updated_by,
       p.acknowledged_at::text AS acknowledged_at,
+      p.acknowledged_by_name,
       r.name AS representative_name,
       r.rep_type,
       h.claimant_link,
@@ -560,6 +563,7 @@ export async function fetchPostHrgCompletedRecords(
         p.created_at::text, p.updated_at::text,
         p.created_by, p.updated_by,
         p.acknowledged_at::text AS acknowledged_at,
+        p.acknowledged_by_name,
         r.name AS representative_name,
         r.rep_type,
         h.claimant_link,
@@ -940,28 +944,22 @@ export async function updatePostHrgDevField(
 // group on next render. Shared across the team — first user to click
 // clears it for everyone.
 
-export async function acknowledgePostHrgDevRecord(id: number) {
+export async function acknowledgePostHrgDevRecord(id: number, byName?: string) {
   const { rows } = await db.query(
     `UPDATE post_hrg_development
-        SET acknowledged_at = NOW()
+        SET acknowledged_at = NOW(),
+            acknowledged_by_name = $2
       WHERE id = $1
         AND acknowledged_at IS NULL
-      RETURNING claimant, acknowledged_at::text AS acknowledged_at`,
-    [id],
+      RETURNING claimant, acknowledged_at::text, acknowledged_by_name`,
+    [id, byName ?? null],
   );
-  if (rows.length === 0) {
-    // Either the row doesn't exist or was already acknowledged by a
-    // teammate — no-op success either way.
-    return { success: true, acknowledged_at: null };
-  }
-  const { logAction } = await import("@/lib/activity-log");
-  await logAction(
-    "post_hrg_dev_acknowledged",
-    `Acknowledged new post-hrg record: ${rows[0].claimant}`,
-  );
+  if (rows.length === 0)
+    return { success: true, acknowledged_at: null, acknowledged_by_name: null };
   return {
     success: true,
     acknowledged_at: rows[0].acknowledged_at as string,
+    acknowledged_by_name: rows[0].acknowledged_by_name as string | null,
   };
 }
 

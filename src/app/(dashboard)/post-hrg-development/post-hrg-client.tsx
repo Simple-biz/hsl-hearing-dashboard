@@ -33,7 +33,8 @@ import { PostHrgDetailPanel } from "./post-hrg-detail-panel";
 import { PostHrgActivityModal } from "@/components/modals/post-hrg-activity-modal";
 import { PostHrgReviewModal } from "@/components/modals/post-hrg-review-modal";
 import { PostHrgCompletedModal } from "@/components/modals/post-hrg-completed-modal";
-import { ClipboardList, Check } from "lucide-react";
+import { ClipboardList, Check, BarChart3 } from "lucide-react";
+import { PostHrgReportsModal } from "@/components/modals/post-hrg-reports-modal";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -235,7 +236,7 @@ function IndicatorDot({
             "w-3.5 h-3.5 rounded-full border transition-all shrink-0",
             color
               ? "border-transparent ring-1 ring-offset-1"
-              : "border-2 border-dashed border-muted-foreground/50 hover:border-primary hover:bg-primary/10",
+              : "border-2 border-dashed border-primary/50 bg-primary/5 hover:border-primary hover:bg-primary/15",
             isAdmin && "cursor-pointer",
             !isAdmin && "cursor-default",
           )}
@@ -506,6 +507,59 @@ function InlineCheck({
   );
 }
 
+// ─── Legend Tooltip ─────────────────────────────────────────────────────────
+
+function LegendTooltip() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((p) => !p)}
+        className={cn(
+          "h-5 w-5 rounded-full border-2 text-[10px] font-bold flex items-center justify-center transition-colors",
+          open
+            ? "border-primary bg-primary text-primary-foreground"
+            : "border-primary/60 bg-primary/10 text-primary hover:bg-primary/20",
+        )}
+      >
+        ?
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 z-50">
+            <div className="rounded-xl border bg-card shadow-xl p-3 w-56">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                Indicator Legend
+              </p>
+              <div className="space-y-1.5">
+                {INDICATOR_OPTIONS.map((o) => (
+                  <div key={o.value} className="flex items-center gap-2">
+                    <span
+                      className="w-3 h-3 rounded-full shrink-0 ring-1 ring-offset-1"
+                      style={{
+                        backgroundColor: o.color,
+                        boxShadow: `0 0 0 1px ${o.color}60`,
+                      }}
+                    />
+                    <span className="text-[11px] text-foreground">
+                      {o.label}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="flex justify-center">
+              <div className="w-2 h-2 rotate-45 border-b border-r border-border bg-card -mt-1" />
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ─── Inline Editable Text ───────────────────────────────────────────────────
 
 // function InlineEditableText({
@@ -726,8 +780,7 @@ function PostHrgCell({
   // - POST_HRG / REP / orphan MR → modal opens in `phd-internal` mode against
   //   `details_notes`, plus a read-only "MR / Dashboard" section pulling from
   //   `hearings.post_hrg_notes` when the row has a linked hearing.
-  const usesHearingNotes =
-    record.record_type === "MR" && !!record.hearing_id;
+  const usesHearingNotes = record.record_type === "MR" && !!record.hearing_id;
   const detailsNotes = parseNotes(
     (record as unknown as { details_notes: string | null }).details_notes ??
       null,
@@ -1454,7 +1507,7 @@ const StatsRow = memo(function StatsRow({ stats }: { stats: PostHrgDevStats }) {
       gradient: "from-emerald-500 to-green-400",
     },
     {
-      label: "Overdue",
+      label: "Incomplete",
       value: stats.overdue,
       gradient: "from-pink-400 to-rose-500",
     },
@@ -1838,6 +1891,12 @@ export function PostHrgClient({
   const [detailPanel, setDetailPanel] = useState<PostHrgDevRow | null>(null);
   const [showActivityLog, setShowActivityLog] = useState(false);
   const [showCompletedModal, setShowCompletedModal] = useState(false);
+  const [showReportsModal, setShowReportsModal] = useState(false);
+  const [completedConfirm, setCompletedConfirm] = useState<{
+    // ← add here
+    id: number;
+    claimant: string;
+  } | null>(null);
   const [completedCount, setCompletedCount] = useState<number>(
     initialCompletedCount,
   );
@@ -2252,13 +2311,24 @@ export function PostHrgClient({
 
   const handleFieldUpdate = useCallback(
     async (id: number, field: string, value: string | boolean | null) => {
+      // Intercept "Completed" status — show confirmation first
+      if (
+        field === "status" &&
+        typeof value === "string" &&
+        value.toLowerCase() === "completed"
+      ) {
+        const record = records.find((r) => r.id === id);
+        setCompletedConfirm({
+          id,
+          claimant: record?.claimant || "this record",
+        });
+        return;
+      }
+
       // Special-case: when status flips to "Completed", drop the row from
       // the visible list and bump the Completed badge count. The main grid
       // hides Completed rows; users access them via the Completed modal.
-      const becameCompleted =
-        field === "status" &&
-        typeof value === "string" &&
-        value.toLowerCase() === "completed";
+      const becameCompleted = false; // handled above via confirmation
       if (becameCompleted) {
         setRecords((prev) => prev.filter((r) => r.id !== id));
         setTotalFiltered((n) => Math.max(0, n - 1));
@@ -2275,9 +2345,49 @@ export function PostHrgClient({
         refreshStats();
       } catch (e) {
         const message =
-          e instanceof Error
-            ? e.message
-            : "Update failed — change rolled back";
+          e instanceof Error ? e.message : "Update failed — change rolled back";
+        toast(message);
+        fetchPage(
+          page,
+          pageSize,
+          sortKey,
+          sortDir,
+          searchTerm,
+          statusFilter,
+          phStatusFilter,
+          indicatorFilter,
+        );
+      }
+    },
+    [
+      records,
+      toast,
+      refreshStats,
+      fetchPage,
+      page,
+      pageSize,
+      sortKey,
+      sortDir,
+      searchTerm,
+      statusFilter,
+      phStatusFilter,
+      indicatorFilter,
+    ],
+  );
+
+  const handleConfirmComplete = useCallback(
+    // ← add here
+    async (id: number) => {
+      setCompletedConfirm(null);
+      setRecords((prev) => prev.filter((r) => r.id !== id));
+      setTotalFiltered((n) => Math.max(0, n - 1));
+      setCompletedCount((n) => n + 1);
+      try {
+        await updatePostHrgDevField(id, "status", "Completed");
+        refreshStats();
+      } catch (e) {
+        const message =
+          e instanceof Error ? e.message : "Update failed — change rolled back";
         toast(message);
         fetchPage(
           page,
@@ -2318,24 +2428,41 @@ export function PostHrgClient({
   const handleAcknowledge = useCallback(
     async (id: number) => {
       const stamp = new Date().toISOString();
+      // Optimistic update — stamp both fields immediately
       setRecords((prev) =>
         prev.map((r) =>
-          r.id === id ? { ...r, acknowledged_at: stamp } : r,
+          r.id === id
+            ? { ...r, acknowledged_at: stamp, acknowledged_by_name: userName }
+            : r,
         ),
       );
       try {
-        const result = await acknowledgePostHrgDevRecord(id);
+        const result = await acknowledgePostHrgDevRecord(id, userName);
         if (!result.success) throw new Error("Acknowledge failed");
+        // Reconcile with server timestamp
+        setRecords((prev) =>
+          prev.map((r) =>
+            r.id === id
+              ? {
+                  ...r,
+                  acknowledged_at: result.acknowledged_at ?? stamp,
+                  acknowledged_by_name: result.acknowledged_by_name ?? userName,
+                }
+              : r,
+          ),
+        );
       } catch {
         setRecords((prev) =>
           prev.map((r) =>
-            r.id === id ? { ...r, acknowledged_at: null } : r,
+            r.id === id
+              ? { ...r, acknowledged_at: null, acknowledged_by_name: null }
+              : r,
           ),
         );
         toast("Failed to acknowledge");
       }
     },
-    [toast],
+    [toast, userName],
   );
 
   const saveNewRecord = useCallback(async () => {
@@ -2685,7 +2812,7 @@ export function PostHrgClient({
                 onChange={(v) => handleFieldUpdate(r.id, "indicator", v)}
                 isAdmin={isAdmin && !isCompletedRow}
               />
-              {!r.acknowledged_at && !isCompletedRow && (
+              {!r.acknowledged_at && !isCompletedRow ? (
                 <button
                   type="button"
                   onClick={(e) => {
@@ -2705,13 +2832,42 @@ export function PostHrgClient({
                     "focus:outline-none focus:ring-2 focus:ring-blue-400/60",
                   )}
                 >
-                  <Check
-                    className="h-3 w-3 shrink-0"
-                    strokeWidth={3}
-                  />
+                  <Check className="h-3 w-3 shrink-0" strokeWidth={3} />
                   <span>NEW</span>
                 </button>
-              )}
+              ) : r.acknowledged_at &&
+                r.acknowledged_by_name &&
+                !isCompletedRow ? (
+                <div
+                  title={`Acknowledged${r.acknowledged_by_name ? ` by ${r.acknowledged_by_name}` : ""}${
+                    r.acknowledged_at
+                      ? ` on ${new Date(r.acknowledged_at).toLocaleDateString(
+                          "en-US",
+                          {
+                            month: "short",
+                            day: "numeric",
+                            year: "2-digit",
+                            hour: "numeric",
+                            minute: "2-digit",
+                          },
+                        )}`
+                      : ""
+                  }`}
+                  className="flex w-14 shrink-0 flex-col items-center rounded-sm bg-green-100 px-0.5 py-0.5 leading-tight text-green-800 dark:bg-green-900/40 dark:text-green-300"
+                >
+                  <span className="text-[10px] font-bold leading-none">✓</span>
+                  <span className="w-full truncate text-center text-[8px] leading-tight">
+                    {r.acknowledged_by_name || "Acked"}
+                  </span>
+                  <span className="w-full truncate text-center text-[8px] leading-tight opacity-80">
+                    {new Date(r.acknowledged_at).toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                      year: "2-digit",
+                    })}
+                  </span>
+                </div>
+              ) : null}
             </div>
           );
         case "claimant":
@@ -2947,6 +3103,20 @@ export function PostHrgClient({
             <div className="flex items-center gap-2">
               <button
                 className={cn(
+                  BTN,
+                  "text-xs sm:text-sm gap-1.5 px-3 py-1.5",
+                  "bg-violet-50 text-violet-700 border border-violet-200",
+                  "hover:bg-violet-100 hover:border-violet-300",
+                  "dark:bg-violet-950/30 dark:text-violet-300 dark:border-violet-800",
+                  "dark:hover:bg-violet-950/50 dark:hover:border-violet-700",
+                )}
+                onClick={() => setShowReportsModal(true)}
+              >
+                <BarChart3 className="h-3.5 w-3.5" />
+                Reports
+              </button>
+              <button
+                className={cn(
                   "flex items-center gap-1.5 text-xs sm:text-sm px-3 py-1.5 rounded-lg transition-colors font-semibold border",
                   completedCount > 0
                     ? "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700"
@@ -3053,10 +3223,7 @@ export function PostHrgClient({
                       )}
                     >
                       <span
-                        className={cn(
-                          "h-1.5 w-1.5 rounded-full",
-                          t.dotCls,
-                        )}
+                        className={cn("h-1.5 w-1.5 rounded-full", t.dotCls)}
                       />
                       {t.label}
                     </span>
@@ -3244,44 +3411,7 @@ export function PostHrgClient({
                     </button>
 
                     {/* Legend tooltip */}
-                    <div className="group relative shrink-0">
-                      <button
-                        type="button"
-                        className="h-5 w-5 rounded-full border border-border bg-muted text-muted-foreground text-[10px] font-bold flex items-center justify-center hover:bg-muted/80 transition-colors"
-                      >
-                        ?
-                      </button>
-                      <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 z-50 hidden group-hover:block">
-                        <div className="rounded-xl border bg-card shadow-xl p-3 w-56">
-                          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-                            Indicator Legend
-                          </p>
-                          <div className="space-y-1.5">
-                            {INDICATOR_OPTIONS.map((o) => (
-                              <div
-                                key={o.value}
-                                className="flex items-center gap-2"
-                              >
-                                <span
-                                  className="w-3 h-3 rounded-full shrink-0 ring-1 ring-offset-1"
-                                  style={{
-                                    backgroundColor: o.color,
-                                    boxShadow: `0 0 0 1px ${o.color}60`,
-                                  }}
-                                />
-                                <span className="text-[11px] text-foreground">
-                                  {o.label}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                        {/* Arrow */}
-                        <div className="flex justify-center">
-                          <div className="w-2 h-2 rotate-45 border-b border-r border-border bg-card -mt-1" />
-                        </div>
-                      </div>
-                    </div>
+                    <LegendTooltip />
                   </div>
                 </div>
                 <span className="text-xs text-muted-foreground self-center">
@@ -3473,13 +3603,14 @@ export function PostHrgClient({
                         className="rounded border bg-background px-1.5 py-0.5 text-xs tabular-nums cursor-pointer hover:bg-muted/40 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400/60"
                         aria-label="Jump to page"
                       >
-                        {Array.from({ length: totalPages }, (_, i) => i + 1).map(
-                          (p) => (
-                            <option key={p} value={p}>
-                              {p}
-                            </option>
-                          ),
-                        )}
+                        {Array.from(
+                          { length: totalPages },
+                          (_, i) => i + 1,
+                        ).map((p) => (
+                          <option key={p} value={p}>
+                            {p}
+                          </option>
+                        ))}
                       </select>{" "}
                       of {totalPages}
                     </span>
@@ -4278,6 +4409,62 @@ export function PostHrgClient({
         row={detailPanel}
         onClose={() => setDetailPanel(null)}
       />
+      <PostHrgReportsModal
+        open={showReportsModal}
+        onClose={() => setShowReportsModal(false)}
+        recordType={recordType}
+      />
+
+      {/* ════════════════ COMPLETE CONFIRMATION ════════════════ */}
+      {completedConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setCompletedConfirm(null)}
+        >
+          <div
+            className="w-full max-w-sm rounded-xl border bg-card shadow-2xl flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 border-b px-5 py-4">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-400">
+                ✓
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold">Mark as Completed?</h3>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  {completedConfirm.claimant}
+                </p>
+              </div>
+            </div>
+            <div className="px-5 py-4">
+              <p className="text-sm text-muted-foreground">
+                This record will be moved to the{" "}
+                <span className="font-medium text-foreground">Completed</span>{" "}
+                list and removed from the main grid. This can be undone by
+                reopening the record from the Completed modal.
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t px-5 py-3">
+              <button
+                className={cn(BTN_SECONDARY, "px-3 py-1.5 text-xs")}
+                onClick={() => setCompletedConfirm(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className={cn(
+                  BTN,
+                  "px-3 py-1.5 text-xs bg-emerald-600 text-white hover:bg-emerald-700",
+                )}
+                onClick={() => handleConfirmComplete(completedConfirm.id)}
+              >
+                Yes, mark as Completed
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <PostHrgActivityModal
         open={showActivityLog}
         onClose={() => setShowActivityLog(false)}
