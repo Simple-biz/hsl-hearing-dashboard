@@ -169,6 +169,86 @@ export async function deleteUser(userId: number) {
   await logAction("user_deleted", `${rows[0]?.full_name} deleted`);
 }
 
+// ═══════════ FIELD ACCESS OVERRIDES ═══════════
+// Per-user, per-page, per-field edit overrides on top of role defaults.
+// See src/lib/field-access.ts for the resolver and src/lib/field-access-catalog.ts
+// for the available pages + fields.
+
+import { requireAuth } from "@/lib/session";
+import {
+  listUserFieldAccess,
+  setUserFieldAccess as _setUserFieldAccess,
+  resetUserFieldAccessForPage,
+  type UserFieldAccessRow,
+} from "@/lib/field-access";
+import type { FieldAccessPageKey } from "@/lib/field-access-catalog";
+
+/** Admin: load every override for a user on a page (drives the modal). */
+export async function getUserFieldAccess(
+  userId: number,
+  pageKey: FieldAccessPageKey,
+): Promise<UserFieldAccessRow[]> {
+  return listUserFieldAccess(userId, pageKey);
+}
+
+/**
+ * Admin: persist a single checkbox change.
+ * - canEdit = true / false → upsert override row
+ * - canEdit = null         → delete override row (revert that one field
+ *   to role default; cleaner than storing redundant rows that match the
+ *   role's current default)
+ */
+export async function setUserFieldAccess(
+  userId: number,
+  pageKey: FieldAccessPageKey,
+  fieldKey: string,
+  canEdit: boolean | null,
+): Promise<{ success: true }> {
+  const session = await requireAuth();
+  await _setUserFieldAccess(
+    userId,
+    pageKey,
+    fieldKey,
+    canEdit,
+    session.user.id ?? null,
+  );
+  const { rows } = await db.query(
+    "SELECT full_name FROM users WHERE id = $1",
+    [userId],
+  );
+  const target = rows[0]?.full_name || `User #${userId}`;
+  const verb =
+    canEdit === null ? "reset" : canEdit ? "granted" : "revoked";
+  await logAction(
+    "user_access_changed",
+    `${verb} ${pageKey}.${fieldKey} for ${target}`,
+  );
+  return { success: true };
+}
+
+/**
+ * Admin: wipe every override for a user on a page (the modal's
+ * "Apply Role Defaults" button).
+ */
+export async function resetUserFieldAccess(
+  userId: number,
+  pageKey: FieldAccessPageKey,
+): Promise<{ success: true; cleared: number }> {
+  const cleared = await resetUserFieldAccessForPage(userId, pageKey);
+  if (cleared > 0) {
+    const { rows } = await db.query(
+      "SELECT full_name FROM users WHERE id = $1",
+      [userId],
+    );
+    const target = rows[0]?.full_name || `User #${userId}`;
+    await logAction(
+      "user_access_reset",
+      `Reset all ${pageKey} access overrides for ${target} (${cleared} field${cleared === 1 ? "" : "s"})`,
+    );
+  }
+  return { success: true, cleared };
+}
+
 // ═══════════ CONFIG OPTIONS ═══════════
 
 export interface ConfigOption {
@@ -389,11 +469,22 @@ export interface RepDocsAssignee {
   bg_color: string | null;
   is_active: boolean;
   display_order: number;
+  // Optional FK to the linked user account. NULL = unlinked (e.g. contractor,
+  // shared queue, label that doesn't map to a user). Joined name/email are
+  // populated by the LEFT JOIN in getRepDocsAssignees for display in the
+  // settings UI.
+  user_id: number | null;
+  user_full_name: string | null;
+  user_email: string | null;
 }
 
 export async function getRepDocsAssignees(): Promise<RepDocsAssignee[]> {
   const { rows } = await db.query(
-    "SELECT id, name, bg_color, is_active, display_order FROM rep_docs_assignees ORDER BY display_order",
+    `SELECT a.id, a.name, a.bg_color, a.is_active, a.display_order,
+            a.user_id, u.full_name AS user_full_name, u.email AS user_email
+     FROM rep_docs_assignees a
+     LEFT JOIN users u ON u.id = a.user_id
+     ORDER BY a.display_order`,
   );
   return rows as RepDocsAssignee[];
 }
@@ -402,17 +493,33 @@ export async function saveRepDocsAssignee(data: {
   id?: number;
   name: string;
   bg_color?: string;
+  /**
+   * User id to link this assignee to. Pass `null` to clear an existing link,
+   * `undefined` to leave the current value untouched (edits where the picker
+   * isn't surfaced).
+   */
+  user_id?: number | null;
 }) {
   if (data.id) {
-    await db.query(
-      "UPDATE rep_docs_assignees SET name=$1, bg_color=$2 WHERE id=$3",
-      [data.name, data.bg_color || null, data.id],
-    );
+    if (data.user_id === undefined) {
+      await db.query(
+        "UPDATE rep_docs_assignees SET name=$1, bg_color=$2 WHERE id=$3",
+        [data.name, data.bg_color || null, data.id],
+      );
+    } else {
+      await db.query(
+        "UPDATE rep_docs_assignees SET name=$1, bg_color=$2, user_id=$3 WHERE id=$4",
+        [data.name, data.bg_color || null, data.user_id, data.id],
+      );
+    }
     return data.id;
   } else {
     const { rows } = await db.query(
-      "INSERT INTO rep_docs_assignees (name, bg_color, is_active, display_order) VALUES ($1,$2,true, (SELECT COALESCE(MAX(display_order),0)+1 FROM rep_docs_assignees)) RETURNING id",
-      [data.name, data.bg_color || null],
+      `INSERT INTO rep_docs_assignees (name, bg_color, user_id, is_active, display_order)
+       VALUES ($1, $2, $3, true,
+               (SELECT COALESCE(MAX(display_order),0)+1 FROM rep_docs_assignees))
+       RETURNING id`,
+      [data.name, data.bg_color || null, data.user_id ?? null],
     );
     return rows[0].id as number;
   }

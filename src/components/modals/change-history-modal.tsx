@@ -70,6 +70,8 @@ export interface SyncResult {
   historyCompletedAt?: string | null;
   message?: string;
   backup?: SyncBackup | null;
+  lastEventId?: number | null;
+  sessionStartEventId?: number | null;
   summary: {
     total: number;
     created: number;
@@ -109,6 +111,8 @@ const LOADING_STEPS = [
 const STEP_INTERVAL_MS = 650;
 const BUSY_RETRY_DELAY_MS = 2500;
 const MAX_BUSY_RETRIES = 24;
+const BACKGROUND_SYNC_POLL_INTERVAL_MS = 3000;
+const BACKGROUND_SYNC_POLL_ATTEMPTS = 40;
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -550,7 +554,7 @@ function ChangeHistoryModal({ result, onClose }: ChangeHistoryModalProps) {
         {showingLatestCompletedSession && (
           <div className="mx-5 mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
             {result.message ??
-              "No new changes were found from your click. Showing the latest completed sync session instead."}
+              "Nothing was left pending when this run started. Showing the latest completed sync session."}
             {latestSessionRunAt ? (
               <span className="block mt-1 text-[11px] text-amber-700/90">
                 Latest completed sync: {latestSessionRunAt}
@@ -673,9 +677,15 @@ function ChangeHistoryModal({ result, onClose }: ChangeHistoryModalProps) {
 
 interface SyncButtonProps {
   userRole: string;
+  disabled?: boolean;
+  disabledReason?: string;
 }
 
-export function GoogleSheetsSyncButton({ userRole }: SyncButtonProps) {
+export function GoogleSheetsSyncButton({
+  userRole,
+  disabled = false,
+  disabledReason = "Finish saving field changes before syncing.",
+}: SyncButtonProps) {
   const [phase, setPhase] = useState<"idle" | "syncing" | "waiting" | "done">("idle");
   const [stepIndex, setStepIndex] = useState(0);
   const [result, setResult] = useState<SyncResult | null>(null);
@@ -755,7 +765,57 @@ export function GoogleSheetsSyncButton({ userRole }: SyncButtonProps) {
     noticeTimer.current = setTimeout(() => setNotice(null), durationMs);
   }, []);
 
+  const loadLatestSyncFromApi = useCallback(async (): Promise<SyncResult | null> => {
+    const res = await fetch("/api/mr-sync", {
+      method: "GET",
+      cache: "no-store",
+    });
+
+    const payload = (await res.json().catch(() => null)) as
+      | (Partial<SyncResult> & { ok?: boolean; hasLatestSync?: boolean })
+      | null;
+
+    if (!res.ok || !payload?.ok || !payload?.hasLatestSync) return null;
+
+    return payload as SyncResult;
+  }, []);
+
+  const isNewerThanPreviousSync = useCallback(
+    (nextResult: SyncResult, syncStartedAtMs: number, previousResult: SyncResult | null) => {
+      const nextLastEventId = nextResult.lastEventId ?? null;
+      const previousLastEventId = previousResult?.lastEventId ?? null;
+
+      if (
+        typeof nextLastEventId === "number" &&
+        typeof previousLastEventId === "number" &&
+        nextLastEventId > previousLastEventId
+      ) {
+        return true;
+      }
+
+      const completedAt = nextResult.historyCompletedAt ?? nextResult.runAt;
+      const completedAtMs = completedAt ? new Date(completedAt).getTime() : 0;
+
+      return Number.isFinite(completedAtMs) && completedAtMs >= syncStartedAtMs - 5000;
+    },
+    [],
+  );
+
   const handleSync = useCallback(async () => {
+    if (disabled) {
+      showNotice(
+        {
+          tone: "amber",
+          message: disabledReason,
+        },
+        5000,
+      );
+      return;
+    }
+
+    const previousResult = result;
+    const syncStartedAtMs = Date.now();
+
     setPhase("syncing");
     setStepIndex(0);
     dismissToast();
@@ -772,6 +832,34 @@ export function GoogleSheetsSyncButton({ userRole }: SyncButtonProps) {
     const sleep = (ms: number) =>
       new Promise((resolve) => window.setTimeout(resolve, ms));
 
+    const waitForBackgroundCompletion = async (): Promise<SyncResult | null> => {
+      setPhase("waiting");
+      setStepIndex(LOADING_STEPS.length - 1);
+      setNotice({
+        tone: "amber",
+        message:
+          "The request timed out, but the n8n workflow may still be finishing. Checking for the completed sync automatically…",
+      });
+
+      for (let attempt = 0; attempt < BACKGROUND_SYNC_POLL_ATTEMPTS; attempt += 1) {
+        await sleep(BACKGROUND_SYNC_POLL_INTERVAL_MS);
+
+        const latestResult = await loadLatestSyncFromApi().catch(() => null);
+        if (!latestResult) continue;
+
+        if (isNewerThanPreviousSync(latestResult, syncStartedAtMs, previousResult)) {
+          return {
+            ...latestResult,
+            syncStatus: "completed",
+            message:
+              "The sync finished in the background after the request timeout. Showing that completed sync session.",
+          };
+        }
+      }
+
+      return null;
+    };
+
     try {
       for (let attempt = 0; attempt <= MAX_BUSY_RETRIES; attempt += 1) {
         const res = await fetch("/api/mr-sync", {
@@ -785,6 +873,17 @@ export function GoogleSheetsSyncButton({ userRole }: SyncButtonProps) {
         }))) as SyncApiError & Partial<SyncResult> & { ok?: boolean };
 
         if (!res.ok) {
+          if (payload.code === "SYNC_TIMEOUT") {
+            const backgroundResult = await waitForBackgroundCompletion();
+
+            if (backgroundResult) {
+              setNotice(null);
+              setResult(backgroundResult);
+              setPhase("done");
+              return;
+            }
+          }
+
           throw payload;
         }
 
@@ -815,15 +914,31 @@ export function GoogleSheetsSyncButton({ userRole }: SyncButtonProps) {
           continue;
         }
 
+        const completedAt = syncResult.historyCompletedAt ?? syncResult.runAt;
+        const completedAtMs = completedAt ? new Date(completedAt).getTime() : 0;
+        const looksLikeJustCompletedBackgroundRun =
+          syncResult.syncStatus === "no_change" &&
+          syncResult.historySource === "latest_completed_session" &&
+          Number.isFinite(completedAtMs) &&
+          completedAtMs >= syncStartedAtMs - 5000;
+
+        const displayResult = looksLikeJustCompletedBackgroundRun
+          ? {
+              ...syncResult,
+              message:
+                "Nothing was left pending when this run started because the latest sync had just completed. Showing that completed sync session.",
+            }
+          : syncResult;
+
         setNotice(null);
-        setResult(syncResult);
+        setResult(displayResult);
         setPhase("done");
 
-        if (syncResult.syncStatus === "no_change" && syncResult.changes.length === 0) {
+        if (displayResult.syncStatus === "no_change" && displayResult.changes.length === 0) {
           showNotice(
             {
               tone: "slate",
-              message: "No new changes were left to sync.",
+              message: "No pending changes were found to sync.",
             },
             7000,
           );
@@ -846,7 +961,16 @@ export function GoogleSheetsSyncButton({ userRole }: SyncButtonProps) {
     } finally {
       clearInterval(stepTimer);
     }
-  }, [dismissToast, showErrorToast, showNotice]);
+  }, [
+    disabled,
+    disabledReason,
+    dismissToast,
+    isNewerThanPreviousSync,
+    loadLatestSyncFromApi,
+    result,
+    showErrorToast,
+    showNotice,
+  ]);
 
   if (!canSyncGoogleSheets(userRole)) return null;
 
@@ -867,24 +991,27 @@ export function GoogleSheetsSyncButton({ userRole }: SyncButtonProps) {
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={handleSync}
-            disabled={phase === "syncing" || phase === "waiting"}
+            disabled={disabled || phase === "syncing" || phase === "waiting"}
+            title={disabled ? disabledReason : undefined}
             className={cn(
               "flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-all",
-              phase === "syncing" || phase === "waiting"
+              disabled || phase === "syncing" || phase === "waiting"
                 ? "bg-blue-500/80 text-white cursor-not-allowed opacity-70"
                 : "bg-blue-600 hover:bg-blue-700 text-white"
             )}
           >
-            {phase === "syncing" || phase === "waiting" ? (
+            {disabled || phase === "syncing" || phase === "waiting" ? (
               <Loader2 size={12} className="animate-spin" />
             ) : (
               <RefreshCw size={12} />
             )}
-            {phase === "waiting"
-              ? "Another sync is processing…"
-              : phase === "syncing"
-                ? "Sync in progress…"
-                : "Sync to Google Sheets"}
+            {disabled
+              ? "Saving changes…"
+              : phase === "waiting"
+                ? "Checking sync completion…"
+                : phase === "syncing"
+                  ? "Sync in progress…"
+                  : "Sync to Google Sheets"}
           </button>
 
           {phase === "done" && result && !modalOpen && (

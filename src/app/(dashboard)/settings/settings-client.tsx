@@ -218,6 +218,14 @@ function StatusDot({ active }: { active: boolean }) {
   );
 }
 
+// Lightweight user shape used for the "Linked User" picker in the Rep Docs
+// Assignees tab. Picked off `users` server-side and trimmed before passing.
+export interface LinkableUser {
+  id: number;
+  full_name: string;
+  email: string;
+}
+
 interface Props {
   configOptions: ConfigOption[];
   mrTeams: MrTeam[];
@@ -226,6 +234,7 @@ interface Props {
   ohoAssignees: OhoAssignee[];
   specialists: MrSpecialist[];
   userRole: string;
+  linkableUsers: LinkableUser[];
 }
 
 export function SettingsClient({
@@ -236,6 +245,7 @@ export function SettingsClient({
   ohoAssignees: initOhoAssignees,
   specialists: initSpecialists,
   userRole,
+  linkableUsers,
 }: Props) {
   // Tab visibility matching PHP settings.php:
   // MR Teams: admin, manager, mr_admin, mr_lead (NOT hearings_admin)
@@ -345,6 +355,7 @@ export function SettingsClient({
             assignees={assignees}
             setAssignees={setAssignees}
             startTransition={startTransition}
+            linkableUsers={linkableUsers}
           />
         )}
         {tab === "oho_assignees" && canSeeConfigTabs && (
@@ -2049,20 +2060,66 @@ function HolidaysTab({
   );
 }
 
+// ── User picker for linking an assignee row to an actual user account ──
+function UserLinkPicker({
+  users,
+  value,
+  onChange,
+}: {
+  users: LinkableUser[];
+  value: number | null;
+  onChange: (id: number | null) => void;
+}) {
+  const sorted = [...users].sort((a, b) =>
+    a.full_name.localeCompare(b.full_name),
+  );
+  return (
+    <div>
+      <label className="mb-1.5 block text-xs font-medium">
+        Linked User{" "}
+        <span className="font-normal text-muted-foreground">(optional)</span>
+      </label>
+      <select
+        className="h-9 w-full rounded-md border border-input bg-card px-2 text-sm cursor-pointer focus:outline-none focus:ring-1 focus:ring-ring"
+        value={value ?? ""}
+        onChange={(e) =>
+          onChange(e.target.value ? Number(e.target.value) : null)
+        }
+      >
+        <option value="">— No linked user —</option>
+        {sorted.map((u) => (
+          <option key={u.id} value={u.id}>
+            {u.full_name} ({u.email})
+          </option>
+        ))}
+      </select>
+      <p className="mt-1 text-[11px] text-muted-foreground">
+        Linking lets &quot;my assignments&quot; filters and the acknowledge gate
+        recognise this assignee as the logged-in user. Leave unlinked for
+        contractors or shared-queue labels.
+      </p>
+    </div>
+  );
+}
+
 // ═══════════ REP DOCS ASSIGNEES TAB ═══════════
 function AssigneesTab({
   assignees,
   setAssignees,
   startTransition,
+  linkableUsers,
 }: {
   assignees: RepDocsAssignee[];
   setAssignees: (a: RepDocsAssignee[]) => void;
   startTransition: (fn: () => void) => void;
+  linkableUsers: LinkableUser[];
 }) {
   const [showAddModal, setShowAddModal] = useState(false);
   const [editItem, setEditItem] = useState<RepDocsAssignee | null>(null);
   const [newName, setNewName] = useState("");
   const [newColor, setNewColor] = useState("");
+  // user_id picked in the Add modal — null = "(no user)" / unlinked.
+  const [newUserId, setNewUserId] = useState<number | null>(null);
 
   const handleAdd = () => {
     if (!newName.trim()) return;
@@ -2070,7 +2127,11 @@ function AssigneesTab({
       const id = await saveRepDocsAssignee({
         name: newName.trim(),
         bg_color: newColor || undefined,
+        user_id: newUserId,
       });
+      const linked = newUserId
+        ? linkableUsers.find((u) => u.id === newUserId)
+        : null;
       setAssignees([
         ...assignees,
         {
@@ -2079,10 +2140,14 @@ function AssigneesTab({
           bg_color: newColor || null,
           is_active: true,
           display_order: assignees.length + 1,
+          user_id: newUserId,
+          user_full_name: linked?.full_name ?? null,
+          user_email: linked?.email ?? null,
         },
       ]);
       setNewName("");
       setNewColor("");
+      setNewUserId(null);
       setShowAddModal(false);
     });
   };
@@ -2094,6 +2159,7 @@ function AssigneesTab({
         id: editItem.id,
         name: editItem.name,
         bg_color: editItem.bg_color || undefined,
+        user_id: editItem.user_id,
       });
       setAssignees(assignees.map((a) => (a.id === editItem.id ? editItem : a)));
       setEditItem(null);
@@ -2141,7 +2207,7 @@ function AssigneesTab({
                     !a.is_active && "opacity-50",
                   )}
                 >
-                  <div className="flex items-center gap-2 flex-1">
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
                     {a.bg_color && (
                       <span
                         className="inline-block h-4 w-4 rounded-full shrink-0 ring-1 ring-black/10"
@@ -2156,6 +2222,21 @@ function AssigneesTab({
                     >
                       {a.name}
                     </span>
+                    {a.user_id ? (
+                      <span
+                        className="rounded-sm bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 truncate"
+                        title={`Linked to ${a.user_full_name || "user"}${a.user_email ? ` <${a.user_email}>` : ""}`}
+                      >
+                        ✓ {a.user_full_name || `user #${a.user_id}`}
+                      </span>
+                    ) : (
+                      <span
+                        className="rounded-sm bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400"
+                        title="No linked user account — acknowledgements and 'my assignments' filters can't tie back to this assignee"
+                      >
+                        unlinked
+                      </span>
+                    )}
                   </div>
                   <StatusDot active={a.is_active} />
                   <Button
@@ -2229,6 +2310,11 @@ function AssigneesTab({
                 }}
               />
             </div>
+            <UserLinkPicker
+              users={linkableUsers}
+              value={newUserId}
+              onChange={setNewUserId}
+            />
             <ColorPicker value={newColor} onChange={setNewColor} />
           </div>
           <Separator />
@@ -2264,6 +2350,21 @@ function AssigneesTab({
                 }}
               />
             </div>
+            <UserLinkPicker
+              users={linkableUsers}
+              value={editItem.user_id}
+              onChange={(uid) => {
+                const linked = uid
+                  ? linkableUsers.find((u) => u.id === uid)
+                  : null;
+                setEditItem({
+                  ...editItem,
+                  user_id: uid,
+                  user_full_name: linked?.full_name ?? null,
+                  user_email: linked?.email ?? null,
+                });
+              }}
+            />
             <ColorPicker
               value={editItem.bg_color || ""}
               onChange={(c) =>

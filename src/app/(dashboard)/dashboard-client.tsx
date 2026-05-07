@@ -4,10 +4,12 @@ import {
   useState,
   memo,
   useCallback,
+  useMemo,
   useTransition,
   useRef,
   useEffect,
 } from "react";
+import { resolveFieldAccess } from "@/lib/field-access";
 import { createPortal } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -27,7 +29,6 @@ import {
   CalendarClock,
   AlertTriangle as AlertTriangleIcon,
   X as XIcon,
-  Trash,
   ClipboardList,
   BarChart3,
   Link2,
@@ -38,7 +39,6 @@ import {
 import { cn } from "@/lib/utils";
 import { StatCard, StatCardGrid } from "@/components/stat-card";
 import {
-  canEditField,
   canManage,
   canSeeCheckbox,
   canSeeAdminButtons,
@@ -153,21 +153,6 @@ function parseNotes(raw: string | null): PostHrgNote[] {
   } catch {
     return raw ? [{ user: "System", date: "", note: raw }] : [];
   }
-}
-
-/** Resolve display name from a note */
-function noteAuthor(n: PostHrgNote): string {
-  return n.user || "Unknown";
-}
-
-/** Resolve content from a note */
-function noteContent(n: PostHrgNote): string {
-  return n.note || "";
-}
-
-/** Resolve date from a note */
-function noteDate(n: PostHrgNote): string {
-  return n.date || "";
 }
 
 // ── MR Worksheet Link cell — link + edit button ──
@@ -327,6 +312,20 @@ function fmtDate(dateStr: string, opts?: Intl.DateTimeFormatOptions): string {
     "en-US",
     opts || { month: "short", day: "numeric", year: "2-digit" },
   );
+}
+
+// Date 14 days before the hearing date — surfaced in the dashboard's "14d Mark"
+// column so the team can see the prep deadline at a glance.
+function fmtMinus14(dateStr: string | null | undefined): string {
+  if (!dateStr) return "";
+  const d = parseDate(dateStr);
+  if (isNaN(d.getTime())) return "";
+  d.setDate(d.getDate() - 14);
+  return d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "2-digit",
+  });
 }
 
 function fmtTime(timeStr: string | null | undefined): string {
@@ -1376,6 +1375,7 @@ const FilterBar = memo(function FilterBar({
   onFilterChange,
   repCounts,
   nextUnassigned,
+  decisionOptions,
   showRepFilter: showRepFilterProp,
   showNextUnassigned: showNextUnassignedProp,
 }: {
@@ -1383,6 +1383,8 @@ const FilterBar = memo(function FilterBar({
   onFilterChange: (f: HearingFilters) => void;
   repCounts: RepWithCount[];
   nextUnassigned: NextUnassignedRow | null;
+  /** Distinct hearing_decision_status values from config_options. */
+  decisionOptions: { value: string; label: string }[];
   showRepFilter: boolean;
   showNextUnassigned: boolean;
 }) {
@@ -1552,6 +1554,20 @@ const FilterBar = memo(function FilterBar({
             <option value="custom">Custom Range...</option>
           </select>
 
+          <select
+            className={SEL + " min-w-37.5"}
+            value={filters.decisionStatus || ""}
+            onChange={(e) => update("decisionStatus", e.target.value)}
+            title="Filter by hearing decision (Withdrawal, Favorable, etc.)"
+          >
+            <option value="">All Decisions</option>
+            {decisionOptions.map((d) => (
+              <option key={d.value} value={d.value}>
+                {d.label}
+              </option>
+            ))}
+          </select>
+
           {filters.datePreset === "custom" && (
             <div className="flex items-center gap-1.5">
               <Input
@@ -1660,14 +1676,15 @@ const ALL_COLUMNS: ColumnDef[] = [
   { key: "rep_docs_assigned_to", label: "Docs Assigned", w: 110 },
   { key: "rep_docs_complete", label: "Rep Docs", w: 65 },
   { key: "fee_agreement_complete", label: "Fee Agmt", w: 65 },
+  { key: "hearing_minus_14", label: "14d Mark", w: 88 },
   { key: "brief_assigned_to", label: "Brief", w: 100 },
+  { key: "phi_sheet_complete", label: "PHI", w: 55 },
   { key: "mr_team_id", label: "Medical Team", w: 110 },
   { key: "medical_record_link", label: "MR Worksheet", w: 95 },
   { key: "medical_record_status", label: "MR Status", w: 90 },
   { key: "rfc_status", label: "RFC", w: 80 },
   { key: "five_day_notice", label: "5-Day", w: 55 },
   { key: "task_assigned", label: "Task Assigned", w: 95 },
-  { key: "phi_sheet_complete", label: "PHI", w: 55 },
   { key: "post_hrg_review", label: "Post Hrg Review", w: 130 },
   { key: "post_hrg_dev_status", label: "Post Hrg Dev", w: 120 },
 ];
@@ -1676,11 +1693,13 @@ const ALL_COLUMNS: ColumnDef[] = [
 function HearingCard({
   hearing,
   userRole,
+  fieldOverrides,
   onUpdate,
   onOpenPostHrg,
 }: {
   hearing: HearingRow;
   userRole: UserRole;
+  fieldOverrides: Record<string, boolean>;
   onUpdate: (id: number, field: string, value: UpdateValue) => void;
   onOpenPostHrg: (h: HearingRow) => void;
 }) {
@@ -1764,7 +1783,14 @@ function HearingCard({
                   onCheckedChange={(v) =>
                     onUpdate(hearing.id, field, v === true)
                   }
-                  disabled={!canEditField(userRole, field)}
+                  disabled={
+                    !resolveFieldAccess(
+                      userRole,
+                      "dashboard",
+                      field,
+                      fieldOverrides,
+                    )
+                  }
                   className="h-3.5 w-3.5"
                 />
                 {labels[field]}
@@ -1805,9 +1831,30 @@ const MemoRow = memo(
     renderCell,
     columns,
   }: MemoRowProps) {
-    const rb = ri % 2 === 0 ? evenBg : oddBg;
+    // Mirror the rep-docs page: any withdrawal/dismissal decision tints the
+    // whole row red so users can spot dropped hearings at a glance. Predicate
+    // matches src/lib/rep-docs-decision-sync.ts:mapDecisionToRepDocsStatus.
+    const decision = (hearing.hearing_decision_status || "")
+      .toLowerCase()
+      .trim();
+    const isWithdrawn =
+      decision.startsWith("withdrawal") ||
+      decision === "dismissed" ||
+      decision === "dismissal";
+
+    const rb = isWithdrawn
+      ? "bg-red-50 dark:bg-red-950/30"
+      : ri % 2 === 0
+        ? evenBg
+        : oddBg;
     return (
-      <tr className={cn("group border-b border-border/40 last:border-0", rb)}>
+      <tr
+        className={cn(
+          "group border-b border-border/40 last:border-0",
+          rb,
+          isWithdrawn && "text-red-900 dark:text-red-300",
+        )}
+      >
         {columns.map((col) => {
           const lp = getLeftPos(col.key);
           const isLF = col.key === lastFrozenKey;
@@ -1914,6 +1961,7 @@ function MoaCell({
 const HearingTable = memo(function HearingTable({
   hearings,
   userRole,
+  fieldOverrides,
   onUpdate,
   onDelete,
   sortKey,
@@ -1932,6 +1980,7 @@ const HearingTable = memo(function HearingTable({
 }: {
   hearings: HearingRow[];
   userRole: UserRole;
+  fieldOverrides: Record<string, boolean>;
   onUpdate: (id: number, field: string, value: UpdateValue) => void;
   onDelete: (id: number) => void;
   sortKey: string;
@@ -2075,7 +2124,12 @@ const HearingTable = memo(function HearingTable({
     frozenCols.length > 0 ? frozenCols[frozenCols.length - 1].key : "";
   const getLeftPos = (key: string): number | undefined => dynamicLeft[key];
   const renderCell = (hearing: HearingRow, col: ColumnDef) => {
-    const editable = canEditField(userRole, col.key);
+    const editable = resolveFieldAccess(
+      userRole,
+      "dashboard",
+      col.key,
+      fieldOverrides,
+    );
     switch (col.key) {
       case "checkbox":
         return null; // Handled directly in MemoRow
@@ -2097,8 +2151,18 @@ const HearingTable = memo(function HearingTable({
         return (
           <ClaimantCell
             hearing={hearing}
-            editable={canEditField(userRole, "claimant_link")}
-            chronicleEditable={canEditField(userRole, "chronicle_link")}
+            editable={resolveFieldAccess(
+              userRole,
+              "dashboard",
+              "claimant_link",
+              fieldOverrides,
+            )}
+            chronicleEditable={resolveFieldAccess(
+              userRole,
+              "dashboard",
+              "chronicle_link",
+              fieldOverrides,
+            )}
             onSave={onUpdate}
           />
         );
@@ -2142,7 +2206,12 @@ const HearingTable = memo(function HearingTable({
             onUpdate={onUpdate}
             moaOptions={moaFallback}
             isRep={userRole === "rep"}
-            canEditOvh={canEditField(userRole, "ovh_link")}
+            canEditOvh={resolveFieldAccess(
+              userRole,
+              "dashboard",
+              "ovh_link",
+              fieldOverrides,
+            )}
           />
         );
       case "rep_docs_assigned_to":
@@ -2277,6 +2346,15 @@ const HearingTable = memo(function HearingTable({
             editable={editable}
             colorMap={RFC_COLORS}
           />
+        );
+      case "hearing_minus_14":
+        return (
+          <span
+            className="text-xs tabular-nums text-muted-foreground"
+            title="14 days before the hearing date — prep deadline marker"
+          >
+            {fmtMinus14(hearing.hearing_date)}
+          </span>
         );
       case "brief_assigned_to":
         return (
@@ -2526,6 +2604,12 @@ interface DashboardClientProps {
   userEmail: string;
   userName: string;
   userId: number;
+  /**
+   * Plain map of field_key → can_edit override for THIS user on the
+   * dashboard page. Empty object = no overrides exist; cells fall back to
+   * the role default. Loaded server-side in page.tsx.
+   */
+  fieldOverrides: Record<string, boolean>;
 }
 
 export function DashboardClient({
@@ -2543,6 +2627,7 @@ export function DashboardClient({
   userEmail,
   userName,
   userId,
+  fieldOverrides,
 }: DashboardClientProps) {
   const [filters, setFilters] = useState<HearingFilters>(EMPTY_FILTERS);
   const [page, setPage] = useState(1);
@@ -2558,11 +2643,22 @@ export function DashboardClient({
     const s = await fetchDashboardStats(userRole, userEmail);
     setStats(s);
   }, [userRole, userEmail]);
-  const [isMobile, setIsMobile] = useState(() =>
-    typeof window !== "undefined"
-      ? window.matchMedia("(max-width: 767px)").matches
-      : false,
+
+  // Decision-status options for the FilterBar dropdown. The cell-level table
+  // also computes these (it needs the values for the inline edit dropdown);
+  // memoising at this level avoids a fresh array on every render.
+  const decisionOptions = useMemo(
+    () =>
+      configOptions
+        .filter((o) => o.option_type === "hearing_decision_status")
+        .map((o) => ({ value: o.option_value, label: o.option_value })),
+    [configOptions],
   );
+  // Always start as `false` — matches SSR exactly. Switched to the real
+  // value in the useEffect below after hydration completes. Lazy-initing
+  // from window.matchMedia would diverge SSR vs first client render on
+  // mobile viewports and shift radix's useId counter (hydration warning).
+  const [isMobile, setIsMobile] = useState(false);
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     requestAnimationFrame(() => setMounted(true));
@@ -2574,6 +2670,7 @@ export function DashboardClient({
   }, [userRole]);
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 767px)");
+    setIsMobile(mq.matches); // sync to actual viewport once we're on the client
     const handler = () => setIsMobile(mq.matches);
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
@@ -2715,6 +2812,15 @@ export function DashboardClient({
       // Find claimant name for toast
       const hearing = hearings.find((h) => h.id === hearingId);
       const claimantName = hearing?.claimant || "";
+      // Snapshot prior value so we can roll back if the server rejects
+      // (e.g. per-user field-access denial via canUserEditField).
+      const priorValue = hearing
+        ? (hearing as unknown as Record<string, unknown>)[field]
+        : undefined;
+      const priorRepName = hearing?.rep_name ?? null;
+      const priorRepType = hearing?.rep_type ?? null;
+      const priorTeamName = hearing?.mr_team_name ?? null;
+      const priorTeamColor = hearing?.mr_team_color ?? null;
 
       // Resolve display value for toast
       let displayValue = String(value ?? "");
@@ -2790,10 +2896,131 @@ export function DashboardClient({
           prev ? { ...prev, [field]: value } : null,
         );
       }
-      // Server update in background
-      updateHearing(hearingId, field, value).catch((e) =>
-        console.error("Update failed:", e),
-      );
+      // Server update in background. On failure, roll back the optimistic
+      // change and surface the error so the user knows it didn't stick.
+      // Most common cause now: per-user field-access denial.
+      // For brief_assigned_to we send the prior value the client thinks is in
+      // the DB so the server can detect a stale page and reject with a
+      // BRIEF_CONFLICT error carrying the actual current assignee.
+      const updateOptions =
+        field === "brief_assigned_to"
+          ? {
+              expectedCurrent: priorValue == null ? null : String(priorValue),
+            }
+          : undefined;
+      const rollback = () => {
+        setHearings((prev) =>
+          prev.map((h) => {
+            if (h.id !== hearingId) return h;
+            const reverted = {
+              ...h,
+              [field]: priorValue as never,
+            } as typeof h;
+            if (field === "assigned_rep_id") {
+              reverted.rep_name = priorRepName;
+              reverted.rep_type = priorRepType;
+            }
+            if (field === "mr_team_id") {
+              reverted.mr_team_name = priorTeamName;
+              reverted.mr_team_color = priorTeamColor;
+            }
+            return reverted;
+          }),
+        );
+        if (postHrgHearing?.id === hearingId) {
+          setPostHrgHearing((p) =>
+            p ? ({ ...p, [field]: priorValue as never } as typeof p) : null,
+          );
+        }
+      };
+
+      updateHearing(hearingId, field, value, updateOptions)
+        .then((result) => {
+          if (!result || result.ok) return;
+
+          // Concurrency conflict — prompt with the real current value and let
+          // the user override.
+          const currentAssignee = result.conflict.currentValue;
+          setHearings((prev) =>
+            prev.map((h) =>
+              h.id === hearingId
+                ? ({ ...h, [field]: currentAssignee } as typeof h)
+                : h,
+            ),
+          );
+          const proceed = window.confirm(
+            `Brief is already assigned to "${currentAssignee}". Override with "${value || "(unassigned)"}"?`,
+          );
+          if (!proceed) {
+            if (updateToastTimer.current)
+              clearTimeout(updateToastTimer.current);
+            setUpdateToast(`Kept current assignee: ${currentAssignee}`);
+            updateToastTimer.current = setTimeout(
+              () => setUpdateToast(null),
+              3000,
+            );
+            return;
+          }
+          // Re-apply optimistic update and retry with override flag
+          setHearings((prev) =>
+            prev.map((h) =>
+              h.id === hearingId ? ({ ...h, [field]: value } as typeof h) : h,
+            ),
+          );
+          updateHearing(hearingId, field, value, { override: true })
+            .then((retry) => {
+              if (retry && !retry.ok) {
+                // Override should never conflict, but guard anyway
+                setHearings((prev) =>
+                  prev.map((h) =>
+                    h.id === hearingId
+                      ? ({
+                          ...h,
+                          [field]: retry.conflict.currentValue,
+                        } as typeof h)
+                      : h,
+                  ),
+                );
+              }
+            })
+            .catch((err) => {
+              console.error("Override update failed:", err);
+              setHearings((prev) =>
+                prev.map((h) =>
+                  h.id === hearingId
+                    ? ({
+                        ...h,
+                        [field]: currentAssignee,
+                      } as typeof h)
+                    : h,
+                ),
+              );
+              if (updateToastTimer.current)
+                clearTimeout(updateToastTimer.current);
+              setUpdateToast(
+                `⚠️ ${err instanceof Error ? err.message : "Override failed"}`,
+              );
+              updateToastTimer.current = setTimeout(
+                () => setUpdateToast(null),
+                5000,
+              );
+            });
+        })
+        .catch((e) => {
+          // Genuine failure (auth, field-access, DB error) — roll back.
+          console.error("Update failed:", e);
+          rollback();
+          const message =
+            e instanceof Error
+              ? e.message
+              : "Update failed — change rolled back";
+          if (updateToastTimer.current) clearTimeout(updateToastTimer.current);
+          setUpdateToast(`⚠️ ${message}`);
+          updateToastTimer.current = setTimeout(
+            () => setUpdateToast(null),
+            5000,
+          );
+        });
     },
     [representatives, mrTeams, postHrgHearing, hearings],
   );
@@ -2824,6 +3051,8 @@ export function DashboardClient({
     try {
       const fd = new FormData(editFormRef.current);
       const original = editHearing as unknown as Record<string, unknown>;
+      // ⚠️ If you add a field here, also add it to EDIT_MODAL_ONLY_FIELDS
+      // in updateHearing() inside actions.tsx to avoid permission errors
       const textFields = [
         "claimant",
         "ssn_last_4",
@@ -2850,11 +3079,38 @@ export function DashboardClient({
         "phi_sheet_complete",
       ];
 
+      const changes: Record<string, string | null> = {};
       for (const key of textFields) {
         const val = fd.get(key) as string | null;
         const newVal = val === "" ? null : val;
-        if (original[key] !== newVal)
+        if (String(original[key] ?? "") !== String(newVal ?? "")) {
+          changes[key] = newVal;
           await updateHearing(editHearing.id, key, newVal);
+        }
+      }
+
+      // Recalculate converted_time_est if hearing_time or time_zone changed
+      if (
+        changes.hearing_time !== undefined ||
+        changes.time_zone !== undefined
+      ) {
+        const TZ_MAP: Record<string, number> = {
+          ET: 0,
+          CT: 1,
+          MT: 2,
+          PT: 3,
+          HA: 5,
+          MSTA: 2,
+        };
+        const newTime = (
+          changes.hearing_time ?? String(original.hearing_time ?? "")
+        ).slice(0, 5);
+        const newTz = changes.time_zone ?? String(original.time_zone ?? "ET");
+        const offset = TZ_MAP[newTz] ?? 0;
+        const [h, m] = newTime.split(":").map(Number);
+        const estH = h + offset;
+        const converted = `${String(estH).padStart(2, "0")}:${String(m || 0).padStart(2, "0")}:00`;
+        await updateHearing(editHearing.id, "converted_time_est", converted);
       }
       for (const key of boolFields) {
         const checked = fd.get(key) === "on";
@@ -3090,12 +3346,6 @@ export function DashboardClient({
     [filters, page, pageSize, sortKey, sortDir, fetchPage],
   );
 
-  console.log("userRole", userRole);
-  console.log(
-    "can edit post_hrg_dev_status?",
-    canEditField(userRole, "post_hrg_dev_status"),
-  );
-
   return (
     <div suppressHydrationWarning>
       <AppHeader
@@ -3249,6 +3499,7 @@ export function DashboardClient({
           onFilterChange={handleFilterChange}
           repCounts={repCounts}
           nextUnassigned={nextUnassigned}
+          decisionOptions={decisionOptions}
           showRepFilter={canSeeRepFilter(effectiveRole)}
           showNextUnassigned={canSeeNextUnassigned(effectiveRole)}
         />
@@ -3389,6 +3640,7 @@ export function DashboardClient({
                 key={h.id}
                 hearing={h}
                 userRole={userRole}
+                fieldOverrides={fieldOverrides}
                 onUpdate={handleUpdate}
                 onOpenPostHrg={setPostHrgHearing}
               />
@@ -3417,6 +3669,7 @@ export function DashboardClient({
           <HearingTable
             hearings={hearings}
             userRole={effectiveRole}
+            fieldOverrides={fieldOverrides}
             onUpdate={handleUpdate}
             onDelete={handleDelete}
             sortKey={sortKey}
@@ -3479,9 +3732,7 @@ export function DashboardClient({
         open={addToPostHrgState.open}
         hearingIds={addToPostHrgState.hearingIds}
         userId={userId}
-        onClose={() =>
-          setAddToPostHrgState({ open: false, hearingIds: [] })
-        }
+        onClose={() => setAddToPostHrgState({ open: false, hearingIds: [] })}
         onDone={(result) => {
           const skipMsg =
             result.skipped.length > 0

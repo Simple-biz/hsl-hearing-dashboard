@@ -53,6 +53,14 @@ export interface RepDocsRow {
 
   // Notes (JSONB array)
   notes: RepDocsNoteEntry[] | null;
+
+  // Acknowledgement — set when any user clicks the Ack button. Cleared
+  // automatically when `assigned_to` changes so a new assignment cycle starts
+  // fresh. `rep_docs_acknowledged_by_name` is the joined display name of the
+  // acknowledger (resolved from the `users` table at fetch time).
+  rep_docs_acknowledged_at: string | null;
+  rep_docs_acknowledged_by: number | null;
+  rep_docs_acknowledged_by_name: string | null;
 }
 
 export interface RepDocsStats {
@@ -220,9 +228,14 @@ export async function fetchRepDocsPage(params: FetchParams = {}): Promise<{
   };
   const sortCol = SORT_MAP[params.sortKey || ""] || "h.hearing_date";
   const dir = params.sortDir === "desc" ? "DESC" : "ASC";
-  // Unassigned non-withdrawn rows float to the top, then normal sort order
+  // Tier 1: hearings on/after the ack-eligible cutoff (May 2026) that haven't
+  // been acknowledged yet — these float to the top so the team sees them first.
+  // Pre-May rows aren't ack-eligible, so they're treated as "below tier 1" and
+  // fall through to chronological sorting.
+  const unacknowledgedFirst = `CASE WHEN h.hearing_date >= DATE '2026-05-01' AND rd.rep_docs_acknowledged_at IS NULL THEN 0 ELSE 1 END`;
+  // Tier 2 (preserved): unassigned non-withdrawn rows above the rest.
   const unassignedFirst = `CASE WHEN COALESCE(TRIM(rd.assigned_to), '') = '' AND LOWER(COALESCE(rd.overall_status, '')) != 'withdrawn' THEN 0 ELSE 1 END`;
-  const orderBy = `ORDER BY ${unassignedFirst}, ${sortCol} ${dir} NULLS LAST, h.id ASC`;
+  const orderBy = `ORDER BY ${unacknowledgedFirst}, ${unassignedFirst}, ${sortCol} ${dir} NULLS LAST, h.id ASC`;
 
   const limit = pageSize;
   const offset = (page - 1) * pageSize;
@@ -256,6 +269,8 @@ export async function fetchRepDocsPage(params: FetchParams = {}): Promise<{
         rd.checker_calendar, rd.checker_chronicle_claim,
         rd.checker_noh, rd.checker_contact_ltr, rd.checker_status,
         rd.notes,
+        rd.rep_docs_acknowledged_at::text, rd.rep_docs_acknowledged_by,
+        ack_user.full_name AS rep_docs_acknowledged_by_name,
         h.claimant,
         h.claim_type,
         h.hearing_date::text AS hearing_date,
@@ -268,6 +283,7 @@ export async function fetchRepDocsPage(params: FetchParams = {}): Promise<{
       FROM representative_docs rd
       JOIN hearings h ON h.id = rd.hearing_id
       LEFT JOIN representatives r ON r.id = h.assigned_rep_id
+      LEFT JOIN users ack_user ON ack_user.id = rd.rep_docs_acknowledged_by
       ${where}
       ${orderBy}
       LIMIT ${limit} OFFSET ${offset}`,
@@ -340,6 +356,24 @@ async function recomputeOverallStatus(id: number) {
   );
 }
 
+// Resolve a rep_docs row to a human-readable label for activity-log entries.
+// Joins through to `hearings.claimant` so the changes modal shows
+// "Smith, John (rep-docs #1887)" instead of an opaque "rep-docs #1887".
+// Falls back to the raw id-only format if the row has no claimant or doesn't
+// exist (defensive — shouldn't happen in practice since callers just updated
+// or read the row).
+async function repDocsLabel(id: number): Promise<string> {
+  const { rows } = await db.query(
+    `SELECT h.claimant
+     FROM representative_docs rd
+     JOIN hearings h ON h.id = rd.hearing_id
+     WHERE rd.id = $1`,
+    [id],
+  );
+  const claimant = (rows[0]?.claimant as string | undefined)?.trim();
+  return claimant ? `${claimant} (rep-docs #${id})` : `rep-docs #${id}`;
+}
+
 // ─── Update a single field (inline edit) ────────────────────────────────────
 
 export async function updateRepDocsField(
@@ -348,6 +382,12 @@ export async function updateRepDocsField(
   value: string | boolean | null,
 ) {
   const session = await requireAuth();
+
+  // Per-user field-access gate (override > role default; rep bypassed)
+  {
+    const { requireFieldAccess } = await import("@/lib/field-access");
+    await requireFieldAccess("representative_docs", field);
+  }
 
   // Workflow checkbox: auto-timestamp
   if (WORKFLOW_FIELD_SET.has(field)) {
@@ -367,7 +407,7 @@ export async function updateRepDocsField(
 
     await logAction(
       "rep_docs_field_updated",
-      `${field} → ${boolVal ? "checked" : "unchecked"} for rep-docs #${id}`,
+      `${field} → ${boolVal ? "checked" : "unchecked"} for ${await repDocsLabel(id)}`,
     );
     return { success: true };
   }
@@ -414,18 +454,33 @@ export async function updateRepDocsField(
 
     await logAction(
       "rep_docs_field_updated",
-      `${field} → ${boolVal ? "checked" : "unchecked"} for rep-docs #${id}`,
+      `${field} → ${boolVal ? "checked" : "unchecked"} for ${await repDocsLabel(id)}`,
     );
     return { success: true };
   }
 
   if (TEXT_FIELDS.has(field)) {
-    await db.query(
-      `UPDATE representative_docs
-       SET ${field} = $1, updated_at = NOW(), updated_by = $2
-       WHERE id = $3`,
-      [value ?? null, Number(session.user.id) || null, id],
-    );
+    // When the assignee changes, clear any prior acknowledgement so the new
+    // person isn't credited with "started" without actually clicking Ack.
+    if (field === "assigned_to") {
+      await db.query(
+        `UPDATE representative_docs
+         SET assigned_to = $1,
+             rep_docs_acknowledged_at = NULL,
+             rep_docs_acknowledged_by = NULL,
+             updated_at = NOW(),
+             updated_by = $2
+         WHERE id = $3`,
+        [value ?? null, Number(session.user.id) || null, id],
+      );
+    } else {
+      await db.query(
+        `UPDATE representative_docs
+         SET ${field} = $1, updated_at = NOW(), updated_by = $2
+         WHERE id = $3`,
+        [value ?? null, Number(session.user.id) || null, id],
+      );
+    }
 
     if (field === "overall_status") {
       // Direct user override — leave as-is
@@ -433,12 +488,64 @@ export async function updateRepDocsField(
 
     await logAction(
       "rep_docs_field_updated",
-      `${field} → '${value ?? "(empty)"}' for rep-docs #${id}`,
+      `${field} → '${value ?? "(empty)"}' for ${await repDocsLabel(id)}`,
     );
     return { success: true };
   }
 
   throw new Error(`Field "${field}" is not editable`);
+}
+
+// ─── Acknowledge: any logged-in user with page access can confirm they've ────
+// seen the row. Sets rep_docs_acknowledged_at = NOW() and stores the caller's
+// id. The badge in the UI shows the acknowledger's name + date — useful for
+// teams whose user accounts don't 1:1 match the `rep_docs_assignees` list.
+
+export async function acknowledgeRepDocs(id: number) {
+  const session = await requireAuth();
+  const userId = Number(session.user.id);
+  const userName = session.user.name || "";
+
+  const { rows } = await db.query(
+    `SELECT rep_docs_acknowledged_at, rep_docs_acknowledged_by
+     FROM representative_docs WHERE id = $1`,
+    [id],
+  );
+  if (!rows[0]) throw new Error("Representative docs row not found");
+
+  // Idempotent — re-clicking doesn't bump the timestamp or change the actor.
+  if (rows[0].rep_docs_acknowledged_at) {
+    const { rows: existing } = await db.query(
+      `SELECT u.full_name FROM users u WHERE u.id = $1`,
+      [rows[0].rep_docs_acknowledged_by],
+    );
+    return {
+      success: true,
+      acknowledgedAt: rows[0].rep_docs_acknowledged_at as string,
+      acknowledgedBy: rows[0].rep_docs_acknowledged_by as number,
+      acknowledgedByName: (existing[0]?.full_name as string) ?? null,
+    };
+  }
+
+  const { rows: updated } = await db.query(
+    `UPDATE representative_docs
+       SET rep_docs_acknowledged_at = NOW(),
+           rep_docs_acknowledged_by = $1,
+           updated_at = NOW(),
+           updated_by = $1
+     WHERE id = $2
+     RETURNING rep_docs_acknowledged_at::text AS acknowledged_at`,
+    [userId, id],
+  );
+
+  await logAction("rep_docs_acknowledged", `Acknowledged ${await repDocsLabel(id)}`);
+
+  return {
+    success: true,
+    acknowledgedAt: updated[0]?.acknowledged_at as string,
+    acknowledgedBy: userId,
+    acknowledgedByName: userName,
+  };
 }
 
 // ─── Update claimant_link / chronicle_link on the joined hearing ───────────
@@ -459,7 +566,7 @@ export async function updateHearingLink(
   );
   await logAction(
     "hearing_link_updated_from_repdocs",
-    `${field} → '${value ?? "(empty)"}' for rep-docs #${repDocsId}`,
+    `${field} → '${value ?? "(empty)"}' for ${await repDocsLabel(repDocsId)}`,
   );
   return { success: true };
 }
@@ -504,8 +611,14 @@ export interface RepDocsChange {
 
 export async function fetchRepDocsChanges(params: {
   since?: string;
-  category?: "status" | "field" | "rep" | "all";
+  category?: "status" | "field" | "rep" | "assigned_to" | "all";
   search?: string;
+  /**
+   * Filter activities whose description mentions this assignee name. Substring
+   * match against the activity description, so it catches assignment changes
+   * naming the person, plus any other field updates that reference them.
+   */
+  assignedTo?: string;
   page?: number;
   pageSize?: number;
   dateFrom?: string;
@@ -545,6 +658,12 @@ export async function fetchRepDocsChanges(params: {
     case "rep":
       actionFilter = repActions;
       break;
+    case "assigned_to":
+      // Rep-docs assignee changes are logged as `rep_docs_field_updated` with
+      // a description starting with `assigned_to →`. We narrow on description
+      // below.
+      actionFilter = ["rep_docs_field_updated"];
+      break;
     default:
       actionFilter = allActions;
   }
@@ -558,6 +677,15 @@ export async function fetchRepDocsChanges(params: {
     conditions.push(
       `(a.action != 'field_updated' OR a.description ILIKE '%Decision%')`,
     );
+  }
+
+  // "Assigned To" tab: narrow rep_docs_field_updated to assignee changes only.
+  if (params.category === "assigned_to") {
+    conditions.push(`a.description ILIKE 'assigned_to %'`);
+  }
+  // "Field Updates" tab: exclude assignee changes so the two tabs don't overlap.
+  if (params.category === "field") {
+    conditions.push(`a.description NOT ILIKE 'assigned_to %'`);
   }
 
   // For rep tab, only show changes for hearings tracked in rep docs
@@ -595,6 +723,30 @@ export async function fetchRepDocsChanges(params: {
     conditions.push(`a.description ILIKE $${idx}`);
     values.push(`%${params.search.trim()}%`);
     idx++;
+  }
+
+  if (params.assignedTo?.trim()) {
+    // Two ways an activity can be "for" this assignee:
+    //   (a) the actor is the user linked to that assignee row (resolved via
+    //       the rep_docs_assignees.user_id FK we added in the May 2026
+    //       migration). This catches actions Madison *did*.
+    //   (b) the description literally mentions the name (catches assignee
+    //       changes like "assigned_to → 'Madison' for ..."). Fallback for
+    //       unlinked assignees and for "actions about Madison" done by
+    //       someone else.
+    conditions.push(
+      `(
+         a.user_id IN (
+           SELECT user_id FROM rep_docs_assignees
+           WHERE LOWER(TRIM(name)) = LOWER(TRIM($${idx}))
+             AND user_id IS NOT NULL
+         )
+         OR a.description ILIKE $${idx + 1}
+       )`,
+    );
+    values.push(params.assignedTo.trim());
+    values.push(`%${params.assignedTo.trim()}%`);
+    idx += 2;
   }
 
   const where = `WHERE ${conditions.join(" AND ")}`;

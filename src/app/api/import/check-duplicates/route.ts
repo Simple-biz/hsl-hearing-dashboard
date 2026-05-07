@@ -45,6 +45,7 @@ export async function POST(req: NextRequest) {
     rowOffset = 0,
     compare_mode = false,
     fuzzy_name_match = false,
+    comments = {},
   } = body;
 
   // Compare mode: return minimal claimant+date+ssn for all hearings
@@ -62,21 +63,53 @@ export async function POST(req: NextRequest) {
   // ── Pre-fetch all existing hearings into lookup maps (single query) ──
   const { rows: existing } = await db.query(
     `SELECT id, claimant, ssn_last_4, hearing_date::text, hearing_time, time_zone,
-            claim_type, converted_time_est,
-            city, state, claimant_location, representative_location, alj,
-            medical_expert, vocational_expert, status_date::text,
-            entered_hearing_level_date::text, download_type, manner_of_appearance,
-            hearing_decision_status, medical_record_status, medical_record_link,
-            rfc_status, claimant_link, assigned_rep_id, mr_team_id,
-            brief_assigned_to, task_assigned, rep_docs_complete, fee_agreement_complete,
-            phi_sheet_complete, five_day_notice, post_hrg_deadline::text, post_hrg_notes,
-            rep_docs_assigned_to, post_hrg_review
-     FROM hearings`,
+       claim_type, converted_time_est,
+       city, state, claimant_location, representative_location, alj,
+       medical_expert, vocational_expert, status_date::text,
+       entered_hearing_level_date::text, download_type, manner_of_appearance,
+       hearing_decision_status, medical_record_status, medical_record_link,
+       rfc_status, claimant_link, assigned_rep_id, mr_team_id,
+       brief_assigned_to, task_assigned, rep_docs_complete, fee_agreement_complete,
+       phi_sheet_complete, five_day_notice, post_hrg_deadline::text, post_hrg_notes,
+       rep_docs_assigned_to, post_hrg_review, assignment_status
+FROM hearings`,
   );
 
   // Full record lookup by id (for diff comparison on duplicates)
   const byId = new Map<number, Record<string, unknown>>();
   for (const row of existing) byId.set(row.id as number, row);
+
+  // ── Lookups for FK fields (representative, mr_team_id) ──
+  // We resolve the sheet's display name → DB id so we can compare against the
+  // hearing's FK column. Only loaded when the corresponding field is mapped.
+  const repByName = new Map<string, number>(); // lower(name) → id
+  const repById = new Map<number, string>(); // id → name (for diff display)
+  const teamByName = new Map<string, number>(); // lower(team_name) → id
+  const teamById = new Map<number, string>(); // id → team_name
+  if (mapping?.representative !== undefined) {
+    const { rows: repRows } = await db.query(
+      "SELECT id, name FROM representatives",
+    );
+    for (const r of repRows) {
+      const key = String(r.name || "")
+        .toLowerCase()
+        .trim();
+      if (key) repByName.set(key, r.id);
+      repById.set(r.id, String(r.name || ""));
+    }
+  }
+  if (mapping?.mr_team_id !== undefined) {
+    const { rows: teamRows } = await db.query(
+      "SELECT id, team_name FROM mr_teams",
+    );
+    for (const t of teamRows) {
+      const key = String(t.team_name || "")
+        .toLowerCase()
+        .trim();
+      if (key) teamByName.set(key, t.id);
+      teamById.set(t.id, String(t.team_name || ""));
+    }
+  }
 
   // Build 3 lookup maps for three-tier matching
   const tier1 = new Map<string, number>(); // claimant|ssn|date → id
@@ -368,12 +401,8 @@ export async function POST(req: NextRequest) {
           "task_assigned",
         ]);
         // Skip fields that map to different DB columns or need special lookup
-        const SKIP_FIELDS = new Set([
-          "representative",
-          "medical_record_source",
-          "claimant",
-          "mr_team_id",
-        ]);
+        const SKIP_FIELDS = new Set(["medical_record_source", "claimant"]);
+        const LOOKUP_FIELDS = new Set(["representative", "mr_team_id"]);
 
         const normalizeTime = (t: string): string => {
           if (!t) return "";
@@ -404,19 +433,189 @@ export async function POST(req: NextRequest) {
           number,
         ][]) {
           if (colIdx === null || colIdx === undefined || colIdx < 0) continue;
+
           if (SKIP_FIELDS.has(field)) continue;
           const importVal = String(row[colIdx] ?? "").trim();
           if (!importVal) continue; // empty import value = no change
 
+          // Lookup fields (representative, mr_team_id): only surface as a diff
+          // when the DB side is empty and the sheet has a value — we can't do a
+          // meaningful string comparison since DB stores an FK, not the display name.
+          if (LOOKUP_FIELDS.has(field)) {
+            const DB_FK_MAP: Record<string, string> = {
+              representative: "assigned_rep_id",
+              mr_team_id: "mr_team_id",
+            };
+            const dbFkCol = DB_FK_MAP[field] ?? field;
+            const dbFkVal = dbRec[dbFkCol];
+            const dbLookupEmpty =
+              dbFkVal === null ||
+              dbFkVal === undefined ||
+              String(dbFkVal).trim() === "" ||
+              String(dbFkVal).trim() === "0";
+
+            if (field === "representative") {
+              const importLower = importVal.toLowerCase().trim();
+
+              // Withdrawal values → surface as assignment_status diff, not rep diff
+              const isWdNeverAssigned =
+                importLower === "wd - never assigned" ||
+                importLower === "wd_never_assigned" ||
+                importLower === "never assigned";
+              const isWithdrawal =
+                importLower === "withdrawal" ||
+                importLower.startsWith("withdrawal -") ||
+                importLower.startsWith("wd -");
+
+              if (isWdNeverAssigned) {
+                const dbStatus = String(
+                  dbRec["assignment_status"] ?? "",
+                ).trim();
+                if (dbStatus !== "wd_never_assigned") {
+                  changedFields.push("assignment_status");
+                  fieldDiffs["assignment_status"] = {
+                    old: dbStatus || "",
+                    new: "wd_never_assigned",
+                  };
+                }
+                continue;
+              }
+
+              if (isWithdrawal) {
+                const dbStatus = String(
+                  dbRec["assignment_status"] ?? "",
+                ).trim();
+                const dbDecision = String(
+                  dbRec["hearing_decision_status"] ?? "",
+                ).trim();
+                const originalCase = importVal.trim();
+
+                // Always surface assignment_status change if not already withdrawal
+                if (
+                  dbStatus !== "withdrawal" &&
+                  dbStatus !== "wd_never_assigned"
+                ) {
+                  changedFields.push("assignment_status");
+                  fieldDiffs["assignment_status"] = {
+                    old: dbStatus || "",
+                    new: "withdrawal",
+                  };
+                }
+
+                // Only emit hearing_decision_status diff when the sheet value is a
+                // SPECIFIC withdrawal type (e.g. "Withdrawal - No Contact"), not the
+                // generic "WITHDRAWAL" / "WD" string which belongs on assignment_status only.
+                const isSpecificWithdrawalType =
+                  importLower.startsWith("withdrawal -") ||
+                  importLower.startsWith("wd -");
+                if (isSpecificWithdrawalType) {
+                  if (dbDecision.toLowerCase() !== importLower) {
+                    fieldDiffs["hearing_decision_status"] = {
+                      old: dbDecision || "",
+                      new: originalCase,
+                    };
+                    if (!changedFields.includes("hearing_decision_status")) {
+                      changedFields.push("hearing_decision_status");
+                    }
+                  }
+                }
+                continue;
+              }
+
+              // Skip other non-name placeholders
+              const NON_REP_VALUES = new Set([
+                "not assigned",
+                "unassigned",
+                "n/a",
+                "none",
+                "—",
+                "-",
+                "pending",
+                "tbd",
+              ]);
+              if (NON_REP_VALUES.has(importLower)) {
+                continue;
+              }
+
+              // Real rep name → resolve to id and compare against the FK.
+              // If the sheet name doesn't match any DB rep, skip silently — we
+              // can't write a bad FK and surfacing the diff would be misleading.
+              const importRepId = repByName.get(importLower) ?? null;
+              if (importRepId === null) continue;
+              const dbRepId = dbLookupEmpty ? null : Number(dbFkVal);
+              if (dbRepId === importRepId) continue;
+              const dbDisplay = dbRepId ? repById.get(dbRepId) || "" : "";
+              changedFields.push(field);
+              fieldDiffs[field] = {
+                old: dbDisplay,
+                new: repById.get(importRepId) || importVal,
+              };
+              continue;
+            }
+
+            // mr_team_id: resolve team name → id, compare against FK column
+            if (field === "mr_team_id") {
+              const importTeamId =
+                teamByName.get(importVal.toLowerCase().trim()) ?? null;
+              if (importTeamId === null) continue;
+              const dbTeamId = dbLookupEmpty ? null : Number(dbFkVal);
+              if (dbTeamId === importTeamId) continue;
+              const oldDisplay = dbTeamId
+                ? teamById.get(dbTeamId) || ""
+                : "";
+              changedFields.push(field);
+              fieldDiffs[field] = {
+                old: oldDisplay,
+                new: teamById.get(importTeamId) || importVal,
+              };
+              continue;
+            }
+
+            // Other lookup fields (none currently) — fall back to empty-only emission
+            if (dbLookupEmpty) {
+              changedFields.push(field);
+              fieldDiffs[field] = { old: "", new: importVal };
+            }
+            continue;
+          }
           const dbRaw = dbRec[field];
           // If DB value is null/empty and import has a value → that's a real change
+          // const dbIsEmpty =
+          //   dbRaw === null ||
+          //   dbRaw === undefined ||
+          //   String(dbRaw).trim() === "";
+
+          // if (dbIsEmpty) {
+          //   // DB is empty, import has value — skip (not a real "change")
+          //   continue;
+          // }
           const dbIsEmpty =
             dbRaw === null ||
             dbRaw === undefined ||
             String(dbRaw).trim() === "";
 
+          // DB is empty, import has a value → this IS a real change (filling in a blank)
+          // if (dbIsEmpty) {
+          //   changedFields.push(field);
+          //   fieldDiffs[field] = { old: "", new: importVal };
+          //   continue;
+          // }
           if (dbIsEmpty) {
-            // DB is empty, import has value — skip (not a real "change")
+            // For date fields, validate the import value is actually a parseable date
+            // before treating it as a diff — prevents free text (e.g. "CE ordered")
+            // in a date column from being flagged as a deadline change.
+            if (DATE_FIELDS.has(field)) {
+              console.log(`DATE_FIELD_DEBUG field=${field} val="${importVal}"`);
+              const cleanVal = importVal.replace(/[.,;]+$/, "").trim();
+              const parsedImport = parseDate(cleanVal);
+              console.log(`DATE_FIELD_DEBUG parsed="${parsedImport}"`);
+              if (!parsedImport) continue;
+              changedFields.push(field);
+              fieldDiffs[field] = { old: "", new: parsedImport };
+              continue;
+            }
+            changedFields.push(field);
+            fieldDiffs[field] = { old: "", new: importVal };
             continue;
           }
 
@@ -449,6 +648,88 @@ export async function POST(req: NextRequest) {
           if (normImport.toLowerCase() !== normDb.toLowerCase()) {
             changedFields.push(field);
             fieldDiffs[field] = { old: String(dbRaw).trim(), new: importVal };
+          }
+        }
+        // ── Post HRG Notes from cell comments ──
+        if (dbRec && mapping.post_hrg_deadline !== undefined) {
+          const deadlineColIdx = mapping.post_hrg_deadline as number;
+          const colToLetter = (idx: number): string => {
+            let letter = "";
+            let n = idx;
+            while (n >= 0) {
+              letter = String.fromCharCode(65 + (n % 26)) + letter;
+              n = Math.floor(n / 26) - 1;
+            }
+            return letter;
+          };
+          const colLetter = colToLetter(deadlineColIdx);
+          const cellRef = `${colLetter}${rowOffset + rowIndex + 2}`;
+          const commentText = (comments as Record<string, string>)[cellRef];
+
+          if (commentText && commentText.trim()) {
+            const dbNotesRaw = dbRec["post_hrg_notes"];
+            const dbNotesStr = dbNotesRaw ? String(dbNotesRaw).trim() : "";
+
+            // Parse existing DB notes array
+            let existingNotes: { user: string; date: string; note: string }[] =
+              [];
+            try {
+              const parsed = JSON.parse(dbNotesStr);
+              if (Array.isArray(parsed)) existingNotes = parsed;
+            } catch {
+              // plain text or empty
+            }
+
+            // Strip "[Author - Date] " or "[Author] " prefix from a comment line
+            const stripPrefix = (line: string): string =>
+              line.replace(/^\[.*?\]\s*/, "").trim();
+
+            // Split multi-reply comment into individual lines and strip prefixes
+            const commentLines = commentText
+              .split("\n")
+              .map((l) => l.trim())
+              .filter(Boolean)
+              .map(stripPrefix)
+              .filter(Boolean);
+
+            // Normalize text for comparison — strips mojibake, normalizes whitespace
+            const normalizeNoteText = (text: string): string => {
+              return text
+                .replace(/\u00C2\u00A0/g, " ") // Â + NBSP mojibake pair
+                .replace(/\u00A0/g, " ") // non-breaking space
+                .replace(/\u00C2/g, "") // lone Â mojibake
+                .replace(/Â/g, "") // literal Â character
+                .replace(/[\u200B-\u200D\uFEFF]/g, "") // zero-width chars
+                .replace(/[\u{1F000}-\u{1FFFF}]/gu, "") // emoji (astral plane)
+                .replace(/[\uD800-\uDFFF]/g, "") // surrogate pairs
+                .replace(/ð[\x80-\xBF]{3}/g, "") // mangled emoji (ð???)
+                .replace(/&amp;/g, "&") // HTML entities
+                .replace(/&lt;/g, "<")
+                .replace(/&gt;/g, ">")
+                .replace(/&nbsp;/g, " ")
+                .replace(/&#39;/g, "'")
+                .replace(/&quot;/g, '"')
+                .replace(/\s+/g, " ")
+                .trim()
+                .toLowerCase();
+            };
+
+            // Find lines that are NOT already in DB notes
+            const existingNoteTexts = new Set(
+              existingNotes.map((n) => normalizeNoteText(n.note)),
+            );
+            const newLines = commentLines.filter(
+              (line) => !existingNoteTexts.has(normalizeNoteText(line)),
+            );
+
+            if (newLines.length > 0) {
+              // Only flag the NEW lines as the diff
+              changedFields.push("post_hrg_notes");
+              fieldDiffs["post_hrg_notes"] = {
+                old: dbNotesStr || "",
+                new: newLines.join("\n"), // only the new content
+              };
+            }
           }
         }
       }
