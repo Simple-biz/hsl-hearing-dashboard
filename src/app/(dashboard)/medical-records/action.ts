@@ -240,7 +240,7 @@ async function updateSingleFieldAndRecordEvent<T>({
           ${oldValueColumnSql} AS old_value
         FROM hearings h
         WHERE h.id = $1
-        FOR UPDATE
+        FOR UPDATE OF h
       ),
       updated AS (
         UPDATE hearings h

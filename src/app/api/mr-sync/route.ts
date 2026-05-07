@@ -35,6 +35,7 @@ type SyncErrorCode =
 type ChangeType = "created" | "updated" | "deleted";
 type DbEventType = "create" | "update" | "delete";
 type HistorySource = "fresh_run" | "latest_completed_session";
+type DiffValue = string | boolean | null;
 
 type SyncBackup = {
   fileId?: string;
@@ -82,14 +83,16 @@ type SyncResult = {
     deleted: number;
   };
   backup?: SyncBackup | null;
+  lastEventId?: number | null;
+  sessionStartEventId?: number | null;
   changes: Array<{
     type: ChangeType;
     record: string;
     sheetRow: number;
     diffs: Array<{
       field: string;
-      old: string | null;
-      new: string | null;
+      old: DiffValue;
+      new: DiffValue;
     }>;
     note?: string;
     time: string;
@@ -162,7 +165,7 @@ function buildLatestSyncResult(rows: DbLatestSyncRow[]): SyncResult | null {
       record: string;
       sheetRow: number;
       time: string;
-      diffsByField: Map<string, { field: string; old: string | null; new: string | null }>;
+      diffsByField: Map<string, { field: string; old: DiffValue; new: DiffValue }>;
     }
   >();
   const passthroughChanges: SyncResult["changes"] = [];
@@ -172,7 +175,7 @@ function buildLatestSyncResult(rows: DbLatestSyncRow[]): SyncResult | null {
   for (const row of eventRows) {
     const payload = parseMaybeJson<Record<string, unknown>>(row.payload, {});
     const changedFields = parseMaybeJson<
-      Record<string, { old?: string | null; new?: string | null }>
+      Record<string, { old?: string | boolean | null; new?: string | boolean | null }>
     >(row.changed_fields, {});
     const record =
       (typeof payload.claimant === "string" && payload.claimant) ||
@@ -265,6 +268,9 @@ function buildLatestSyncResult(rows: DbLatestSyncRow[]): SyncResult | null {
   const updated = changes.filter((item) => item.type === "updated").length;
   const deleted = changes.filter((item) => item.type === "deleted").length;
 
+  const lastEventId = Number(sessionMeta.last_event_id ?? 0);
+  const sessionStartEventId = Number(sessionMeta.last_session_start_event_id ?? 0);
+
   const backup =
     sessionMeta.last_backup_file_id ||
     sessionMeta.last_backup_file_name ||
@@ -291,6 +297,8 @@ function buildLatestSyncResult(rows: DbLatestSyncRow[]): SyncResult | null {
     historySource: "latest_completed_session",
     historyCompletedAt,
     backup,
+    lastEventId,
+    sessionStartEventId,
     summary: {
       total: changes.length,
       created,
@@ -458,7 +466,31 @@ export async function POST(request: Request) {
     const sheetUrl =
       typeof data.sheetUrl === "string" && data.sheetUrl ? data.sheetUrl : DEFAULT_SHEET_URL;
 
-    return NextResponse.json({ ok: true, ...data, sheetUrl });
+    const lastEventId =
+      typeof data.lastEventId === "number"
+        ? data.lastEventId
+        : typeof data.__lastEventId === "number"
+          ? data.__lastEventId
+          : typeof data.__lastEventId === "string"
+            ? Number(data.__lastEventId)
+            : undefined;
+
+    const sessionStartEventId =
+      typeof data.sessionStartEventId === "number"
+        ? data.sessionStartEventId
+        : typeof data.__sessionStartEventId === "number"
+          ? data.__sessionStartEventId
+          : typeof data.__sessionStartEventId === "string"
+            ? Number(data.__sessionStartEventId)
+            : undefined;
+
+    return NextResponse.json({
+      ok: true,
+      ...data,
+      sheetUrl,
+      ...(Number.isFinite(lastEventId) ? { lastEventId } : {}),
+      ...(Number.isFinite(sessionStartEventId) ? { sessionStartEventId } : {}),
+    });
   } catch (error) {
     console.error("[api/mr-sync] Invalid JSON response from N8N →", error);
 
