@@ -71,6 +71,57 @@ async function isScheduleLocked(repId: number, date: string): Promise<boolean> {
   return true; // Record exists = rep has availability set for this date
 }
 
+// ── Convert EST time to rep's local timezone ──
+function convertEstToRepTimezone(
+  estTime: string,
+  date: string | Date,
+  repTimezone: string,
+): string {
+  if (!repTimezone || repTimezone === "America/New_York") return estTime;
+  try {
+    const timeStr = estTime.slice(0, 5);
+    // Handle both string and Date object
+    const dateStr =
+      date instanceof Date
+        ? date.toISOString().slice(0, 10)
+        : String(date).slice(0, 10);
+
+    const tempDate = new Date(`${dateStr}T${timeStr}:00`);
+
+    const nyFormatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/New_York",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+    const parts = Object.fromEntries(
+      nyFormatter.formatToParts(tempDate).map((x) => [x.type, x.value]),
+    );
+    const nyAsUtc = new Date(
+      `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}Z`,
+    );
+    const correctUtc = new Date(
+      tempDate.getTime() - (nyAsUtc.getTime() - tempDate.getTime()),
+    );
+
+    const local = new Intl.DateTimeFormat("en-US", {
+      timeZone: repTimezone,
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(correctUtc);
+
+    return local === "24:00" ? "00:00" : local;
+  } catch (e) {
+    console.error("[convertEstToRepTimezone] ERROR:", e);
+    return estTime;
+  }
+}
+
 // ── Check rep availability (including partial and time slots) ──
 async function isRepAvailable(
   repId: number,
@@ -92,12 +143,35 @@ async function isRepAvailable(
 
   const avail = rows[0];
 
+  console.log("[isRepAvailable]", {
+    repId,
+    date,
+    hearingTimeEst,
+    rep_timezone: avail.rep_timezone,
+    is_available: avail.is_available,
+    availability_type: avail.availability_type,
+    time_slots: avail.time_slots,
+  });
+
   if (!avail.is_available) {
     return { available: false, reason: "Rep marked fully unavailable" };
   }
 
-  // Check custom time slots
-  if (avail.time_slots && hearingTimeEst) {
+  // Convert hearing EST time to rep's local timezone for comparison
+  const repTimezone = avail.rep_timezone || "America/New_York";
+  const hearingTimeLocal =
+    hearingTimeEst && date
+      ? convertEstToRepTimezone(hearingTimeEst, date, repTimezone)
+      : hearingTimeEst;
+
+  console.log("[isRepAvailable] converted time:", {
+    hearingTimeEst,
+    repTimezone,
+    hearingTimeLocal,
+  });
+
+  // Check custom time slots (slots are stored in rep's local timezone)
+  if (avail.time_slots && hearingTimeLocal) {
     let timeSlots: { start: string; end: string }[] = [];
     try {
       timeSlots =
@@ -109,7 +183,7 @@ async function isRepAvailable(
     }
 
     if (timeSlots.length > 0) {
-      const hearingMin = timeToMinutes(hearingTimeEst);
+      const hearingMin = timeToMinutes(hearingTimeLocal);
       const inSlot = timeSlots.some((slot) => {
         const start = timeToMinutes(slot.start);
         const end = timeToMinutes(slot.end);
@@ -118,21 +192,27 @@ async function isRepAvailable(
       if (!inSlot) {
         return {
           available: false,
-          reason: "Hearing time outside available time slots",
+          reason: `Hearing time (${hearingTimeLocal} local) outside available slots`,
         };
       }
       return { available: true, reason: "" };
     }
   }
 
-  // Check morning/afternoon availability
-  if (avail.availability_type && hearingTimeEst) {
-    const hour = parseInt(hearingTimeEst.split(":")[0]);
+  // Check morning/afternoon (also in rep's local time)
+  if (avail.availability_type && hearingTimeLocal) {
+    const hour = parseInt(hearingTimeLocal.split(":")[0]);
     if (avail.availability_type === "morning_only" && hour >= 12) {
-      return { available: false, reason: "Rep only available in morning" };
+      return {
+        available: false,
+        reason: `Rep only available in morning (hearing is ${hearingTimeLocal} local)`,
+      };
     }
     if (avail.availability_type === "afternoon_only" && hour < 12) {
-      return { available: false, reason: "Rep only available in afternoon" };
+      return {
+        available: false,
+        reason: `Rep only available in afternoon (hearing is ${hearingTimeLocal} local)`,
+      };
     }
   }
 
@@ -277,7 +357,10 @@ async function scoreRep(
 ): Promise<{ eligible: boolean; score: number; details: string }> {
   let score = 0;
   const details: string[] = [];
-  const hearingDate = hearing.hearing_date as string;
+  const hearingDate =
+    hearing.hearing_date instanceof Date
+      ? (hearing.hearing_date as Date).toISOString().slice(0, 10)
+      : String(hearing.hearing_date).slice(0, 10);
   const hearingTimeEst = hearing.converted_time_est as string | null;
   const repId = rep.id as number;
 
@@ -409,7 +492,12 @@ export async function assignSingleHearing(
       success: false,
       message: `Marked as: ${hearing.assignment_status}`,
     };
-  if (hearing.hearing_date < new Date().toISOString().split("T")[0])
+  const hearingDateStr =
+    hearing.hearing_date instanceof Date
+      ? (hearing.hearing_date as Date).toISOString().slice(0, 10)
+      : String(hearing.hearing_date).slice(0, 10);
+
+  if (hearingDateStr < new Date().toISOString().split("T")[0])
     return { success: false, message: "Cannot assign past hearings" };
 
   // Get active reps

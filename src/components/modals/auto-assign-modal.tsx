@@ -304,7 +304,8 @@ export function AutoAssignModal({
         r.includes("unavailable") ||
         r.includes("morning") ||
         r.includes("afternoon") ||
-        r.includes("time slot")
+        r.includes("time slot") ||
+        r.includes("outside available")
       ) {
         cat = "Unavailable";
         icon = "🚫";
