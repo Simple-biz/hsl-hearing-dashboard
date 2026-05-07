@@ -306,6 +306,62 @@ export function ScheduleClient({
     await loadData(selectedRepId, selectedMonth);
   };
 
+  // ═════════ DEFAULT SCHEDULE TEMPLATE ═════════
+  const [templateSlots, setTemplateSlots] = useState<
+    { start: string; end: string }[]
+  >([{ start: "08:30", end: "17:00" }]);
+  const [templateDays, setTemplateDays] = useState<number[]>([1, 2, 3, 4, 5]);
+  const [templateApplied, setTemplateApplied] = useState(false);
+  const [templateSelectMode, setTemplateSelectMode] = useState(false);
+  const [selectedDates, setSelectedDates] = useState<Set<string>>(new Set());
+
+  const toggleDateSelection = (dateStr: string) => {
+    setSelectedDates((prev) => {
+      const next = new Set(prev);
+      if (next.has(dateStr)) next.delete(dateStr);
+      else next.add(dateStr);
+      return next;
+    });
+  };
+
+  const applyTemplateToSelected = () => {
+    if (templateSlots.length === 0 || selectedDates.size === 0) return;
+    const newEdits = { ...edits };
+    for (const dateStr of selectedDates) {
+      newEdits[dateStr] = {
+        type: "custom_time",
+        timeSlots: [...templateSlots],
+      };
+    }
+    setEdits(newEdits);
+    setSelectedDates(new Set());
+    setTemplateSelectMode(false);
+    setTemplateApplied(true);
+    setTimeout(() => setTemplateApplied(false), 2000);
+  };
+
+  const applyTemplate = (mode: "all" | "unset") => {
+    if (templateSlots.length === 0) return;
+    const newEdits = { ...edits };
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateStr = `${selectedMonth}-${String(d).padStart(2, "0")}`;
+      const dow = new Date(year, month - 1, d).getDay();
+      const isWeekend = dow === 0 || dow === 6;
+      const isHoliday = !!holidays[dateStr];
+      const isPast = dateStr < todayStr;
+      if (isWeekend || isHoliday || isPast) continue;
+      if (!templateDays.includes(dow)) continue;
+      if (mode === "unset" && newEdits[dateStr]) continue;
+      newEdits[dateStr] = {
+        type: "custom_time",
+        timeSlots: [...templateSlots],
+      };
+    }
+    setEdits(newEdits);
+    setTemplateApplied(true);
+    setTimeout(() => setTemplateApplied(false), 2000);
+  };
+
   const filteredReps = reps.filter(
     (r) =>
       !repSearch ||
@@ -559,6 +615,184 @@ export function ScheduleClient({
             </Select>
             {tzSaved && <span className="text-xs text-green-600">✓ Saved</span>}
           </div>
+        )}
+
+        {/* ═════════ DEFAULT SCHEDULE TEMPLATE ═════════ */}
+        {canEditSchedule && (
+          <details className="rounded-xl border bg-card">
+            <summary className="px-4 py-3 text-sm font-semibold cursor-pointer hover:bg-muted/50 flex items-center justify-between">
+              <span>📋 Default Schedule Template</span>
+              <span className="text-xs font-normal text-muted-foreground">
+                Set a repeating availability and apply to the whole month
+              </span>
+            </summary>
+            <div className="px-4 pb-4 pt-2 space-y-4">
+              {/* Time slots */}
+              <div>
+                <p className="text-xs font-semibold mb-2">
+                  🕐 Default Time Slots{" "}
+                  <span className="font-normal text-muted-foreground">
+                    (in your timezone:{" "}
+                    {TZ_OPTIONS.find((t) => t.value === repTz)?.label || "ET"})
+                  </span>
+                </p>
+                <div className="space-y-2">
+                  {templateSlots.map((slot, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <Input
+                        type="time"
+                        value={slot.start}
+                        onChange={(e) => {
+                          const s = [...templateSlots];
+                          s[i].start = e.target.value;
+                          setTemplateSlots(s);
+                        }}
+                        className="h-8 text-xs"
+                      />
+                      <span className="text-xs text-muted-foreground">to</span>
+                      <Input
+                        type="time"
+                        value={slot.end}
+                        onChange={(e) => {
+                          const s = [...templateSlots];
+                          s[i].end = e.target.value;
+                          setTemplateSlots(s);
+                        }}
+                        className="h-8 text-xs"
+                      />
+                      {templateSlots.length > 1 && (
+                        <button
+                          onClick={() =>
+                            setTemplateSlots(
+                              templateSlots.filter((_, j) => j !== i),
+                            )
+                          }
+                          className="text-red-500 hover:text-red-700"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  <button
+                    onClick={() =>
+                      setTemplateSlots([
+                        ...templateSlots,
+                        { start: "08:00", end: "17:00" },
+                      ])
+                    }
+                    className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800"
+                  >
+                    <Plus className="h-3 w-3" /> Add Another Slot
+                  </button>
+                </div>
+              </div>
+
+              {/* Day of week selector */}
+              <div>
+                <p className="text-xs font-semibold mb-2">📅 Apply to Days</p>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { label: "Mon", value: 1 },
+                    { label: "Tue", value: 2 },
+                    { label: "Wed", value: 3 },
+                    { label: "Thu", value: 4 },
+                    { label: "Fri", value: 5 },
+                  ].map((day) => (
+                    <button
+                      key={day.value}
+                      onClick={() =>
+                        setTemplateDays((prev) =>
+                          prev.includes(day.value)
+                            ? prev.filter((d) => d !== day.value)
+                            : [...prev, day.value],
+                        )
+                      }
+                      className={cn(
+                        "rounded-md px-3 py-1.5 text-xs font-semibold transition-colors border",
+                        templateDays.includes(day.value)
+                          ? "bg-blue-600 text-white border-blue-600"
+                          : "bg-card text-muted-foreground border-border hover:bg-muted/50",
+                      )}
+                    >
+                      {day.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Apply buttons */}
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <Button
+                  size="sm"
+                  className="h-8 text-xs gap-1.5 bg-blue-600 hover:bg-blue-700"
+                  onClick={() => applyTemplate("unset")}
+                  disabled={
+                    templateDays.length === 0 || templateSlots.length === 0
+                  }
+                >
+                  <Plus className="h-3.5 w-3.5" /> Apply to Unset Days
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs gap-1.5"
+                  onClick={() => applyTemplate("all")}
+                  disabled={
+                    templateDays.length === 0 || templateSlots.length === 0
+                  }
+                >
+                  <RotateCcw className="h-3.5 w-3.5" /> Overwrite All Days
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={cn(
+                    "h-8 text-xs gap-1.5",
+                    templateSelectMode
+                      ? "border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
+                      : "",
+                  )}
+                  onClick={() => {
+                    setTemplateSelectMode(!templateSelectMode);
+                    setSelectedDates(new Set());
+                  }}
+                >
+                  {templateSelectMode ? `✕ Cancel Selection` : "🖱️ Pick Dates"}
+                </Button>
+
+                {templateSelectMode && selectedDates.size > 0 && (
+                  <Button
+                    size="sm"
+                    className="h-8 text-xs gap-1.5 bg-green-600 hover:bg-green-700"
+                    onClick={applyTemplateToSelected}
+                  >
+                    Apply to {selectedDates.size} Date
+                    {selectedDates.size !== 1 ? "s" : ""}
+                  </Button>
+                )}
+
+                {templateSelectMode && (
+                  <span className="text-xs text-blue-600 dark:text-blue-400">
+                    👆 Click dates on the calendar to select them
+                  </span>
+                )}
+
+                {templateApplied && (
+                  <span className="text-xs text-green-600 font-medium">
+                    ✓ Template applied — review then Save or Lock
+                  </span>
+                )}
+              </div>
+
+              <p className="text-[10px] text-muted-foreground">
+                💡 <strong>Apply to Unset Days</strong> only fills blank dates.{" "}
+                <strong>Overwrite All Days</strong> replaces any existing
+                availability. Either way, you can still edit individual days
+                after applying.
+              </p>
+            </div>
+          </details>
         )}
 
         {/* Collapsible instructions */}
@@ -837,8 +1071,17 @@ export function ScheduleClient({
                     bg,
                     canClick &&
                       "cursor-pointer hover:ring-2 hover:ring-inset hover:ring-blue-400",
+                    selectedDates.has(dateStr) &&
+                      "ring-2 ring-inset ring-blue-500 !bg-blue-100 dark:!bg-blue-900/50",
                   )}
-                  onClick={() => canClick && openModal(dateStr)}
+                  onClick={() => {
+                    if (!canClick) return;
+                    if (templateSelectMode) {
+                      toggleDateSelection(dateStr);
+                    } else {
+                      openModal(dateStr);
+                    }
+                  }}
                 >
                   <div className="flex items-center justify-between">
                     <span
