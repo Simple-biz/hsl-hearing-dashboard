@@ -28,6 +28,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { convertTimeFromEST } from "@/lib/timezone";
 import type { UserRole } from "@/lib/roles";
 import {
   getAvailability,
@@ -170,7 +171,10 @@ export function ScheduleClient({
   const isAdmin = !["rep", "staff"].includes(userRole);
   const isLocked = availability.some((a) => a.schedule_locked);
   const selectedRep = reps.find((r) => r.id === selectedRepId);
-  const repTz = selectedRep?.timezone || "America/New_York";
+  // const repTz = selectedRep?.timezone || "America/New_York";
+  const [repTz, setRepTz] = useState(
+    selectedRep?.timezone || "America/New_York",
+  );
 
   const [year, month] = selectedMonth.split("-").map(Number);
   const daysInMonth = new Date(year, month, 0).getDate();
@@ -222,6 +226,8 @@ export function ScheduleClient({
   const handleSelectRep = async (repId: number) => {
     setSelectedRepId(repId);
     setRepLoaded(true);
+    const rep = reps.find((r) => r.id === repId);
+    setRepTz(rep?.timezone || "America/New_York");
     await loadData(repId, selectedMonth);
   };
   const handleMonthNav = async (dir: number) => {
@@ -234,7 +240,9 @@ export function ScheduleClient({
     setSelectedMonth(ym);
     await loadData(selectedRepId, ym);
   };
+
   const handleTimezoneChange = async (tz: string) => {
+    setRepTz(tz); // ← add this line
     await updateRepTimezone(selectedRepId, tz);
     setTzSaved(true);
     setTimeout(() => setTzSaved(false), 2000);
@@ -848,35 +856,51 @@ export function ScheduleClient({
                     )}
                   </div>
                   {isHoliday && (
-                    <p className="text-[9px] text-muted-foreground mt-0.5 leading-tight">
+                    <span className="block text-[9px] text-muted-foreground mt-0.5 leading-tight">
                       {holidays[dateStr]}
-                    </p>
+                    </span>
                   )}
                   {!isHoliday && !isWeekend && !isPast && type !== "unset" && (
-                    <p className="text-[9px] font-medium mt-0.5">{lbl[type]}</p>
+                    <span className="block text-[9px] font-medium mt-0.5">
+                      {lbl[type]}
+                    </span>
                   )}
                   {edit?.timeSlots?.map((s, si) => (
-                    <p
+                    <span
                       key={si}
-                      className="text-[8px] text-purple-600 dark:text-purple-400"
+                      className="block text-[8px] text-purple-600 dark:text-purple-400"
                     >
                       {s.start}-{s.end}
-                    </p>
+                    </span>
                   ))}
                   {dayHearings.slice(0, 2).map((h, hi) => (
                     <div
                       key={hi}
                       className="mt-0.5 rounded bg-blue-100 dark:bg-blue-900/40 px-1 py-0.5"
                     >
-                      <p className="text-[8px] font-medium text-blue-700 dark:text-blue-300 truncate">
-                        {h.time?.slice(0, 5)} {h.claimant}
-                      </p>
+                      <span className="block text-[8px] font-medium text-blue-700 dark:text-blue-300 truncate">
+                        {convertTimeFromEST(h.time, h.date, "America/New_York")}{" "}
+                        ET
+                        {repTz !== "America/New_York" && (
+                          <span className="text-purple-600 dark:text-purple-400">
+                            {" "}
+                            ({convertTimeFromEST(h.time, h.date, repTz)}{" "}
+                            {TZ_OPTIONS.find(
+                              (t) => t.value === repTz,
+                            )?.label.match(/\((\w+)\)/)?.[1] ?? ""}
+                            )
+                          </span>
+                        )}
+                      </span>
+                      <span className="block text-[8px] text-blue-600 dark:text-blue-400 truncate">
+                        {h.claimant}
+                      </span>
                     </div>
                   ))}
                   {dayHearings.length > 2 && (
-                    <p className="text-[8px] text-blue-500 dark:text-blue-400">
+                    <span className="block text-[8px] text-blue-500 dark:text-blue-400">
                       +{dayHearings.length - 2} more
-                    </p>
+                    </span>
                   )}
                 </div>
               );
@@ -1168,7 +1192,9 @@ function LockStatusModal({
         setLoading(false);
       }
     });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [month]);
 
   const handleMonthChange = (ym: string) => {

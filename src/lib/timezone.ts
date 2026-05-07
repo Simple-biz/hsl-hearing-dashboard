@@ -61,6 +61,66 @@ export function convertToEST(time: string, timezone: string): string {
 }
 
 /**
+ * Convert a stored Eastern-Time wall-clock time (`converted_time_est`) into
+ * the rep's selected timezone for display. Pure formatter — does not mutate
+ * any DB column.
+ *
+ * The system stores hearings as `converted_time_est` (EST/EDT wall clock) for
+ * historical reasons. The schedule view lets reps in other zones see the
+ * same hearings translated into their local time, e.g. a 10:00 ET hearing
+ * shown as 07:00 PT. Uses the hearing's actual date so DST transitions
+ * resolve correctly.
+ *
+ * Returns "HH:MM" (24-hour). Returns the input untouched if anything fails.
+ */
+export function convertTimeFromEST(
+  estTime: string | null | undefined,
+  hearingDate: string | null | undefined,
+  targetTz: string,
+): string {
+  if (!estTime) return "";
+  const fallback = estTime.slice(0, 5);
+  if (!hearingDate || !targetTz || targetTz === "America/New_York") {
+    return fallback;
+  }
+
+  const [hStr, mStr] = estTime.split(":");
+  const hh = Number(hStr);
+  const mm = Number(mStr);
+  if (Number.isNaN(hh) || Number.isNaN(mm)) return fallback;
+
+  try {
+    // Anchor the wall-clock time as if it were UTC, then walk it back to find
+    // the actual UTC instant that Eastern would call hh:mm on hearingDate.
+    const anchor = new Date(
+      `${hearingDate}T${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:00Z`,
+    );
+    if (Number.isNaN(anchor.getTime())) return fallback;
+
+    const easternParts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(anchor);
+    const [eH, eM] = easternParts.split(":").map(Number);
+    if (Number.isNaN(eH) || Number.isNaN(eM)) return fallback;
+
+    const offsetMin = (hh * 60 + mm) - (eH * 60 + eM);
+    const realUtc = new Date(anchor.getTime() + offsetMin * 60_000);
+
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: targetTz,
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(realUtc);
+  } catch {
+    return fallback;
+  }
+}
+
+/**
  * Format SSN — store only last 4 digits
  * Replaces PHP formatSSN() from config.php
  */
