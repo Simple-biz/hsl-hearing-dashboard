@@ -3163,96 +3163,119 @@ export function PostHrgClient({
 
             {/* Record-type tabs (All / Post HRG / MR / REP). */}
             <div className="flex items-center gap-1.5 border-b border-border/60 px-1 overflow-x-auto">
-              {(
-                [
-                  {
-                    key: "all",
-                    label: "All",
-                    count: recordTypeCounts.all,
-                    activeCls:
-                      "border-primary text-foreground bg-primary/15 dark:bg-primary/25 ring-1 ring-primary/40 dark:ring-primary/60",
-                    chipActive: "bg-primary/15 text-primary",
-                    badgeCls:
-                      "bg-slate-200 text-slate-700 ring-slate-300 dark:bg-slate-700/50 dark:text-slate-200 dark:ring-slate-600",
-                    dotCls: "bg-slate-400 dark:bg-slate-500",
-                  },
-                  {
-                    key: "POST_HRG",
-                    label: "Post HRG",
-                    count: recordTypeCounts.postHrg,
-                    activeCls:
-                      "border-violet-500 text-violet-800 dark:text-violet-100 bg-violet-100 dark:bg-violet-500/30 ring-1 ring-violet-300 dark:ring-violet-400/60",
-                    chipActive:
-                      "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300",
-                    badgeCls:
-                      "bg-violet-100 text-violet-700 ring-violet-200 dark:bg-violet-900/40 dark:text-violet-300 dark:ring-violet-800",
-                    dotCls: "bg-violet-500",
-                  },
-                  {
-                    key: "MR",
-                    label: "MR",
-                    count: recordTypeCounts.mr,
-                    activeCls:
-                      "border-amber-500 text-amber-800 dark:text-amber-100 bg-amber-100 dark:bg-amber-500/30 ring-1 ring-amber-300 dark:ring-amber-400/60",
-                    chipActive:
-                      "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
-                    badgeCls:
-                      "bg-amber-100 text-amber-800 ring-amber-200 dark:bg-amber-900/40 dark:text-amber-300 dark:ring-amber-800",
-                    dotCls: "bg-amber-500",
-                  },
-                  {
-                    key: "REP",
-                    label: "REP",
-                    count: recordTypeCounts.rep,
-                    activeCls:
-                      "border-emerald-500 text-emerald-800 dark:text-emerald-100 bg-emerald-100 dark:bg-emerald-500/30 ring-1 ring-emerald-300 dark:ring-emerald-400/60",
-                    chipActive:
-                      "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
-                    badgeCls:
-                      "bg-emerald-100 text-emerald-800 ring-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-300 dark:ring-emerald-800",
-                    dotCls: "bg-emerald-500",
-                  },
-                ] as const
-              ).map((t) => {
-                const active = recordType === t.key;
-                return (
-                  <button
-                    key={t.key}
-                    type="button"
-                    onClick={() => handleRecordTypeChange(t.key)}
-                    className={cn(
-                      "group relative flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 -mb-px rounded-t-md transition-all duration-200 whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                      active
-                        ? cn("shadow-sm", t.activeCls)
-                        : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50 hover:border-muted-foreground/30 hover:-translate-y-px",
-                    )}
-                  >
-                    {/* Type badge — small colored pill so each tab stays
-                        visually identifiable even when not the active tab. */}
-                    <span
+              <div className="flex items-center gap-1.5">
+                {(
+                  [
+                    {
+                      key: "all",
+                      label: "All",
+                      count: recordTypeCounts.all,
+                      activeCls:
+                        "border-primary text-foreground bg-primary/15 dark:bg-primary/25 ring-1 ring-primary/40 dark:ring-primary/60",
+                      chipActive: "bg-primary/15 text-primary",
+                      badgeCls:
+                        "bg-slate-200 text-slate-700 ring-slate-300 dark:bg-slate-700/50 dark:text-slate-200 dark:ring-slate-600",
+                      dotCls: "bg-slate-400 dark:bg-slate-500",
+                    },
+                    {
+                      key: "POST_HRG",
+                      label: "Post HRG",
+                      count: recordTypeCounts.postHrg,
+                      activeCls:
+                        "border-violet-500 text-violet-800 dark:text-violet-100 bg-violet-100 dark:bg-violet-500/30 ring-1 ring-violet-300 dark:ring-violet-400/60",
+                      chipActive:
+                        "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300",
+                      badgeCls:
+                        "bg-violet-100 text-violet-700 ring-violet-200 dark:bg-violet-900/40 dark:text-violet-300 dark:ring-violet-800",
+                      dotCls: "bg-violet-500",
+                    },
+                    {
+                      key: "MR",
+                      label: "MR",
+                      count: recordTypeCounts.mr,
+                      activeCls:
+                        "border-amber-500 text-amber-800 dark:text-amber-100 bg-amber-100 dark:bg-amber-500/30 ring-1 ring-amber-300 dark:ring-amber-400/60",
+                      chipActive:
+                        "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+                      badgeCls:
+                        "bg-amber-100 text-amber-800 ring-amber-200 dark:bg-amber-900/40 dark:text-amber-300 dark:ring-amber-800",
+                      dotCls: "bg-amber-500",
+                    },
+                    {
+                      key: "REP",
+                      label: "REP",
+                      count: recordTypeCounts.rep,
+                      activeCls:
+                        "border-emerald-500 text-emerald-800 dark:text-emerald-100 bg-emerald-100 dark:bg-emerald-500/30 ring-1 ring-emerald-300 dark:ring-emerald-400/60",
+                      chipActive:
+                        "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
+                      badgeCls:
+                        "bg-emerald-100 text-emerald-800 ring-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-300 dark:ring-emerald-800",
+                      dotCls: "bg-emerald-500",
+                    },
+                  ] as const
+                ).map((t) => {
+                  const active = recordType === t.key;
+                  return (
+                    <button
+                      key={t.key}
+                      type="button"
+                      onClick={() => handleRecordTypeChange(t.key)}
                       className={cn(
-                        "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ring-1 transition-colors",
-                        t.badgeCls,
-                      )}
-                    >
-                      <span
-                        className={cn("h-1.5 w-1.5 rounded-full", t.dotCls)}
-                      />
-                      {t.label}
-                    </span>
-                    <span
-                      className={cn(
-                        "inline-flex items-center justify-center min-w-[1.25rem] rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums transition-colors",
+                        "group relative flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 -mb-px rounded-t-md transition-all duration-200 whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-ring",
                         active
-                          ? t.chipActive
-                          : "bg-muted text-muted-foreground group-hover:bg-muted-foreground/15",
+                          ? cn("shadow-sm", t.activeCls)
+                          : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50 hover:border-muted-foreground/30 hover:-translate-y-px",
                       )}
                     >
-                      {t.count}
+                      {/* Type badge — small colored pill so each tab stays
+                        visually identifiable even when not the active tab. */}
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ring-1 transition-colors",
+                          t.badgeCls,
+                        )}
+                      >
+                        <span
+                          className={cn("h-1.5 w-1.5 rounded-full", t.dotCls)}
+                        />
+                        {t.label}
+                      </span>
+                      <span
+                        className={cn(
+                          "inline-flex items-center justify-center min-w-[1.25rem] rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums transition-colors",
+                          active
+                            ? t.chipActive
+                            : "bg-muted text-muted-foreground group-hover:bg-muted-foreground/15",
+                        )}
+                      >
+                        {t.count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Indicator legend — always visible, no tooltip needed */}
+              <div className="flex items-center gap-3 px-2 pb-1 shrink-0">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Indicators:
+                </span>
+                {INDICATOR_OPTIONS.map((o) => (
+                  <div key={o.value} className="flex items-center gap-1">
+                    <span
+                      className="w-2.5 h-2.5 rounded-full shrink-0"
+                      style={{
+                        backgroundColor: o.color,
+                        boxShadow: `0 0 0 1px ${o.color}60`,
+                      }}
+                    />
+                    <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+                      {o.label}
                     </span>
-                  </button>
-                );
-              })}
+                  </div>
+                ))}
+              </div>
             </div>
 
             <div className={cn(CARD, "p-3 sm:p-4")}>
