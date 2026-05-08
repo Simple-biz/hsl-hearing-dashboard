@@ -912,6 +912,118 @@ export async function addDashboardPostHrgNote(
   return { success: true };
 }
 
+// ── Edit a post HRG note by index (server-side read-modify-write).
+// Only the original author can edit. Previous text is preserved in an
+// `edits` array on the note so the audit trail stays intact.
+export async function editDashboardPostHrgNote(
+  hearingId: number,
+  noteIndex: number,
+  newText: string,
+  userName: string,
+) {
+  const trimmed = newText.trim();
+  if (!trimmed) {
+    return {
+      success: false,
+      error: "Note cannot be empty",
+      updatedNotes: null,
+    };
+  }
+
+  const { rows } = await db.query(
+    "SELECT post_hrg_notes, claimant FROM hearings WHERE id = $1",
+    [hearingId],
+  );
+  if (!rows[0])
+    return { success: false, error: "Hearing not found", updatedNotes: null };
+
+  type EditEntry = { at: string; prev: string };
+  type Note = {
+    user: string;
+    date: string;
+    note: string;
+    edits?: EditEntry[];
+  };
+
+  let notes: Note[] = [];
+  try {
+    const parsed = JSON.parse(rows[0].post_hrg_notes || "[]");
+    if (Array.isArray(parsed)) {
+      notes = parsed.map((item: Record<string, unknown>) => {
+        const editsRaw = Array.isArray(item.edits) ? item.edits : [];
+        const edits: EditEntry[] = editsRaw
+          .map((e) => {
+            if (!e || typeof e !== "object") return null;
+            const eo = e as Record<string, unknown>;
+            return { at: String(eo.at ?? ""), prev: String(eo.prev ?? "") };
+          })
+          .filter((e): e is EditEntry => e !== null);
+        return {
+          user: String(
+            item.user ?? item.author ?? item.author_name ?? "Unknown",
+          ),
+          date: String(item.date ?? item.created_at ?? ""),
+          note: String(item.note ?? item.content ?? ""),
+          edits: edits.length > 0 ? edits : undefined,
+        };
+      });
+    }
+  } catch {
+    /* empty */
+  }
+
+  if (noteIndex < 0 || noteIndex >= notes.length) {
+    return {
+      success: false,
+      error: "Invalid note index",
+      updatedNotes: JSON.stringify(notes),
+    };
+  }
+
+  const target = notes[noteIndex];
+
+  // Author-only gate. Trim/case-insensitive so trailing whitespace doesn't
+  // lock the author out.
+  if (
+    (target.user || "").trim().toLowerCase() !== userName.trim().toLowerCase()
+  ) {
+    return {
+      success: false,
+      error: "Only the original author can edit this note",
+      updatedNotes: JSON.stringify(notes),
+    };
+  }
+
+  // No-op if text unchanged — avoid bumping the audit trail for no reason.
+  if (target.note === trimmed) {
+    return { success: true, updatedNotes: JSON.stringify(notes) };
+  }
+
+  const newEdit: EditEntry = {
+    at: new Date().toISOString(),
+    prev: target.note,
+  };
+  notes[noteIndex] = {
+    ...target,
+    note: trimmed,
+    edits: [...(target.edits ?? []), newEdit],
+  };
+
+  const updatedNotes = JSON.stringify(notes);
+  await db.query("UPDATE hearings SET post_hrg_notes = $1 WHERE id = $2", [
+    updatedNotes,
+    hearingId,
+  ]);
+
+  const { logAction } = await import("@/lib/activity-log");
+  await logAction(
+    "post_hrg_note_edited",
+    `Edited Post HRG note for: ${rows[0].claimant}`,
+  );
+
+  return { success: true, updatedNotes };
+}
+
 // ── Delete a post HRG note by index (server-side read-modify-write) ──
 export async function deleteDashboardPostHrgNote(
   hearingId: number,
