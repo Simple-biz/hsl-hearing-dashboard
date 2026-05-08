@@ -1804,6 +1804,10 @@ export function PostHrgClient({
   // Threaded via ref so the existing fetchPage signature stays stable.
   const [showNewOnly, setShowNewOnly] = useState<boolean>(false);
   const showNewOnlyRef = useRef<boolean>(false);
+  // "Show Overdue only" toggle — when ON, only unacknowledged rows are returned.
+  // Threaded via ref so the existing fetchPage signature stays stable.
+  const [showOverdueOnly, setShowOverdueOnly] = useState<boolean>(false);
+  const showOverdueOnlyRef = useRef<boolean>(false);
   // Hearing-date filter: preset drives from/to. Threaded via ref so the
   // existing positional fetchPage signature stays stable.
   const [datePreset, setDatePreset] = useState<string>("");
@@ -2044,6 +2048,7 @@ export function PostHrgClient({
           hearingDateFrom: dateRangeRef.current.from || undefined,
           hearingDateTo: dateRangeRef.current.to || undefined,
           unacknowledgedOnly: showNewOnlyRef.current || undefined,
+          overdueOnly: showOverdueOnlyRef.current || undefined, // ← add this
           sortKey: sk,
           sortDir: sd,
         });
@@ -2221,6 +2226,14 @@ export function PostHrgClient({
     const next = !showNewOnlyRef.current;
     showNewOnlyRef.current = next;
     setShowNewOnly(next);
+    setPage(1);
+    refetchWithCurrentFilters();
+  }, [refetchWithCurrentFilters]);
+
+  const toggleShowOverdueOnly = useCallback(() => {
+    const next = !showOverdueOnlyRef.current;
+    showOverdueOnlyRef.current = next;
+    setShowOverdueOnly(next);
     setPage(1);
     refetchWithCurrentFilters();
   }, [refetchWithCurrentFilters]);
@@ -3389,6 +3402,31 @@ export function PostHrgClient({
                         )}
                       />
                       Show NEW only
+                    </button>
+
+                    {/* Show Overdue only */}
+                    <button
+                      type="button"
+                      onClick={toggleShowOverdueOnly}
+                      title={
+                        showOverdueOnly
+                          ? "Showing only overdue rows. Click to show all."
+                          : "Show only overdue rows (past deadline)."
+                      }
+                      className={cn(
+                        "h-8 px-2.5 rounded-md text-xs font-semibold border transition-colors shrink-0 inline-flex items-center gap-1.5",
+                        showOverdueOnly
+                          ? "border-red-500 bg-red-600 text-white hover:bg-red-700 shadow-sm"
+                          : "border-border bg-card text-foreground hover:bg-muted/50",
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "inline-block w-2 h-2 rounded-full",
+                          showOverdueOnly ? "bg-white" : "bg-red-500",
+                        )}
+                      />
+                      Show Incomplete only
                     </button>
 
                     {/* Legacy display toggle — tints the entire row by indicator color (sheet style) */}

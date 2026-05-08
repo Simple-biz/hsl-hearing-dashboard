@@ -283,6 +283,9 @@ export interface FetchPostHrgPageParams {
   // When true, restrict results to rows that have not yet been acknowledged.
   // Used by the "Show NEW only" filter chip.
   unacknowledgedOnly?: boolean;
+  // When true, restrict results to rows that are past their deadline and
+  // not yet completed. Used by the "Show Overdue only" filter chip.
+  overdueOnly?: boolean;
   // When true, INCLUDE Completed rows in the result. Default false — the
   // main grid hides Completed rows; the team views them via a dedicated
   // "Completed" modal that calls fetchPostHrgCompletedRecords directly.
@@ -348,6 +351,12 @@ export async function fetchPostHrgDevPage(
 
   if (params.unacknowledgedOnly) {
     conditions.push(`p.acknowledged_at IS NULL`);
+  }
+
+  if (params.overdueOnly) {
+    conditions.push(
+      `(p.deadline IS NOT NULL AND p.deadline < CURRENT_DATE AND LOWER(COALESCE(p.status, '')) <> 'completed')`,
+    );
   }
 
   // Hide Completed rows from the main grid by default. The Completed modal
