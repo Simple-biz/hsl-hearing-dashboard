@@ -3243,7 +3243,7 @@ export function PostHrgClient({
                       </span>
                       <span
                         className={cn(
-                          "inline-flex items-center justify-center min-w-[1.25rem] rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums transition-colors",
+                          "inline-flex items-center justify-center min-w-5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums transition-colors",
                           active
                             ? t.chipActive
                             : "bg-muted text-muted-foreground group-hover:bg-muted-foreground/15",
