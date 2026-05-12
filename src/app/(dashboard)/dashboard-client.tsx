@@ -108,6 +108,11 @@ interface HearingFilters {
   medicalRecordStatus: string;
   assignmentStatus: string;
   datePreset: string;
+  /** When true, show only hearings with no chronicle_link populated. */
+  noChronicleLink: boolean;
+  /** When true, show only hearings with no claimant_link populated.
+   * (Column is named claimant_link in the DB; surfaced as "MyCase" in the UI.) */
+  noMyCaseLink: boolean;
 }
 const EMPTY_FILTERS: HearingFilters = {
   search: "",
@@ -121,6 +126,8 @@ const EMPTY_FILTERS: HearingFilters = {
   medicalRecordStatus: "",
   assignmentStatus: "",
   datePreset: "",
+  noChronicleLink: false,
+  noMyCaseLink: false,
 };
 type HearingBoolField =
   | "task_assigned"
@@ -1463,6 +1470,8 @@ const FilterBar = memo(function FilterBar({
     filters.medicalRecordStatus,
     filters.assignmentStatus,
     filters.datePreset,
+    filters.noChronicleLink,
+    filters.noMyCaseLink,
   ].filter(Boolean).length;
   // Using showRepFilterProp and showNextUnassignedProp from parent
 
@@ -1589,6 +1598,38 @@ const FilterBar = memo(function FilterBar({
               />
             </div>
           )}
+
+          {/* Missing-link toggles. Both `no*Link` filters narrow the result
+              to rows where the corresponding URL column is NULL or empty,
+              and combine with every other filter via AND. */}
+          <label className="flex h-8 items-center gap-1.5 rounded-md border border-input bg-card px-2 text-xs cursor-pointer hover:bg-muted">
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5 accent-purple-600 cursor-pointer"
+              checked={filters.noChronicleLink}
+              onChange={(e) =>
+                onFilterChange({
+                  ...filters,
+                  noChronicleLink: e.target.checked,
+                })
+              }
+            />
+            <span>No Chronicle Link</span>
+          </label>
+          <label className="flex h-8 items-center gap-1.5 rounded-md border border-input bg-card px-2 text-xs cursor-pointer hover:bg-muted">
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5 accent-purple-600 cursor-pointer"
+              checked={filters.noMyCaseLink}
+              onChange={(e) =>
+                onFilterChange({
+                  ...filters,
+                  noMyCaseLink: e.target.checked,
+                })
+              }
+            />
+            <span>No MyCase Link</span>
+          </label>
 
           {activeCount > 0 && (
             <Button
@@ -2745,6 +2786,8 @@ export function DashboardClient({
           medicalRecordStatus: f.medicalRecordStatus || undefined,
           assignmentStatus: f.assignmentStatus || undefined,
           datePreset: f.datePreset || undefined,
+          noChronicleLink: f.noChronicleLink || undefined,
+          noMyCaseLink: f.noMyCaseLink || undefined,
           sortKey: sk || undefined,
           sortDir: sk ? sd : undefined,
           userRole: roleOverride ?? effectiveRole,

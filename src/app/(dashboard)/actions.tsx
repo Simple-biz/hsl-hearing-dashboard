@@ -252,6 +252,11 @@ export interface FetchPageParams {
   medicalRecordStatus?: string;
   assignmentStatus?: string;
   datePreset?: string;
+  /** When true, narrow to hearings where chronicle_link is NULL or empty. */
+  noChronicleLink?: boolean;
+  /** When true, narrow to hearings where claimant_link is NULL or empty.
+   * (DB column is claimant_link; surfaced as "MyCase" in the UI.) */
+  noMyCaseLink?: boolean;
   sortKey?: string;
   sortDir?: "asc" | "desc";
   userRole?: string;
@@ -418,6 +423,15 @@ export async function fetchHearingsPage(
       values.push(params.assignmentStatus);
       idx++;
     }
+  }
+
+  // Missing-link filters — narrow to hearings where the URL column is NULL
+  // or blank. Combine with every other condition via AND (the join below).
+  if (params.noChronicleLink) {
+    conditions.push("(h.chronicle_link IS NULL OR h.chronicle_link = '')");
+  }
+  if (params.noMyCaseLink) {
+    conditions.push("(h.claimant_link IS NULL OR h.claimant_link = '')");
   }
 
   const where =
