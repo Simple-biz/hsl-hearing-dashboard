@@ -47,6 +47,7 @@ export interface PostHrgDevRow {
   // NULL = unacknowledged ("NEW" pill, pinned to top of grid)
   // Timestamp = acknowledged, sorts in normal date order
   acknowledged_at: string | null;
+  acknowledged_by_name: string | null; // ← add this line after acknowledged_at
 }
 
 export interface PostHrgDevStats {
@@ -282,6 +283,9 @@ export interface FetchPostHrgPageParams {
   // When true, restrict results to rows that have not yet been acknowledged.
   // Used by the "Show NEW only" filter chip.
   unacknowledgedOnly?: boolean;
+  // When true, restrict results to rows that are past their deadline and
+  // not yet completed. Used by the "Show Overdue only" filter chip.
+  overdueOnly?: boolean;
   // When true, INCLUDE Completed rows in the result. Default false — the
   // main grid hides Completed rows; the team views them via a dedicated
   // "Completed" modal that calls fetchPostHrgCompletedRecords directly.
@@ -349,6 +353,12 @@ export async function fetchPostHrgDevPage(
     conditions.push(`p.acknowledged_at IS NULL`);
   }
 
+  if (params.overdueOnly) {
+    conditions.push(
+      `(p.deadline IS NOT NULL AND p.deadline < CURRENT_DATE AND LOWER(COALESCE(p.status, '')) <> 'completed')`,
+    );
+  }
+
   // Hide Completed rows from the main grid by default. The Completed modal
   // passes includeCompleted=true via fetchPostHrgCompletedRecords below.
   // EXCEPTION: when the user runs a text search, surface Completed rows too
@@ -406,6 +416,7 @@ export async function fetchPostHrgDevPage(
         p.created_at::text, p.updated_at::text,
         p.created_by, p.updated_by,
         p.acknowledged_at::text AS acknowledged_at,
+        p.acknowledged_by_name,
         r.name AS representative_name,
         r.rep_type,
         h.claimant_link,
@@ -447,6 +458,7 @@ export async function fetchPostHrgDevRecords(): Promise<PostHrgDevRow[]> {
       p.created_at::text, p.updated_at::text,
       p.created_by, p.updated_by,
       p.acknowledged_at::text AS acknowledged_at,
+      p.acknowledged_by_name,
       r.name AS representative_name,
       r.rep_type,
       h.claimant_link,
@@ -560,6 +572,7 @@ export async function fetchPostHrgCompletedRecords(
         p.created_at::text, p.updated_at::text,
         p.created_by, p.updated_by,
         p.acknowledged_at::text AS acknowledged_at,
+        p.acknowledged_by_name,
         r.name AS representative_name,
         r.rep_type,
         h.claimant_link,
@@ -940,28 +953,22 @@ export async function updatePostHrgDevField(
 // group on next render. Shared across the team — first user to click
 // clears it for everyone.
 
-export async function acknowledgePostHrgDevRecord(id: number) {
+export async function acknowledgePostHrgDevRecord(id: number, byName?: string) {
   const { rows } = await db.query(
     `UPDATE post_hrg_development
-        SET acknowledged_at = NOW()
+        SET acknowledged_at = NOW(),
+            acknowledged_by_name = $2
       WHERE id = $1
         AND acknowledged_at IS NULL
-      RETURNING claimant, acknowledged_at::text AS acknowledged_at`,
-    [id],
+      RETURNING claimant, acknowledged_at::text, acknowledged_by_name`,
+    [id, byName ?? null],
   );
-  if (rows.length === 0) {
-    // Either the row doesn't exist or was already acknowledged by a
-    // teammate — no-op success either way.
-    return { success: true, acknowledged_at: null };
-  }
-  const { logAction } = await import("@/lib/activity-log");
-  await logAction(
-    "post_hrg_dev_acknowledged",
-    `Acknowledged new post-hrg record: ${rows[0].claimant}`,
-  );
+  if (rows.length === 0)
+    return { success: true, acknowledged_at: null, acknowledged_by_name: null };
   return {
     success: true,
     acknowledged_at: rows[0].acknowledged_at as string,
+    acknowledged_by_name: rows[0].acknowledged_by_name as string | null,
   };
 }
 
@@ -995,9 +1002,11 @@ function deriveRecordTypeFromDocs(
   if (!typeOfDocsNeeded) return "POST_HRG";
   const s = typeOfDocsNeeded.toLowerCase();
 
-  // MR — medical records / consultative examinations
+  // MR — strictly medical records. Any other "CE..." variants (CE Report,
+  // Updated CE, CE Proffer, plain CE, etc.) flow through to POST_HRG by
+  // default, since they describe post-hearing CE *documents* rather than
+  // medical record requests.
   if (s.includes("medical")) return "MR";
-  if (s.includes("ce") && !s.includes("proffer")) return "MR";
 
   // REP — rep-side / claimant-supplied evidence
   if (
@@ -1010,7 +1019,8 @@ function deriveRecordTypeFromDocs(
     return "REP";
   }
 
-  // Default — post-hearing legal docs (letter / brief / memo / unmatched)
+  // Default — post-hearing legal docs (letter / brief / memo / CE-related
+  // / unmatched).
   return "POST_HRG";
 }
 
