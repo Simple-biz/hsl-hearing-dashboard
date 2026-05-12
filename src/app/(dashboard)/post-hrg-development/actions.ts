@@ -1002,9 +1002,11 @@ function deriveRecordTypeFromDocs(
   if (!typeOfDocsNeeded) return "POST_HRG";
   const s = typeOfDocsNeeded.toLowerCase();
 
-  // MR — medical records / consultative examinations
+  // MR — strictly medical records. Any other "CE..." variants (CE Report,
+  // Updated CE, CE Proffer, plain CE, etc.) flow through to POST_HRG by
+  // default, since they describe post-hearing CE *documents* rather than
+  // medical record requests.
   if (s.includes("medical")) return "MR";
-  if (s.includes("ce") && !s.includes("proffer")) return "MR";
 
   // REP — rep-side / claimant-supplied evidence
   if (
@@ -1017,7 +1019,8 @@ function deriveRecordTypeFromDocs(
     return "REP";
   }
 
-  // Default — post-hearing legal docs (letter / brief / memo / unmatched)
+  // Default — post-hearing legal docs (letter / brief / memo / CE-related
+  // / unmatched).
   return "POST_HRG";
 }
 
