@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import {
   X,
   BarChart3,
@@ -15,12 +15,12 @@ import {
   Circle,
   ChevronDown,
   ChevronUp,
+  CalendarDays,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type {
   PostHrgDevRow,
   PostHrgRecordType,
-  PostHrgDevStats,
 } from "@/app/(dashboard)/post-hrg-development/actions";
 import { fetchPostHrgDevPage } from "@/app/(dashboard)/post-hrg-development/actions";
 
@@ -61,7 +61,12 @@ interface ReportData {
   unacknowledgedRows: PostHrgDevRow[];
 }
 
-type ReportTab = "summary" | "timeliness" | "people" | "detail";
+type ReportTab =
+  | "summary"
+  | "timeliness"
+  | "people"
+  | "detail"
+  | "completed_by_day";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -558,6 +563,59 @@ export function PostHrgReportsModal({ open, onClose, recordType }: Props) {
   const [scopedType, setScopedType] = useState<PostHrgRecordType | "all">(
     recordType,
   );
+  // "Completed by Day" tab — picked date defaults to today (local YYYY-MM-DD).
+  const [selectedCompletedDate, setSelectedCompletedDate] = useState<string>(
+    () => new Date().toLocaleDateString("en-CA"),
+  );
+  // Optional substring filter (claimant / rep / person responsible).
+  const [completedSearch, setCompletedSearch] = useState("");
+
+  // Completed records on the selected date — re-derived only when rows or
+  // date change. We treat `updated_at` as the completion timestamp (same
+  // proxy the existing "Completed this month" stat uses); accuracy depends
+  // on no later edits to a Completed row.
+  const completedOnSelectedDate = useMemo(() => {
+    return rows
+      .filter((r) => {
+        if ((r.status || "").toLowerCase() !== "completed") return false;
+        if (!r.updated_at) return false;
+        // Compare in the user's local timezone — the date input picker is
+        // also in local time, so the day boundaries line up.
+        const localDay = new Date(r.updated_at).toLocaleDateString("en-CA");
+        return localDay === selectedCompletedDate;
+      })
+      .sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
+  }, [rows, selectedCompletedDate]);
+
+  // Apply the search filter on top of the date-filtered set. Both the count
+  // card and the list below use this — so the displayed count always matches
+  // what the user sees in the table.
+  const completedFiltered = useMemo(() => {
+    const q = completedSearch.trim().toLowerCase();
+    if (!q) return completedOnSelectedDate;
+    return completedOnSelectedDate.filter((r) => {
+      const haystack = [
+        r.claimant,
+        r.representative_name,
+        r.assigned_rep,
+        r.person_responsible,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [completedOnSelectedDate, completedSearch]);
+
+  // Per-record-type breakdown for the count cards (uses the filtered set so
+  // the breakdown reflects whatever the search has narrowed to).
+  const completedBreakdown = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const r of completedFiltered) {
+      counts[r.record_type] = (counts[r.record_type] ?? 0) + 1;
+    }
+    return counts;
+  }, [completedFiltered]);
 
   const loadRef = useRef(false);
 
@@ -625,6 +683,11 @@ export function PostHrgReportsModal({ open, onClose, recordType }: Props) {
       key: "detail",
       label: "Detail View",
       icon: <FileText className="h-3.5 w-3.5" />,
+    },
+    {
+      key: "completed_by_day",
+      label: "Completed by Day",
+      icon: <CalendarDays className="h-3.5 w-3.5" />,
     },
   ];
 
@@ -750,7 +813,7 @@ export function PostHrgReportsModal({ open, onClose, recordType }: Props) {
                     />
                     <MetricCard
                       icon={<AlertTriangle className="h-4 w-4 text-red-500" />}
-                      label="Overdue"
+                      label="Incomplete"
                       value={report.overdueCount}
                       accent={
                         report.overdueCount > 0
@@ -1036,7 +1099,7 @@ export function PostHrgReportsModal({ open, onClose, recordType }: Props) {
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                     <MetricCard
                       icon={<AlertTriangle className="h-4 w-4 text-red-500" />}
-                      label="Overdue"
+                      label="Incomplete"
                       value={report.overdueCount}
                       sub="Past deadline, not completed"
                       accent={
@@ -1426,6 +1489,209 @@ export function PostHrgReportsModal({ open, onClose, recordType }: Props) {
                       </table>
                     </div>
                   </div>
+                </div>
+              )}
+
+              {tab === "completed_by_day" && (
+                <div className="space-y-4">
+                  {/* Date picker + search + summary row */}
+                  <div className="flex flex-col gap-3 rounded-xl border bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                          <CalendarDays className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground">
+                            Completed on
+                          </p>
+                          <input
+                            type="date"
+                            value={selectedCompletedDate}
+                            onChange={(e) =>
+                              setSelectedCompletedDate(
+                                e.target.value ||
+                                  new Date().toLocaleDateString("en-CA"),
+                              )
+                            }
+                            max={new Date().toLocaleDateString("en-CA")}
+                            className="mt-0.5 rounded-md border border-input bg-background px-2 py-1 text-sm font-medium focus:outline-none focus:ring-1 focus:ring-ring"
+                          />
+                        </div>
+                      </div>
+                      <div className="relative w-full sm:w-64">
+                        <input
+                          type="text"
+                          value={completedSearch}
+                          onChange={(e) => setCompletedSearch(e.target.value)}
+                          placeholder="Search claimant, rep, responsible..."
+                          className="h-9 w-full rounded-md border border-input bg-background px-3 pr-7 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                        />
+                        {completedSearch && (
+                          <button
+                            type="button"
+                            onClick={() => setCompletedSearch("")}
+                            className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground hover:bg-muted"
+                            title="Clear search"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                        {completedSearch ? "Matches" : "Records completed"}
+                      </p>
+                      <p className="text-3xl font-bold tabular-nums leading-tight">
+                        {completedFiltered.length}
+                        {completedSearch &&
+                          completedFiltered.length !==
+                            completedOnSelectedDate.length && (
+                            <span className="ml-1 text-sm font-normal text-muted-foreground">
+                              of {completedOnSelectedDate.length}
+                            </span>
+                          )}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Per-record-type breakdown — only show types that have at
+                      least one completion that day, so empty types don't
+                      clutter the row. */}
+                  {Object.keys(completedBreakdown).length > 0 && (
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+                      {Object.entries(completedBreakdown)
+                        .sort(([, a], [, b]) => b - a)
+                        .map(([rt, count]) => (
+                          <div
+                            key={rt}
+                            className={cn(
+                              "flex items-center justify-between rounded-lg border p-3",
+                              RT_COLORS[rt]?.bg,
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                "text-[10px] font-bold uppercase tracking-wide",
+                                RT_COLORS[rt]?.text,
+                              )}
+                            >
+                              {rt}
+                            </span>
+                            <span
+                              className={cn(
+                                "text-xl font-bold tabular-nums",
+                                RT_COLORS[rt]?.text,
+                              )}
+                            >
+                              {count}
+                            </span>
+                          </div>
+                        ))}
+                    </div>
+                  )}
+
+                  {/* Completed list — bottom of the cards, the team's “what
+                      shipped today” feed. */}
+                  <div className="rounded-xl border bg-card overflow-hidden">
+                    <div className="flex items-center justify-between border-b px-4 py-2.5">
+                      <p className="text-xs font-semibold">Completed records</p>
+                      <p className="text-[10px] text-muted-foreground">
+                        Sorted by completion time, newest first
+                      </p>
+                    </div>
+                    {completedFiltered.length === 0 ? (
+                      <p className="p-6 text-center text-xs text-muted-foreground">
+                        {completedSearch
+                          ? "No completed records match this search."
+                          : "No records completed on this day."}
+                      </p>
+                    ) : (
+                      <div className="overflow-x-auto max-h-[45vh] overflow-y-auto">
+                        <table className="w-full text-xs">
+                          <thead className="sticky top-0 z-10 bg-muted/90 backdrop-blur-sm">
+                            <tr className="border-b">
+                              {[
+                                "Time",
+                                "Claimant",
+                                "Hearing Date",
+                                "Record Type",
+                                "Rep",
+                                "Responsible",
+                              ].map((h) => (
+                                <th
+                                  key={h}
+                                  className="px-3 py-2 text-left font-semibold text-muted-foreground whitespace-nowrap"
+                                >
+                                  {h}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {completedFiltered.map((r, i) => (
+                              <tr
+                                key={r.id}
+                                className={cn(
+                                  "border-b last:border-0 hover:bg-muted/30",
+                                  i % 2 === 0
+                                    ? "bg-white dark:bg-zinc-950"
+                                    : "bg-zinc-50 dark:bg-zinc-900",
+                                )}
+                              >
+                                <td className="px-3 py-2 tabular-nums text-muted-foreground whitespace-nowrap">
+                                  {r.updated_at
+                                    ? new Date(r.updated_at).toLocaleTimeString(
+                                        "en-US",
+                                        {
+                                          hour: "numeric",
+                                          minute: "2-digit",
+                                        },
+                                      )
+                                    : "—"}
+                                </td>
+                                <td className="px-3 py-2 font-medium whitespace-nowrap max-w-40 truncate">
+                                  {r.claimant}
+                                </td>
+                                <td className="px-3 py-2 tabular-nums text-muted-foreground whitespace-nowrap">
+                                  {fmtDate(r.hearing_date)}
+                                </td>
+                                <td className="px-3 py-2">
+                                  <span
+                                    className={cn(
+                                      "inline-flex items-center rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide",
+                                      RT_COLORS[r.record_type]?.bg,
+                                      RT_COLORS[r.record_type]?.text,
+                                    )}
+                                  >
+                                    {r.record_type}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2 text-muted-foreground whitespace-nowrap max-w-28 truncate">
+                                  {r.representative_name ||
+                                    r.assigned_rep ||
+                                    "—"}
+                                </td>
+                                <td className="px-3 py-2 text-muted-foreground whitespace-nowrap max-w-28 truncate">
+                                  {r.person_responsible || "—"}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Caveat note — tells the user what "completion time"
+                      actually represents. Cheap honesty so the report
+                      isn't misread as exact audit data. */}
+                  <p className="text-[10px] text-muted-foreground italic">
+                    Completion time is taken from each record&apos;s last
+                    update. Editing a completed record after marking it Complete
+                    will shift its position in this list.
+                  </p>
                 </div>
               )}
             </div>
