@@ -408,6 +408,29 @@ export function CsvCompareModal({
         }
 
         if (dateMap.has(`${nameLower}|${ssn}|${normDate}`)) {
+          // Same date but exact-match (date+time) failed — the time is
+          // different, or one side is missing it. Treat a real time change
+          // as a reschedule so it surfaces alongside other reschedules
+          // instead of getting buried in the (often huge) duplicates list.
+          // We require a non-empty CSV time AND a known DB time that
+          // genuinely differs — otherwise it's still effectively a dup.
+          const dbRecords = personMap.get(`${nameLower}|${ssn}`) ?? [];
+          const sameDay = dbRecords.find((r) => r.date === normDate);
+          if (
+            normTime &&
+            sameDay &&
+            sameDay.time &&
+            sameDay.time !== normTime
+          ) {
+            rescheduled.push({
+              ...entry,
+              _cat: "rescheduled",
+              prevDate: sameDay.date,
+              prevTime: sameDay.time,
+              prevClaimant: sameDay.claimant,
+            });
+            continue;
+          }
           duplicates.push({ ...entry, _cat: "duplicate" });
           continue;
         }

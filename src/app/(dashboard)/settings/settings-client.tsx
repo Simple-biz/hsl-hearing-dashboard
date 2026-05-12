@@ -17,6 +17,7 @@ import {
   Calendar,
   ClipboardList,
   UserCheck,
+  FileCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -64,18 +65,6 @@ const CONFIG_TYPES = [
   { key: "rfc_status", label: "RFC Status", hasColor: true },
   { key: "rfc_document_type", label: "RFC Document Type", hasColor: true },
   { key: "rfc_method_received", label: "RFC Method Received", hasColor: true },
-  { key: "post_hrg_dev_status", label: "Post Hrg Dev Status", hasColor: true },
-  {
-    key: "post_hrg_workflow_status",
-    label: "Post Hrg Workflow Status",
-    hasColor: true,
-  },
-  { key: "post_hrg_indicator", label: "Post HRG Indicators", hasColor: true },
-  {
-    key: "type_of_docs_needed",
-    label: "Type of Docs Needed",
-    hasColor: true,
-  },
 ];
 
 const TEAM_TYPES = [
@@ -286,6 +275,11 @@ export function SettingsClient({
       label: "OHO Assignees",
       icon: UserCheck,
     },
+    canSeeConfigTabs && {
+      key: "post_hrg",
+      label: "Post HRG",
+      icon: FileCheck,
+    },
   ].filter(Boolean) as {
     key: string;
     label: string;
@@ -362,6 +356,13 @@ export function SettingsClient({
           <OhoAssigneesTab
             assignees={ohoAssignees}
             setAssignees={setOhoAssignees}
+            startTransition={startTransition}
+          />
+        )}
+        {tab === "post_hrg" && canSeeConfigTabs && (
+          <PostHrgSettingsTab
+            options={configOptions}
+            setOptions={setConfigOptions}
             startTransition={startTransition}
           />
         )}
@@ -2614,6 +2615,306 @@ function OhoAssigneesTab({
               value={editItem.bg_color || ""}
               onChange={(c) =>
                 setEditItem({ ...editItem, bg_color: c || null })
+              }
+            />
+          </div>
+          <Separator />
+          <div className="flex justify-end gap-2 px-5 py-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setEditItem(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="bg-amber-600 hover:bg-amber-700"
+              onClick={handleEditSave}
+            >
+              Update
+            </Button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ═══════════ POST HRG SETTINGS TAB ═══════════
+const POST_HRG_CONFIG_TYPES = [
+  {
+    key: "post_hrg_workflow_status",
+    label: "Workflow Status",
+    hasColor: true,
+  },
+  {
+    key: "hearing_decision_status",
+    label: "PH Decision Status",
+    hasColor: true,
+  },
+  {
+    key: "post_hrg_indicator",
+    label: "Indicators",
+    hasColor: true,
+  },
+  {
+    key: "type_of_docs_needed",
+    label: "Type of Docs Needed",
+    hasColor: true,
+  },
+];
+
+function PostHrgSettingsTab({
+  options,
+  setOptions,
+  startTransition,
+}: {
+  options: ConfigOption[];
+  setOptions: (o: ConfigOption[]) => void;
+  startTransition: (fn: () => void) => void;
+}) {
+  const [activeType, setActiveType] = useState(POST_HRG_CONFIG_TYPES[0].key);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [editItem, setEditItem] = useState<ConfigOption | null>(null);
+  const [newValue, setNewValue] = useState("");
+  const [newColor, setNewColor] = useState("");
+  const typeConfig = POST_HRG_CONFIG_TYPES.find((t) => t.key === activeType)!;
+  const items = options.filter((o) => o.option_type === activeType);
+
+  const handleAdd = () => {
+    if (!newValue.trim()) return;
+    startTransition(async () => {
+      const id = await saveConfigOption({
+        option_type: activeType,
+        option_value: newValue.trim(),
+        option_color: newColor || undefined,
+      });
+      setOptions([
+        ...options,
+        {
+          id,
+          option_type: activeType,
+          option_value: newValue.trim(),
+          option_color: newColor || null,
+          is_active: true,
+          display_order: items.length + 1,
+        },
+      ]);
+      setNewValue("");
+      setNewColor("");
+      setShowAddModal(false);
+    });
+  };
+
+  const handleEditSave = () => {
+    if (!editItem) return;
+    startTransition(async () => {
+      await saveConfigOption({
+        id: editItem.id,
+        option_type: editItem.option_type,
+        option_value: editItem.option_value,
+        option_color: editItem.option_color || undefined,
+      });
+      setOptions(options.map((o) => (o.id === editItem.id ? editItem : o)));
+      setEditItem(null);
+    });
+  };
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">
+        Configure dropdown values used in the Post Hearing Development page.
+      </p>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {POST_HRG_CONFIG_TYPES.map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setActiveType(t.key)}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-medium transition-all",
+              activeType === t.key
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground",
+            )}
+          >
+            {t.label}{" "}
+            <span className="opacity-60">
+              ({options.filter((o) => o.option_type === t.key).length})
+            </span>
+          </button>
+        ))}
+      </div>
+
+      <Card className="shadow-sm">
+        <CardHeader className="flex flex-row items-center justify-between py-3 px-4">
+          <CardTitle className="text-base">
+            {typeConfig.label}{" "}
+            <span className="ml-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary font-normal">
+              {items.length}
+            </span>
+          </CardTitle>
+          <Button
+            size="sm"
+            className="h-8 gap-1.5"
+            onClick={() => {
+              setNewValue("");
+              setNewColor("");
+              setShowAddModal(true);
+            }}
+          >
+            <Plus className="h-3.5 w-3.5" /> Add
+          </Button>
+        </CardHeader>
+        <Separator />
+        <div className="divide-y">
+          {items.length === 0 ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              No options for this type.
+            </div>
+          ) : (
+            [...items]
+              .sort((a, b) => Number(b.is_active) - Number(a.is_active))
+              .map((item) => (
+                <div
+                  key={item.id}
+                  className={cn(
+                    "flex items-center gap-2.5 px-4 py-2.5 hover:bg-muted/40 transition-colors",
+                    !item.is_active && "opacity-50",
+                  )}
+                >
+                  {item.option_color && (
+                    <span
+                      className="h-4 w-4 rounded-full shrink-0 ring-1 ring-black/10"
+                      style={{ backgroundColor: item.option_color }}
+                    />
+                  )}
+                  <span
+                    className={cn(
+                      "flex-1 text-sm",
+                      !item.is_active && "line-through text-muted-foreground",
+                    )}
+                  >
+                    {item.option_value}
+                  </span>
+                  <StatusDot active={item.is_active} />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs px-2.5"
+                    onClick={() => setEditItem(item)}
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className={cn(
+                      "h-7 text-xs px-2.5",
+                      item.is_active
+                        ? "text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                        : "text-emerald-600 border-emerald-200 hover:bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:hover:bg-emerald-950/30",
+                    )}
+                    onClick={() => {
+                      startTransition(async () => {
+                        await toggleConfigOption(item.id, !item.is_active);
+                        setOptions(
+                          options.map((o) =>
+                            o.id === item.id
+                              ? { ...o, is_active: !item.is_active }
+                              : o,
+                          ),
+                        );
+                      });
+                    }}
+                  >
+                    {item.is_active ? "Deactivate" : "Activate"}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-7 p-0 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30"
+                    onClick={() => {
+                      if (confirm(`Delete "${item.option_value}"?`))
+                        startTransition(async () => {
+                          await deleteConfigOption(item.id);
+                          setOptions(options.filter((o) => o.id !== item.id));
+                        });
+                    }}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              ))
+          )}
+        </div>
+      </Card>
+
+      {showAddModal && (
+        <Modal
+          title={`Add ${typeConfig.label}`}
+          onClose={() => setShowAddModal(false)}
+        >
+          <div className="px-5 py-4 space-y-4">
+            <div>
+              <label className="mb-1.5 block text-xs font-medium">
+                Value *
+              </label>
+              <Input
+                value={newValue}
+                onChange={(e) => setNewValue(e.target.value)}
+                placeholder="Enter value"
+                className="h-9 text-sm"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleAdd();
+                }}
+              />
+            </div>
+            <ColorPicker value={newColor} onChange={setNewColor} />
+          </div>
+          <Separator />
+          <div className="flex justify-end gap-2 px-5 py-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowAddModal(false)}
+            >
+              Cancel
+            </Button>
+            <Button size="sm" onClick={handleAdd}>
+              Add
+            </Button>
+          </div>
+        </Modal>
+      )}
+
+      {editItem && (
+        <Modal
+          title={`Edit ${typeConfig.label}`}
+          onClose={() => setEditItem(null)}
+        >
+          <div className="px-5 py-4 space-y-4">
+            <div>
+              <label className="mb-1.5 block text-xs font-medium">
+                Value *
+              </label>
+              <Input
+                value={editItem.option_value}
+                onChange={(e) =>
+                  setEditItem({ ...editItem, option_value: e.target.value })
+                }
+                className="h-9 text-sm"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleEditSave();
+                }}
+              />
+            </div>
+            <ColorPicker
+              value={editItem.option_color || ""}
+              onChange={(c) =>
+                setEditItem({ ...editItem, option_color: c || null })
               }
             />
           </div>

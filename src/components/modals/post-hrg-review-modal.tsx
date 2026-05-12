@@ -16,10 +16,30 @@ import { cn } from "@/lib/utils";
 //                        the given PHD row id. Scoped to the post-hrg team;
 //                        never syncs to the parent hearing.
 
+export interface PostHrgNoteEdit {
+  at: string; // ISO timestamp
+  prev: string; // text before this edit
+}
+
 export interface PostHrgNote {
   user: string;
   date: string;
   note: string;
+  edits?: PostHrgNoteEdit[];
+}
+
+function parseEdits(raw: unknown): PostHrgNoteEdit[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: PostHrgNoteEdit[] = [];
+  for (const e of raw) {
+    if (!e || typeof e !== "object") continue;
+    const item = e as Record<string, unknown>;
+    out.push({
+      at: String(item.at ?? ""),
+      prev: String(item.prev ?? ""),
+    });
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 function parseNotes(raw: string | null | undefined): PostHrgNote[] {
@@ -33,6 +53,7 @@ function parseNotes(raw: string | null | undefined): PostHrgNote[] {
       user: String(item.user ?? item.author ?? item.author_name ?? "Unknown"),
       date: String(item.date ?? item.created_at ?? ""),
       note: String(item.note ?? item.content ?? ""),
+      edits: parseEdits(item.edits),
     }));
   } catch {
     return raw ? [{ user: "System", date: "", note: String(raw) }] : [];
@@ -319,6 +340,35 @@ function HearingReview({
     }
   };
 
+  // Inline-edit: only the original author can edit. The server enforces this
+  // too, but we also gate the UI here so non-authors don't see the affordance.
+  const handleEditNote = async (
+    idx: number,
+    newText: string,
+  ): Promise<boolean> => {
+    if (!canEditNotes) return false;
+    const target = visibleNotes[idx];
+    if (target.user.trim().toLowerCase() !== userName.trim().toLowerCase()) {
+      return false;
+    }
+    const fullIdx = notes.findIndex((n) => n === target);
+    if (fullIdx < 0) return false;
+    const { editDashboardPostHrgNote } = await import(
+      "@/app/(dashboard)/actions"
+    );
+    const r = await editDashboardPostHrgNote(
+      hearingId,
+      fullIdx,
+      newText,
+      userName,
+    );
+    if (!r.success || !r.updatedNotes) return false;
+    const reparsed = parseNotes(r.updatedNotes);
+    setNotes(reparsed);
+    onHearingPatch({ post_hrg_notes: r.updatedNotes });
+    return true;
+  };
+
   const handleUpdateDeadline = async () => {
     const value = deadline || null;
     const { updateHearing } = await import("@/app/(dashboard)/actions");
@@ -523,7 +573,9 @@ function HearingReview({
       <NotesHistory
         notes={visibleNotes}
         canEdit={canEditNotes}
+        currentUserName={userName}
         onDelete={handleDeleteNote}
+        onEdit={handleEditNote}
       />
     </ModalShell>
   );
@@ -1143,12 +1195,75 @@ function AddNote({
 function NotesHistory({
   notes,
   canEdit,
+  currentUserName,
   onDelete,
+  onEdit,
 }: {
   notes: PostHrgNote[];
   canEdit: boolean;
+  /**
+   * Current user's display name. Compared against `note.user` to gate the
+   * inline-edit button — only the original author sees it. The server
+   * enforces this independently.
+   */
+  currentUserName?: string;
   onDelete: (idx: number) => void;
+  /**
+   * Optional — if omitted, edit affordance is hidden everywhere (used by
+   * call sites that don't want inline editing yet).
+   */
+  onEdit?: (idx: number, newText: string) => Promise<boolean>;
 }) {
+  // Index of the note currently in edit mode, or -1 if none. We allow at
+  // most one note being edited at a time.
+  const [editingIdx, setEditingIdx] = useState(-1);
+  const [editDraft, setEditDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  // Set of indices whose previous-versions panel is expanded.
+  const [expandedHistory, setExpandedHistory] = useState<Set<number>>(
+    new Set(),
+  );
+
+  const fmt = (d: string) => {
+    if (!d) return "";
+    const dt = new Date(d);
+    if (isNaN(dt.getTime())) return d;
+    return dt.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  };
+
+  const toggleHistory = (i: number) => {
+    setExpandedHistory((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  };
+
+  const startEdit = (i: number, current: string) => {
+    setEditingIdx(i);
+    setEditDraft(current);
+  };
+  const cancelEdit = () => {
+    setEditingIdx(-1);
+    setEditDraft("");
+  };
+  const saveEdit = async () => {
+    if (!onEdit || editingIdx < 0) return;
+    setSaving(true);
+    try {
+      const ok = await onEdit(editingIdx, editDraft);
+      if (ok) cancelEdit();
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-1.5">
       <label className="text-xs font-medium">
@@ -1161,39 +1276,111 @@ function NotesHistory({
         </p>
       ) : (
         <div className="max-h-72 overflow-y-auto pr-1 space-y-2">
-          {notes.map((n, i) => (
-            <div
-              key={i}
-              className="rounded-lg border bg-muted/30 p-3 space-y-1"
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                  <span className="font-medium text-foreground">
-                    {n.user || "System"}
-                  </span>
-                  {n.date && (
-                    <span>
-                      {new Date(n.date).toLocaleDateString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                        hour: "numeric",
-                        minute: "2-digit",
-                      })}
+          {notes.map((n, i) => {
+            const isEditing = editingIdx === i;
+            const isAuthor =
+              !!currentUserName &&
+              !!n.user &&
+              n.user.trim().toLowerCase() ===
+                currentUserName.trim().toLowerCase();
+            const canEditThis = canEdit && isAuthor && !!onEdit;
+            const editCount = n.edits?.length ?? 0;
+            const isHistoryOpen = expandedHistory.has(i);
+            return (
+              <div
+                key={i}
+                className="rounded-lg border bg-muted/30 p-3 space-y-1"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                    <span className="font-medium text-foreground">
+                      {n.user || "System"}
                     </span>
-                  )}
+                    {n.date && <span>{fmt(n.date)}</span>}
+                    {editCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => toggleHistory(i)}
+                        className="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-800 hover:bg-amber-200 dark:bg-amber-900/40 dark:text-amber-300 dark:hover:bg-amber-900/60"
+                        title="Show previous versions"
+                      >
+                        edited {editCount}× {isHistoryOpen ? "▴" : "▾"}
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {canEditThis && !isEditing && (
+                      <button
+                        onClick={() => startEdit(i, n.note)}
+                        className="text-xs text-muted-foreground hover:text-blue-600"
+                        title="Edit note"
+                      >
+                        ✎
+                      </button>
+                    )}
+                    {canEdit && !isEditing && (
+                      <button
+                        onClick={() => onDelete(i)}
+                        className="text-xs text-muted-foreground hover:text-red-600"
+                        title="Delete note"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
                 </div>
-                {canEdit && (
-                  <button
-                    onClick={() => onDelete(i)}
-                    className="text-xs text-muted-foreground hover:text-red-600"
-                  >
-                    ✕
-                  </button>
+                {isEditing ? (
+                  <div className="space-y-1.5">
+                    <textarea
+                      value={editDraft}
+                      onChange={(e) => setEditDraft(e.target.value)}
+                      autoFocus
+                      rows={3}
+                      className="w-full rounded border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                    />
+                    <div className="flex justify-end gap-1.5">
+                      <button
+                        onClick={cancelEdit}
+                        disabled={saving}
+                        className="rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted disabled:opacity-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={saveEdit}
+                        disabled={saving || !editDraft.trim()}
+                        className="rounded bg-blue-600 px-2 py-0.5 text-[11px] text-white hover:bg-blue-700 disabled:opacity-50"
+                      >
+                        {saving ? "Saving..." : "Save"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs whitespace-pre-wrap">{n.note}</p>
+                )}
+                {editCount > 0 && isHistoryOpen && (
+                  <div className="mt-1 space-y-1 rounded border border-dashed border-amber-300 bg-amber-50/50 p-2 dark:border-amber-800 dark:bg-amber-950/20">
+                    <p className="text-[9px] uppercase tracking-wide text-amber-700 dark:text-amber-400">
+                      Previous versions
+                    </p>
+                    {n.edits!.map((e, ei) => (
+                      <div
+                        key={ei}
+                        className="border-l-2 border-amber-300 pl-2 dark:border-amber-700"
+                      >
+                        <p className="text-[9px] text-muted-foreground">
+                          {e.at ? fmt(e.at) : "—"}
+                        </p>
+                        <p className="text-[11px] whitespace-pre-wrap text-foreground/80">
+                          {e.prev}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
-              <p className="text-xs whitespace-pre-wrap">{n.note}</p>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

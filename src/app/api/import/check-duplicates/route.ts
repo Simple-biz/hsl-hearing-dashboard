@@ -11,6 +11,26 @@ function formatSSN(raw: string): string | null {
   return digits.length > 0 ? digits.padStart(4, "0") : null;
 }
 
+// Normalize a time string for comparison: "8:30 AM" → "08:30",
+// "08:30:00" → "08:30", "8:30" → "08:30". Returns "" for empty/invalid input.
+// Lifted to module scope so the rescheduled-on-time-change check at the top
+// of the matching loop and the field-diff logic (deeper in) share the same
+// rules — otherwise a row could be classified differently than its diff.
+function normalizeTime(t: string): string {
+  if (!t) return "";
+  const s = t.trim();
+  const ap = s.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (ap) {
+    let h = parseInt(ap[1]);
+    if (ap[3].toUpperCase() === "PM" && h !== 12) h += 12;
+    if (ap[3].toUpperCase() === "AM" && h === 12) h = 0;
+    return `${String(h).padStart(2, "0")}:${ap[2]}`;
+  }
+  const hm = s.match(/^(\d{1,2}):(\d{2})/);
+  if (hm) return `${hm[1].padStart(2, "0")}:${hm[2]}`;
+  return s;
+}
+
 function parseDate(raw: string): string | null {
   if (!raw) return null;
   const s = String(raw).trim();
@@ -364,6 +384,74 @@ FROM hearings`,
       existingId = tier4.get(`${ssnFormatted}|${hearingDate}`) ?? null;
     }
 
+    // Disambiguate: tier2/3 match by name without checking date, so when a
+    // person has multiple hearings (e.g. an older row + a renamed
+    // "(Rescheduled)" row on a newer date), tier2 can pick the wrong one
+    // because the CSV's plain claimant matches the OLDER, non-renamed row.
+    // If we have a date in hand and the matched record's date doesn't
+    // align, prefer tier4's ssn+date match — that fingerprint identifies
+    // the specific hearing being referenced. Without this, "Update X
+    // Rescheduled" could overwrite an old hearing with new-hearing data.
+    if (
+      existingId &&
+      hearingDate &&
+      fuzzy_name_match &&
+      ssnFormatted
+    ) {
+      const matched = byId.get(existingId);
+      const matchedDate = String(matched?.hearing_date || "");
+      if (matchedDate && matchedDate !== hearingDate) {
+        const tier4Match = tier4.get(`${ssnFormatted}|${hearingDate}`);
+        if (tier4Match && tier4Match !== existingId) {
+          existingId = tier4Match;
+        }
+      }
+    }
+
+    // ── Same-date time change → reschedule (not duplicate) ──
+    // The suffix-based reschedule branch above only fires when the CSV's own
+    // claimant has "(Rescheduled)". For rows where the DB record already
+    // carries the suffix (e.g. an earlier reschedule) and the chronicle has
+    // since updated the time, tier matching finds the row but it gets
+    // bucketed as a Duplicate and the "Update X Rescheduled" button skips
+    // it. Surface those as reschedules so they're updatable.
+    if (existingId) {
+      const dbRec = byId.get(existingId);
+      const csvTimeRaw =
+        mapping.hearing_time !== undefined
+          ? String(row[mapping.hearing_time] || "").trim()
+          : "";
+      const csvTime = normalizeTime(csvTimeRaw);
+      const dbTime = normalizeTime(String(dbRec?.hearing_time || ""));
+      if (csvTime && dbTime && csvTime !== dbTime) {
+        // CSV-compare-modal pre-tags rescheduled rows with "(Rescheduled)"
+        // before sending the synthetic batch here, so `claimant` may already
+        // carry the suffix. Strip it before stashing as `base_name` —
+        // otherwise the client's renaming loop re-appends another
+        // "(Rescheduled N)" and you end up with double suffixes.
+        const baseName = claimant.replace(RESCHED_RE, "").trim() || claimant;
+        rescheduledRecords.push({
+          row: rowOffset + rowIndex + 2,
+          rowIndex: rowOffset + rowIndex,
+          claimant,
+          hearing_date: hearingDate,
+          ssn: ssnFormatted,
+          claim_type: claimType,
+          claimantLocation,
+          repLocation,
+          downloadType,
+          statusDate,
+          is_rescheduled: true,
+          original_id: existingId,
+          base_name: baseName,
+          original_claimant: dbRec?.claimant,
+          original_date: dbRec?.hearing_date,
+          original_time: dbRec?.hearing_time,
+        });
+        continue;
+      }
+    }
+
     const record: Record<string, unknown> = {
       row: rowOffset + rowIndex + 2,
       rowIndex: rowOffset + rowIndex,
@@ -403,23 +491,6 @@ FROM hearings`,
         // Skip fields that map to different DB columns or need special lookup
         const SKIP_FIELDS = new Set(["medical_record_source", "claimant"]);
         const LOOKUP_FIELDS = new Set(["representative", "mr_team_id"]);
-
-        const normalizeTime = (t: string): string => {
-          if (!t) return "";
-          const s = t.trim();
-          // "8:30 AM" → "08:30"
-          const ap = s.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-          if (ap) {
-            let h = parseInt(ap[1]);
-            if (ap[3].toUpperCase() === "PM" && h !== 12) h += 12;
-            if (ap[3].toUpperCase() === "AM" && h === 12) h = 0;
-            return `${String(h).padStart(2, "0")}:${ap[2]}`;
-          }
-          // "08:30:00" → "08:30", "8:30" → "08:30"
-          const hm = s.match(/^(\d{1,2}):(\d{2})/);
-          if (hm) return `${hm[1].padStart(2, "0")}:${hm[2]}`;
-          return s;
-        };
 
         const normalizeBool = (v: unknown): string => {
           if (v === true || v === "true" || v === "t" || v === "1" || v === 1)
