@@ -185,13 +185,24 @@ export async function POST(req: NextRequest) {
   // Pre-fetch lookups once if compare mode might need FK resolution.
   // Mirror the import-insert path: load all reps/teams (no is_active filter)
   // so legacy assignments still resolve.
-  let allReps: { id: number; name: string }[] = [];
+  // Each rep also gets its `name_aliases` (TEXT[]) flattened into the lookup
+  // so the sheet's shortened/married-name variants resolve to the right id
+  // without admins having to rename the canonical record.
+  let allReps: { id: number; name: string; aliases: string[] }[] = [];
   let allTeams: { id: number; team_name: string }[] = [];
   if (isCompareMode) {
     const sel = selectedFields as string[];
     if (sel.includes("representative")) {
-      const { rows } = await db.query("SELECT id, name FROM representatives");
-      allReps = rows;
+      const { rows } = await db.query(
+        "SELECT id, name, name_aliases FROM representatives",
+      );
+      allReps = rows.map((r) => ({
+        id: r.id as number,
+        name: String(r.name || ""),
+        aliases: Array.isArray(r.name_aliases)
+          ? (r.name_aliases as unknown[]).map((a) => String(a || ""))
+          : [],
+      }));
     }
     if (sel.includes("mr_team_id")) {
       const { rows } = await db.query(
@@ -219,13 +230,19 @@ export async function POST(req: NextRequest) {
           const diff = fieldDiffs[field];
           if (!diff) continue;
 
-          // Representative: resolve name → assigned_rep_id FK
+          // Representative: resolve name → assigned_rep_id FK.
+          // Match against the canonical name first; if that misses, try each
+          // rep's aliases (so "Alecia Reed" resolves to "Alecia Reed-Owens"
+          // when the alias is on file). Bad/unknown names still no-op rather
+          // than writing a bogus FK.
           if (field === "representative") {
             if (!diff.new) continue;
             const repName = diff.new.trim().toLowerCase();
-            const match = allReps.find(
-              (r) => r.name.trim().toLowerCase() === repName,
-            );
+            const match =
+              allReps.find((r) => r.name.trim().toLowerCase() === repName) ||
+              allReps.find((r) =>
+                r.aliases.some((a) => a.trim().toLowerCase() === repName),
+              );
             if (match) {
               updates["assigned_rep_id"] = match.id;
               updates["assignment_status"] = null; // clear any withdrawal/status
