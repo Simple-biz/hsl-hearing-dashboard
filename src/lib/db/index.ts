@@ -15,15 +15,65 @@ function getPool(): Pool {
 }
 
 /**
+ * Detect transient connection-level failures that are safe to retry.
+ * Neon auto-suspends idle databases on the any tier, which leaves the
+ * cached pool holding a dead socket. The first query after wake-up then
+ * fails with one of these messages — but a fresh pool succeeds.
+ */
+function isTransientConnectionError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return (
+    msg.includes("connection terminated unexpectedly") ||
+    msg.includes("connection terminated") ||
+    msg.includes("connection lost") ||
+    msg.includes("connection ended") ||
+    msg.includes("client has encountered a connection error") ||
+    msg.includes("econnreset") ||
+    msg.includes("etimedout") ||
+    msg.includes("socket hang up")
+  );
+}
+
+/** Drop the cached pool so the next getPool() call creates a fresh one. */
+async function resetPool(): Promise<void> {
+  const dead = pool;
+  pool = null;
+  if (dead) {
+    try {
+      await dead.end();
+    } catch {
+      // The connection is already broken — `end()` may itself throw.
+      // Swallow so the retry path isn't blocked.
+    }
+  }
+}
+
+/**
  * Run a query without RLS context (uses DB owner, bypasses RLS).
  * Use for: admin operations, imports, cron jobs, migrations.
+ *
+ * Retries once on transient connection errors so a stale-pool drop
+ * (common with Neon auto-suspend on the free tier) doesn't surface as
+ * a 500 to the user.
  *
  * Usage:
  *   const { rows } = await db.query('SELECT * FROM users')
  *   const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [userId])
  */
 export const db = {
-  query: (text: string, params?: unknown[]) => getPool().query(text, params),
+  query: async (text: string, params?: unknown[]) => {
+    try {
+      return await getPool().query(text, params);
+    } catch (err) {
+      if (!isTransientConnectionError(err)) throw err;
+      console.warn(
+        "[db] transient connection error; recreating pool and retrying once:",
+        err instanceof Error ? err.message : err,
+      );
+      await resetPool();
+      return await getPool().query(text, params);
+    }
+  },
 };
 
 /**

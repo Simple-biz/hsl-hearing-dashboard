@@ -186,28 +186,73 @@ export function ImportRfcClient({ userRole }: Props) {
 
   const loadSheet = useCallback(
     (wb: XLSX.WorkBook, idx: number) => {
-      setSelectedSheet(idx);
-      const ws = wb.Sheets[wb.SheetNames[idx]];
-      const json = XLSX.utils.sheet_to_json<unknown[]>(ws, {
-        header: 1,
-        defval: "",
-        raw: true,
-      });
-      if (json.length < 2) {
-        setError("Sheet is empty or has no data rows");
+      // Wrap the whole parse in try/catch so unexpected workbook shapes
+      // (corrupt cells, missing sheet refs, etc.) surface as a friendly
+      // error instead of crashing the runtime overlay.
+      try {
+        setSelectedSheet(idx);
+        const sheetName = wb.SheetNames[idx];
+        const ws = sheetName ? wb.Sheets[sheetName] : undefined;
+        if (!ws) {
+          setError(
+            `Selected sheet "${sheetName ?? `#${idx}`}" not found in workbook`,
+          );
+          return;
+        }
+        const json = XLSX.utils.sheet_to_json<unknown[]>(ws, {
+          header: 1,
+          defval: "",
+          raw: true,
+        });
+        if (json.length < 2) {
+          setError("Sheet is empty or has no data rows");
+          return;
+        }
+
+      // Find the real header row — sheets sometimes have a title / blank
+      // row above the column names, which would otherwise cause the actual
+      // header row to be imported as data. We scan the first few rows for
+      // recognizable column names and use whichever matches first.
+      // Defaults to row 0 (current template behavior) when nothing matches.
+      const KNOWN_HEADER_HINTS = [
+        "client name",
+        "hearing date",
+        "entry date",
+        "document type",
+        "type of document",
+      ];
+      let headerIdx = 0;
+      for (let i = 0; i < Math.min(5, json.length); i++) {
+        const row = (json[i] as unknown[]) ?? [];
+        const lower = row.map((c) =>
+          String(c ?? "")
+            .trim()
+            .toLowerCase(),
+        );
+        if (KNOWN_HEADER_HINTS.some((h) => lower.includes(h))) {
+          headerIdx = i;
+          break;
+        }
+      }
+
+      if (json.length <= headerIdx + 1) {
+        setError("Sheet has a header row but no data rows below it");
         return;
       }
-      const hdrs = (json[0] as unknown[]).map((h) => String(h ?? "").trim());
-      const dataRows = (json.slice(1) as unknown[][]).filter((r) =>
+
+      const hdrs = (json[headerIdx] as unknown[]).map((h) =>
+        String(h ?? "").trim(),
+      );
+      const dataRows = (json.slice(headerIdx + 1) as unknown[][]).filter((r) =>
         r.some((c) => c != null && String(c).trim() !== ""),
       );
 
       // Extract Excel cell comments/notes from column L (Approved by TL, index 11)
       // and append as a virtual 13th column (index 12) for each data row
       const COMMENT_COL = 11; // Column L (0-indexed)
-      const dataStartRow = 1; // Row 0 is header
+      const dataStartRow = headerIdx + 1; // Row right after the header
       let filteredIdx = 0;
-      const allDataRows = json.slice(1) as unknown[][];
+      const allDataRows = json.slice(headerIdx + 1) as unknown[][];
       for (let ri = 0; ri < allDataRows.length; ri++) {
         const row = allDataRows[ri];
         const hasData = row.some((c) => c != null && String(c).trim() !== "");
@@ -231,18 +276,24 @@ export function ImportRfcClient({ userRole }: Props) {
       // Add "Comments" to headers if not already present
       if (hdrs.length <= 12) hdrs.push("Comments");
 
-      setHeaders(hdrs);
-      setRows(dataRows);
-      setStep("preview");
+        setHeaders(hdrs);
+        setRows(dataRows);
+        setStep("preview");
 
-      // Run duplicate check
-      setPreviewCounts(null);
-      setIsChecking(true);
-      const records = buildRecordsFrom(dataRows);
-      checkRfcDuplicates(records)
-        .then((counts) => setPreviewCounts(counts))
-        .catch(() => {})
-        .finally(() => setIsChecking(false));
+        // Run duplicate check
+        setPreviewCounts(null);
+        setIsChecking(true);
+        const records = buildRecordsFrom(dataRows);
+        checkRfcDuplicates(records)
+          .then((counts) => setPreviewCounts(counts))
+          .catch(() => {})
+          .finally(() => setIsChecking(false));
+      } catch (err) {
+        console.error("[loadSheet] failed:", err);
+        setError(
+          `Failed to parse sheet: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     },
     [buildRecordsFrom],
   );
@@ -477,14 +528,37 @@ export function ImportRfcClient({ userRole }: Props) {
             </div>
             <div className="p-5 space-y-5">
               {/* Info bar */}
-              <div className="rounded-lg bg-muted/50 px-4 py-2.5 text-sm">
-                Found <strong>{rows.length}</strong> data rows in{" "}
-                <strong>{file?.name}</strong>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg bg-muted/50 px-4 py-2.5 text-sm">
+                <span>
+                  Found <strong>{rows.length}</strong> data rows in{" "}
+                  <strong>{file?.name}</strong>
+                </span>
+                {/* Live sheet switcher — the upload step jumps straight to
+                    preview, so this is where multi-tab workbooks need a way
+                    to choose which sheet to import from. Re-running
+                    loadSheet() re-parses, re-extracts cell comments, and
+                    re-runs the duplicate check against the newly-selected
+                    sheet. */}
                 {sheets.length > 1 && (
-                  <>
-                    {" "}
-                    &middot; Sheet: <strong>{sheets[selectedSheet]}</strong>
-                  </>
+                  <span className="flex items-center gap-2">
+                    &middot;
+                    <label className="font-medium">Sheet:</label>
+                    <select
+                      className="rounded-md border border-input bg-background px-2 py-1 text-sm"
+                      value={selectedSheet}
+                      onChange={(e) => {
+                        const idx = Number(e.target.value);
+                        if (workbookRef.current)
+                          loadSheet(workbookRef.current, idx);
+                      }}
+                    >
+                      {sheets.map((name, i) => (
+                        <option key={i} value={i}>
+                          {name}
+                        </option>
+                      ))}
+                    </select>
+                  </span>
                 )}
               </div>
 
