@@ -11,6 +11,27 @@ function formatSSN(raw: string): string | null {
   return digits.length > 0 ? digits.padStart(4, "0") : null;
 }
 
+// Tiny trigram-based similarity score, used for "did you mean ...?" rep
+// suggestions when a sheet name doesn't match any canonical name or alias.
+// 0 = no overlap, 1 = identical (after lowercasing). Pure JS; no extension
+// needed. With ~65 reps this runs in well under a millisecond per CSV name.
+function trigramSet(s: string): Set<string> {
+  const padded = `  ${s.toLowerCase().trim()}  `;
+  const out = new Set<string>();
+  for (let i = 0; i < padded.length - 2; i++) {
+    out.add(padded.slice(i, i + 3));
+  }
+  return out;
+}
+function trigramSimilarity(a: string, b: string): number {
+  const ta = trigramSet(a);
+  const tb = trigramSet(b);
+  if (ta.size === 0 || tb.size === 0) return 0;
+  let common = 0;
+  for (const t of ta) if (tb.has(t)) common++;
+  return common / Math.max(ta.size, tb.size);
+}
+
 // Normalize a time string for comparison: "8:30 AM" → "08:30",
 // "08:30:00" → "08:30", "8:30" → "08:30". Returns "" for empty/invalid input.
 // Lifted to module scope so the rescheduled-on-time-change check at the top
@@ -104,18 +125,36 @@ FROM hearings`,
   // hearing's FK column. Only loaded when the corresponding field is mapped.
   const repByName = new Map<string, number>(); // lower(name) → id
   const repById = new Map<number, string>(); // id → name (for diff display)
+  // Canonical name list for fuzzy fallback when neither the main name nor
+  // any alias matches. Used to surface "did you mean ...?" suggestions.
+  const repNames: { id: number; name: string }[] = [];
   const teamByName = new Map<string, number>(); // lower(team_name) → id
   const teamById = new Map<number, string>(); // id → team_name
   if (mapping?.representative !== undefined) {
     const { rows: repRows } = await db.query(
-      "SELECT id, name FROM representatives",
+      "SELECT id, name, name_aliases FROM representatives",
     );
     for (const r of repRows) {
-      const key = String(r.name || "")
-        .toLowerCase()
-        .trim();
+      const canonical = String(r.name || "");
+      const key = canonical.toLowerCase().trim();
       if (key) repByName.set(key, r.id);
-      repById.set(r.id, String(r.name || ""));
+      repById.set(r.id, canonical);
+      if (canonical) repNames.push({ id: r.id as number, name: canonical });
+
+      // Index aliases (TEXT[]) the same way. First-write wins — if two reps
+      // claim the same alias, the canonical-name row registered above
+      // already won the lower(name) key; aliases only fill gaps.
+      const aliases: unknown[] = Array.isArray(r.name_aliases)
+        ? r.name_aliases
+        : [];
+      for (const a of aliases) {
+        const aliasKey = String(a || "")
+          .toLowerCase()
+          .trim();
+        if (aliasKey && !repByName.has(aliasKey)) {
+          repByName.set(aliasKey, r.id);
+        }
+      }
     }
   }
   if (mapping?.mr_team_id !== undefined) {
@@ -206,6 +245,30 @@ FROM hearings`,
   const duplicateRecords: Record<string, unknown>[] = [];
   const skippedRecords: Record<string, unknown>[] = [];
   const rescheduledRecords: Record<string, unknown>[] = [];
+  // Cache "did you mean ...?" candidates for each unmatched CSV rep name.
+  // Keyed by lowercased CSV value so we only compute suggestions once per
+  // distinct mystery name even if it appears on hundreds of rows.
+  type RepSuggestion = { id: number; name: string; score: number };
+  const repNameSuggestions = new Map<string, RepSuggestion[]>();
+  const computeRepSuggestions = (csvName: string): RepSuggestion[] => {
+    const cached = repNameSuggestions.get(csvName);
+    if (cached) return cached;
+    if (repNames.length === 0) {
+      repNameSuggestions.set(csvName, []);
+      return [];
+    }
+    const scored = repNames
+      .map((r) => ({
+        id: r.id,
+        name: r.name,
+        score: trigramSimilarity(csvName, r.name),
+      }))
+      .filter((c) => c.score >= 0.5) // weak matches drop out
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3);
+    repNameSuggestions.set(csvName, scored);
+    return scored;
+  };
   const debugResched: Record<string, unknown>[] = [];
 
   for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
@@ -609,10 +672,15 @@ FROM hearings`,
               }
 
               // Real rep name → resolve to id and compare against the FK.
-              // If the sheet name doesn't match any DB rep, skip silently — we
-              // can't write a bad FK and surfacing the diff would be misleading.
+              // If the sheet name doesn't match any DB rep, collect fuzzy
+              // suggestions (returned at top-level for the UI to surface as
+              // "did you mean ...?") and skip the FK diff — we can't write a
+              // bad FK on a guess.
               const importRepId = repByName.get(importLower) ?? null;
-              if (importRepId === null) continue;
+              if (importRepId === null) {
+                computeRepSuggestions(importVal.trim());
+                continue;
+              }
               const dbRepId = dbLookupEmpty ? null : Number(dbFkVal);
               if (dbRepId === importRepId) continue;
               const dbDisplay = dbRepId ? repById.get(dbRepId) || "" : "";
@@ -822,6 +890,14 @@ FROM hearings`,
         fieldChangeCounts[f] = (fieldChangeCounts[f] || 0) + 1;
   }
 
+  // Surface fuzzy "did you mean ...?" candidates for any sheet rep name
+  // that didn't match the canonical name OR any alias. UI can render these
+  // in the preview so an admin can either confirm an alias or import the
+  // row knowing the rep won't be auto-resolved.
+  const rep_name_suggestions = Array.from(repNameSuggestions.entries()).map(
+    ([csvName, candidates]) => ({ csv_name: csvName, candidates }),
+  );
+
   return NextResponse.json({
     success: true,
     total: rows.length,
@@ -836,6 +912,7 @@ FROM hearings`,
     duplicate_records: duplicateRecords,
     skipped_records: skippedRecords,
     rescheduled_records: rescheduledRecords,
+    rep_name_suggestions,
     debug_rescheduled: debugResched,
   });
 }

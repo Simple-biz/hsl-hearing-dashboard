@@ -14,6 +14,10 @@ export interface RepDetail {
   preferred_monthly_hearings: number | null;
   hearing_restriction: string | null;
   timezone: string | null;
+  /** Alternate-name aliases used by import-compare's name lookup so sheet
+   * names that don't exactly match the canonical name still resolve to
+   * this rep. */
+  name_aliases: string[];
   this_week_count: number;
   upcoming_count: number;
   total_count: number;
@@ -43,12 +47,18 @@ export async function saveRep(data: {
   daily_limit: number;
   weekly_limit: number;
   hearing_restriction: string;
+  /** Optional alternate names. Trimmed, blanks removed before write. */
+  name_aliases?: string[];
 }) {
   const { logAction } = await import("@/lib/activity-log");
+  const aliases = Array.isArray(data.name_aliases)
+    ? data.name_aliases.map((a) => String(a || "").trim()).filter(Boolean)
+    : [];
   if (data.id) {
     await db.query(
       `UPDATE representatives SET name=$1, email=$2, rep_type=$3, priority=$4,
-       daily_limit=$5, weekly_limit=$6, hearing_restriction=$7 WHERE id=$8`,
+       daily_limit=$5, weekly_limit=$6, hearing_restriction=$7,
+       name_aliases=$8 WHERE id=$9`,
       [
         data.name,
         data.email,
@@ -57,6 +67,7 @@ export async function saveRep(data: {
         data.daily_limit,
         data.weekly_limit,
         data.hearing_restriction || "none",
+        aliases,
         data.id,
       ],
     );
@@ -64,8 +75,8 @@ export async function saveRep(data: {
     return data.id;
   } else {
     const { rows } = await db.query(
-      `INSERT INTO representatives (name, email, rep_type, priority, daily_limit, weekly_limit, hearing_restriction, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, true) RETURNING id`,
+      `INSERT INTO representatives (name, email, rep_type, priority, daily_limit, weekly_limit, hearing_restriction, is_active, name_aliases)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8) RETURNING id`,
       [
         data.name,
         data.email,
@@ -74,6 +85,7 @@ export async function saveRep(data: {
         data.daily_limit,
         data.weekly_limit,
         data.hearing_restriction || "none",
+        aliases,
       ],
     );
     await logAction("rep_created", `${data.name} added as ${data.rep_type}`);
