@@ -2435,6 +2435,53 @@ export function PostHrgClient({
     setPostHrgModal((prev) => (prev?.id === updated.id ? updated : prev));
   }, []);
 
+  // Patch sibling rows in local state after a Post HRG Review cascade
+  // ("Also apply to ..." checkboxes). Avoids a page refresh by mirroring
+  // the server-side cascade on the client:
+  //   - MR target → hearings.post_hrg_deadline (joined onto every row for
+  //     this hearing), so update post_hrg_deadline on ALL same-hearing rows.
+  //     (post_hrg_requirements isn't surfaced on the row, so nothing to do
+  //     for the requirements field.)
+  //   - POST_HRG/REP target → the row's own deadline/requirements column;
+  //     update only the matching-type rows for this hearing.
+  const handleCascadeApplied = useCallback(
+    (params: {
+      hearingId: number;
+      field: "deadline" | "requirements";
+      value: string | null;
+      targets: ("MR" | "POST_HRG" | "REP")[];
+    }) => {
+      const { hearingId, field, value, targets } = params;
+      const hasMr = targets.includes("MR");
+      setRecords((prev) =>
+        prev.map((r) => {
+          if (r.hearing_id !== hearingId) return r;
+          let next = r;
+          if (hasMr && field === "deadline") {
+            next = { ...next, post_hrg_deadline: value };
+          }
+          if (r.record_type !== "MR" && targets.includes(r.record_type)) {
+            next = { ...next, [field]: value } as PostHrgDevRow;
+          }
+          return next;
+        }),
+      );
+      // Keep open modal in sync if it points at a row touched by the cascade
+      setPostHrgModal((prev) => {
+        if (!prev || prev.hearing_id !== hearingId) return prev;
+        let next = prev;
+        if (hasMr && field === "deadline") {
+          next = { ...next, post_hrg_deadline: value };
+        }
+        if (prev.record_type !== "MR" && targets.includes(prev.record_type)) {
+          next = { ...next, [field]: value } as PostHrgDevRow;
+        }
+        return next;
+      });
+    },
+    [],
+  );
+
   // Acknowledge a "NEW" row — drops it out of the pinned-to-top group on
   // the next render. Optimistic: stamp acknowledged_at locally, fire the
   // server call; on failure roll back.
@@ -4408,6 +4455,7 @@ export function PostHrgClient({
               }
               handleRecordUpdate(next);
             }}
+            onCascadeApplied={handleCascadeApplied}
           />
         ) : (
           <PostHrgReviewModal
@@ -4451,6 +4499,7 @@ export function PostHrgClient({
                     : postHrgModal.requirements,
               });
             }}
+            onCascadeApplied={handleCascadeApplied}
           />
         ))}
       {/* ════════════════ REMARKS MODAL ════════════════ */}

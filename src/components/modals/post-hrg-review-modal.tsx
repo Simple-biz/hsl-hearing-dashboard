@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { cn } from "@/lib/utils";
+import { Calendar } from "lucide-react";
+import { cn, formatDate } from "@/lib/utils";
 
 // ─── Shared PostHrgReviewModal ────────────────────────────────────────────────
 // Matches the dashboard-client review UX and is the canonical modal for any
@@ -84,6 +85,15 @@ interface CommonProps {
   userName: string;
   userRole: string;
   onClose: () => void;
+  // Fired after a successful "Also apply to" cascade so the parent can
+  // patch sibling rows in local state without a page refresh. `targets`
+  // contains the record types that were cascaded TO.
+  onCascadeApplied?: (params: {
+    hearingId: number;
+    field: "deadline" | "requirements";
+    value: string | null;
+    targets: ("MR" | "POST_HRG" | "REP")[];
+  }) => void;
 }
 
 type HearingModeProps = CommonProps & {
@@ -153,6 +163,7 @@ function HearingReview({
   initialDeadlinePrev,
   initialDeadlineChangedBy,
   onHearingPatch,
+  onCascadeApplied,
 }: HearingModeProps) {
   const [notes, setNotes] = useState<PostHrgNote[]>(() =>
     parseNotes(initialNotes),
@@ -195,6 +206,16 @@ function HearingReview({
     savingRef.current = saving;
   }, [saving]);
 
+  // Tracks "user has picked a new deadline locally but hasn't clicked
+  // Update/Clear yet". Flipped on by handleDeadlineUserChange and off by
+  // the save / clear handlers. The 8s poll honors this so a mid-edit
+  // pick isn't clobbered by the server value.
+  const deadlineDirtyRef = useRef(false);
+  const handleDeadlineUserChange = (v: string) => {
+    deadlineDirtyRef.current = true;
+    setDeadline(v);
+  };
+
   useEffect(() => {
     let active = true;
     const poll = async () => {
@@ -228,7 +249,9 @@ function HearingReview({
             setRequirements(data.post_hrg_requirements ?? "");
             setHasSavedReq(!!data.post_hrg_requirements);
           }
-          if (data.post_hrg_deadline != null) setDeadline(data.post_hrg_deadline);
+          if (!deadlineDirtyRef.current && data.post_hrg_deadline != null) {
+            setDeadline(data.post_hrg_deadline);
+          }
           if (data.post_hrg_deadline_prev !== undefined) {
             setDeadlinePrev(data.post_hrg_deadline_prev ?? "");
           }
@@ -283,7 +306,9 @@ function HearingReview({
       const { cascadePhdField } = await import(
         "@/app/(dashboard)/post-hrg-development/actions"
       );
-      await cascadePhdField(hearingId, field, value, Array.from(targets));
+      const targetList = Array.from(targets);
+      await cascadePhdField(hearingId, field, value, targetList);
+      onCascadeApplied?.({ hearingId, field, value, targets: targetList });
     } catch {
       /* best-effort — primary already saved */
     }
@@ -374,6 +399,7 @@ function HearingReview({
     const { updateHearing } = await import("@/app/(dashboard)/actions");
     await updateHearing(hearingId, "post_hrg_deadline", value);
     onHearingPatch({ post_hrg_deadline: value });
+    deadlineDirtyRef.current = false;
     await runCascade("deadline", value, cascadeDeadlineTargets);
     setCascadeDeadlineTargets(new Set());
   };
@@ -383,6 +409,7 @@ function HearingReview({
     const { updateHearing } = await import("@/app/(dashboard)/actions");
     await updateHearing(hearingId, "post_hrg_deadline", null);
     onHearingPatch({ post_hrg_deadline: null });
+    deadlineDirtyRef.current = false;
     await runCascade("deadline", null, cascadeDeadlineTargets);
     setCascadeDeadlineTargets(new Set());
   };
@@ -419,7 +446,7 @@ function HearingReview({
       {/* Deadline */}
       <DeadlineRow
         deadline={deadline}
-        onChange={setDeadline}
+        onChange={handleDeadlineUserChange}
         onUpdate={handleUpdateDeadline}
         onClear={handleClearDeadline}
       />
@@ -441,7 +468,7 @@ function HearingReview({
           {deadlinePrev && (
             <p>
               <span className="font-medium">Previous date:</span>{" "}
-              <span className="font-semibold">{deadlinePrev}</span>
+              <span className="font-semibold">{formatDate(deadlinePrev)}</span>
             </p>
           )}
           {deadlineChangedBy && (
@@ -478,7 +505,7 @@ function HearingReview({
                 >
                   <div className="flex items-center gap-2 min-w-0">
                     <span className="font-semibold tabular-nums">
-                      {h.deadline}
+                      {formatDate(h.deadline)}
                     </span>
                     {h.set_by && (
                       <span className="text-muted-foreground truncate">
@@ -597,6 +624,7 @@ function PhdInternalReview({
   linkedHearingId,
   currentRecordType,
   onPhdPatch,
+  onCascadeApplied,
 }: PhdInternalModeProps) {
   const [notes, setNotes] = useState<PostHrgNote[]>(() =>
     parseNotes(initialNotes),
@@ -636,6 +664,14 @@ function PhdInternalReview({
     savingRef.current = saving;
   }, [saving]);
 
+  // Tracks user-edited but not-yet-saved deadline state (see hearing-mode
+  // for rationale). Wraps setDeadline for user input; cleared on save/clear.
+  const deadlineDirtyRef = useRef(false);
+  const handleDeadlineUserChange = (v: string) => {
+    deadlineDirtyRef.current = true;
+    setDeadline(v);
+  };
+
   useEffect(() => {
     let active = true;
     const poll = async () => {
@@ -671,7 +707,9 @@ function PhdInternalReview({
         );
         const data = await fetchPostHrgDevDeadlineAndRequirements(phdRowId);
         if (!active) return;
-        if (data.deadline != null) setDeadline(data.deadline);
+        if (!deadlineDirtyRef.current && data.deadline != null) {
+          setDeadline(data.deadline);
+        }
         if (!isEditingReqRef.current) {
           setRequirements(data.requirements ?? "");
           setHasSavedReq(!!data.requirements);
@@ -759,12 +797,14 @@ function PhdInternalReview({
       const { cascadePhdField } = await import(
         "@/app/(dashboard)/post-hrg-development/actions"
       );
-      await cascadePhdField(
-        linkedHearingId,
+      const targetList = Array.from(targets);
+      await cascadePhdField(linkedHearingId, field, value, targetList);
+      onCascadeApplied?.({
+        hearingId: linkedHearingId,
         field,
         value,
-        Array.from(targets),
-      );
+        targets: targetList,
+      });
     } catch {
       /* best-effort — primary already saved */
     }
@@ -779,6 +819,7 @@ function PhdInternalReview({
       const next = deadline || null;
       await updatePostHrgDevField(phdRowId, "deadline", next);
       onPhdPatch({ deadline: next });
+      deadlineDirtyRef.current = false;
       await runCascade("deadline", next, cascadeDeadlineTargets);
       setCascadeDeadlineTargets(new Set());
     } finally {
@@ -795,6 +836,7 @@ function PhdInternalReview({
       await updatePostHrgDevField(phdRowId, "deadline", null);
       setDeadline("");
       onPhdPatch({ deadline: null });
+      deadlineDirtyRef.current = false;
       await runCascade("deadline", null, cascadeDeadlineTargets);
       setCascadeDeadlineTargets(new Set());
     } finally {
@@ -871,7 +913,7 @@ function PhdInternalReview({
       {/* Deadline (per-PHD-row) */}
       <DeadlineRow
         deadline={deadline}
-        onChange={setDeadline}
+        onChange={handleDeadlineUserChange}
         onUpdate={handleUpdateDeadline}
         onClear={handleClearDeadline}
       />
@@ -1103,6 +1145,27 @@ function CascadeCheckboxes({
   );
 }
 
+// ISO YYYY-MM-DD <-> US MM/DD/YYYY conversion. The native <input type="date">
+// follows the OS/browser locale for its visible value, so on non-US locales
+// it can render as dd/mm/yyyy. We force US display by swapping in a text
+// input and overlaying a hidden native picker (for date-picking UX).
+function isoToUs(iso: string): string {
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return "";
+  return `${m[2]}/${m[3]}/${m[1]}`;
+}
+
+function usToIso(us: string): string | null {
+  const m = us.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!m) return null;
+  const [, mm, dd, yyyy] = m;
+  const d = new Date(`${yyyy}-${mm}-${dd}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return null;
+  // Reject invalid calendar dates like 02/31/2025 that JS would roll over.
+  const roundtrip = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return roundtrip === `${yyyy}-${mm}-${dd}` ? roundtrip : null;
+}
+
 function DeadlineRow({
   deadline,
   onChange,
@@ -1114,16 +1177,62 @@ function DeadlineRow({
   onUpdate: () => void;
   onClear: () => void;
 }) {
+  const [text, setText] = useState<string>(() => isoToUs(deadline));
+
+  // Keep the visible US-formatted text in sync when `deadline` changes from
+  // outside (picker selection, poll refresh, clear, etc.) but don't fight
+  // the user while they're mid-typing.
+  useEffect(() => {
+    const fromIso = isoToUs(deadline);
+    if (fromIso !== text && usToIso(text) !== deadline) {
+      setText(fromIso);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deadline]);
+
+  const handleTextChange = (raw: string) => {
+    setText(raw);
+    if (!raw.trim()) {
+      onChange("");
+      return;
+    }
+    const iso = usToIso(raw);
+    if (iso) onChange(iso);
+  };
+
+  const handlePickerChange = (iso: string) => {
+    setText(isoToUs(iso));
+    onChange(iso);
+  };
+
   return (
     <div className="space-y-1.5">
       <label className="text-xs font-medium">Deadline Date</label>
       <div className="flex items-center gap-2 flex-wrap">
-        <input
-          type="date"
-          value={deadline}
-          onChange={(e) => onChange(e.target.value)}
-          className="h-8 rounded-lg border bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary w-auto"
-        />
+        <div className="relative">
+          <input
+            type="text"
+            inputMode="numeric"
+            placeholder="MM/DD/YYYY"
+            value={text}
+            maxLength={10}
+            onChange={(e) => handleTextChange(e.target.value)}
+            className="h-8 rounded-lg border bg-background pl-3 pr-8 text-xs text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary w-32 tabular-nums"
+          />
+          {/* Visible calendar icon — the hidden native date input sits on
+              top of this area so clicking the icon opens the OS picker. */}
+          <Calendar
+            className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-foreground/70"
+            aria-hidden="true"
+          />
+          <input
+            type="date"
+            value={deadline}
+            onChange={(e) => handlePickerChange(e.target.value)}
+            aria-label="Open date picker"
+            className="absolute inset-y-0 right-0 w-7 opacity-0 cursor-pointer"
+          />
+        </div>
         <button
           className="h-8 text-xs px-3 rounded-md border hover:bg-muted transition-colors"
           onClick={onUpdate}
@@ -1133,7 +1242,10 @@ function DeadlineRow({
         {deadline && (
           <button
             className="h-8 text-xs px-3 rounded-md hover:bg-muted transition-colors text-muted-foreground"
-            onClick={onClear}
+            onClick={() => {
+              setText("");
+              onClear();
+            }}
           >
             Clear
           </button>
