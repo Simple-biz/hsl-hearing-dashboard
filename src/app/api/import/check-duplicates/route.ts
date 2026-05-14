@@ -384,13 +384,22 @@ FROM hearings`,
 
         if (!alreadyImported) {
           // Find the record to update: first try exact name+SSN, then base name+SSN,
-          // then SSN-only (handles name typos like "RaZiyah" vs "Ra'Ziyah")
+          // then SSN-only (handles name typos like "RaZiyah" vs "Ra'Ziyah").
+          // SSN-last-4 has only 4 digits of entropy so collisions across
+          // unrelated people are common — require some name overlap before
+          // accepting the SSN-only fallback, otherwise e.g. "Madison Chakey"
+          // and "Senator Carpenter" (different people, same last 4 of SSN)
+          // get falsely linked as a reschedule.
           const exactKey = `${claimant.toLowerCase()}|${ssnFormatted}`;
           const origKey = `${baseName.toLowerCase()}|${ssnFormatted}`;
-          const existing =
-            byNameAndSsn.get(exactKey) ||
-            byNameAndSsn.get(origKey) ||
-            (fuzzy_name_match ? bySsn.get(ssnFormatted) : undefined);
+          let existing =
+            byNameAndSsn.get(exactKey) || byNameAndSsn.get(origKey);
+          if (!existing && fuzzy_name_match) {
+            const ssnHit = bySsn.get(ssnFormatted);
+            if (ssnHit && trigramSimilarity(baseName, ssnHit.claimant) >= 0.5) {
+              existing = ssnHit;
+            }
+          }
 
           if (existing) {
             rescheduledRecords.push({
@@ -442,9 +451,21 @@ FROM hearings`,
     if (!existingId && hearingDate) {
       existingId = tier3.get(`${claimant}|${hearingDate}`) ?? null;
     }
-    // Tier 4: SSN + date only — catches name typos (only when fuzzy matching enabled)
+    // Tier 4: SSN + date only — catches name typos (only when fuzzy matching enabled).
+    // SSN-last-4 has only 4 digits of entropy so SSN+date collisions across
+    // unrelated people on a busy hearing day are common. Require some name
+    // overlap (trigram similarity ≥ 0.5) before accepting, otherwise e.g.
+    // "Madison Chakey" and "Senator Carpenter" (different people, same last
+    // 4 of SSN, same hearing date) get falsely linked.
     if (!existingId && fuzzy_name_match && ssnFormatted && hearingDate) {
-      existingId = tier4.get(`${ssnFormatted}|${hearingDate}`) ?? null;
+      const tier4Hit = tier4.get(`${ssnFormatted}|${hearingDate}`) ?? null;
+      if (tier4Hit) {
+        const candidateName = String(byId.get(tier4Hit)?.claimant || "");
+        const baseName = claimant.replace(RESCHED_RE, "").trim() || claimant;
+        if (trigramSimilarity(baseName, candidateName) >= 0.5) {
+          existingId = tier4Hit;
+        }
+      }
     }
 
     // Disambiguate: tier2/3 match by name without checking date, so when a
@@ -455,18 +476,18 @@ FROM hearings`,
     // align, prefer tier4's ssn+date match — that fingerprint identifies
     // the specific hearing being referenced. Without this, "Update X
     // Rescheduled" could overwrite an old hearing with new-hearing data.
-    if (
-      existingId &&
-      hearingDate &&
-      fuzzy_name_match &&
-      ssnFormatted
-    ) {
+    // Same trigram guard as above to avoid swapping in an SSN-collision row.
+    if (existingId && hearingDate && fuzzy_name_match && ssnFormatted) {
       const matched = byId.get(existingId);
       const matchedDate = String(matched?.hearing_date || "");
       if (matchedDate && matchedDate !== hearingDate) {
         const tier4Match = tier4.get(`${ssnFormatted}|${hearingDate}`);
         if (tier4Match && tier4Match !== existingId) {
-          existingId = tier4Match;
+          const candidateName = String(byId.get(tier4Match)?.claimant || "");
+          const baseName = claimant.replace(RESCHED_RE, "").trim() || claimant;
+          if (trigramSimilarity(baseName, candidateName) >= 0.5) {
+            existingId = tier4Match;
+          }
         }
       }
     }
@@ -699,9 +720,7 @@ FROM hearings`,
               if (importTeamId === null) continue;
               const dbTeamId = dbLookupEmpty ? null : Number(dbFkVal);
               if (dbTeamId === importTeamId) continue;
-              const oldDisplay = dbTeamId
-                ? teamById.get(dbTeamId) || ""
-                : "";
+              const oldDisplay = dbTeamId ? teamById.get(dbTeamId) || "" : "";
               changedFields.push(field);
               fieldDiffs[field] = {
                 old: oldDisplay,
