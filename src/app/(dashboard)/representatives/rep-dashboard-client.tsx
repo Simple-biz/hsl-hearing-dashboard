@@ -105,6 +105,10 @@ export function RepDashboardClient({
     daily_limit: 3,
     weekly_limit: 12,
     hearing_restriction: "none",
+    /** Comma-separated text the admin types; converted to a string[] in
+     * the submit handler. Stored as TEXT[] in `representatives.name_aliases`
+     * and consulted by import-compare's rep lookup. */
+    name_aliases_text: "",
   });
   const setField = (key: string, value: string | number) =>
     setForm((p) => ({ ...p, [key]: value }));
@@ -185,6 +189,7 @@ export function RepDashboardClient({
       daily_limit: 3,
       weekly_limit: 12,
       hearing_restriction: "none",
+      name_aliases_text: "",
     });
     setEditRep(null);
     setShowAddModal(true);
@@ -198,13 +203,18 @@ export function RepDashboardClient({
       daily_limit: rep.daily_limit,
       weekly_limit: rep.weekly_limit,
       hearing_restriction: rep.hearing_restriction || "none",
+      name_aliases_text: (rep.name_aliases ?? []).join(", "),
     });
     setEditRep(rep);
     setShowAddModal(true);
   };
   const handleSubmit = async () => {
     setSaving(true);
-    await saveRep({ ...form, id: editRep?.id });
+    const aliases = form.name_aliases_text
+      .split(",")
+      .map((a) => a.trim())
+      .filter(Boolean);
+    await saveRep({ ...form, id: editRep?.id, name_aliases: aliases });
     window.location.reload();
   };
   const handleToggle = async (id: number, val: boolean) => {
@@ -766,6 +776,27 @@ export function RepDashboardClient({
                   onChange={(e) => setField("name", e.target.value)}
                   className="h-10 text-sm"
                 />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium">
+                  Name Aliases
+                  <span className="ml-1 font-normal text-muted-foreground">
+                    (optional, comma-separated)
+                  </span>
+                </label>
+                <Input
+                  value={form.name_aliases_text}
+                  onChange={(e) =>
+                    setField("name_aliases_text", e.target.value)
+                  }
+                  placeholder="e.g. Alecia Reed, Alecia M Reed"
+                  className="h-10 text-sm"
+                />
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Alternate names the import-compare flow should treat as
+                  this rep. Useful for married names, abbreviations, or
+                  recurring sheet typos.
+                </p>
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium">
