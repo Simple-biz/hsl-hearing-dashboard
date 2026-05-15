@@ -1844,7 +1844,7 @@ const RepDocsRowView = memo(
           return (
             <td
               key={c.key as string}
-              className="px-2 py-1.5 text-center"
+              className={cn("px-2 py-1.5 text-center", evenBg)}
               style={{ width: WORKFLOW_CELL_W, minWidth: WORKFLOW_CELL_W }}
             >
               <div className="flex flex-col items-center gap-0.5">
@@ -1873,7 +1873,10 @@ const RepDocsRowView = memo(
         })}
 
         {/* OHO Assigned */}
-        <td className="px-2 py-1.5" style={{ width: OHO_W, minWidth: OHO_W }}>
+        <td
+          className={cn("px-2 py-1.5", evenBg)}
+          style={{ width: OHO_W, minWidth: OHO_W }}
+        >
           {(() => {
             const selectedOho = ohoAssignees.find(
               (a) => a.name === row.oho_assigned_to,
@@ -1925,7 +1928,7 @@ const RepDocsRowView = memo(
         {CHECKER_COLUMNS.map((c) => (
           <td
             key={c.key as string}
-            className="px-2 py-1.5 text-center"
+            className={cn("px-2 py-1.5 text-center", evenBg)}
             style={{ width: CHECKER_CELL_W, minWidth: CHECKER_CELL_W }}
           >
             <input
@@ -1947,7 +1950,7 @@ const RepDocsRowView = memo(
 
         {/* Checker Status — auto-computed, read-only */}
         <td
-          className="px-2 py-1.5"
+          className={cn("px-2 py-1.5", evenBg)}
           style={{ width: CHECKER_STATUS_W, minWidth: CHECKER_STATUS_W }}
         >
           {(() => {
@@ -1973,7 +1976,7 @@ const RepDocsRowView = memo(
 
         {/* Notes button */}
         <td
-          className="px-1 py-1.5 text-center"
+          className={cn("px-1 py-1.5 text-center", evenBg)}
           style={{ width: 32, minWidth: 32 }}
           onClick={(e) => e.stopPropagation()}
         >
