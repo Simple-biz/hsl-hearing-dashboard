@@ -33,7 +33,13 @@ import { PostHrgDetailPanel } from "./post-hrg-detail-panel";
 import { PostHrgActivityModal } from "@/components/modals/post-hrg-activity-modal";
 import { PostHrgReviewModal } from "@/components/modals/post-hrg-review-modal";
 import { PostHrgCompletedModal } from "@/components/modals/post-hrg-completed-modal";
-import { ClipboardList, Check, BarChart3, Trash2 } from "lucide-react";
+import {
+  ClipboardList,
+  Check,
+  BarChart3,
+  Trash2,
+  RefreshCw,
+} from "lucide-react";
 import { PostHrgReportsModal } from "@/components/modals/post-hrg-reports-modal";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -3211,6 +3217,47 @@ export function PostHrgClient({
     overscan: 8,
   });
 
+  // Manual refresh — pulls the current page from the server using ALL active
+  // filters/sort/search/tab (those already flow through fetchPage via refs
+  // and explicit args). We capture the scroll-container's scrollTop before
+  // the fetch and restore it on the next frame so the user stays where they
+  // were instead of snapping back to row 0 after the virtualizer remeasures.
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = useCallback(async () => {
+    const scrollTop = parentRef.current?.scrollTop ?? 0;
+    setRefreshing(true);
+    try {
+      await fetchPage(
+        page,
+        pageSize,
+        sortKey,
+        sortDir,
+        searchTerm,
+        statusFilter,
+        phStatusFilter,
+        indicatorFilter,
+      );
+    } finally {
+      setRefreshing(false);
+      // Wait for React to commit the new records + virtualizer to remeasure,
+      // then restore scroll. requestAnimationFrame is enough here because
+      // fetchPage's awaits complete after setRecords is committed.
+      requestAnimationFrame(() => {
+        if (parentRef.current) parentRef.current.scrollTop = scrollTop;
+      });
+    }
+  }, [
+    fetchPage,
+    page,
+    pageSize,
+    sortKey,
+    sortDir,
+    searchTerm,
+    statusFilter,
+    phStatusFilter,
+    indicatorFilter,
+  ]);
+
   // ── JSX ──
   return (
     <>
@@ -3278,6 +3325,26 @@ export function PostHrgClient({
                 title="View completed records (hidden from main grid)"
               >
                 ✅ Completed ({completedCount})
+              </button>
+              <button
+                className={cn(
+                  BTN,
+                  "text-xs sm:text-sm gap-1.5 px-3 py-1.5",
+                  "bg-sky-50 text-sky-700 border border-sky-200",
+                  "hover:bg-sky-100 hover:border-sky-300",
+                  "dark:bg-sky-950/30 dark:text-sky-300 dark:border-sky-800",
+                  "dark:hover:bg-sky-950/50 dark:hover:border-sky-700",
+                  "disabled:opacity-60 disabled:cursor-not-allowed",
+                )}
+                onClick={handleRefresh}
+                disabled={refreshing}
+                title="Refresh table data without losing scroll, filters, or sort"
+              >
+                <RefreshCw
+                  className={cn("h-3.5 w-3.5", refreshing && "animate-spin")}
+                  strokeWidth={2}
+                />
+                {refreshing ? "Refreshing…" : "Refresh"}
               </button>
               <button
                 className={cn(BTN_OUTLINE, "text-xs sm:text-sm gap-1.5")}
