@@ -1650,6 +1650,9 @@ const RepDocsRowView = memo(
     const isWithdrawn =
       (row.overall_status || "").toLowerCase() === "withdrawn";
 
+    // Withdrawn rows keep the existing red tint as the "this is withdrawn"
+    // signal. The disabled-edit affordance comes from the row opacity +
+    // disabled inline controls below, not from a color swap.
     const evenBg = isWithdrawn
       ? "bg-red-50 dark:bg-red-950/30"
       : ri % 2 === 0
@@ -1680,7 +1683,10 @@ const RepDocsRowView = memo(
         className={cn(
           "border-b border-border/40 last:border-0 cursor-pointer",
           evenBg,
-          isWithdrawn && "text-red-900 dark:text-red-300",
+          // Greyed-out look for withdrawn — muted text + slight opacity
+          // signal "view-only". Editable controls inside are also disabled
+          // (see passes below).
+          isWithdrawn && "text-muted-foreground opacity-75",
           // Hover overlay (matches PHD / dashboard). Applied to every
           // direct <td> child via arbitrary-variant so we don't have to
           // touch each cell individually. Inset box-shadow paints a
@@ -1714,7 +1720,7 @@ const RepDocsRowView = memo(
         </td>
         {/* Claimant */}
         <td {...stickyCell("claimant")}>
-          <ClaimantCell row={row} editable={true} onSave={onLink} />
+          <ClaimantCell row={row} editable={!isWithdrawn} onSave={onLink} />
         </td>
         {/* SSN */}
         <td {...stickyCell("ssn_last_4")}>
@@ -1745,8 +1751,14 @@ const RepDocsRowView = memo(
             return (
               <div className="flex items-start gap-1">
                 <select
-                  className="h-6 min-w-0 flex-1 rounded border border-transparent px-1 text-[11px] cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-400 hover:border-border"
+                  className={cn(
+                    "h-6 min-w-0 flex-1 rounded border border-transparent px-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-400 hover:border-border",
+                    isWithdrawn
+                      ? "cursor-not-allowed opacity-70"
+                      : "cursor-pointer",
+                  )}
                   value={row.assigned_to ?? ""}
+                  disabled={isWithdrawn}
                   style={
                     bgColor
                       ? {
@@ -1775,7 +1787,7 @@ const RepDocsRowView = memo(
                     </option>
                   ))}
                 </select>
-                {!ackEligible ? null : isAcknowledged ? (
+                {!ackEligible || isWithdrawn ? null : isAcknowledged ? (
                   <div
                     title={`Acknowledged by ${ackName || "Unknown"}${ackDate ? ` on ${ackDate}` : ""}`}
                     className="flex w-14 shrink-0 flex-col items-center rounded-sm bg-green-100 px-0.5 py-0.5 leading-tight text-green-800 dark:bg-green-900/40 dark:text-green-300"
@@ -1839,10 +1851,16 @@ const RepDocsRowView = memo(
                 <input
                   type="checkbox"
                   checked={checked}
+                  disabled={isWithdrawn}
                   onChange={(e) =>
                     onField(row.id, c.key as string, e.target.checked)
                   }
-                  className="h-4 w-4 accent-emerald-600 cursor-pointer rounded"
+                  className={cn(
+                    "h-4 w-4 accent-emerald-600 rounded",
+                    isWithdrawn
+                      ? "cursor-not-allowed opacity-60"
+                      : "cursor-pointer",
+                  )}
                 />
                 {ts && (
                   <span className="text-[9px] text-muted-foreground leading-tight">
@@ -1863,8 +1881,14 @@ const RepDocsRowView = memo(
             const bgColor = selectedOho?.bg_color;
             return (
               <select
-                className="h-6 w-full rounded border border-transparent px-1 text-[11px] cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-400 hover:border-border"
+                className={cn(
+                  "h-6 w-full rounded border border-transparent px-1 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-400 hover:border-border",
+                  isWithdrawn
+                    ? "cursor-not-allowed opacity-70"
+                    : "cursor-pointer",
+                )}
                 value={row.oho_assigned_to ?? ""}
+                disabled={isWithdrawn}
                 style={
                   bgColor
                     ? {
@@ -1907,10 +1931,16 @@ const RepDocsRowView = memo(
             <input
               type="checkbox"
               checked={Boolean(row[c.key])}
+              disabled={isWithdrawn}
               onChange={(e) =>
                 onField(row.id, c.key as string, e.target.checked)
               }
-              className="h-4 w-4 accent-blue-600 cursor-pointer rounded"
+              className={cn(
+                "h-4 w-4 accent-blue-600 rounded",
+                isWithdrawn
+                  ? "cursor-not-allowed opacity-60"
+                  : "cursor-pointer",
+              )}
             />
           </td>
         ))}
