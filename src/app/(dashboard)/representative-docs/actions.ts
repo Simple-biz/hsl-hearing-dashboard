@@ -389,6 +389,21 @@ export async function updateRepDocsField(
     await requireFieldAccess("representative_docs", field);
   }
 
+  // Resolve the linked hearing's id once so every logAction below can tag
+  // entries with it for per-hearing audit views. Cheap single-row lookup.
+  const { rows: metaRows } = await db.query(
+    `SELECT h.id AS hearing_id, h.claimant
+       FROM representative_docs rd
+       JOIN hearings h ON h.id = rd.hearing_id
+      WHERE rd.id = $1`,
+    [id],
+  );
+  const linkedHearingId =
+    (metaRows[0]?.hearing_id as number | null) ?? undefined;
+  const rowLabel = metaRows[0]?.claimant
+    ? `${(metaRows[0].claimant as string).trim()} (rep-docs #${id})`
+    : `rep-docs #${id}`;
+
   // Workflow checkbox: auto-timestamp
   if (WORKFLOW_FIELD_SET.has(field)) {
     const boolVal = Boolean(value);
@@ -407,7 +422,8 @@ export async function updateRepDocsField(
 
     await logAction(
       "rep_docs_field_updated",
-      `${field} → ${boolVal ? "checked" : "unchecked"} for ${await repDocsLabel(id)}`,
+      `${field} → ${boolVal ? "checked" : "unchecked"} for ${rowLabel}`,
+      linkedHearingId,
     );
     return { success: true };
   }
@@ -454,7 +470,8 @@ export async function updateRepDocsField(
 
     await logAction(
       "rep_docs_field_updated",
-      `${field} → ${boolVal ? "checked" : "unchecked"} for ${await repDocsLabel(id)}`,
+      `${field} → ${boolVal ? "checked" : "unchecked"} for ${rowLabel}`,
+      linkedHearingId,
     );
     return { success: true };
   }
@@ -488,7 +505,8 @@ export async function updateRepDocsField(
 
     await logAction(
       "rep_docs_field_updated",
-      `${field} → '${value ?? "(empty)"}' for ${await repDocsLabel(id)}`,
+      `${field} → '${value ?? "(empty)"}' for ${rowLabel}`,
+      linkedHearingId,
     );
     return { success: true };
   }
@@ -507,11 +525,12 @@ export async function acknowledgeRepDocs(id: number) {
   const userName = session.user.name || "";
 
   const { rows } = await db.query(
-    `SELECT rep_docs_acknowledged_at, rep_docs_acknowledged_by
+    `SELECT rep_docs_acknowledged_at, rep_docs_acknowledged_by, hearing_id
      FROM representative_docs WHERE id = $1`,
     [id],
   );
   if (!rows[0]) throw new Error("Representative docs row not found");
+  const linkedHearingId = (rows[0].hearing_id as number | null) ?? undefined;
 
   // Idempotent — re-clicking doesn't bump the timestamp or change the actor.
   if (rows[0].rep_docs_acknowledged_at) {
@@ -538,7 +557,11 @@ export async function acknowledgeRepDocs(id: number) {
     [userId, id],
   );
 
-  await logAction("rep_docs_acknowledged", `Acknowledged ${await repDocsLabel(id)}`);
+  await logAction(
+    "rep_docs_acknowledged",
+    `Acknowledged ${await repDocsLabel(id)}`,
+    linkedHearingId,
+  );
 
   return {
     success: true,
@@ -559,6 +582,13 @@ export async function updateHearingLink(
   if (field !== "claimant_link" && field !== "chronicle_link") {
     throw new Error(`Field "${field}" is not a hearing link`);
   }
+  // Capture hearing_id for the audit log before / alongside the UPDATE.
+  const { rows: linkRows } = await db.query(
+    "SELECT hearing_id FROM representative_docs WHERE id = $1",
+    [repDocsId],
+  );
+  const linkedHearingId =
+    (linkRows[0]?.hearing_id as number | null) ?? undefined;
   await db.query(
     `UPDATE hearings SET ${field} = $1, updated_at = NOW()
      WHERE id = (SELECT hearing_id FROM representative_docs WHERE id = $2)`,
@@ -567,6 +597,7 @@ export async function updateHearingLink(
   await logAction(
     "hearing_link_updated_from_repdocs",
     `${field} → '${value ?? "(empty)"}' for ${await repDocsLabel(repDocsId)}`,
+    linkedHearingId,
   );
   return { success: true };
 }
@@ -1025,7 +1056,7 @@ export async function addRepDocsNote(
   await requireAuth();
 
   const { rows } = await db.query(
-    `SELECT rd.notes, h.claimant
+    `SELECT rd.notes, h.claimant, h.id AS hearing_id
      FROM representative_docs rd
      JOIN hearings h ON h.id = rd.hearing_id
      WHERE rd.id = $1`,
@@ -1049,6 +1080,7 @@ export async function addRepDocsNote(
   await logAction(
     "rep_docs_field_updated",
     `notes → added note for rep-docs #${repDocsId} (${rows[0].claimant})`,
+    (rows[0].hearing_id as number | null) ?? undefined,
   );
 
   return { success: true, notes };
@@ -1061,7 +1093,7 @@ export async function deleteRepDocsNote(
   await requireAuth();
 
   const { rows } = await db.query(
-    `SELECT rd.notes, h.claimant
+    `SELECT rd.notes, h.claimant, h.id AS hearing_id
      FROM representative_docs rd
      JOIN hearings h ON h.id = rd.hearing_id
      WHERE rd.id = $1`,
@@ -1084,6 +1116,7 @@ export async function deleteRepDocsNote(
   await logAction(
     "rep_docs_field_updated",
     `notes → deleted note for rep-docs #${repDocsId} (${rows[0].claimant})`,
+    (rows[0].hearing_id as number | null) ?? undefined,
   );
 
   return { success: true, notes };
