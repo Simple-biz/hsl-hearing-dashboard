@@ -104,8 +104,7 @@ export async function fetchPostHrgOptions(): Promise<{
     configRes,
     statusConfigRes,
     repsRes,
-    mrSpecRes,
-    mrTeamsRes,
+    responsibleRes,
     indicatorRes,
     docsNeededRes,
   ] = await Promise.all([
@@ -127,13 +126,13 @@ export async function fetchPostHrgOptions(): Promise<{
     db.query(
       `SELECT id, name FROM representatives WHERE is_active = true ORDER BY name`,
     ),
-    // MR specialists (individuals)
+    // "Responsible" dropdown — fully admin-managed via Settings → POST HRG.
+    // Replaces the prior hybrid (mr_specialists + mr_teams + hardcoded color
+    // maps). Seed list lives in 20260514_seed_post_hrg_responsible_options.sql.
     db.query(
-      `SELECT name FROM mr_specialists WHERE is_active = true ORDER BY display_order, name`,
-    ),
-    // MR teams
-    db.query(
-      `SELECT team_name, team_color FROM mr_teams WHERE is_active = true ORDER BY display_order`,
+      `SELECT option_value, option_color FROM config_options
+       WHERE option_type = 'post_hrg_responsible' AND is_active = true
+       ORDER BY display_order`,
     ),
     db.query(
       `SELECT option_value, option_color FROM config_options
@@ -147,82 +146,12 @@ export async function fetchPostHrgOptions(): Promise<{
     ),
   ]);
 
-  // Build responsible options from DB + hardcoded color mapping
-  const PERSON_COLORS: Record<string, string> = {
-    Noah: "#DBEAFE",
-    Maya: "#EDE9FE",
-    Trina: "#EDE9FE",
-    Nina: "#EDE9FE",
-    Van: "#EDE9FE",
-    Jerome: "#DBEAFE",
-    Carol: "#EDE9FE",
-    Rick: "#DBEAFE",
-    Jeff: "#DBEAFE",
-    Vera: "#EDE9FE",
-    Esther: "#EDE9FE",
-    Windell: "#DBEAFE",
-    Jared: "#DBEAFE",
-    Allen: "#EDE9FE",
-    Gail: "#EDE9FE",
-    Vicky: "#EDE9FE",
-    Austin: "#DBEAFE",
-    Kourtney: "#DBEAFE",
-    Glenda: "#EDE9FE",
-    Emerald: "#EDE9FE",
-    Claire: "#EDE9FE",
-    Adele: "#EDE9FE",
-    Milton: "#F3F4F6",
-    Winter: "#DBEAFE",
-    Tracy: "#EDE9FE",
-    Haya: "#EDE9FE",
-    Naomi: "#EDE9FE",
-    Charlotte: "#EDE9FE",
-    Tina: "#EDE9FE",
-    Catherine: "#EDE9FE",
-  };
-  const TEAM_COLORS_MAP: Record<string, string> = {
-    "BLUE TEAM": "#3B82F6",
-    "ORANGE TEAM": "#F97316",
-    "GREEN TEAM": "#22C55E",
-    "YELLOW TEAM": "#EAB308",
-    "PURPLE TEAM": "#A855F7",
-    ALJ: "#FDBA74",
-    "HITMER/ALJ": "#FED7AA",
-  };
-
-  const responsibleSet = new Map<string, string>();
-
-  // Add MR specialists from DB
-  for (const r of mrSpecRes.rows as { name: string }[]) {
-    const color = PERSON_COLORS[r.name] || "#F3F4F6";
-    responsibleSet.set(r.name, color);
-  }
-
-  // Add hardcoded persons not in DB
-  for (const [name, color] of Object.entries(PERSON_COLORS)) {
-    if (!responsibleSet.has(name)) responsibleSet.set(name, color);
-  }
-
-  // Add MR teams from DB
-  for (const t of mrTeamsRes.rows as {
-    team_name: string;
-    team_color: string | null;
-  }[]) {
-    const key = t.team_name.toUpperCase().includes("TEAM")
-      ? t.team_name
-      : t.team_name;
-    const color = TEAM_COLORS_MAP[key] || t.team_color || "#F3F4F6";
-    responsibleSet.set(key, color);
-  }
-
-  // Add hardcoded teams not in DB
-  for (const [name, color] of Object.entries(TEAM_COLORS_MAP)) {
-    if (!responsibleSet.has(name)) responsibleSet.set(name, color);
-  }
-
-  const responsibleOptions: ResponsibleOption[] = Array.from(
-    responsibleSet.entries(),
-  ).map(([value, color]) => ({ value, color }));
+  const responsibleOptions: ResponsibleOption[] = (
+    responsibleRes.rows as {
+      option_value: string;
+      option_color: string | null;
+    }[]
+  ).map((r) => ({ value: r.option_value, color: r.option_color || "#F3F4F6" }));
 
   return {
     phStatusOptions: configRes.rows.map(
@@ -278,6 +207,11 @@ export interface FetchPostHrgPageParams {
   recordType?: PostHrgRecordType | "all";
   hearingDateFrom?: string | null;
   hearingDateTo?: string | null;
+  // Which column the date range targets. Defaults to "hearing_date" (the
+  // historical meaning of "This Week" / "Today" presets). Set to "created_at"
+  // when the user flips the UI toggle to "Date Added" — filters by when the
+  // PHD row was created instead of when the hearing is/was.
+  dateField?: "hearing_date" | "created_at";
   sortKey?: string;
   sortDir?: "asc" | "desc";
   // When true, restrict results to rows that have not yet been acknowledged.
@@ -337,14 +271,20 @@ export async function fetchPostHrgDevPage(
     idx++;
   }
 
+  // Whitelist the date column so an unexpected dateField value can't smuggle
+  // SQL. hearing_date is DATE; created_at is TIMESTAMP so cast to date for
+  // a same-day inclusive compare against the YYYY-MM-DD bounds.
+  const dateCol =
+    params.dateField === "created_at" ? "p.created_at::date" : "p.hearing_date";
+
   if (params.hearingDateFrom) {
-    conditions.push(`p.hearing_date >= $${idx}::date`);
+    conditions.push(`${dateCol} >= $${idx}::date`);
     values.push(params.hearingDateFrom);
     idx++;
   }
 
   if (params.hearingDateTo) {
-    conditions.push(`p.hearing_date <= $${idx}::date`);
+    conditions.push(`${dateCol} <= $${idx}::date`);
     values.push(params.hearingDateTo);
     idx++;
   }
@@ -1493,7 +1433,8 @@ export async function addPostHrgDevNote(
 ) {
   const col = notesColumn(field);
   const { rows } = await db.query(
-    `SELECT ${col}, claimant FROM post_hrg_development WHERE id = $1`,
+    `SELECT ${col}, claimant, record_type, hearing_id
+       FROM post_hrg_development WHERE id = $1`,
     [recordId],
   );
   if (!rows[0])
@@ -1513,17 +1454,57 @@ export async function addPostHrgDevNote(
     /* empty */
   }
 
-  notes.unshift({
+  // Same note object reused for the optional mirror below so both threads
+  // share the exact same timestamp/author/text — makes manual de-dup easy
+  // if a user inspects both lists side-by-side.
+  const newNote = {
     user: userName,
     date: new Date().toISOString(),
     note: noteText,
-  });
+  };
+  notes.unshift(newNote);
   const updatedNotes = JSON.stringify(notes);
 
   await db.query(`UPDATE post_hrg_development SET ${col} = $1 WHERE id = $2`, [
     updatedNotes,
     recordId,
   ]);
+
+  // Mirror Details notes from MR PHD rows to the linked hearing's
+  // post_hrg_notes so the MR-mode Post HRG Review modal shows the same
+  // thread admins are typing into the Details column. One-way mirror on
+  // ADD only — edits/deletes on either side stay independent, so the two
+  // threads can drift. If that ever becomes confusing we can add an
+  // identifier-based two-way sync, but the current ask is just "show up
+  // in the modal".
+  const recordType = String(rows[0].record_type || "");
+  const hearingId = rows[0].hearing_id as number | null;
+  if (field === "details" && recordType === "MR" && hearingId) {
+    const { rows: hRows } = await db.query(
+      "SELECT post_hrg_notes FROM hearings WHERE id = $1",
+      [hearingId],
+    );
+    let hNotes: { user: string; date: string; note: string }[] = [];
+    try {
+      const parsed = JSON.parse(hRows[0]?.post_hrg_notes || "[]");
+      if (Array.isArray(parsed)) {
+        hNotes = parsed.map((item: Record<string, unknown>) => ({
+          user: String(
+            item.user ?? item.author ?? item.author_name ?? "Unknown",
+          ),
+          date: String(item.date ?? item.created_at ?? ""),
+          note: String(item.note ?? item.content ?? ""),
+        }));
+      }
+    } catch {
+      /* treat as empty */
+    }
+    hNotes.unshift(newNote);
+    await db.query("UPDATE hearings SET post_hrg_notes = $1 WHERE id = $2", [
+      JSON.stringify(hNotes),
+      hearingId,
+    ]);
+  }
 
   const { logAction } = await import("@/lib/activity-log");
   await logAction(
