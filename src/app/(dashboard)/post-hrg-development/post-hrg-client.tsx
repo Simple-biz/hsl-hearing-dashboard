@@ -33,7 +33,7 @@ import { PostHrgDetailPanel } from "./post-hrg-detail-panel";
 import { PostHrgActivityModal } from "@/components/modals/post-hrg-activity-modal";
 import { PostHrgReviewModal } from "@/components/modals/post-hrg-review-modal";
 import { PostHrgCompletedModal } from "@/components/modals/post-hrg-completed-modal";
-import { ClipboardList, Check, BarChart3 } from "lucide-react";
+import { ClipboardList, Check, BarChart3, Trash2 } from "lucide-react";
 import { PostHrgReportsModal } from "@/components/modals/post-hrg-reports-modal";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -1562,6 +1562,10 @@ const COLUMNS: {
   // new_due_date REMOVED — replaced with post_hrg_review
   { key: "post_hrg_review", label: "Post HRG Review", w: 140 },
   { key: "remarks", label: "Remarks", w: 200 },
+  // Admin-only trash icon. Cell renders empty for non-admin roles so the
+  // column adds no visible affordance for them; width is small enough to
+  // not waste horizontal space.
+  { key: "actions", label: "", w: 44 },
 ];
 
 const lastFrozenKey = COLUMNS.filter((c) => c.frozen).at(-1)?.key ?? "";
@@ -1689,6 +1693,7 @@ const MemoRow = memo(
                   "post_hrg_review",
                   "remarks",
                   "details",
+                  "actions",
                 ];
                 if (INTERACTIVE_COLS.includes(col.key)) {
                   e.stopPropagation();
@@ -1917,6 +1922,16 @@ export function PostHrgClient({
     id: number;
     claimant: string;
   } | null>(null);
+  // Delete-confirmation modal state. Opening this stashes the target row's
+  // id + claimant; the modal requires the user to type "delete" before the
+  // destructive button enables. Independent typed-text state lives in the
+  // modal JSX so it resets each time the modal opens.
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    id: number;
+    claimant: string;
+  } | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const [completedCount, setCompletedCount] = useState<number>(
     initialCompletedCount,
   );
@@ -2463,6 +2478,30 @@ export function PostHrgClient({
       indicatorFilter,
     ],
   );
+
+  const handleConfirmDelete = useCallback(async () => {
+    if (!deleteConfirm) return;
+    if (deleteConfirmText.trim().toLowerCase() !== "delete") return;
+    const { id, claimant } = deleteConfirm;
+    setDeletingId(id);
+    try {
+      const { deletePostHrgDevRecord } = await import(
+        "@/app/(dashboard)/post-hrg-development/actions"
+      );
+      await deletePostHrgDevRecord(id);
+      setRecords((prev) => prev.filter((r) => r.id !== id));
+      setTotalFiltered((n) => Math.max(0, n - 1));
+      refreshStats();
+      setDeleteConfirm(null);
+      setDeleteConfirmText("");
+      toast(`Deleted ${claimant}`, "success");
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Delete failed";
+      toast(message);
+    } finally {
+      setDeletingId(null);
+    }
+  }, [deleteConfirm, deleteConfirmText, toast, refreshStats]);
 
   const handleRecordUpdate = useCallback((updated: PostHrgDevRow) => {
     setRecords((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
@@ -3119,6 +3158,24 @@ export function PostHrgClient({
         case "remarks":
           return (
             <RemarksCellBadge record={r} onClick={() => setRemarksModal(r)} />
+          );
+        case "actions":
+          // Trash icon — admin-only. Stops propagation so the row click
+          // (which opens the details modal) doesn't fire underneath.
+          if (!isAdmin) return null;
+          return (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setDeleteConfirm({ id: r.id, claimant: r.claimant });
+              }}
+              className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400 transition-colors"
+              title="Delete record"
+              aria-label={`Delete ${r.claimant}`}
+            >
+              <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+            </button>
           );
         default:
           return <span className="text-xs">—</span>;
@@ -4574,6 +4631,94 @@ export function PostHrgClient({
         onClose={() => setShowReportsModal(false)}
         recordType={recordType}
       />
+
+      {/* ════════════════ DELETE CONFIRMATION ════════════════ */}
+      {deleteConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => {
+            if (deletingId === null) {
+              setDeleteConfirm(null);
+              setDeleteConfirmText("");
+            }
+          }}
+        >
+          <div
+            className="w-full max-w-sm rounded-xl border bg-card shadow-2xl flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 border-b px-5 py-4">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-red-100 text-red-600 dark:bg-red-950/40 dark:text-red-400">
+                <Trash2 className="h-4 w-4" strokeWidth={2} />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold">Delete record?</h3>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  {deleteConfirm.claimant}
+                </p>
+              </div>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              <p className="text-sm text-muted-foreground">
+                This permanently removes the post-hearing record. Notes,
+                deadlines, requirements, and acknowledgement state are deleted
+                along with it. This cannot be undone.
+              </p>
+              <div className="space-y-1.5">
+                <label className="text-xs text-muted-foreground">
+                  Type{" "}
+                  <span className="font-mono font-semibold text-foreground">
+                    delete
+                  </span>{" "}
+                  to confirm:
+                </label>
+                <input
+                  type="text"
+                  autoFocus
+                  value={deleteConfirmText}
+                  onChange={(e) => setDeleteConfirmText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (
+                      e.key === "Enter" &&
+                      deleteConfirmText.trim().toLowerCase() === "delete" &&
+                      deletingId === null
+                    ) {
+                      handleConfirmDelete();
+                    }
+                  }}
+                  placeholder="delete"
+                  className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-400/40 focus:border-red-400"
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t px-5 py-3">
+              <button
+                className={cn(BTN_SECONDARY, "px-3 py-1.5 text-xs")}
+                onClick={() => {
+                  setDeleteConfirm(null);
+                  setDeleteConfirmText("");
+                }}
+                disabled={deletingId !== null}
+              >
+                Cancel
+              </button>
+              <button
+                className={cn(
+                  BTN,
+                  "px-3 py-1.5 text-xs bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-red-600",
+                )}
+                onClick={handleConfirmDelete}
+                disabled={
+                  deletingId !== null ||
+                  deleteConfirmText.trim().toLowerCase() !== "delete"
+                }
+              >
+                {deletingId !== null ? "Deleting…" : "Delete record"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ════════════════ COMPLETE CONFIRMATION ════════════════ */}
       {completedConfirm && (
