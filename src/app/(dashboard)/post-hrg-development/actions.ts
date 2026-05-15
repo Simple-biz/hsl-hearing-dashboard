@@ -915,6 +915,12 @@ export async function acknowledgePostHrgDevRecord(id: number, byName?: string) {
 // ─── Delete a record ────────────────────────────────────────────────────────
 
 export async function deletePostHrgDevRecord(id: number) {
+  // Server-side role gate — UI hides the trash icon for non-admins but a
+  // malicious caller could still invoke this action directly, so require
+  // the same allow-list as the client's `isAdmin` check in post-hrg-client.
+  const { requireRole } = await import("@/lib/session");
+  await requireRole(["system_admin", "admin", "post_hearing_admin"]);
+
   const { rows } = await db.query(
     "SELECT claimant FROM post_hrg_development WHERE id = $1",
     [id],
