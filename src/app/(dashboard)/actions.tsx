@@ -790,6 +790,7 @@ export async function updateHearing(
       await logAction(
         "post_hrg_dev_phstatus_synced",
         `Synced PH Status on ${syncRes.rowCount} Post HRG record(s) for ${claimant}: '${oldValue ?? "(empty)"}' → '${value ?? "(empty)"}'`,
+        hearingId,
       );
     }
   }
@@ -855,17 +856,20 @@ export async function updateHearing(
     await logAction(
       "rep_assigned",
       `Assigned ${newName} to: ${claimant}${oldValue ? ` (was: ${oldName})` : ""}`,
+      hearingId,
     );
   } else if (field === "assigned_rep_id" && !value) {
     const oldName = oldValue ? await resolveValue(field, oldValue) : "unknown";
     await logAction(
       "rep_unassigned",
       `Unassigned ${oldName} from: ${claimant}`,
+      hearingId,
     );
   } else if (field === "assignment_status") {
     await logAction(
       "status_assigned",
       `Set ${fieldLabel} to '${value || "cleared"}' for: ${claimant}`,
+      hearingId,
     );
   } else {
     const oldDisplay = await resolveValue(field, oldValue);
@@ -873,6 +877,7 @@ export async function updateHearing(
     await logAction(
       "field_updated",
       `${fieldLabel}: '${oldDisplay}' → '${newDisplay}' for: ${claimant}`,
+      hearingId,
     );
   }
 
@@ -921,6 +926,7 @@ export async function addDashboardPostHrgNote(
   await logAction(
     "post_hrg_note_added",
     `Added Post HRG note for: ${rows[0].claimant}`,
+    hearingId,
   );
 
   return { success: true };
@@ -1033,6 +1039,7 @@ export async function editDashboardPostHrgNote(
   await logAction(
     "post_hrg_note_edited",
     `Edited Post HRG note for: ${rows[0].claimant}`,
+    hearingId,
   );
 
   return { success: true, updatedNotes };
@@ -1084,6 +1091,7 @@ export async function deleteDashboardPostHrgNote(
   await logAction(
     "post_hrg_note_deleted",
     `Deleted Post HRG note for: ${rows[0].claimant}`,
+    hearingId,
   );
 
   return { success: true, updatedNotes };
@@ -1093,7 +1101,7 @@ export async function deleteHearing(hearingId: number) {
   const { logAction, getClaimantName } = await import("@/lib/activity-log");
   const claimant = await getClaimantName(hearingId);
   await db.query("DELETE FROM hearings WHERE id = $1", [hearingId]);
-  await logAction("hearing_deleted", `Deleted hearing: ${claimant}`);
+  await logAction("hearing_deleted", `Deleted hearing: ${claimant}`, hearingId);
 }
 
 export async function autoAssignSingle(hearingId: number) {
@@ -1109,6 +1117,7 @@ export async function autoAssignSingle(hearingId: number) {
     await logAction(
       "rep_auto_assigned",
       `Auto-assigned ${result.rep_name} to: ${claimant}`,
+      hearingId,
     );
   }
   return result;
@@ -1192,6 +1201,7 @@ export async function addHearing(form: {
   await logAction(
     "hearing_created",
     `${form.claimant} added (${form.hearing_date})`,
+    rows[0].id as number,
   );
 
   return rows[0].id as number;
@@ -2436,6 +2446,7 @@ export async function unarchiveHearing(archiveId: number) {
   await logAction(
     "hearing_unarchived",
     `Unarchived hearing: ${rows[0].claimant}`,
+    rows[0].hearing_id as number,
   );
   return { success: true };
 }

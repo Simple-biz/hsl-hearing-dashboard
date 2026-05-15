@@ -539,7 +539,7 @@ export async function reopenPostHrgDevRecord(id: number) {
         SET status = 'In Progress', updated_at = NOW()
       WHERE id = $1
         AND LOWER(status) = 'completed'
-      RETURNING claimant`,
+      RETURNING claimant, hearing_id`,
     [id],
   );
   if (rows.length === 0) {
@@ -549,6 +549,7 @@ export async function reopenPostHrgDevRecord(id: number) {
   await logAction(
     "post_hrg_dev_reopened",
     `Reopened completed post-hrg record: ${rows[0].claimant}`,
+    (rows[0].hearing_id as number | null) ?? undefined,
   );
   return { success: true };
 }
@@ -639,6 +640,7 @@ export async function createPostHrgDevRecord(data: {
   await logAction(
     "post_hrg_dev_created",
     `Created post-hrg record for: ${data.claimant.trim()}${hearingId ? ` (linked to hearing #${hearingId})` : ""}`,
+    hearingId,
   );
 
   return { success: true, id: rows[0].id, hearingId };
@@ -788,12 +790,13 @@ export async function updatePostHrgDevRecord(
     values,
   );
 
-  // Get claimant name for logging
+  // Get claimant name + hearing id for logging
   const { rows } = await db.query(
-    "SELECT claimant FROM post_hrg_development WHERE id = $1",
+    "SELECT claimant, hearing_id FROM post_hrg_development WHERE id = $1",
     [id],
   );
   const claimant = rows[0]?.claimant || `Record #${id}`;
+  const linkedHearingId = (rows[0]?.hearing_id as number | null) ?? undefined;
 
   const { logAction } = await import("@/lib/activity-log");
   await logAction(
@@ -801,6 +804,7 @@ export async function updatePostHrgDevRecord(
     `Updated post-hrg record for: ${claimant} (fields: ${Object.keys(data)
       .filter((k) => ALLOWED_FIELDS.includes(k))
       .join(", ")})`,
+    linkedHearingId,
   );
 
   return { success: true };
@@ -843,13 +847,15 @@ export async function updatePostHrgDevField(
 
   const DATE_FIELDS = ["hearing_date", "deadline", "new_due_date"];
 
-  // Get old value for logging
+  // Get old value + hearing id for logging
   const { rows: oldRows } = await db.query(
-    `SELECT ${field}, claimant FROM post_hrg_development WHERE id = $1`,
+    `SELECT ${field}, claimant, hearing_id FROM post_hrg_development WHERE id = $1`,
     [id],
   );
   const oldValue = oldRows[0]?.[field];
   const claimant = oldRows[0]?.claimant || `Record #${id}`;
+  const linkedHearingId =
+    (oldRows[0]?.hearing_id as number | null) ?? undefined;
 
   if (DATE_FIELDS.includes(field)) {
     await db.query(
@@ -885,6 +891,7 @@ export async function updatePostHrgDevField(
   await logAction(
     "post_hrg_dev_field_updated",
     `${label}: '${oldValue ?? "(empty)"}' → '${value ?? "(empty)"}' for: ${claimant}`,
+    linkedHearingId,
   );
 }
 
@@ -922,10 +929,11 @@ export async function deletePostHrgDevRecord(id: number) {
   await requireRole(["system_admin", "admin", "post_hearing_admin"]);
 
   const { rows } = await db.query(
-    "SELECT claimant FROM post_hrg_development WHERE id = $1",
+    "SELECT claimant, hearing_id FROM post_hrg_development WHERE id = $1",
     [id],
   );
   const claimant = rows[0]?.claimant || `Record #${id}`;
+  const linkedHearingId = (rows[0]?.hearing_id as number | null) ?? undefined;
 
   await db.query("DELETE FROM post_hrg_development WHERE id = $1", [id]);
 
@@ -933,6 +941,7 @@ export async function deletePostHrgDevRecord(id: number) {
   await logAction(
     "post_hrg_dev_deleted",
     `Deleted post-hrg record: ${claimant}`,
+    linkedHearingId,
   );
 
   return { success: true };
@@ -1288,6 +1297,7 @@ export async function createPostHrgDevFromHearing(hearingId: number) {
   await logAction(
     "post_hrg_dev_auto_created",
     `Auto-created post-hrg record for: ${h.claimant} (from hearing #${hearingId})`,
+    hearingId,
   );
 
   return { success: true, id: insertRows[0].id, alreadyExists: false };
@@ -1425,6 +1435,7 @@ export async function cascadePhdField(
     await logAction(
       "post_hrg_dev_cascade",
       `Cascaded ${label} to ${targets.join(", ")} on hearing #${hearingId}: '${value ?? "(cleared)"}' (${updated} row${updated === 1 ? "" : "s"})`,
+      hearingId,
     );
   }
 
@@ -1516,6 +1527,7 @@ export async function addPostHrgDevNote(
   await logAction(
     "post_hrg_dev_note_added",
     `Added ${field} note for: ${rows[0].claimant}`,
+    (rows[0].hearing_id as number | null) ?? undefined,
   );
 
   return { success: true, updatedNotes };
@@ -1528,7 +1540,7 @@ export async function deletePostHrgDevNote(
 ) {
   const col = notesColumn(field);
   const { rows } = await db.query(
-    `SELECT ${col}, claimant FROM post_hrg_development WHERE id = $1`,
+    `SELECT ${col}, claimant, hearing_id FROM post_hrg_development WHERE id = $1`,
     [recordId],
   );
   if (!rows[0])
@@ -1568,6 +1580,7 @@ export async function deletePostHrgDevNote(
   await logAction(
     "post_hrg_dev_note_deleted",
     `Deleted ${field} note for: ${rows[0].claimant}`,
+    (rows[0].hearing_id as number | null) ?? undefined,
   );
 
   return { success: true, updatedNotes };
