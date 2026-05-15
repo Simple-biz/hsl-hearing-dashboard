@@ -855,12 +855,14 @@ export async function updateHearing(
     await logAction(
       "rep_assigned",
       `Assigned ${newName} to: ${claimant}${oldValue ? ` (was: ${oldName})` : ""}`,
+      hearingId,
     );
   } else if (field === "assigned_rep_id" && !value) {
     const oldName = oldValue ? await resolveValue(field, oldValue) : "unknown";
     await logAction(
       "rep_unassigned",
       `Unassigned ${oldName} from: ${claimant}`,
+      hearingId,
     );
   } else if (field === "assignment_status") {
     await logAction(
@@ -1109,6 +1111,7 @@ export async function autoAssignSingle(hearingId: number) {
     await logAction(
       "rep_auto_assigned",
       `Auto-assigned ${result.rep_name} to: ${claimant}`,
+      hearingId,
     );
   }
   return result;

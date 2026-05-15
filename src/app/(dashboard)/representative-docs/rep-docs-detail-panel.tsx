@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   X,
@@ -11,10 +11,12 @@ import {
   CheckSquare,
   Clock,
   MessageSquare,
+  History,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { RepDocsRow, RepDocsAssigneeOption } from "./actions";
+import { RepHistoryModal } from "@/components/modals/rep-history-modal";
 
 // ── Reuse the same date formatter ──
 function formatDate(iso: string | null) {
@@ -113,6 +115,7 @@ export function RepDocsDetailPanel({
   onOpenNotes,
 }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
+  const [showRepHistory, setShowRepHistory] = useState(false);
 
   // Close on Escape
   useEffect(() => {
@@ -263,25 +266,36 @@ export function RepDocsDetailPanel({
             {/* People */}
             <Section title="People" icon={<User className="h-3.5 w-3.5" />}>
               <InfoRow label="Representative">
-                {row.representative_name ? (
-                  <span
-                    className={cn(
-                      "inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-semibold",
-                      row.rep_type === "in-house" ||
-                        row.rep_type === "internal_advocates"
-                        ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
-                        : "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
-                    )}
+                <div className="flex flex-col items-end gap-1">
+                  {row.representative_name ? (
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-semibold",
+                        row.rep_type === "in-house" ||
+                          row.rep_type === "internal_advocates"
+                          ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300"
+                          : "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+                      )}
+                    >
+                      {row.rep_type === "in-house" ||
+                      row.rep_type === "internal_advocates"
+                        ? "🏠"
+                        : "📋"}{" "}
+                      {row.representative_name}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground text-xs">—</span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowRepHistory(true)}
+                    className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                    title="View representative assignment history for this hearing"
                   >
-                    {row.rep_type === "in-house" ||
-                    row.rep_type === "internal_advocates"
-                      ? "🏠"
-                      : "📋"}{" "}
-                    {row.representative_name}
-                  </span>
-                ) : (
-                  <span className="text-muted-foreground text-xs">—</span>
-                )}
+                    <History className="h-3 w-3" />
+                    Rep History
+                  </button>
+                </div>
               </InfoRow>
               <InfoRow label="Assigned To">
                 {row.assigned_to ? (
@@ -533,6 +547,14 @@ export function RepDocsDetailPanel({
           </Button>
         </div>
       </div>
+
+      {showRepHistory && (
+        <RepHistoryModal
+          hearingId={row.hearing_id}
+          claimant={row.claimant ?? ""}
+          onClose={() => setShowRepHistory(false)}
+        />
+      )}
     </>,
     document.body,
   );

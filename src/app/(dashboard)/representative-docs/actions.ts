@@ -598,6 +598,61 @@ export async function clearRepDocsForRescheduledHearing(hearingId: number) {
   );
 }
 
+// ─── Per-hearing rep assignment history ────────────────────────────────────
+// Pulls activity_log rows for rep_assigned / rep_unassigned / rep_auto_assigned
+// matching this hearing's claimant. The activity_log doesn't carry hearing_id
+// today, so claimant substring is the join key — same convention the existing
+// rep-docs-changes-modal uses. This works for the common case but can show
+// extra entries if two hearings share a claimant name; users can disambiguate
+// via the timestamps and old-value text in the description.
+
+export interface RepHistoryEntry {
+  id: number;
+  action: string;
+  description: string;
+  userName: string | null;
+  createdAt: string;
+}
+
+export async function fetchRepHistoryForHearing(
+  hearingId: number,
+): Promise<RepHistoryEntry[]> {
+  await requireAuth();
+  const { rows: hRows } = await db.query(
+    "SELECT claimant FROM hearings WHERE id = $1",
+    [hearingId],
+  );
+  const claimant = (hRows[0]?.claimant as string | null) ?? "";
+
+  // Hybrid match: prefer the accurate hearing_id key (populated for entries
+  // logged after migration 20260516_add_hearing_id_to_activity_log.sql), and
+  // fall back to claimant-substring for legacy NULL rows so historical
+  // coverage doesn't regress. As old entries age out, the substring branch
+  // becomes redundant.
+  const { rows } = await db.query(
+    `SELECT a.id, a.action, a.description,
+            u.full_name AS user_name,
+            a.created_at::text AS created_at
+       FROM activity_log a
+       LEFT JOIN users u ON u.id = a.user_id
+      WHERE a.action IN ('rep_assigned', 'rep_unassigned', 'rep_auto_assigned')
+        AND (
+          a.hearing_id = $1
+          OR (a.hearing_id IS NULL AND $2 <> '' AND a.description ILIKE '%' || $2 || '%')
+        )
+      ORDER BY a.created_at DESC
+      LIMIT 100`,
+    [hearingId, claimant],
+  );
+  return rows.map((r) => ({
+    id: r.id as number,
+    action: r.action as string,
+    description: r.description as string,
+    userName: (r.user_name as string | null) ?? null,
+    createdAt: r.created_at as string,
+  }));
+}
+
 // ─── Fetch recent rep-docs changes for the notification center ─────────────
 
 export interface RepDocsChange {
