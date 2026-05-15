@@ -2663,6 +2663,11 @@ const POST_HRG_CONFIG_TYPES = [
     label: "Type of Docs Needed",
     hasColor: true,
   },
+  {
+    key: "post_hrg_responsible",
+    label: "Responsible",
+    hasColor: true,
+  },
 ];
 
 function PostHrgSettingsTab({

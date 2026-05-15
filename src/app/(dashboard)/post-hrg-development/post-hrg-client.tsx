@@ -1658,8 +1658,7 @@ const MemoRow = memo(
     return (
       <tr
         className={cn(
-          "group border-b border-border/40 last:border-0 cursor-pointer transition-colors duration-150",
-          !tintBg && "hover:bg-muted/50",
+          "group border-b border-border/40 last:border-0 cursor-pointer",
           overdue && "bg-red-50/50! dark:bg-red-950/10!",
           // Completed rows surface during search but are view-only — dim
           // them so the team can see at a glance that they're historical.
@@ -1696,7 +1695,7 @@ const MemoRow = memo(
                 }
               }}
               className={cn(
-                "px-2 py-1.5",
+                "px-2 py-1.5 transition-shadow duration-150",
                 // Frozen cells always paint the opaque row surface
                 col.frozen && cn("sticky z-10 overflow-hidden", rb),
                 // Non-frozen cells need rb only when there's no tint —
@@ -1704,6 +1703,16 @@ const MemoRow = memo(
                 !col.frozen && !tintBg && rb,
                 isLF &&
                   "border-r-2 border-r-blue-400/40 dark:border-r-blue-500/40",
+                // Hover highlight: a large-spread inset box-shadow paints a
+                // translucent blue overlay on top of the cell's existing
+                // background-color / background-image. This wins over the
+                // per-cell tint/tinge that an alpha hover:bg-* would lose to.
+                // Indicator cell on unacknowledged rows uses inline boxShadow
+                // for its blue stripe — inline beats class, so that one cell
+                // won't show this hover overlay. Acceptable seam since the
+                // rest of the row clearly reacts.
+                "group-hover:shadow-[inset_0_0_0_9999px_rgb(59_130_246/0.10)]",
+                "dark:group-hover:shadow-[inset_0_0_0_9999px_rgb(96_165_250/0.18)]",
               )}
               style={{
                 width: col.w,
@@ -1817,6 +1826,13 @@ export function PostHrgClient({
     from: "",
     to: "",
   });
+  // Which column the date filter targets. "hearing_date" preserves the
+  // existing meaning of presets like "This Week" = hearings in that week.
+  // Flip to "created_at" to filter by when each PHD row was added.
+  const [dateField, setDateField] = useState<"hearing_date" | "created_at">(
+    "hearing_date",
+  );
+  const dateFieldRef = useRef<"hearing_date" | "created_at">("hearing_date");
   // Tab state — which record_type bucket is active (MR / POST_HRG / REP / all).
   // Read by fetchPage via ref so we don't have to thread it through every caller.
   const [recordType, setRecordType] = useState<PostHrgRecordType | "all">(
@@ -2047,6 +2063,7 @@ export function PostHrgClient({
           recordType: recordTypeRef.current,
           hearingDateFrom: dateRangeRef.current.from || undefined,
           hearingDateTo: dateRangeRef.current.to || undefined,
+          dateField: dateFieldRef.current,
           unacknowledgedOnly: showNewOnlyRef.current || undefined,
           overdueOnly: showOverdueOnlyRef.current || undefined, // ← add this
           sortKey: sk,
@@ -2119,6 +2136,11 @@ export function PostHrgClient({
       today.setHours(0, 0, 0, 0);
       const iso = (d: Date) => d.toISOString().slice(0, 10);
 
+      if (preset === "yesterday") {
+        const y = new Date(today);
+        y.setDate(y.getDate() - 1);
+        return { from: iso(y), to: iso(y) };
+      }
       if (preset === "today") return { from: iso(today), to: iso(today) };
       if (preset === "tomorrow") {
         const t = new Date(today);
@@ -2215,6 +2237,19 @@ export function PostHrgClient({
     dateRangeRef.current = { from: "", to: "" };
     refetchWithCurrentFilters();
   }, [refetchWithCurrentFilters]);
+
+  const handleDateFieldChange = useCallback(
+    (next: "hearing_date" | "created_at") => {
+      dateFieldRef.current = next;
+      setDateField(next);
+      // Only refetch if there's an active date range — otherwise the toggle
+      // has no current effect on the result set.
+      if (dateRangeRef.current.from || dateRangeRef.current.to) {
+        refetchWithCurrentFilters();
+      }
+    },
+    [refetchWithCurrentFilters],
+  );
 
   // Toggle the "Show NEW only" filter — restricts results to unacknowledged
   // rows. State + ref kept in sync so the next fetchPage call picks it up.
@@ -3403,11 +3438,26 @@ export function PostHrgClient({
                     </select>
 
                     <select
+                      className={cn(SELECT_CLS, "w-32 sm:w-36 shrink-0")}
+                      value={dateField}
+                      onChange={(e) =>
+                        handleDateFieldChange(
+                          e.target.value as "hearing_date" | "created_at",
+                        )
+                      }
+                      title="Which column the date range filters on"
+                    >
+                      <option value="hearing_date">Hearing Date</option>
+                      <option value="created_at">Date Added</option>
+                    </select>
+
+                    <select
                       className={cn(SELECT_CLS, "flex-1 sm:w-40")}
                       value={datePreset}
                       onChange={(e) => handleDatePresetChange(e.target.value)}
                     >
                       <option value="">All Dates</option>
+                      <option value="yesterday">Yesterday</option>
                       <option value="today">Today</option>
                       <option value="tomorrow">Tomorrow</option>
                       <option value="this-week">This Week</option>
