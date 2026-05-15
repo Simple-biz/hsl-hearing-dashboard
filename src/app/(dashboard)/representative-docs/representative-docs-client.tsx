@@ -1681,6 +1681,13 @@ const RepDocsRowView = memo(
           "border-b border-border/40 last:border-0 cursor-pointer",
           evenBg,
           isWithdrawn && "text-red-900 dark:text-red-300",
+          // Hover overlay (matches PHD / dashboard). Applied to every
+          // direct <td> child via arbitrary-variant so we don't have to
+          // touch each cell individually. Inset box-shadow paints a
+          // translucent blue layer on top of the cell's existing bg.
+          "[&>td]:transition-shadow [&>td]:duration-150",
+          "hover:[&>td]:shadow-[inset_0_0_0_9999px_rgb(59_130_246/0.10)]",
+          "dark:hover:[&>td]:shadow-[inset_0_0_0_9999px_rgb(96_165_250/0.18)]",
         )}
         onClick={(e) => {
           const tag = (e.target as HTMLElement).tagName;

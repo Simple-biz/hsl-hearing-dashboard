@@ -1903,10 +1903,15 @@ const MemoRow = memo(
             <td
               key={col.key}
               className={cn(
-                "px-2 py-1.5",
+                "px-2 py-1.5 transition-shadow duration-150",
                 col.frozen && cn("sticky z-10 overflow-hidden", rb),
                 isLF &&
                   "border-r-2 border-r-blue-400/40 dark:border-r-blue-500/40",
+                // Hover overlay (matches PHD page). Inset box-shadow paints
+                // a translucent blue layer over the cell's existing bg,
+                // visible on tinted/untinted/frozen cells alike.
+                "group-hover:shadow-[inset_0_0_0_9999px_rgb(59_130_246/0.10)]",
+                "dark:group-hover:shadow-[inset_0_0_0_9999px_rgb(96_165_250/0.18)]",
               )}
               style={{
                 width: col.w,
