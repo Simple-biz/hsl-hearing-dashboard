@@ -116,9 +116,27 @@ export async function POST(req: NextRequest) {
 FROM hearings`,
   );
 
+  // Archived hearings live in a separate `archived_hearings` table. Pull
+  // their key columns too — otherwise a CSV row matching an archived hearing
+  // falls through every active-table tier and gets mislabeled "new" (then
+  // re-imported). Only the matching-key columns are needed; archived matches
+  // skip the field-diff below.
+  const { rows: archivedRows } = await db.query(
+    `SELECT hearing_id AS id, claimant, ssn_last_4, hearing_date::text,
+            hearing_time::text AS hearing_time,
+            converted_time_est::text AS converted_time_est
+       FROM archived_hearings`,
+  );
+  const archivedIds = new Set<number>(
+    (archivedRows as { id: number }[]).map((r) => r.id),
+  );
+  // Combined set used to build the match lookups (tier maps, byNameAndSsn,
+  // bySsn). Active rows first so they win first-write-wins keys over archived.
+  const allExisting = [...existing, ...archivedRows];
+
   // Full record lookup by id (for diff comparison on duplicates)
   const byId = new Map<number, Record<string, unknown>>();
-  for (const row of existing) byId.set(row.id as number, row);
+  for (const row of allExisting) byId.set(row.id as number, row);
 
   // ── Lookups for FK fields (representative, mr_team_id) ──
   // We resolve the sheet's display name → DB id so we can compare against the
@@ -170,13 +188,26 @@ FROM hearings`,
     }
   }
 
+  // Suffix-stripping helper — declared up here so the tier-map builder can
+  // index DB names both with and without their "(Rescheduled)" / "(SSN)"
+  // tags. The DB stores e.g. "Crystal Coker (Rescheduled)" but a Chronicle
+  // CSV carries the plain "Crystal Coker"; exact-match tiers would never
+  // bridge that gap, so we index a base-name key alongside the exact one.
+  const RESCHED_RE = /\s*\(Rescheduled(?:\s+\d+)?\)\s*$/i;
+  const SSN_SUFFIX_RE = /\s*\(\d{4}\)\s*$/;
+  const baseNameOf = (s: string): string =>
+    String(s || "")
+      .replace(RESCHED_RE, "")
+      .replace(SSN_SUFFIX_RE, "")
+      .trim();
+
   // Build 3 lookup maps for three-tier matching
   const tier1 = new Map<string, number>(); // claimant|ssn|date → id
   const tier2 = new Map<string, number>(); // claimant|ssn → id
   const tier3 = new Map<string, number>(); // claimant|date → id
   const tier4 = new Map<string, number>(); // ssn|date → id (handles name typos)
 
-  for (const row of existing) {
+  for (const row of allExisting) {
     const c = (row.claimant || "").trim();
     const s = (row.ssn_last_4 || "").padStart(4, "0");
     const d = row.hearing_date || "";
@@ -188,23 +219,19 @@ FROM hearings`,
     // Tier 4: SSN + date only (handles name typos) — only when fuzzy matching enabled
     if (fuzzy_name_match && s && d && !tier4.has(`${s}|${d}`))
       tier4.set(`${s}|${d}`, id);
+
+    // Also index by the base name (suffix stripped) so a plain CSV name
+    // matches a DB record carrying "(Rescheduled)" / "(SSN)" directly —
+    // without depending on tier-4 fuzzy + trigram. Exact-name keys above
+    // still take precedence (don't overwrite them).
+    const cb = baseNameOf(c);
+    if (cb && cb !== c) {
+      if (cb && s && d && !tier1.has(`${cb}|${s}|${d}`))
+        tier1.set(`${cb}|${s}|${d}`, id);
+      if (cb && s && !tier2.has(`${cb}|${s}`)) tier2.set(`${cb}|${s}`, id);
+      if (cb && d && !tier3.has(`${cb}|${d}`)) tier3.set(`${cb}|${d}`, id);
+    }
   }
-
-  // Also build a lookup by claimant name + SSN (for rescheduled base-name matching)
-  // Index both the exact name AND the base name (stripped of Rescheduled/SSN tags)
-  const RESCHED_RE = /\s*\(Rescheduled(?:\s+\d+)?\)\s*$/i;
-  const SSN_SUFFIX_RE = /\s*\(\d{4}\)\s*$/;
-
-  // Strip reschedule / SSN-tag suffixes so a plain CSV name ("Crystal Coker")
-  // compares cleanly against a DB name that carries a suffix
-  // ("Crystal Coker (Rescheduled)"). Used by the trigram guards below —
-  // without it the suffix inflates the DB name's trigram set and drags the
-  // similarity score below the 0.5 threshold, falsely rejecting real matches.
-  const baseNameOf = (s: string): string =>
-    String(s || "")
-      .replace(RESCHED_RE, "")
-      .replace(SSN_SUFFIX_RE, "")
-      .trim();
 
   const byNameAndSsn = new Map<
     string,
@@ -215,7 +242,7 @@ FROM hearings`,
     string,
     { id: number; claimant: string; hearing_date: string; hearing_time: string }
   >();
-  for (const row of existing) {
+  for (const row of allExisting) {
     const c = (row.claimant || "").trim();
     const s = (row.ssn_last_4 || "").padStart(4, "0");
     if (c && s) {
@@ -458,15 +485,32 @@ FROM hearings`,
     // ── Normal three-tier duplicate matching ──
     let existingId: number | null = null;
 
+    // Try the CSV claimant as-is, then its base name (suffix stripped) so a
+    // suffixed CSV name also matches a plain DB record. The DB side already
+    // indexes base-name keys, so a plain CSV name matches a suffixed DB
+    // record via the first lookup — this covers the reverse direction.
+    const csvBase = baseNameOf(claimant);
+    const csvHasSuffix = csvBase !== "" && csvBase !== claimant;
+
     if (ssnFormatted && hearingDate) {
       existingId =
-        tier1.get(`${claimant}|${ssnFormatted}|${hearingDate}`) ?? null;
+        tier1.get(`${claimant}|${ssnFormatted}|${hearingDate}`) ??
+        (csvHasSuffix
+          ? tier1.get(`${csvBase}|${ssnFormatted}|${hearingDate}`)
+          : undefined) ??
+        null;
     }
     if (!existingId && ssnFormatted) {
-      existingId = tier2.get(`${claimant}|${ssnFormatted}`) ?? null;
+      existingId =
+        tier2.get(`${claimant}|${ssnFormatted}`) ??
+        (csvHasSuffix ? tier2.get(`${csvBase}|${ssnFormatted}`) : undefined) ??
+        null;
     }
     if (!existingId && hearingDate) {
-      existingId = tier3.get(`${claimant}|${hearingDate}`) ?? null;
+      existingId =
+        tier3.get(`${claimant}|${hearingDate}`) ??
+        (csvHasSuffix ? tier3.get(`${csvBase}|${hearingDate}`) : undefined) ??
+        null;
     }
     // Tier 4: SSN + date only — catches name typos (only when fuzzy matching enabled).
     // SSN-last-4 has only 4 digits of entropy so SSN+date collisions across
@@ -511,6 +555,32 @@ FROM hearings`,
           }
         }
       }
+    }
+
+    // ── Archived-hearing match ──
+    // If the matched record is an archived hearing, surface it as a
+    // duplicate (so it's not re-imported as "new") and skip the field-diff —
+    // archived rows carry only key columns. `matched_archived` lets the UI
+    // flag it distinctly if desired.
+    if (existingId !== null && archivedIds.has(existingId)) {
+      duplicateRecords.push({
+        row: rowOffset + rowIndex + 2,
+        rowIndex: rowOffset + rowIndex,
+        claimant,
+        hearing_date: hearingDate,
+        ssn: ssnFormatted,
+        claim_type: claimType,
+        claimantLocation,
+        repLocation,
+        downloadType,
+        statusDate,
+        existing_id: existingId,
+        changed_fields: [],
+        field_diffs: {},
+        has_changes: false,
+        matched_archived: true,
+      });
+      continue;
     }
 
     // ── Same-date time change → reschedule (not duplicate) ──
@@ -944,6 +1014,10 @@ FROM hearings`,
     new_count: newRecords.length,
     duplicate_count: duplicateRecords.length,
     duplicates_with_changes: duplicateRecords.filter((r) => r.has_changes)
+      .length,
+    // Subset of duplicate_records that matched an archived hearing rather
+    // than an active one — surfaced so the UI can call them out if needed.
+    archived_matched_count: duplicateRecords.filter((r) => r.matched_archived)
       .length,
     skipped_count: skippedRecords.length,
     rescheduled_count: rescheduledRecords.length,
