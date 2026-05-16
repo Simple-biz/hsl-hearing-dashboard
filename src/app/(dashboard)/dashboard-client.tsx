@@ -3841,17 +3841,39 @@ export function DashboardClient({
               className="w-full max-w-lg max-h-[85vh] flex flex-col rounded-xl border bg-card shadow-2xl"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="flex items-center justify-between border-b bg-muted/50 px-5 py-4 shrink-0">
-                <h2 className="text-sm font-semibold">
+              <div className="flex items-center justify-between gap-3 border-b bg-muted/50 px-5 py-4 shrink-0">
+                <h2 className="text-sm font-semibold shrink-0">
                   {hasManageAccess ? "✏️ Edit Hearing" : "👁️ View Hearing"} #
                   {editHearing.id}
                 </h2>
-                <button
-                  onClick={() => setEditHearing(null)}
-                  className="text-muted-foreground hover:text-foreground"
-                >
-                  <XIcon className="h-5 w-5" />
-                </button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs gap-1.5"
+                    onClick={() => setShowRepHistory(true)}
+                    title="View representative assignment history for this hearing"
+                  >
+                    <History className="h-3.5 w-3.5" />
+                    Rep History
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs gap-1.5"
+                    onClick={() => setShowAuditTrail(true)}
+                    title="View the full activity history for this hearing"
+                  >
+                    <History className="h-3.5 w-3.5" />
+                    Audit Log
+                  </Button>
+                  <button
+                    onClick={() => setEditHearing(null)}
+                    className="text-muted-foreground hover:text-foreground"
+                  >
+                    <XIcon className="h-5 w-5" />
+                  </button>
+                </div>
               </div>
               <form
                 ref={editFormRef}
@@ -4215,27 +4237,7 @@ export function DashboardClient({
                 </div>
               </form>
               <div className="flex items-center justify-between border-t bg-muted/50 px-5 py-3 shrink-0">
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-8 text-xs gap-1.5"
-                    onClick={() => setShowRepHistory(true)}
-                    title="View representative assignment history for this hearing"
-                  >
-                    <History className="h-3.5 w-3.5" />
-                    Rep History
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-8 text-xs gap-1.5"
-                    onClick={() => setShowAuditTrail(true)}
-                    title="View the full activity history for this hearing"
-                  >
-                    <History className="h-3.5 w-3.5" />
-                    Audit Log
-                  </Button>
+                <div>
                   {hasManageAccess && (
                     <Button
                       variant="destructive"
