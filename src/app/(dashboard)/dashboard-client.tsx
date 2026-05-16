@@ -8,6 +8,7 @@ import {
   useTransition,
   useRef,
   useEffect,
+  useLayoutEffect,
 } from "react";
 import { resolveFieldAccess } from "@/lib/field-access";
 import { createPortal } from "react-dom";
@@ -646,31 +647,308 @@ const WITHDRAWAL_TYPES = [
   "Withdrawal - Misc",
 ];
 
+// ── Inline rep-assignment cell ────────────────────────────────────────────
+// Replaces the static RepBadge in the Representative column with self-service
+// controls: assign / change / unassign / withdraw without opening the ⋯ menu.
+//   • Unassigned  → "+ Assign" button → popover (Auto-Assign / rep picker /
+//                   Withdrawal)
+//   • Assigned    → rep badge + caret → menu (Change Rep / Unassign /
+//                   Withdrawal)
+//   • Withdrawn   → status badge + caret → menu (Assign a Rep / Clear Status)
+// View-only roles (no canManage) fall back to a plain badge.
+function RepCell({
+  hearing,
+  representatives,
+  userRole,
+  onUpdate,
+  onAutoAssign,
+}: {
+  hearing: HearingRow;
+  representatives: RepRow[];
+  userRole: UserRole;
+  onUpdate: (id: number, field: string, value: UpdateValue) => void;
+  onAutoAssign: (id: number) => void;
+}) {
+  const canEdit = canManage(userRole);
+  const isAssigned = !!hearing.assigned_rep_id;
+  const hasStatus = !!hearing.assignment_status && !isAssigned;
+
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const [view, setView] = useState<
+    null | "assign" | "menu" | "withdrawal" | "changeRep"
+  >(null);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+
+  // Anchor the popover directly below the trigger button. We don't guess the
+  // popover height here — a useLayoutEffect below measures the rendered
+  // popover and nudges it up only if it actually overflows the viewport.
+  // (The old approach guessed a fixed height and flipped up by that guess,
+  // which slammed short menus to the top of the screen.)
+  const goTo = (next: NonNullable<typeof view>) => {
+    if (btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      const left = Math.min(Math.max(8, r.left), window.innerWidth - 296);
+      setPos({ top: r.bottom + 4, left });
+    }
+    setView(next);
+  };
+  const close = () => setView(null);
+
+  // After the popover renders (or switches sub-views), measure it; if its
+  // bottom would spill past the viewport, pull it up just enough to fit.
+  useLayoutEffect(() => {
+    if (!view || !popoverRef.current) return;
+    const rect = popoverRef.current.getBoundingClientRect();
+    if (rect.bottom > window.innerHeight - 8) {
+      setPos((p) => ({
+        ...p,
+        top: Math.max(8, window.innerHeight - 8 - rect.height),
+      }));
+    }
+  }, [view]);
+
+  const assignRep = (repId: number) => {
+    onUpdate(hearing.id, "assigned_rep_id", repId);
+    onUpdate(hearing.id, "assignment_status", null);
+    close();
+  };
+  const unassign = () => {
+    onUpdate(hearing.id, "assigned_rep_id", null);
+    close();
+  };
+  const clearStatus = () => {
+    onUpdate(hearing.id, "assignment_status", null);
+    onUpdate(hearing.id, "assigned_rep_id", null);
+    close();
+  };
+  const doWithdrawal = (type: string) => {
+    onUpdate(hearing.id, "assignment_status", "withdrawal");
+    onUpdate(hearing.id, "hearing_decision_status", type);
+    close();
+  };
+  const wdNeverAssigned = () => {
+    onUpdate(hearing.id, "assignment_status", "wd_never_assigned");
+    close();
+  };
+
+  if (!canEdit) return <RepBadge hearing={hearing} />;
+
+  const internalReps = representatives.filter(
+    (r) => r.is_active && r.rep_type === "internal_advocates",
+  );
+  const externalReps = representatives.filter(
+    (r) => r.is_active && r.rep_type === "external_advocates",
+  );
+
+  const repSelect = (
+    <select
+      className="h-9 w-full rounded border bg-card px-2 text-sm"
+      autoFocus
+      defaultValue=""
+      onChange={(e) => {
+        if (e.target.value) assignRep(Number(e.target.value));
+      }}
+    >
+      <option value="">Select representative…</option>
+      <optgroup label="Internal">
+        {internalReps.map((r) => (
+          <option key={r.id} value={r.id}>
+            {r.name}
+          </option>
+        ))}
+      </optgroup>
+      <optgroup label="External">
+        {externalReps.map((r) => (
+          <option key={r.id} value={r.id}>
+            {r.name}
+          </option>
+        ))}
+      </optgroup>
+    </select>
+  );
+
+  const subtitle = `${hearing.claimant} — ${fmtDate(hearing.hearing_date, {
+    month: "short",
+    day: "numeric",
+  })}`;
+
+  const menuItem =
+    "flex w-full items-center gap-2 px-3 py-1.5 text-xs text-left hover:bg-muted/50 transition-colors";
+
+  return (
+    <>
+      {/* Trigger */}
+      {isAssigned || hasStatus ? (
+        <div className="flex items-center gap-1">
+          <RepBadge hearing={hearing} />
+          <button
+            ref={btnRef}
+            onClick={() => goTo("menu")}
+            className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+            title="Assignment options"
+          >
+            <ChevronDown className="h-3 w-3" />
+          </button>
+        </div>
+      ) : (
+        <button
+          ref={btnRef}
+          onClick={() => goTo("assign")}
+          className="inline-flex items-center gap-1 rounded-md border border-dashed px-2 py-0.5 text-[10px] font-semibold text-muted-foreground hover:border-primary hover:text-primary transition-colors"
+        >
+          + Assign
+        </button>
+      )}
+
+      {/* Popover */}
+      {view &&
+        createPortal(
+          <>
+            <div className="fixed inset-0 z-100" onClick={close} />
+            <div
+              ref={popoverRef}
+              className="fixed z-101 max-h-[calc(100vh-16px)] overflow-y-auto rounded-lg border bg-card shadow-xl"
+              style={{ top: pos.top, left: pos.left }}
+            >
+              {/* Assigned / Withdrawn menu */}
+              {view === "menu" && (
+                <div className="w-44 py-1">
+                  {isAssigned && (
+                    <>
+                      <button
+                        className={menuItem}
+                        onClick={() => goTo("changeRep")}
+                      >
+                        🔄 Change Rep
+                      </button>
+                      <button className={menuItem} onClick={unassign}>
+                        ✖ Unassign
+                      </button>
+                      <button
+                        className={menuItem}
+                        onClick={() => goTo("withdrawal")}
+                      >
+                        🚫 Withdrawal
+                      </button>
+                    </>
+                  )}
+                  {hasStatus && (
+                    <>
+                      <button
+                        className={menuItem}
+                        onClick={() => goTo("changeRep")}
+                      >
+                        📋 Assign a Rep
+                      </button>
+                      <button className={menuItem} onClick={clearStatus}>
+                        ✖ Clear Status
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* Assign popover (unassigned) */}
+              {view === "assign" && (
+                <div className="w-60 p-2">
+                  <button
+                    className={cn(menuItem, "rounded-md")}
+                    onClick={() => {
+                      onAutoAssign(hearing.id);
+                      close();
+                    }}
+                  >
+                    ⚡ Auto-Assign
+                  </button>
+                  <div className="my-1.5 border-t" />
+                  <p className="px-1 pb-1 text-[10px] font-medium text-muted-foreground">
+                    Assign representative
+                  </p>
+                  {repSelect}
+                  <div className="my-1.5 border-t" />
+                  <button
+                    className={cn(menuItem, "rounded-md")}
+                    onClick={() => goTo("withdrawal")}
+                  >
+                    🚫 Withdrawal
+                  </button>
+                </div>
+              )}
+
+              {/* Change / Assign rep */}
+              {view === "changeRep" && (
+                <div className="w-72 p-4">
+                  <p className="mb-0.5 text-xs font-semibold">
+                    📋 {isAssigned ? "Change Representative" : "Assign Representative"}
+                  </p>
+                  <p className="mb-2 text-[10px] text-muted-foreground">
+                    {subtitle}
+                  </p>
+                  {repSelect}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-2 h-7 w-full text-xs"
+                    onClick={close}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              )}
+
+              {/* Withdrawal type picker */}
+              {view === "withdrawal" && (
+                <div className="w-72 p-1">
+                  <div className="px-3 py-2 border-b">
+                    <p className="text-xs font-semibold">🚫 Withdrawal Type</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      {subtitle}
+                    </p>
+                  </div>
+                  {WITHDRAWAL_TYPES.map((wt) => (
+                    <button
+                      key={wt}
+                      onClick={() => doWithdrawal(wt)}
+                      className="flex w-full items-center px-3 py-1.5 text-xs text-left hover:bg-muted/50 rounded transition-colors"
+                    >
+                      {wt}
+                    </button>
+                  ))}
+                  <div className="border-t mt-1 pt-1">
+                    <button
+                      onClick={wdNeverAssigned}
+                      className="flex w-full items-center px-3 py-1.5 text-xs text-left hover:bg-muted/50 rounded font-medium text-amber-700"
+                    >
+                      WD - Never Assigned
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </>,
+          document.body,
+        )}
+    </>
+  );
+}
+
 // ── Actions menu (context-sensitive like old dashboard) ──
 function ActionMenu({
   hearing,
   userRole,
-  onUpdate,
   onDelete,
-  representatives,
   onEdit,
-  onAutoAssign,
 }: {
   hearing: HearingRow;
   userRole: UserRole;
-  onUpdate: (id: number, field: string, value: UpdateValue) => void;
   onDelete: (id: number) => void;
-  representatives: RepRow[];
   onEdit: (h: HearingRow) => void;
-  onAutoAssign: (id: number) => void;
 }) {
+  // Record-level actions only — Edit/View, Activity Log, Delete. Rep
+  // assignment (assign / change / unassign / withdraw) moved inline to the
+  // Representative column via <RepCell>.
   const isActionAdmin = canManage(userRole);
-  const isUnassigned = !hearing.assigned_rep_id && !hearing.assignment_status;
-  const isAssigned = !!hearing.assigned_rep_id;
-  const hasStatus = !!hearing.assignment_status;
-  const [showAssign, setShowAssign] = useState(false);
-  const [showWithdrawal, setShowWithdrawal] = useState(false);
-
   const [menuOpen, setMenuOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const [pos, setPos] = useState({ top: 0, left: 0 });
@@ -678,7 +956,7 @@ function ActionMenu({
   const openMenu = () => {
     if (btnRef.current) {
       const r = btnRef.current.getBoundingClientRect();
-      const menuH = 250; // estimated max menu height
+      const menuH = 160; // estimated max menu height
       const spaceBelow = window.innerHeight - r.bottom;
       const top =
         spaceBelow < menuH ? Math.max(8, r.top - menuH) : r.bottom + 4;
@@ -687,27 +965,9 @@ function ActionMenu({
     setMenuOpen(true);
   };
 
-  const handleWithdrawal = (type: string) => {
-    onUpdate(hearing.id, "assignment_status", "withdrawal");
-    onUpdate(hearing.id, "hearing_decision_status", type);
-    setShowWithdrawal(false);
-  };
-
   const menuAction = (fn: () => void) => () => {
     fn();
     setMenuOpen(false);
-  };
-
-  const openSub = (setter: (v: boolean) => void) => () => {
-    setMenuOpen(false);
-    if (btnRef.current) {
-      const r = btnRef.current.getBoundingClientRect();
-      const subH = 350; // estimated sub-popover height
-      const spaceBelow = window.innerHeight - r.bottom;
-      const top = spaceBelow < subH ? Math.max(8, r.top - subH) : r.bottom + 4;
-      setPos({ top, left: Math.min(r.right - 288, window.innerWidth - 300) });
-    }
-    setter(true);
   };
 
   return (
@@ -722,10 +982,9 @@ function ActionMenu({
         <MoreHorizontal className="h-3.5 w-3.5" />
       </Button>
 
-      {/* Main menu — portal */}
+      {/* Main menu — portal. Record-level actions only; rep assignment is
+          handled inline in the Representative column via <RepCell>. */}
       {menuOpen &&
-        !showAssign &&
-        !showWithdrawal &&
         createPortal(
           <>
             <div
@@ -736,71 +995,6 @@ function ActionMenu({
               className="fixed z-101 w-48 max-h-[calc(100vh-16px)] overflow-y-auto rounded-lg border bg-card py-1 shadow-xl"
               style={{ top: pos.top, left: pos.left - 192 }}
             >
-              {isActionAdmin && (
-                <>
-                  {isUnassigned && (
-                    <>
-                      <button
-                        onClick={openSub(setShowAssign)}
-                        className="flex w-full items-center px-3 py-1.5 text-xs hover:bg-muted/50"
-                      >
-                        📋 Assign
-                      </button>
-                      <button
-                        onClick={menuAction(() => onAutoAssign(hearing.id))}
-                        className="flex w-full items-center px-3 py-1.5 text-xs hover:bg-muted/50"
-                      >
-                        ⚡ Auto-Assign
-                      </button>
-                    </>
-                  )}
-                  {isAssigned && (
-                    <>
-                      <button
-                        onClick={menuAction(() => {})}
-                        className="flex w-full items-center px-3 py-1.5 text-xs hover:bg-muted/50"
-                      >
-                        📧 Send Email
-                      </button>
-                      <button
-                        onClick={menuAction(() =>
-                          onUpdate(hearing.id, "assigned_rep_id", null),
-                        )}
-                        className="flex w-full items-center px-3 py-1.5 text-xs hover:bg-muted/50"
-                      >
-                        🔄 Unassign
-                      </button>
-                    </>
-                  )}
-                  {hasStatus && !isAssigned && (
-                    <>
-                      <button
-                        onClick={openSub(setShowAssign)}
-                        className="flex w-full items-center px-3 py-1.5 text-xs hover:bg-muted/50"
-                      >
-                        📋 Change Assignment
-                      </button>
-                      <button
-                        onClick={menuAction(() => {
-                          onUpdate(hearing.id, "assignment_status", null);
-                          onUpdate(hearing.id, "assigned_rep_id", null);
-                        })}
-                        className="flex w-full items-center px-3 py-1.5 text-xs hover:bg-muted/50"
-                      >
-                        🔄 Clear Status
-                      </button>
-                    </>
-                  )}
-                  {/* Withdrawal — always available */}
-                  <button
-                    onClick={openSub(setShowWithdrawal)}
-                    className="flex w-full items-center justify-between px-3 py-1.5 text-xs hover:bg-muted/50"
-                  >
-                    🚫 Withdrawal <ChevronRight className="h-3 w-3" />
-                  </button>
-                  <div className="my-1 border-t" />
-                </>
-              )}
               <button
                 onClick={menuAction(() => onEdit(hearing))}
                 className="flex w-full items-center px-3 py-1.5 text-xs hover:bg-muted/50"
@@ -841,129 +1035,6 @@ function ActionMenu({
                   </button>
                 </>
               )}
-            </div>
-          </>,
-          document.body,
-        )}
-
-      {/* Withdrawal submenu — portal */}
-      {showWithdrawal &&
-        createPortal(
-          <>
-            <div
-              className="fixed inset-0 z-100"
-              onClick={() => setShowWithdrawal(false)}
-            />
-            <div
-              className="fixed z-101 w-72 max-h-[calc(100vh-16px)] overflow-y-auto rounded-lg border bg-card p-1 shadow-xl"
-              style={{ top: pos.top, left: pos.left - 288 }}
-            >
-              <div className="px-3 py-2 border-b">
-                <p className="text-xs font-semibold">🚫 Withdrawal Type</p>
-                <p className="text-[10px] text-muted-foreground mt-0.5">
-                  {hearing.claimant} —{" "}
-                  {fmtDate(hearing.hearing_date, {
-                    month: "short",
-                    day: "numeric",
-                  })}
-                </p>
-              </div>
-              {WITHDRAWAL_TYPES.map((wt) => (
-                <button
-                  key={wt}
-                  onClick={() => handleWithdrawal(wt)}
-                  className="flex w-full items-center px-3 py-1.5 text-xs text-left hover:bg-muted/50 rounded transition-colors"
-                >
-                  {wt}
-                </button>
-              ))}
-              <div className="border-t mt-1 pt-1 px-1">
-                <button
-                  onClick={() => {
-                    onUpdate(
-                      hearing.id,
-                      "assignment_status",
-                      "wd_never_assigned",
-                    );
-                    setShowWithdrawal(false);
-                  }}
-                  className="flex w-full items-center px-3 py-1.5 text-xs text-left hover:bg-muted/50 rounded text-amber-700 font-medium"
-                >
-                  WD - Never Assigned
-                </button>
-              </div>
-            </div>
-          </>,
-          document.body,
-        )}
-
-      {/* Assign popover — portal */}
-      {showAssign &&
-        createPortal(
-          <>
-            <div
-              className="fixed inset-0 z-100"
-              onClick={() => setShowAssign(false)}
-            />
-            <div
-              className="fixed z-101 w-72 max-h-[calc(100vh-16px)] overflow-y-auto rounded-lg border bg-card p-4 shadow-xl"
-              style={{ top: pos.top, left: pos.left - 288 }}
-            >
-              <p className="mb-0.5 text-xs font-semibold">📋 Assign</p>
-              <p className="mb-2 text-[10px] text-muted-foreground">
-                {hearing.claimant} —{" "}
-                {fmtDate(hearing.hearing_date, {
-                  month: "short",
-                  day: "numeric",
-                })}
-              </p>
-              <select
-                className="h-9 w-full rounded border bg-card px-2 text-sm"
-                autoFocus
-                onChange={(e) => {
-                  if (e.target.value) {
-                    onUpdate(
-                      hearing.id,
-                      "assigned_rep_id",
-                      Number(e.target.value),
-                    );
-                    onUpdate(hearing.id, "assignment_status", null);
-                    setShowAssign(false);
-                  }
-                }}
-              >
-                <option value="">Select representative...</option>
-                <optgroup label="Internal">
-                  {representatives
-                    .filter(
-                      (r) => r.is_active && r.rep_type === "internal_advocates",
-                    )
-                    .map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.name}
-                      </option>
-                    ))}
-                </optgroup>
-                <optgroup label="External">
-                  {representatives
-                    .filter(
-                      (r) => r.is_active && r.rep_type === "external_advocates",
-                    )
-                    .map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.name}
-                      </option>
-                    ))}
-                </optgroup>
-              </select>
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-2 h-7 w-full text-xs"
-                onClick={() => setShowAssign(false)}
-              >
-                Cancel
-              </Button>
             </div>
           </>,
           document.body,
@@ -2183,7 +2254,15 @@ const HearingTable = memo(function HearingTable({
       case "checkbox":
         return null; // Handled directly in MemoRow
       case "assigned_rep_id":
-        return <RepBadge hearing={hearing} />;
+        return (
+          <RepCell
+            hearing={hearing}
+            representatives={representatives}
+            userRole={userRole}
+            onUpdate={onUpdate}
+            onAutoAssign={onAutoAssign}
+          />
+        );
       case "hearing_date":
         return (
           <span className="text-xs tabular-nums">
@@ -2226,11 +2305,8 @@ const HearingTable = memo(function HearingTable({
           <ActionMenu
             hearing={hearing}
             userRole={userRole}
-            onUpdate={onUpdate}
             onDelete={onDelete}
-            representatives={representatives}
             onEdit={onEdit}
-            onAutoAssign={onAutoAssign}
           />
         );
       case "location":
