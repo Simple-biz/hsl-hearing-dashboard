@@ -195,6 +195,17 @@ FROM hearings`,
   const RESCHED_RE = /\s*\(Rescheduled(?:\s+\d+)?\)\s*$/i;
   const SSN_SUFFIX_RE = /\s*\(\d{4}\)\s*$/;
 
+  // Strip reschedule / SSN-tag suffixes so a plain CSV name ("Crystal Coker")
+  // compares cleanly against a DB name that carries a suffix
+  // ("Crystal Coker (Rescheduled)"). Used by the trigram guards below —
+  // without it the suffix inflates the DB name's trigram set and drags the
+  // similarity score below the 0.5 threshold, falsely rejecting real matches.
+  const baseNameOf = (s: string): string =>
+    String(s || "")
+      .replace(RESCHED_RE, "")
+      .replace(SSN_SUFFIX_RE, "")
+      .trim();
+
   const byNameAndSsn = new Map<
     string,
     { id: number; claimant: string; hearing_date: string; hearing_time: string }
@@ -396,7 +407,13 @@ FROM hearings`,
             byNameAndSsn.get(exactKey) || byNameAndSsn.get(origKey);
           if (!existing && fuzzy_name_match) {
             const ssnHit = bySsn.get(ssnFormatted);
-            if (ssnHit && trigramSimilarity(baseName, ssnHit.claimant) >= 0.5) {
+            if (
+              ssnHit &&
+              trigramSimilarity(
+                baseNameOf(claimant),
+                baseNameOf(ssnHit.claimant),
+              ) >= 0.5
+            ) {
               existing = ssnHit;
             }
           }
@@ -460,9 +477,11 @@ FROM hearings`,
     if (!existingId && fuzzy_name_match && ssnFormatted && hearingDate) {
       const tier4Hit = tier4.get(`${ssnFormatted}|${hearingDate}`) ?? null;
       if (tier4Hit) {
-        const candidateName = String(byId.get(tier4Hit)?.claimant || "");
-        const baseName = claimant.replace(RESCHED_RE, "").trim() || claimant;
-        if (trigramSimilarity(baseName, candidateName) >= 0.5) {
+        const candidateName = baseNameOf(
+          String(byId.get(tier4Hit)?.claimant || ""),
+        );
+        const csvName = baseNameOf(claimant) || claimant;
+        if (trigramSimilarity(csvName, candidateName) >= 0.5) {
           existingId = tier4Hit;
         }
       }
@@ -483,9 +502,11 @@ FROM hearings`,
       if (matchedDate && matchedDate !== hearingDate) {
         const tier4Match = tier4.get(`${ssnFormatted}|${hearingDate}`);
         if (tier4Match && tier4Match !== existingId) {
-          const candidateName = String(byId.get(tier4Match)?.claimant || "");
-          const baseName = claimant.replace(RESCHED_RE, "").trim() || claimant;
-          if (trigramSimilarity(baseName, candidateName) >= 0.5) {
+          const candidateName = baseNameOf(
+            String(byId.get(tier4Match)?.claimant || ""),
+          );
+          const csvName = baseNameOf(claimant) || claimant;
+          if (trigramSimilarity(csvName, candidateName) >= 0.5) {
             existingId = tier4Match;
           }
         }
