@@ -62,6 +62,7 @@ import { PostHrgModal } from "@/components/modals/post-hrg-modal";
 import { PostHrgReviewModal } from "@/components/modals/post-hrg-review-modal";
 import { TeamStatsModal } from "@/components/modals/team-stats-modal";
 import { ActivityLogModal } from "@/components/modals/activity-log-modal";
+import { MedicalRecordsDetailPanel } from "./medical-records-detail-panel";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -967,7 +968,15 @@ function WithdrawnModal({
                   return (
                     <tr
                       key={h.id}
-                      className="border-b border-border/40 hover:bg-muted/30 transition-colors"
+                      className={cn(
+                        "border-b border-border/40",
+                        // Hover overlay — matches the PHD / dashboard /
+                        // rep-docs tables. Translucent blue inset box-shadow
+                        // applied to every direct <td> via arbitrary variant.
+                        "[&>td]:transition-shadow [&>td]:duration-150",
+                        "hover:[&>td]:shadow-[inset_0_0_0_9999px_rgb(59_130_246/0.10)]",
+                        "dark:hover:[&>td]:shadow-[inset_0_0_0_9999px_rgb(96_165_250/0.18)]",
+                      )}
                     >
                       <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap text-center">
                         {d.toLocaleDateString("en-US", {
@@ -1173,6 +1182,7 @@ function HearingRow({
   onUpdate,
   onOpenPostHrg,
   onOpenWorksheet,
+  onRowClick,
 }: {
   h: Hearing;
   teams: MrPivotPageData["medical_teams"];
@@ -1183,6 +1193,7 @@ function HearingRow({
   onUpdate: (id: number, field: string, value: unknown) => void;
   onOpenPostHrg: (h: Hearing) => void;
   onOpenWorksheet: (h: Hearing) => void;
+  onRowClick: (h: Hearing) => void;
 }) {
   const dateStr = new Date(h.hearing_date + "T00:00:00").toLocaleDateString(
     "en-US",
@@ -1201,11 +1212,23 @@ function HearingRow({
 
   return (
     <div
-      className="grid gap-x-2 px-4 border-b border-border/40 hover:bg-muted/30 transition-colors text-[11px] items-center"
+      className="grid gap-x-2 px-4 border-b border-border/40 cursor-pointer transition-colors text-[11px] items-center hover:bg-blue-500/10 dark:hover:bg-blue-400/15"
       style={{
         gridTemplateColumns: GRID_COLS,
         minWidth: MIN_W,
         height: "44px",
+      }}
+      onClick={(e) => {
+        // Open the detail panel on row click, but ignore clicks on the
+        // inline editors / buttons / links inside the row.
+        const tag = (e.target as HTMLElement).tagName;
+        if (
+          ["INPUT", "SELECT", "OPTION", "BUTTON", "A", "SVG", "PATH"].includes(
+            tag,
+          )
+        )
+          return;
+        onRowClick(h);
       }}
     >
       {/* Month — blank spacer in data rows */}
@@ -1581,6 +1604,8 @@ export function MrPivotClient({ userRole, userName, ...data }: Props) {
   const [worksheetHearing, setWorksheetHearing] = useState<Hearing | null>(
     null,
   );
+  // Slide-over detail panel — opened on row click.
+  const [detailPanel, setDetailPanel] = useState<Hearing | null>(null);
 
   // ── Data loading ──────────────────────────────────────────────────────────
   const loadHearings = useCallback((f: HearingFilters) => {
@@ -2417,6 +2442,7 @@ export function MrPivotClient({ userRole, userName, ...data }: Props) {
                         onUpdate={handleUpdate}
                         onOpenPostHrg={(h) => setPostHrgHearing(h)}
                         onOpenWorksheet={(h) => setWorksheetHearing(h)}
+                        onRowClick={(h) => setDetailPanel(h)}
                       />
                     </div>
                   );
@@ -2613,6 +2639,12 @@ export function MrPivotClient({ userRole, userName, ...data }: Props) {
         onClose={() => setShowWithdrawn(false)}
         userName={userName}
         userRole={userRole}
+      />
+
+      {/* Slide-over detail panel — opened on row click */}
+      <MedicalRecordsDetailPanel
+        row={detailPanel}
+        onClose={() => setDetailPanel(null)}
       />
 
       {/* ── Field update toast ── */}

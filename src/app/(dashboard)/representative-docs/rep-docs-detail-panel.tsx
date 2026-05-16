@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { RepDocsRow, RepDocsAssigneeOption } from "./actions";
 import { RepHistoryModal } from "@/components/modals/rep-history-modal";
+import { HearingAuditTrailModal } from "@/components/modals/hearing-audit-trail-modal";
 
 // ── Reuse the same date formatter ──
 function formatDate(iso: string | null) {
@@ -116,6 +117,7 @@ export function RepDocsDetailPanel({
 }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
   const [showRepHistory, setShowRepHistory] = useState(false);
+  const [showAuditTrail, setShowAuditTrail] = useState(false);
 
   // Close on Escape
   useEffect(() => {
@@ -531,20 +533,34 @@ export function RepDocsDetailPanel({
             </kbd>{" "}
             to close
           </p>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 gap-1.5 text-xs"
-            onClick={() => onOpenNotes(row)}
-          >
-            <MessageSquare className="h-3 w-3" />
-            Notes
-            {row.notes && Array.isArray(row.notes) && row.notes.length > 0 && (
-              <span className="ml-0.5 rounded-full bg-blue-500 text-white text-[9px] font-bold px-1.5 py-0.5 leading-none">
-                {row.notes.length}
-              </span>
-            )}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1.5 text-xs"
+              onClick={() => setShowAuditTrail(true)}
+              title="View the full activity history for this hearing"
+            >
+              <History className="h-3 w-3" />
+              Audit Log
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1.5 text-xs"
+              onClick={() => onOpenNotes(row)}
+            >
+              <MessageSquare className="h-3 w-3" />
+              Notes
+              {row.notes &&
+                Array.isArray(row.notes) &&
+                row.notes.length > 0 && (
+                  <span className="ml-0.5 rounded-full bg-blue-500 text-white text-[9px] font-bold px-1.5 py-0.5 leading-none">
+                    {row.notes.length}
+                  </span>
+                )}
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -553,6 +569,14 @@ export function RepDocsDetailPanel({
           hearingId={row.hearing_id}
           claimant={row.claimant ?? ""}
           onClose={() => setShowRepHistory(false)}
+        />
+      )}
+
+      {showAuditTrail && (
+        <HearingAuditTrailModal
+          hearingId={row.hearing_id}
+          claimant={row.claimant ?? ""}
+          onClose={() => setShowAuditTrail(false)}
         />
       )}
     </>,
