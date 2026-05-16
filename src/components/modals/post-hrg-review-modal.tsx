@@ -84,6 +84,10 @@ interface CommonProps {
   assignedRep?: string | null;
   userName: string;
   userRole: string;
+  // When true the modal is view-only: the body is rendered `inert` (readable
+  // + scrollable but non-interactive) and a lock banner is shown. Used for
+  // Completed / Records Closed PHD rows.
+  readOnly?: boolean;
   onClose: () => void;
   // Fired after a successful "Also apply to" cascade so the parent can
   // patch sibling rows in local state without a page refresh. `targets`
@@ -155,6 +159,7 @@ function HearingReview({
   assignedRep,
   userName,
   userRole,
+  readOnly,
   onClose,
   hearingId,
   initialNotes,
@@ -433,6 +438,7 @@ function HearingReview({
       hearingDateText={hearingDateText}
       assignedRep={assignedRep}
       onClose={onClose}
+      readOnly={readOnly}
       banner={
         <div className="flex items-center gap-2 rounded-lg bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 px-3 py-2">
           <span className="text-blue-500 text-sm">🔗</span>
@@ -481,23 +487,44 @@ function HearingReview({
       )}
       {deadlineHistory.length > 1 && (
         <div className="rounded-md border bg-muted/20">
-          <button
-            type="button"
-            onClick={() => setShowDeadlineHistory((p) => !p)}
-            className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <span>
-              Deadline History{" "}
-              <span className="text-muted-foreground/70">
-                ({deadlineHistory.length})
+          {readOnly ? (
+            // View-only: the toggle would be inert (unclickable), so render
+            // the history expanded with a static, non-interactive header.
+            <div className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] font-medium text-muted-foreground">
+              <span>
+                Deadline History{" "}
+                <span className="text-muted-foreground/70">
+                  ({deadlineHistory.length})
+                </span>
               </span>
-            </span>
-            <span className="text-[10px]">
-              {showDeadlineHistory ? "▾ Hide" : "▸ Show"}
-            </span>
-          </button>
-          {showDeadlineHistory && (
-            <div className="max-h-56 overflow-y-auto pr-1 px-3 pb-2 space-y-1.5">
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowDeadlineHistory((p) => !p)}
+              className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <span>
+                Deadline History{" "}
+                <span className="text-muted-foreground/70">
+                  ({deadlineHistory.length})
+                </span>
+              </span>
+              <span className="text-[10px]">
+                {showDeadlineHistory ? "▾ Hide" : "▸ Show"}
+              </span>
+            </button>
+          )}
+          {(readOnly || showDeadlineHistory) && (
+            <div
+              className={cn(
+                "pr-1 px-3 pb-2 space-y-1.5",
+                // When inert (read-only) a nested scrollbox can't be wheel-
+                // scrolled reliably, so let it flow and the outer modal body
+                // scroll (non-inert) handle it.
+                !readOnly && "max-h-56 overflow-y-auto",
+              )}
+            >
               {deadlineHistory.map((h, i) => (
                 <div
                   key={i}
@@ -600,6 +627,7 @@ function HearingReview({
       <NotesHistory
         notes={visibleNotes}
         canEdit={canEditNotes}
+        flatten={readOnly}
         currentUserName={userName}
         onDelete={handleDeleteNote}
         onEdit={handleEditNote}
@@ -616,6 +644,7 @@ function PhdInternalReview({
   assignedRep,
   userName,
   userRole,
+  readOnly,
   onClose,
   phdRowId,
   initialNotes,
@@ -642,6 +671,10 @@ function PhdInternalReview({
     !initialRequirements,
   );
   const [hasSavedReq, setHasSavedReq] = useState<boolean>(!!initialRequirements);
+  const [deadlineHistory, setDeadlineHistory] = useState<
+    { deadline: string; set_at: string; set_by: string | null }[]
+  >([]);
+  const [showDeadlineHistory, setShowDeadlineHistory] = useState(false);
 
   // Cascade UI (only meaningful when a linked hearing exists).
   const [availableCascadeTypes, setAvailableCascadeTypes] = useState<{
@@ -677,11 +710,17 @@ function PhdInternalReview({
     const poll = async () => {
       if (!active) return;
       try {
-        const { fetchPostHrgDevNotes } = await import(
+        const { fetchPostHrgDevNotes, fetchPhdDeadlineHistory } = await import(
           "@/app/(dashboard)/post-hrg-development/actions"
         );
-        const raw = await fetchPostHrgDevNotes(phdRowId, "details");
-        if (active) setNotes(parseNotes(raw));
+        const [raw, history] = await Promise.all([
+          fetchPostHrgDevNotes(phdRowId, "details"),
+          fetchPhdDeadlineHistory(phdRowId),
+        ]);
+        if (active) {
+          setNotes(parseNotes(raw));
+          setDeadlineHistory(history);
+        }
       } catch {
         /* */
       }
@@ -894,12 +933,24 @@ function PhdInternalReview({
     }
   };
 
+  // "Previous date" / "Changed by" indicator — derived from the per-row
+  // deadline history (no _prev/_changed_by columns on post_hrg_development,
+  // unlike hearings). History is sorted newest-first: [0] is the latest
+  // change, [1] the one before it. Only meaningful once an actual change
+  // exists on top of the seeded baseline (length > 1), matching MR mode.
+  const hasDeadlineChange = deadlineHistory.length > 1;
+  const deadlinePrev = hasDeadlineChange ? deadlineHistory[1].deadline : "";
+  const deadlineChangedBy = hasDeadlineChange
+    ? (deadlineHistory[0].set_by ?? "")
+    : "";
+
   return (
     <ModalShell
       claimant={claimant}
       hearingDateText={hearingDateText}
       assignedRep={assignedRep}
       onClose={onClose}
+      readOnly={readOnly}
       banner={
         <div className="flex items-center gap-2 rounded-lg bg-violet-50 dark:bg-violet-950/20 border border-violet-200 dark:border-violet-800 px-3 py-2">
           <span className="text-violet-500 text-sm">🔒</span>
@@ -931,6 +982,89 @@ function PhdInternalReview({
             })
           }
         />
+      )}
+      {(deadlinePrev || deadlineChangedBy) && (
+        <div className="rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20 px-3 py-1.5 text-[11px] text-amber-800 dark:text-amber-300 space-y-0.5">
+          {deadlinePrev && (
+            <p>
+              <span className="font-medium">Previous date:</span>{" "}
+              <span className="font-semibold">{formatDate(deadlinePrev)}</span>
+            </p>
+          )}
+          {deadlineChangedBy && (
+            <p>
+              <span className="font-medium">Changed by:</span>{" "}
+              <span className="font-semibold">{deadlineChangedBy}</span>
+            </p>
+          )}
+        </div>
+      )}
+      {deadlineHistory.length > 1 && (
+        <div className="rounded-md border bg-muted/20">
+          {readOnly ? (
+            // View-only: the toggle would be inert (unclickable), so render
+            // the history expanded with a static, non-interactive header.
+            <div className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] font-medium text-muted-foreground">
+              <span>
+                Deadline History{" "}
+                <span className="text-muted-foreground/70">
+                  ({deadlineHistory.length})
+                </span>
+              </span>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowDeadlineHistory((p) => !p)}
+              className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <span>
+                Deadline History{" "}
+                <span className="text-muted-foreground/70">
+                  ({deadlineHistory.length})
+                </span>
+              </span>
+              <span className="text-[10px]">
+                {showDeadlineHistory ? "▾ Hide" : "▸ Show"}
+              </span>
+            </button>
+          )}
+          {(readOnly || showDeadlineHistory) && (
+            <div
+              className={cn(
+                "pr-1 px-3 pb-2 space-y-1.5",
+                !readOnly && "max-h-56 overflow-y-auto",
+              )}
+            >
+              {deadlineHistory.map((h, i) => (
+                <div
+                  key={i}
+                  className="flex items-center justify-between gap-2 text-[11px] border-t border-border/40 pt-1.5 first:border-t-0 first:pt-0"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="font-semibold tabular-nums">
+                      {formatDate(h.deadline)}
+                    </span>
+                    {h.set_by && (
+                      <span className="text-muted-foreground truncate">
+                        by {h.set_by}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">
+                    {new Date(h.set_at).toLocaleString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                      hour: "numeric",
+                      minute: "2-digit",
+                    })}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
       {/* Requirements (per-PHD-row) */}
@@ -1003,6 +1137,7 @@ function PhdInternalReview({
       <NotesHistory
         notes={notes}
         canEdit={canEditNotes}
+        flatten={readOnly}
         onDelete={handleDeleteNote}
       />
       {linkedHearingId ? (
@@ -1020,7 +1155,12 @@ function PhdInternalReview({
               No MR / Dashboard notes yet.
             </p>
           ) : (
-            <div className="max-h-56 overflow-y-auto pr-1 space-y-1.5">
+            <div
+              className={cn(
+                "pr-1 space-y-1.5",
+                !readOnly && "max-h-56 overflow-y-auto",
+              )}
+            >
               {hearingNotes.map((n, i) => (
                 <div
                   key={i}
@@ -1049,6 +1189,7 @@ function ModalShell({
   assignedRep,
   onClose,
   banner,
+  readOnly,
   children,
 }: {
   claimant: string;
@@ -1056,6 +1197,7 @@ function ModalShell({
   assignedRep?: string | null;
   onClose: () => void;
   banner?: React.ReactNode;
+  readOnly?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -1084,8 +1226,21 @@ function ModalShell({
           </button>
         </div>
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+          {readOnly && (
+            <div className="flex items-center gap-2 rounded-lg bg-slate-100 dark:bg-slate-800/60 border border-slate-300 dark:border-slate-700 px-3 py-2">
+              <span className="text-slate-500 text-sm">🔒</span>
+              <p className="text-[11px] text-slate-700 dark:text-slate-300">
+                This record is closed/completed and is view-only. Reopen it from
+                the Completed / Records Closed list to make changes.
+              </p>
+            </div>
+          )}
           {banner}
-          {children}
+          {/* `inert` keeps the body readable + scrollable but blocks all
+              edits/clicks/focus when the record is in a terminal status. */}
+          <div inert={readOnly ? true : undefined} className={readOnly ? "opacity-70" : undefined}>
+            <div className="space-y-4">{children}</div>
+          </div>
         </div>
         <div className="border-t px-5 py-3 shrink-0 flex justify-end">
           <button
@@ -1149,13 +1304,26 @@ function CascadeCheckboxes({
 // follows the OS/browser locale for its visible value, so on non-US locales
 // it can render as dd/mm/yyyy. We force US display by swapping in a text
 // input and overlaying a hidden native picker (for date-picking UX).
-function isoToUs(iso: string): string {
-  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+// Tolerant of the value arriving as a Date (Postgres `date` columns come
+// back as JS Date unless cast `::text`), an ISO datetime string, a plain
+// `YYYY-MM-DD` string, or null/undefined. Anything unrecognized → "".
+function isoToUs(iso: unknown): string {
+  if (iso == null) return "";
+  let s: string;
+  if (iso instanceof Date) {
+    if (Number.isNaN(iso.getTime())) return "";
+    s = `${iso.getFullYear()}-${String(iso.getMonth() + 1).padStart(2, "0")}-${String(iso.getDate()).padStart(2, "0")}`;
+  } else {
+    s = String(iso);
+  }
+  // Prefix match so ISO datetimes ("2025-10-14T00:00:00Z") work too.
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!m) return "";
   return `${m[2]}/${m[3]}/${m[1]}`;
 }
 
-function usToIso(us: string): string | null {
+function usToIso(us: unknown): string | null {
+  if (typeof us !== "string") return null;
   const m = us.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
   if (!m) return null;
   const [, mm, dd, yyyy] = m;
@@ -1310,9 +1478,16 @@ function NotesHistory({
   currentUserName,
   onDelete,
   onEdit,
+  flatten,
 }: {
   notes: PostHrgNote[];
   canEdit: boolean;
+  /**
+   * When true, drop the inner fixed-height scrollbox so the list flows and
+   * the outer (non-inert) modal body handles scrolling. Used for the
+   * read-only / inert view of Completed / Records Closed rows.
+   */
+  flatten?: boolean;
   /**
    * Current user's display name. Compared against `note.user` to gate the
    * inline-edit button — only the original author sees it. The server
@@ -1387,7 +1562,12 @@ function NotesHistory({
           No notes yet
         </p>
       ) : (
-        <div className="max-h-72 overflow-y-auto pr-1 space-y-2">
+        <div
+          className={cn(
+            "pr-1 space-y-2",
+            !flatten && "max-h-72 overflow-y-auto",
+          )}
+        >
           {notes.map((n, i) => {
             const isEditing = editingIdx === i;
             const isAuthor =

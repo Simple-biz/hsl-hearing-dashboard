@@ -224,6 +224,87 @@ function exportPivotToCsv(rows: MrStatusByTeam[]) {
   ] as string[][]);
 }
 
+// ─── PostHrgReviewBadge ───────────────────────────────────────────────────────
+// Mirrors the Post HRG cell on the dashboard / post-hrg-development pages:
+// shows the deadline (color-coded: red ⚠️ overdue, blue 📅 upcoming) when one
+// is set, falls back to a "Notes" pill when a review note exists, else "+ Add".
+// MR rows are hearing-mode, so the deadline source is hearings.post_hrg_deadline.
+
+// `post_hrg_deadline` is typed string|null but a Postgres `date` can arrive as
+// a JS Date; normalize to a local YYYY-MM-DD string before formatting.
+function toYmd(v: unknown): string | null {
+  if (v == null) return null;
+  if (v instanceof Date) {
+    if (Number.isNaN(v.getTime())) return null;
+    return `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, "0")}-${String(v.getDate()).padStart(2, "0")}`;
+  }
+  const m = String(v).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : null;
+}
+
+function PostHrgReviewBadge({
+  h,
+  onClick,
+}: {
+  h: Hearing;
+  onClick: () => void;
+}) {
+  const ymd = toYmd(h.post_hrg_deadline);
+  const hasNotes = !!h.post_hrg_review;
+
+  let badgeClass =
+    "border-border text-muted-foreground hover:bg-muted bg-transparent";
+  let icon = "📝";
+  let text = "+ Add";
+
+  if (ymd) {
+    const dd = new Date(ymd + "T12:00:00");
+    const today = new Date(
+      new Date().toISOString().split("T")[0] + "T12:00:00",
+    );
+    const fmt = dd.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+    });
+    if (dd < today) {
+      badgeClass =
+        "bg-red-100 border-red-300 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:border-red-700 dark:text-red-400";
+      icon = "⚠️";
+      text = fmt;
+    } else {
+      badgeClass =
+        "bg-blue-100 border-blue-300 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/30 dark:border-blue-700 dark:text-blue-400";
+      icon = "📅";
+      text = fmt;
+    }
+  } else if (hasNotes) {
+    badgeClass =
+      "bg-yellow-50 border-yellow-300 text-yellow-800 hover:bg-yellow-100 dark:bg-yellow-900/30 dark:border-yellow-700 dark:text-yellow-300";
+    icon = "📝";
+    text = "Notes";
+  }
+
+  return (
+    <button
+      onClick={onClick}
+      title={
+        ymd
+          ? `Deadline ${text} — Click to view`
+          : hasNotes
+            ? "Post HRG notes — Click to view"
+            : "Click to add"
+      }
+      className={cn(
+        "inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded border transition-colors whitespace-nowrap font-semibold",
+        badgeClass,
+      )}
+    >
+      <span>{icon}</span>
+      <span>{text}</span>
+    </button>
+  );
+}
+
 // ─── SummaryCard ──────────────────────────────────────────────────────────────
 
 function SummaryCard({
@@ -1040,22 +1121,10 @@ function WithdrawnModal({
                         {h.hearing_decision_status ?? "—"}
                       </td>
                       <td className="px-3 py-1.5 text-center">
-                        <button
+                        <PostHrgReviewBadge
+                          h={h}
                           onClick={() => setPostHrgHearing(h)}
-                          className={cn(
-                            "inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded border transition-colors whitespace-nowrap",
-                            h.post_hrg_review
-                              ? "bg-yellow-50 border-yellow-300 text-yellow-800 hover:bg-yellow-100 dark:bg-yellow-900/30 dark:border-yellow-700 dark:text-yellow-300"
-                              : "border-border text-muted-foreground hover:bg-muted",
-                          )}
-                        >
-                          📝{" "}
-                          {h.post_hrg_review ? (
-                            <span className="font-semibold">Notes</span>
-                          ) : (
-                            <span>+ Add</span>
-                          )}
-                        </button>
+                        />
                       </td>
                       <td className="px-3 py-1.5 text-center whitespace-nowrap">
                         {h.medical_record_link ? (
@@ -1450,24 +1519,9 @@ function HearingRow({
         />
       </div>
 
-      {/* Post HRG — 📝 + Add or 📝 Notes N, centered */}
+      {/* Post HRG — deadline-aware badge (matches dashboard / PHD pages) */}
       <div className="flex justify-center">
-        <button
-          onClick={() => onOpenPostHrg(h)}
-          className={cn(
-            "inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded border transition-colors whitespace-nowrap",
-            h.post_hrg_review
-              ? "bg-yellow-50 border-yellow-300 text-yellow-800 hover:bg-yellow-100 dark:bg-yellow-900/30 dark:border-yellow-700 dark:text-yellow-300"
-              : "border-border text-muted-foreground hover:bg-muted",
-          )}
-        >
-          📝{" "}
-          {h.post_hrg_review ? (
-            <span className="font-semibold">Notes 1</span>
-          ) : (
-            <span>+ Add</span>
-          )}
-        </button>
+        <PostHrgReviewBadge h={h} onClick={() => onOpenPostHrg(h)} />
       </div>
 
       {/* MR Worksheet — 📄 opens link + ✏️ opens edit modal; "+ Link" when empty */}

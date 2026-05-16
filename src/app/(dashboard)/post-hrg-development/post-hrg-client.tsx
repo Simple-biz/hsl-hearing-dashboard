@@ -889,10 +889,12 @@ function RemarksCellBadge({
 
 function RemarksModal({
   record,
+  readOnly,
   onClose,
   onSave,
 }: {
   record: PostHrgDevRow;
+  readOnly?: boolean;
   onClose: () => void;
   onSave: (id: number, field: string, value: string | null) => void;
 }) {
@@ -942,13 +944,26 @@ function RemarksModal({
         </div>
 
         <div className="p-5 space-y-3">
+          {readOnly && (
+            <div className="flex items-center gap-2 rounded-lg bg-slate-100 dark:bg-slate-800/60 border border-slate-300 dark:border-slate-700 px-3 py-2">
+              <span className="text-slate-500 text-sm">🔒</span>
+              <p className="text-[11px] text-slate-700 dark:text-slate-300">
+                View-only — this record is closed/completed.
+              </p>
+            </div>
+          )}
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             rows={6}
-            placeholder="Enter remarks..."
-            className={cn(INPUT, "resize-y text-sm")}
-            autoFocus
+            placeholder={readOnly ? "No remarks." : "Enter remarks..."}
+            className={cn(
+              INPUT,
+              "resize-y text-sm",
+              readOnly && "opacity-70 cursor-not-allowed",
+            )}
+            autoFocus={!readOnly}
+            disabled={readOnly}
             onKeyDown={(e) => {
               if (e.key === "Escape") onClose();
             }}
@@ -961,7 +976,7 @@ function RemarksModal({
         </div>
 
         <div className="flex items-center justify-between border-t px-5 py-3 shrink-0">
-          {record.remarks && (
+          {!readOnly && record.remarks && (
             <button
               className={cn(
                 BTN,
@@ -980,15 +995,17 @@ function RemarksModal({
               className={cn(BTN_SECONDARY, "px-3 py-1.5 text-xs")}
               onClick={onClose}
             >
-              Cancel
+              {readOnly ? "Close" : "Cancel"}
             </button>
-            <button
-              className={cn(BTN_PRIMARY, "px-3 py-1.5 text-xs")}
-              onClick={handleSave}
-              disabled={saving}
-            >
-              {saving ? "Saving..." : "Save"}
-            </button>
+            {!readOnly && (
+              <button
+                className={cn(BTN_PRIMARY, "px-3 py-1.5 text-xs")}
+                onClick={handleSave}
+                disabled={saving}
+              >
+                {saving ? "Saving..." : "Save"}
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -1001,12 +1018,14 @@ function RemarksModal({
 function DetailsModal({
   record,
   userName,
+  readOnly,
   onClose,
   onRecordUpdate,
   onFieldUpdate,
 }: {
   record: PostHrgDevRow;
   userName: string;
+  readOnly?: boolean;
   onClose: () => void;
   onRecordUpdate: (r: PostHrgDevRow) => void;
   onFieldUpdate: (id: number, field: string, value: string | null) => void;
@@ -1111,9 +1130,26 @@ function DetailsModal({
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {readOnly && (
+            <div className="flex items-center gap-2 rounded-lg bg-slate-100 dark:bg-slate-800/60 border border-slate-300 dark:border-slate-700 px-3 py-2">
+              <span className="text-slate-500 text-sm">🔒</span>
+              <p className="text-[11px] text-slate-700 dark:text-slate-300">
+                View-only — this record is closed/completed. Reopen it to edit
+                details or add notes.
+              </p>
+            </div>
+          )}
           <div className="space-y-1.5">
             <label className="text-xs font-medium">Details Content</label>
-            {editingDetails ? (
+            {readOnly ? (
+              <div className="rounded-md border bg-muted/20 px-3 py-2 text-xs whitespace-pre-wrap min-h-12">
+                {record.details || (
+                  <span className="text-muted-foreground italic">
+                    No details.
+                  </span>
+                )}
+              </div>
+            ) : editingDetails ? (
               <div className="space-y-2">
                 <textarea
                   value={details}
@@ -1159,33 +1195,35 @@ function DetailsModal({
               </div>
             )}
           </div>
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium">Add Note</label>
-            <div className="flex gap-2">
-              <textarea
-                className={cn(INPUT, "min-h-12 resize-none text-xs flex-1")}
-                placeholder="Add a note..."
-                value={newNote}
-                onChange={(e) => setNewNote(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    addNote();
-                  }
-                }}
-              />
-              <button
-                className={cn(
-                  BTN,
-                  "px-3 py-1 text-xs bg-primary text-primary-foreground hover:bg-primary/90",
-                )}
-                onClick={addNote}
-                disabled={saving || !newNote.trim()}
-              >
-                {saving ? "..." : "Add"}
-              </button>
+          {!readOnly && (
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium">Add Note</label>
+              <div className="flex gap-2">
+                <textarea
+                  className={cn(INPUT, "min-h-12 resize-none text-xs flex-1")}
+                  placeholder="Add a note..."
+                  value={newNote}
+                  onChange={(e) => setNewNote(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      addNote();
+                    }
+                  }}
+                />
+                <button
+                  className={cn(
+                    BTN,
+                    "px-3 py-1 text-xs bg-primary text-primary-foreground hover:bg-primary/90",
+                  )}
+                  onClick={addNote}
+                  disabled={saving || !newNote.trim()}
+                >
+                  {saving ? "..." : "Add"}
+                </button>
+              </div>
             </div>
-          </div>
+          )}
           <div className="space-y-1.5">
             <label className="text-xs font-medium">
               Notes History{" "}
@@ -1215,12 +1253,14 @@ function DetailsModal({
                           </span>
                         )}
                       </span>
-                      <button
-                        onClick={() => removeNote(i)}
-                        className="text-xs text-muted-foreground hover:text-red-600"
-                      >
-                        ✕
-                      </button>
+                      {!readOnly && (
+                        <button
+                          onClick={() => removeNote(i)}
+                          className="text-xs text-muted-foreground hover:text-red-600"
+                        >
+                          ✕
+                        </button>
+                      )}
                     </div>
                     <p className="text-xs whitespace-pre-wrap">{n.note}</p>
                   </div>
@@ -1295,6 +1335,7 @@ function NoteModal({
   field,
   fieldLabel,
   userName,
+  readOnly,
   onClose,
   onRecordUpdate,
 }: {
@@ -1302,6 +1343,7 @@ function NoteModal({
   field: string;
   fieldLabel: string;
   userName: string;
+  readOnly?: boolean;
   onClose: () => void;
   onRecordUpdate: (r: PostHrgDevRow) => void;
 }) {
@@ -1390,6 +1432,14 @@ function NoteModal({
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          {readOnly && (
+            <div className="flex items-center gap-2 rounded-lg bg-slate-100 dark:bg-slate-800/60 border border-slate-300 dark:border-slate-700 px-3 py-2">
+              <span className="text-slate-500 text-sm">🔒</span>
+              <p className="text-[11px] text-slate-700 dark:text-slate-300">
+                View-only — this record is closed/completed.
+              </p>
+            </div>
+          )}
           {notes.length === 0 && (
             <p className="text-sm text-muted-foreground text-center py-6">
               No notes yet
@@ -1413,43 +1463,47 @@ function NoteModal({
                     </span>
                   )}
                 </span>
-                <button
-                  onClick={() => removeNote(i)}
-                  className="text-xs text-muted-foreground hover:text-red-600"
-                >
-                  ✕
-                </button>
+                {!readOnly && (
+                  <button
+                    onClick={() => removeNote(i)}
+                    className="text-xs text-muted-foreground hover:text-red-600"
+                  >
+                    ✕
+                  </button>
+                )}
               </div>
               <p className="text-xs whitespace-pre-wrap">{n.note}</p>
             </div>
           ))}
         </div>
-        <div className="border-t p-4 shrink-0">
-          <div className="flex gap-2">
-            <textarea
-              className={cn(INPUT, "min-h-12 resize-none text-xs flex-1")}
-              placeholder="Add a note..."
-              value={newNote}
-              onChange={(e) => setNewNote(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  addNote();
-                }
-              }}
-            />
-            <button
-              className={cn(
-                BTN,
-                "px-3 py-1 text-xs bg-primary text-primary-foreground hover:bg-primary/90",
-              )}
-              onClick={addNote}
-              disabled={saving || !newNote.trim()}
-            >
-              {saving ? "..." : "Add"}
-            </button>
+        {!readOnly && (
+          <div className="border-t p-4 shrink-0">
+            <div className="flex gap-2">
+              <textarea
+                className={cn(INPUT, "min-h-12 resize-none text-xs flex-1")}
+                placeholder="Add a note..."
+                value={newNote}
+                onChange={(e) => setNewNote(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    addNote();
+                  }
+                }}
+              />
+              <button
+                className={cn(
+                  BTN,
+                  "px-3 py-1 text-xs bg-primary text-primary-foreground hover:bg-primary/90",
+                )}
+                onClick={addNote}
+                disabled={saving || !newNote.trim()}
+              >
+                {saving ? "..." : "Add"}
+              </button>
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
@@ -1663,8 +1717,11 @@ function getHearingDateCls(dateStr: string | null): string {
   return "text-blue-500 dark:text-blue-400"; // past
 }
 
+const TERMINAL_STATUSES = ["completed", "records closed"];
+
 const isOverdueCheck = (r: PostHrgDevRow) => {
-  if (!r.deadline || r.status?.toLowerCase() === "completed") return false;
+  const s = r.status?.toLowerCase() ?? "";
+  if (!r.deadline || TERMINAL_STATUSES.includes(s)) return false;
   return new Date(r.deadline) < new Date();
 };
 
@@ -1827,6 +1884,7 @@ export function PostHrgClient({
   initialRecordType,
   initialRecordTypeCounts,
   initialCompletedCount,
+  initialRecordsClosedCount,
   fieldOverrides,
 }: {
   userRole: string;
@@ -1843,6 +1901,7 @@ export function PostHrgClient({
   initialRecordType: PostHrgRecordType | "all";
   initialRecordTypeCounts: PostHrgRecordTypeCounts;
   initialCompletedCount: number;
+  initialRecordsClosedCount: number;
   fieldOverrides: Record<string, boolean>;
 }) {
   // Per-user editability: consult overrides → fall back to role default
@@ -1970,11 +2029,15 @@ export function PostHrgClient({
   const [detailPanel, setDetailPanel] = useState<PostHrgDevRow | null>(null);
   const [showActivityLog, setShowActivityLog] = useState(false);
   const [showCompletedModal, setShowCompletedModal] = useState(false);
+  const [showRecordsClosedModal, setShowRecordsClosedModal] = useState(false);
   const [showReportsModal, setShowReportsModal] = useState(false);
+  // Confirmation before flipping a row into a terminal status. `status` is the
+  // exact value to persist ("Completed" or "Records Closed") and drives the
+  // confirmation copy + which badge count gets bumped.
   const [completedConfirm, setCompletedConfirm] = useState<{
-    // ← add here
     id: number;
     claimant: string;
+    status: "Completed" | "Records Closed";
   } | null>(null);
   // Delete-confirmation modal state. Opening this stashes the target row's
   // id + claimant; the modal requires the user to type "delete" before the
@@ -1988,6 +2051,9 @@ export function PostHrgClient({
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [completedCount, setCompletedCount] = useState<number>(
     initialCompletedCount,
+  );
+  const [recordsClosedCount, setRecordsClosedCount] = useState<number>(
+    initialRecordsClosedCount,
   );
 
   // Import state
@@ -2428,35 +2494,27 @@ export function PostHrgClient({
 
   const handleFieldUpdate = useCallback(
     async (id: number, field: string, value: string | boolean | null) => {
-      // Intercept "Completed" status — show confirmation first
-      if (
-        field === "status" &&
-        typeof value === "string" &&
-        value.toLowerCase() === "completed"
-      ) {
-        const record = records.find((r) => r.id === id);
-        setCompletedConfirm({
-          id,
-          claimant: record?.claimant || "this record",
-        });
-        return;
+      // Intercept the terminal statuses ("Completed" / "Records Closed") —
+      // show a confirmation first. Both buckets are hidden from the main grid
+      // and reached via their dedicated modal.
+      if (field === "status" && typeof value === "string") {
+        const v = value.toLowerCase();
+        if (v === "completed" || v === "records closed") {
+          const record = records.find((r) => r.id === id);
+          setCompletedConfirm({
+            id,
+            claimant: record?.claimant || "this record",
+            status: v === "completed" ? "Completed" : "Records Closed",
+          });
+          return;
+        }
       }
 
-      // Special-case: when status flips to "Completed", drop the row from
-      // the visible list and bump the Completed badge count. The main grid
-      // hides Completed rows; users access them via the Completed modal.
-      const becameCompleted = false; // handled above via confirmation
-      if (becameCompleted) {
-        setRecords((prev) => prev.filter((r) => r.id !== id));
-        setTotalFiltered((n) => Math.max(0, n - 1));
-        setCompletedCount((n) => n + 1);
-      } else {
-        setRecords((prev) =>
-          prev.map((r) =>
-            r.id === id ? ({ ...r, [field]: value } as PostHrgDevRow) : r,
-          ),
-        );
-      }
+      setRecords((prev) =>
+        prev.map((r) =>
+          r.id === id ? ({ ...r, [field]: value } as PostHrgDevRow) : r,
+        ),
+      );
       try {
         await updatePostHrgDevField(id, field, value);
         refreshStats();
@@ -2493,14 +2551,17 @@ export function PostHrgClient({
   );
 
   const handleConfirmComplete = useCallback(
-    // ← add here
-    async (id: number) => {
+    async (id: number, status: "Completed" | "Records Closed") => {
       setCompletedConfirm(null);
       setRecords((prev) => prev.filter((r) => r.id !== id));
       setTotalFiltered((n) => Math.max(0, n - 1));
-      setCompletedCount((n) => n + 1);
+      if (status === "Completed") {
+        setCompletedCount((n) => n + 1);
+      } else {
+        setRecordsClosedCount((n) => n + 1);
+      }
       try {
-        await updatePostHrgDevField(id, "status", "Completed");
+        await updatePostHrgDevField(id, "status", status);
         refreshStats();
       } catch (e) {
         const message =
@@ -2968,7 +3029,9 @@ export function PostHrgClient({
     (r: PostHrgDevRow, col: { key: string }) => {
       // Completed rows surface in the grid via search but must remain
       // view-only — every editable cell renders as a static badge below.
-      const isCompletedRow = (r.status || "").toLowerCase() === "completed";
+      const isCompletedRow = TERMINAL_STATUSES.includes(
+        (r.status || "").toLowerCase(),
+      );
       // Small helper: render a read-only badge using the same color map
       // as the live dropdown so completed rows still look at-a-glance
       // consistent with active ones, just non-interactive.
@@ -3373,6 +3436,18 @@ export function PostHrgClient({
                 title="View completed records (hidden from main grid)"
               >
                 ✅ Completed ({completedCount})
+              </button>
+              <button
+                className={cn(
+                  "flex items-center gap-1.5 text-xs sm:text-sm px-3 py-1.5 rounded-lg transition-colors font-semibold border",
+                  recordsClosedCount > 0
+                    ? "bg-slate-600 hover:bg-slate-700 text-white border-slate-700"
+                    : "bg-card hover:bg-muted text-muted-foreground border-border",
+                )}
+                onClick={() => setShowRecordsClosedModal(true)}
+                title="View records-closed entries (hidden from main grid)"
+              >
+                📁 Records Closed ({recordsClosedCount})
               </button>
               <button
                 className={cn(
@@ -3878,9 +3953,9 @@ export function PostHrgClient({
                                     : null;
                                 })()}
                                 unacknowledged={!r.acknowledged_at}
-                                completed={
-                                  (r.status || "").toLowerCase() === "completed"
-                                }
+                                completed={TERMINAL_STATUSES.includes(
+                                  (r.status || "").toLowerCase(),
+                                )}
                               />
                             );
                           })}
@@ -4620,6 +4695,9 @@ export function PostHrgClient({
         <DetailsModal
           record={detailsModal}
           userName={userName}
+          readOnly={TERMINAL_STATUSES.includes(
+            (detailsModal.status || "").toLowerCase(),
+          )}
           onClose={() => setDetailsModal(null)}
           onRecordUpdate={handleRecordUpdate}
           onFieldUpdate={handleFieldUpdate}
@@ -4632,6 +4710,9 @@ export function PostHrgClient({
           field={noteModal.field}
           fieldLabel={noteModal.label}
           userName={userName}
+          readOnly={TERMINAL_STATUSES.includes(
+            (noteModal.record.status || "").toLowerCase(),
+          )}
           onClose={() => setNoteModal(null)}
           onRecordUpdate={handleRecordUpdate}
         />
@@ -4657,6 +4738,9 @@ export function PostHrgClient({
             assignedRep={postHrgModal.assigned_rep}
             userName={userName}
             userRole={userRole}
+            readOnly={TERMINAL_STATUSES.includes(
+              (postHrgModal.status || "").toLowerCase(),
+            )}
             initialNotes={postHrgModal.post_hrg_notes}
             initialDeadline={postHrgModal.post_hrg_deadline}
             initialRequirements={null}
@@ -4700,6 +4784,9 @@ export function PostHrgClient({
             assignedRep={postHrgModal.assigned_rep}
             userName={userName}
             userRole={userRole}
+            readOnly={TERMINAL_STATUSES.includes(
+              (postHrgModal.status || "").toLowerCase(),
+            )}
             initialNotes={postHrgModal.details_notes}
             initialDeadline={postHrgModal.deadline}
             initialRequirements={postHrgModal.requirements}
@@ -4728,6 +4815,9 @@ export function PostHrgClient({
       {remarksModal && (
         <RemarksModal
           record={remarksModal}
+          readOnly={TERMINAL_STATUSES.includes(
+            (remarksModal.status || "").toLowerCase(),
+          )}
           onClose={() => setRemarksModal(null)}
           onSave={(id, field, value) => {
             handleFieldUpdate(id, field, value);
@@ -4846,11 +4936,20 @@ export function PostHrgClient({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center gap-3 border-b px-5 py-4">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-400">
-                ✓
+              <div
+                className={cn(
+                  "flex h-9 w-9 shrink-0 items-center justify-center rounded-full",
+                  completedConfirm.status === "Completed"
+                    ? "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-400"
+                    : "bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
+                )}
+              >
+                {completedConfirm.status === "Completed" ? "✓" : "📁"}
               </div>
               <div>
-                <h3 className="text-sm font-semibold">Mark as Completed?</h3>
+                <h3 className="text-sm font-semibold">
+                  Mark as {completedConfirm.status}?
+                </h3>
                 <p className="text-[11px] text-muted-foreground mt-0.5">
                   {completedConfirm.claimant}
                 </p>
@@ -4859,9 +4958,11 @@ export function PostHrgClient({
             <div className="px-5 py-4">
               <p className="text-sm text-muted-foreground">
                 This record will be moved to the{" "}
-                <span className="font-medium text-foreground">Completed</span>{" "}
+                <span className="font-medium text-foreground">
+                  {completedConfirm.status}
+                </span>{" "}
                 list and removed from the main grid. This can be undone by
-                reopening the record from the Completed modal.
+                reopening the record from the {completedConfirm.status} modal.
               </p>
             </div>
             <div className="flex items-center justify-end gap-2 border-t px-5 py-3">
@@ -4874,11 +4975,19 @@ export function PostHrgClient({
               <button
                 className={cn(
                   BTN,
-                  "px-3 py-1.5 text-xs bg-emerald-600 text-white hover:bg-emerald-700",
+                  "px-3 py-1.5 text-xs text-white",
+                  completedConfirm.status === "Completed"
+                    ? "bg-emerald-600 hover:bg-emerald-700"
+                    : "bg-slate-600 hover:bg-slate-700",
                 )}
-                onClick={() => handleConfirmComplete(completedConfirm.id)}
+                onClick={() =>
+                  handleConfirmComplete(
+                    completedConfirm.id,
+                    completedConfirm.status,
+                  )
+                }
               >
-                Yes, mark as Completed
+                Yes, mark as {completedConfirm.status}
               </button>
             </div>
           </div>
@@ -4892,11 +5001,31 @@ export function PostHrgClient({
       <PostHrgCompletedModal
         open={showCompletedModal}
         recordType={recordType}
+        status="Completed"
         onClose={() => setShowCompletedModal(false)}
         onReopen={() => {
           // Reopened row now lives back in the main grid as "In Progress" —
           // refetch + decrement the badge.
           setCompletedCount((n) => Math.max(0, n - 1));
+          fetchPage(
+            page,
+            pageSize,
+            sortKey,
+            sortDir,
+            searchTerm,
+            statusFilter,
+            phStatusFilter,
+            indicatorFilter,
+          );
+        }}
+      />
+      <PostHrgCompletedModal
+        open={showRecordsClosedModal}
+        recordType={recordType}
+        status="Records Closed"
+        onClose={() => setShowRecordsClosedModal(false)}
+        onReopen={() => {
+          setRecordsClosedCount((n) => Math.max(0, n - 1));
           fetchPage(
             page,
             pageSize,
