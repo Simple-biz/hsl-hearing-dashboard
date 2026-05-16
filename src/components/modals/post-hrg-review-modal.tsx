@@ -1304,13 +1304,26 @@ function CascadeCheckboxes({
 // follows the OS/browser locale for its visible value, so on non-US locales
 // it can render as dd/mm/yyyy. We force US display by swapping in a text
 // input and overlaying a hidden native picker (for date-picking UX).
-function isoToUs(iso: string): string {
-  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+// Tolerant of the value arriving as a Date (Postgres `date` columns come
+// back as JS Date unless cast `::text`), an ISO datetime string, a plain
+// `YYYY-MM-DD` string, or null/undefined. Anything unrecognized → "".
+function isoToUs(iso: unknown): string {
+  if (iso == null) return "";
+  let s: string;
+  if (iso instanceof Date) {
+    if (Number.isNaN(iso.getTime())) return "";
+    s = `${iso.getFullYear()}-${String(iso.getMonth() + 1).padStart(2, "0")}-${String(iso.getDate()).padStart(2, "0")}`;
+  } else {
+    s = String(iso);
+  }
+  // Prefix match so ISO datetimes ("2025-10-14T00:00:00Z") work too.
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!m) return "";
   return `${m[2]}/${m[3]}/${m[1]}`;
 }
 
-function usToIso(us: string): string | null {
+function usToIso(us: unknown): string | null {
+  if (typeof us !== "string") return null;
   const m = us.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
   if (!m) return null;
   const [, mm, dd, yyyy] = m;
