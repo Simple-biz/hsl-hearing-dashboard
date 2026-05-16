@@ -10,6 +10,7 @@ import {
 } from "react";
 import type { Chart as ChartType } from "chart.js";
 import { Card } from "@/components/ui/card";
+import { StackedDeck } from "@/components/ui/stacked-deck";
 import { AppHeader } from "@/components/layout/app-header";
 import { DashboardNav } from "@/components/layout/dashboard-nav";
 import {
@@ -370,7 +371,14 @@ export function MrReportsClient({
           </div>
         </Card>
 
-        {/* ══════════ SECTION 1: Decision Status Summary Table ══════════ */}
+        <StackedDeck
+          items={[
+            {
+              id: "decision-counts",
+              title: "Decision Status — Counts",
+              accent: "#f59e0b",
+              content: (
+        /* ══════════ SECTION 1: Decision Status Summary Table ══════════ */
         <Card className="overflow-x-auto shadow-sm">
           <table className="w-full text-xs border-collapse">
             <thead>
@@ -445,8 +453,14 @@ export function MrReportsClient({
             </tbody>
           </table>
         </Card>
-
-        {/* ══════════ SECTION 2: Percentage Table ══════════ */}
+              ),
+            },
+            {
+              id: "decision-pct",
+              title: "Decision Status — Percentages",
+              accent: "#f59e0b",
+              content: (
+        /* ══════════ SECTION 2: Percentage Table ══════════ */
         <Card className="overflow-x-auto shadow-sm">
           <table className="w-full text-xs border-collapse">
             <thead>
@@ -492,14 +506,15 @@ export function MrReportsClient({
             </tbody>
           </table>
         </Card>
-
-        {/* ══════════ SECTION 3: Decision Status Pie Charts ══════════ */}
-        <div>
-          <h2 className="text-base font-bold mb-4 flex items-center gap-2">
-            <span className="w-1 h-5 rounded-full bg-amber-500 inline-block" />
-            Decision Status Distribution by Team
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+              ),
+            },
+            {
+              id: "decision-pies",
+              title: "Decision Status Distribution by Team",
+              accent: "#f59e0b",
+              content: (
+        /* ══════════ SECTION 3: Decision Status Pie Charts ══════════ */
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
             {teamOrder.map((team) => {
               const d = teamDecisionData[team];
               if (!d || d.total === 0) return null;
@@ -567,10 +582,15 @@ export function MrReportsClient({
                 </Card>
               );
             })}
-          </div>
         </div>
-
-        {/* ══════════ SECTION 4: Monthly Stats — MR Status ══════════ */}
+              ),
+            },
+            {
+              id: "mr-status-stats",
+              title: "Monthly Stats — Medical Record Status",
+              accent: "#10b981",
+              content: (
+        /* ══════════ SECTION 4: Monthly Stats — MR Status ══════════ */
         <Card className="overflow-x-auto shadow-sm">
           <div className="bg-emerald-600 dark:bg-emerald-700 px-5 py-2.5">
             <h2 className="text-sm font-bold uppercase tracking-wider text-white">
@@ -670,14 +690,15 @@ export function MrReportsClient({
             </table>
           </div>
         </Card>
-
-        {/* ══════════ SECTION 5: MR Status Pie Charts ══════════ */}
-        <div>
-          <h2 className="text-base font-bold mb-4 flex items-center gap-2">
-            <span className="w-1 h-5 rounded-full bg-emerald-500 inline-block" />
-            MR Status Distribution by Team
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+              ),
+            },
+            {
+              id: "mr-status-pies",
+              title: "MR Status Distribution by Team",
+              accent: "#10b981",
+              content: (
+        /* ══════════ SECTION 5: MR Status Pie Charts ══════════ */
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
             {teamOrder.map((team) => {
               const d = teamMrStatusData[team];
               if (!d || d.total === 0) return null;
@@ -746,16 +767,16 @@ export function MrReportsClient({
                 </Card>
               );
             })}
-          </div>
         </div>
-
-        {/* ══════════ SECTION 6: Team Members ══════════ */}
-        <div>
-          <h2 className="text-base font-bold mb-4 flex items-center gap-2">
-            <span className="w-1 h-5 rounded-full bg-indigo-500 inline-block" />
-            Team Roster
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              ),
+            },
+            {
+              id: "team-roster",
+              title: "Team Roster",
+              accent: "#6366f1",
+              content: (
+        /* ══════════ SECTION 6: Team Members ══════════ */
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {teamOrder.map((team) => {
               const members = membersByTeam[team];
               if (!members || members.length === 0) return null;
@@ -790,8 +811,11 @@ export function MrReportsClient({
                 </Card>
               );
             })}
-          </div>
         </div>
+              ),
+            },
+          ]}
+        />
       </div>
     </>
   );
