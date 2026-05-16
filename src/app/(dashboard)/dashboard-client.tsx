@@ -720,15 +720,38 @@ function RepCell({
   const clearStatus = () => {
     onUpdate(hearing.id, "assignment_status", null);
     onUpdate(hearing.id, "assigned_rep_id", null);
+    // A UI withdrawal also stamps hearing_decision_status with the withdrawal
+    // type, so clearing the status must clear that too — otherwise a stale
+    // "Withdrawal - …" decision lingers. Only cleared when the decision is
+    // actually withdrawal-flavored, so a legitimate non-withdrawal decision
+    // (e.g. Favorable) is left untouched.
+    if (
+      (hearing.hearing_decision_status || "")
+        .toLowerCase()
+        .startsWith("withdrawal")
+    ) {
+      onUpdate(hearing.id, "hearing_decision_status", null);
+    }
     close();
   };
   const doWithdrawal = (type: string) => {
     onUpdate(hearing.id, "assignment_status", "withdrawal");
     onUpdate(hearing.id, "hearing_decision_status", type);
+    // Withdrawal supersedes the rep assignment — clear it so the row reads
+    // as withdrawn. Without this, an assigned hearing keeps assigned_rep_id,
+    // RepBadge still shows the rep (assigned check wins), and the
+    // withdrawn-state menu / Clear Status never surface.
+    if (hearing.assigned_rep_id) {
+      onUpdate(hearing.id, "assigned_rep_id", null);
+    }
     close();
   };
   const wdNeverAssigned = () => {
     onUpdate(hearing.id, "assignment_status", "wd_never_assigned");
+    // "Never assigned" can't coexist with a rep — clear any assignment.
+    if (hearing.assigned_rep_id) {
+      onUpdate(hearing.id, "assigned_rep_id", null);
+    }
     close();
   };
 
@@ -950,6 +973,7 @@ function ActionMenu({
   // Representative column via <RepCell>.
   const isActionAdmin = canManage(userRole);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [showAuditTrail, setShowAuditTrail] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const [pos, setPos] = useState({ top: 0, left: 0 });
 
@@ -1011,7 +1035,7 @@ function ActionMenu({
               </button>
               {userRole !== "rep" && (
                 <button
-                  onClick={menuAction(() => {})}
+                  onClick={menuAction(() => setShowAuditTrail(true))}
                   className="flex w-full items-center px-3 py-1.5 text-xs hover:bg-muted/50"
                 >
                   📝 Activity Log
@@ -1039,6 +1063,14 @@ function ActionMenu({
           </>,
           document.body,
         )}
+
+      {showAuditTrail && (
+        <HearingAuditTrailModal
+          hearingId={hearing.id}
+          claimant={hearing.claimant ?? ""}
+          onClose={() => setShowAuditTrail(false)}
+        />
+      )}
     </>
   );
 }
