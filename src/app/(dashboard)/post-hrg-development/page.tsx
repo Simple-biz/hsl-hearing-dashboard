@@ -53,6 +53,7 @@ export default async function PostHrgDevelopmentPage({
     options,
     recordTypeCounts,
     completedCount,
+    recordsClosedCount,
     fieldOverrides,
   ] = await Promise.all([
     fetchPostHrgDevPage({ page: 1, pageSize: 100, recordType: initialTab }),
@@ -60,6 +61,7 @@ export default async function PostHrgDevelopmentPage({
     fetchPostHrgOptions(),
     fetchPostHrgRecordTypeCounts(),
     fetchPostHrgCompletedCount(),
+    fetchPostHrgCompletedCount("records closed"),
     getUserFieldOverridesPlain(
       Number(session.user.id),
       "post_hrg_development",
@@ -82,6 +84,7 @@ export default async function PostHrgDevelopmentPage({
       initialRecordType={initialTab}
       initialRecordTypeCounts={recordTypeCounts}
       initialCompletedCount={completedCount}
+      initialRecordsClosedCount={recordsClosedCount}
       fieldOverrides={fieldOverrides}
     />
   );

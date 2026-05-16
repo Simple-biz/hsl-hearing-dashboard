@@ -299,14 +299,15 @@ export async function fetchPostHrgDevPage(
     );
   }
 
-  // Hide Completed rows from the main grid by default. The Completed modal
-  // passes includeCompleted=true via fetchPostHrgCompletedRecords below.
-  // EXCEPTION: when the user runs a text search, surface Completed rows too
-  // so nothing appears "missing" when they search for a known claimant.
-  // Those rows render read-only on the client.
+  // Hide terminal-status rows (Completed, Records Closed) from the main grid
+  // by default — each has its own dedicated modal. EXCEPTION: when the user
+  // runs a text search, surface them too so nothing appears "missing" when
+  // searching for a known claimant. Those rows render read-only on the client.
   const searchActive = !!params.search?.trim();
   if (!params.includeCompleted && !searchActive) {
-    conditions.push(`(p.status IS NULL OR LOWER(p.status) <> 'completed')`);
+    conditions.push(
+      `(p.status IS NULL OR LOWER(p.status) NOT IN ('completed', 'records closed'))`,
+    );
   }
 
   const where =
@@ -329,7 +330,7 @@ export async function fetchPostHrgDevPage(
   // Pin unacknowledged ("NEW") rows to the very top, regardless of the
   // user's chosen sort. Within the unacknowledged group, newest first.
   // Then completed rows sink to the bottom of the rest, then user sort.
-  const orderBy = `ORDER BY (p.acknowledged_at IS NULL) DESC, CASE WHEN p.status = 'Completed' THEN 1 ELSE 0 END ASC, ${sortCol} ${dir} NULLS LAST, p.created_at DESC`;
+  const orderBy = `ORDER BY (p.acknowledged_at IS NULL) DESC, CASE WHEN LOWER(p.status) IN ('completed', 'records closed') THEN 1 ELSE 0 END ASC, ${sortCol} ${dir} NULLS LAST, p.created_at DESC`;
 
   const limit = params.pageSize;
   const offset = (params.page - 1) * params.pageSize;
@@ -412,7 +413,7 @@ export async function fetchPostHrgDevRecords(): Promise<PostHrgDevRow[]> {
     LEFT JOIN representatives r ON r.id = h.assigned_rep_id
     ORDER BY
       (p.acknowledged_at IS NULL) DESC,
-      CASE WHEN p.status = 'Completed' THEN 1 ELSE 0 END ASC,
+      CASE WHEN LOWER(p.status) IN ('completed', 'records closed') THEN 1 ELSE 0 END ASC,
       p.deadline ASC NULLS LAST,
       p.created_at DESC
   `);
@@ -437,6 +438,7 @@ export async function fetchPostHrgDevStats(
       COUNT(*) FILTER (
         WHERE deadline < CURRENT_DATE
         AND (LOWER(status) IS DISTINCT FROM 'completed')
+        AND (LOWER(status) IS DISTINCT FROM 'records closed')
         AND (LOWER(status) IS DISTINCT FROM 'cancelled')
       )::int AS overdue
     FROM post_hrg_development
@@ -455,8 +457,8 @@ export async function fetchPostHrgDevStats(
 }
 
 export async function fetchPostHrgRecordTypeCounts(): Promise<PostHrgRecordTypeCounts> {
-  // Counts mirror what the main grid actually displays — Completed rows
-  // are hidden by default and live in the dedicated Completed modal.
+  // Counts mirror what the main grid actually displays — terminal-status
+  // rows (Completed, Records Closed) are hidden and live in their own modals.
   const { rows } = await db.query(`
     SELECT
       COUNT(*)::int AS all_count,
@@ -464,7 +466,7 @@ export async function fetchPostHrgRecordTypeCounts(): Promise<PostHrgRecordTypeC
       COUNT(*) FILTER (WHERE record_type = 'POST_HRG')::int AS post_hrg,
       COUNT(*) FILTER (WHERE record_type = 'REP')::int AS rep
     FROM post_hrg_development
-    WHERE status IS NULL OR LOWER(status) <> 'completed'
+    WHERE status IS NULL OR LOWER(status) NOT IN ('completed', 'records closed')
   `);
   const r = rows[0];
   return {
@@ -475,27 +477,32 @@ export async function fetchPostHrgRecordTypeCounts(): Promise<PostHrgRecordTypeC
   };
 }
 
-// Lightweight count used to drive the "Completed (N)" badge on the page
-// header without pulling the full row payload.
-export async function fetchPostHrgCompletedCount(): Promise<number> {
+// Lightweight count used to drive the "Completed (N)" / "Records Closed (N)"
+// badges on the page header without pulling the full row payload.
+// `statusValue` is matched case-insensitively against post_hrg_development.status.
+export async function fetchPostHrgCompletedCount(
+  statusValue: string = "completed",
+): Promise<number> {
   const { rows } = await db.query(
     `SELECT COUNT(*)::int AS n
        FROM post_hrg_development
-      WHERE LOWER(status) = 'completed'`,
+      WHERE LOWER(status) = LOWER($1)`,
+    [statusValue],
   );
   return rows[0]?.n ?? 0;
 }
 
-// Returns every Completed row, optionally filtered by record_type.
-// Used by the Completed modal — most teams have a manageable number of
-// Completed entries so we don't paginate.
+// Returns every row at the given status, optionally filtered by record_type.
+// Used by the Completed / Records Closed modal — most teams have a manageable
+// number of such entries so we don't paginate.
 export async function fetchPostHrgCompletedRecords(
   recordType?: PostHrgRecordType | "all",
+  statusValue: string = "completed",
 ): Promise<PostHrgDevRow[]> {
-  const conditions: string[] = [`LOWER(p.status) = 'completed'`];
-  const values: unknown[] = [];
+  const conditions: string[] = [`LOWER(p.status) = LOWER($1)`];
+  const values: unknown[] = [statusValue];
   if (recordType && recordType !== "all") {
-    conditions.push(`p.record_type = $1`);
+    conditions.push(`p.record_type = $2`);
     values.push(recordType);
   }
   const { rows } = await db.query(
@@ -531,24 +538,27 @@ export async function fetchPostHrgCompletedRecords(
   return rows as PostHrgDevRow[];
 }
 
-// Reopen a Completed row — flips status back to "In Progress" so it
-// reappears in the main grid. Logged for audit.
+// Reopen a Completed / Records Closed row — flips status back to "In Progress"
+// so it reappears in the main grid. Logged for audit.
 export async function reopenPostHrgDevRecord(id: number) {
   const { rows } = await db.query(
     `UPDATE post_hrg_development
         SET status = 'In Progress', updated_at = NOW()
       WHERE id = $1
-        AND LOWER(status) = 'completed'
-      RETURNING claimant, hearing_id`,
+        AND LOWER(status) IN ('completed', 'records closed')
+      RETURNING claimant, hearing_id, status`,
     [id],
   );
   if (rows.length === 0) {
-    return { success: false, message: "Record not found or not completed" };
+    return {
+      success: false,
+      message: "Record not found or not in a reopenable status",
+    };
   }
   const { logAction } = await import("@/lib/activity-log");
   await logAction(
     "post_hrg_dev_reopened",
-    `Reopened completed post-hrg record: ${rows[0].claimant}`,
+    `Reopened post-hrg record: ${rows[0].claimant}`,
     (rows[0].hearing_id as number | null) ?? undefined,
   );
   return { success: true };
@@ -867,6 +877,36 @@ export async function updatePostHrgDevField(
       `UPDATE post_hrg_development SET ${field} = $1 WHERE id = $2`,
       [value, id],
     );
+  }
+
+  // Append to the per-row deadline history trail (mirrors the hearing-level
+  // post_hrg_deadline_history). Only on an actual change to a non-null date.
+  if (
+    field === "deadline" &&
+    (oldValue ?? null) !== (value ?? null) &&
+    value
+  ) {
+    // Best-effort: the primary deadline UPDATE above is already committed, so
+    // a history-table problem must NOT make a successful save look failed to
+    // the caller (which would trigger an optimistic rollback). Log and move on.
+    try {
+      let setBy = "Unknown";
+      try {
+        const { requireAuth } = await import("@/lib/session");
+        const session = await requireAuth();
+        setBy = session.user.name || session.user.email || "Unknown";
+      } catch {
+        /* fallback to Unknown */
+      }
+      await db.query(
+        `INSERT INTO post_hrg_dev_deadline_history
+           (phd_row_id, hearing_id, deadline, set_by)
+         VALUES ($1, $2, $3::date, $4)`,
+        [id, linkedHearingId ?? null, value, setBy],
+      );
+    } catch (e) {
+      console.error("post_hrg_dev_deadline_history insert failed", e);
+    }
   }
 
   const FIELD_LABELS: Record<string, string> = {
@@ -1413,10 +1453,39 @@ export async function cascadePhdField(
         `UPDATE post_hrg_development
             SET deadline = NULLIF($1, '')::date, updated_at = NOW()
           WHERE hearing_id = $2
-            AND record_type = ANY($3::post_hrg_record_type[])`,
+            AND record_type = ANY($3::post_hrg_record_type[])
+          RETURNING id`,
         [value, hearingId, phdTargets],
       );
       updated += res.rowCount ?? 0;
+      // Trail each cascaded row's new deadline (non-null only). Best-effort —
+      // the cascade UPDATE is already committed, so a history-table problem
+      // must not make a successful cascade throw.
+      if (value && res.rows.length > 0) {
+        try {
+          let setBy = "Unknown";
+          try {
+            const { requireAuth } = await import("@/lib/session");
+            const session = await requireAuth();
+            setBy = session.user.name || session.user.email || "Unknown";
+          } catch {
+            /* fallback to Unknown */
+          }
+          for (const row of res.rows) {
+            await db.query(
+              `INSERT INTO post_hrg_dev_deadline_history
+                 (phd_row_id, hearing_id, deadline, set_by)
+               VALUES ($1, $2, $3::date, $4)`,
+              [row.id, hearingId, value, setBy],
+            );
+          }
+        } catch (e) {
+          console.error(
+            "post_hrg_dev_deadline_history cascade insert failed",
+            e,
+          );
+        }
+      }
     } else {
       const res = await db.query(
         `UPDATE post_hrg_development
@@ -1440,6 +1509,31 @@ export async function cascadePhdField(
   }
 
   return { success: true, updated };
+}
+
+// ─── Per-PHD-row deadline history ───────────────────────────────────────────
+
+export interface PhdDeadlineHistoryEntry {
+  deadline: string;
+  set_at: string;
+  set_by: string | null;
+}
+
+// Full deadline-change trail for a single PHD row (REP / POST_HRG / unlinked
+// MR). The hearing-level equivalent is fetchPostHrgDeadlineHistory.
+export async function fetchPhdDeadlineHistory(
+  phdRowId: number,
+): Promise<PhdDeadlineHistoryEntry[]> {
+  const { rows } = await db.query(
+    `SELECT deadline::text AS deadline,
+            set_at::text  AS set_at,
+            set_by
+       FROM post_hrg_dev_deadline_history
+      WHERE phd_row_id = $1
+      ORDER BY set_at DESC, id DESC`,
+    [phdRowId],
+  );
+  return rows as PhdDeadlineHistoryEntry[];
 }
 
 export async function addPostHrgDevNote(
