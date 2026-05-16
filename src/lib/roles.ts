@@ -110,7 +110,7 @@ export const PAGE_ACCESS: Record<string, UserRole[]> = {
     "link_editor",
   ],
   admin: ["system_admin", "admin"],
-  api_keys: ["system_admin", "admin"],
+  api_keys: ["system_admin"],
   settings: [
     "system_admin",
     "admin",
@@ -285,11 +285,7 @@ export const EDITABLE_FIELDS: Record<string, UserRole[]> = {
   // Tighter than the other post_hrg_* fields — only the post-hearing team
   // lead + admins curate the formal "Requirements" block. Must match the
   // modal-side ROLES_CAN_EDIT_REQUIREMENTS gate in post-hrg-review-modal.tsx.
-  post_hrg_requirements: [
-    "system_admin",
-    "admin",
-    "post_hearing_admin",
-  ],
+  post_hrg_requirements: ["system_admin", "admin", "post_hearing_admin"],
   post_hrg_dev_status: [
     "system_admin",
     "admin",

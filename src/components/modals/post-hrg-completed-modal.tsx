@@ -12,22 +12,42 @@ import {
 } from "@/app/(dashboard)/post-hrg-development/actions";
 
 // ─── PostHrgCompletedModal ─────────────────────────────────────────────────
-// Lists every Completed PHD row. Per-row "Reopen" sets status back to
-// "In Progress" and removes the entry from this list (the main grid will
-// pick it up on the next refetch).
+// Lists every PHD row at a given terminal status ("Completed" or
+// "Records Closed"). Per-row "Reopen" sets status back to "In Progress" and
+// removes the entry from this list (the main grid will pick it up on the next
+// refetch). Generalized via the `status` prop so a single modal serves both
+// terminal-status buckets.
+
+type TerminalStatus = "Completed" | "Records Closed";
+
+// Per-status presentation — title icon, body copy, the "…At" column label.
+const STATUS_META: Record<
+  TerminalStatus,
+  { icon: string; noun: string; atLabel: string }
+> = {
+  Completed: { icon: "✅", noun: "completed", atLabel: "Completed At" },
+  "Records Closed": {
+    icon: "📁",
+    noun: "records-closed",
+    atLabel: "Closed At",
+  },
+};
 
 interface Props {
   open: boolean;
   recordType: PostHrgRecordType | "all";
+  /** Which terminal status this modal lists. Defaults to "Completed". */
+  status?: TerminalStatus;
   onClose: () => void;
   // Called after a successful reopen so the parent can refetch the main grid
-  // and decrement its completed count badge.
+  // and decrement its count badge.
   onReopen?: (id: number) => void;
 }
 
 export function PostHrgCompletedModal({
   open,
   recordType,
+  status = "Completed",
   onClose,
   onReopen,
 }: Props) {
@@ -36,12 +56,14 @@ export function PostHrgCompletedModal({
   const [busyId, setBusyId] = useState<number | null>(null);
   const [loading, startTransition] = useTransition();
 
+  const meta = STATUS_META[status];
+
   const load = useCallback(() => {
     startTransition(async () => {
-      const rows = await fetchPostHrgCompletedRecords(recordType);
+      const rows = await fetchPostHrgCompletedRecords(recordType, status);
       setRecords(rows);
     });
-  }, [recordType]);
+  }, [recordType, status]);
 
   useEffect(() => {
     if (open) load();
@@ -91,7 +113,7 @@ export function PostHrgCompletedModal({
         <div className="flex items-center justify-between border-b bg-muted/50 px-5 py-4 shrink-0">
           <div>
             <h2 className="text-sm font-semibold">
-              ✅ Completed Records ({records.length})
+              {meta.icon} {status} Records ({records.length})
             </h2>
             <p className="text-xs text-muted-foreground mt-0.5">
               Hidden from the main grid. Click <strong>Reopen</strong> to
@@ -123,12 +145,12 @@ export function PostHrgCompletedModal({
           {loading ? (
             <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
-              Loading completed records...
+              Loading {meta.noun} records...
             </div>
           ) : filtered.length === 0 ? (
             <div className="py-12 text-center text-sm text-muted-foreground">
               {records.length === 0
-                ? "No completed records yet."
+                ? `No ${meta.noun} records yet.`
                 : "No matches for your search."}
             </div>
           ) : (
@@ -150,7 +172,7 @@ export function PostHrgCompletedModal({
                     Docs Needed
                   </th>
                   <th className="px-3 py-2 text-left font-semibold">
-                    Completed At
+                    {meta.atLabel}
                   </th>
                   <th className="px-3 py-2 text-right font-semibold">Action</th>
                 </tr>
