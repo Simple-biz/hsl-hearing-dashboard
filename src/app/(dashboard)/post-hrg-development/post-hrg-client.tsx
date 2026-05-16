@@ -39,8 +39,11 @@ import {
   BarChart3,
   Trash2,
   RefreshCw,
+  History,
 } from "lucide-react";
 import { PostHrgReportsModal } from "@/components/modals/post-hrg-reports-modal";
+import { RepHistoryModal } from "@/components/modals/rep-history-modal";
+import { HearingAuditTrailModal } from "@/components/modals/hearing-audit-trail-modal";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -1015,6 +1018,8 @@ function DetailsModal({
   const [saving, setSaving] = useState(false);
   const [details, setDetails] = useState(record.details || "");
   const [editingDetails, setEditingDetails] = useState(false);
+  const [showRepHistory, setShowRepHistory] = useState(false);
+  const [showAuditTrail, setShowAuditTrail] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -1224,7 +1229,7 @@ function DetailsModal({
             )}
           </div>
         </div>
-        <div className="border-t px-5 py-3 shrink-0">
+        <div className="border-t px-5 py-3 shrink-0 flex items-center justify-between gap-2">
           <button
             className={cn(
               BTN,
@@ -1234,8 +1239,51 @@ function DetailsModal({
           >
             Close
           </button>
+          {/* Rep History + Audit Trail — only meaningful when the PHD row is
+              linked to a hearing (history is keyed by hearing_id). */}
+          {record.hearing_id && (
+            <div className="flex items-center gap-2">
+              <button
+                className={cn(
+                  BTN,
+                  "h-8 text-xs px-3 py-1 gap-1.5 border bg-background hover:bg-muted",
+                )}
+                onClick={() => setShowRepHistory(true)}
+                title="View representative assignment history for this hearing"
+              >
+                <History className="h-3 w-3" />
+                Rep History
+              </button>
+              <button
+                className={cn(
+                  BTN,
+                  "h-8 text-xs px-3 py-1 gap-1.5 border bg-background hover:bg-muted",
+                )}
+                onClick={() => setShowAuditTrail(true)}
+                title="View the full activity history for this hearing"
+              >
+                <History className="h-3 w-3" />
+                Audit Log
+              </button>
+            </div>
+          )}
         </div>
       </div>
+
+      {showRepHistory && record.hearing_id && (
+        <RepHistoryModal
+          hearingId={record.hearing_id}
+          claimant={record.claimant}
+          onClose={() => setShowRepHistory(false)}
+        />
+      )}
+      {showAuditTrail && record.hearing_id && (
+        <HearingAuditTrailModal
+          hearingId={record.hearing_id}
+          claimant={record.claimant}
+          onClose={() => setShowAuditTrail(false)}
+        />
+      )}
     </div>
   );
 }

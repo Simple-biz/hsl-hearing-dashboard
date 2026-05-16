@@ -35,6 +35,7 @@ import {
   Archive,
   ArchiveRestore,
   RefreshCw,
+  History,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatCard, StatCardGrid } from "@/components/stat-card";
@@ -69,6 +70,8 @@ import { CsvCompareModal } from "@/components/modals/csv-compare-modal";
 import { RescheduledHistoryModal } from "@/components/modals/rescheduled-history-modal";
 import { AddToPostHrgModal } from "@/components/modals/add-to-post-hrg-modal";
 import { PostHrgReviewModal } from "@/components/modals/post-hrg-review-modal";
+import { RepHistoryModal } from "@/components/modals/rep-history-modal";
+import { HearingAuditTrailModal } from "@/components/modals/hearing-audit-trail-modal";
 import {
   updateHearing,
   deleteHearing,
@@ -3088,6 +3091,9 @@ export function DashboardClient({
   const [editHearing, setEditHearing] = useState<HearingRow | null>(null);
   const [editSaving, setEditSaving] = useState(false);
   const editFormRef = useRef<HTMLFormElement>(null);
+  // Rep History / Audit Trail modals — opened from the Edit/View Hearing modal.
+  const [showRepHistory, setShowRepHistory] = useState(false);
+  const [showAuditTrail, setShowAuditTrail] = useState(false);
 
   const handleEdit = useCallback((hearing: HearingRow) => {
     setEditHearing(hearing);
@@ -3835,17 +3841,39 @@ export function DashboardClient({
               className="w-full max-w-lg max-h-[85vh] flex flex-col rounded-xl border bg-card shadow-2xl"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="flex items-center justify-between border-b bg-muted/50 px-5 py-4 shrink-0">
-                <h2 className="text-sm font-semibold">
+              <div className="flex items-center justify-between gap-3 border-b bg-muted/50 px-5 py-4 shrink-0">
+                <h2 className="text-sm font-semibold shrink-0">
                   {hasManageAccess ? "✏️ Edit Hearing" : "👁️ View Hearing"} #
                   {editHearing.id}
                 </h2>
-                <button
-                  onClick={() => setEditHearing(null)}
-                  className="text-muted-foreground hover:text-foreground"
-                >
-                  <XIcon className="h-5 w-5" />
-                </button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs gap-1.5"
+                    onClick={() => setShowRepHistory(true)}
+                    title="View representative assignment history for this hearing"
+                  >
+                    <History className="h-3.5 w-3.5" />
+                    Rep History
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs gap-1.5"
+                    onClick={() => setShowAuditTrail(true)}
+                    title="View the full activity history for this hearing"
+                  >
+                    <History className="h-3.5 w-3.5" />
+                    Audit Log
+                  </Button>
+                  <button
+                    onClick={() => setEditHearing(null)}
+                    className="text-muted-foreground hover:text-foreground"
+                  >
+                    <XIcon className="h-5 w-5" />
+                  </button>
+                </div>
               </div>
               <form
                 ref={editFormRef}
@@ -4248,6 +4276,21 @@ export function DashboardClient({
                 </div>
               </div>
             </div>
+
+            {showRepHistory && (
+              <RepHistoryModal
+                hearingId={editHearing.id}
+                claimant={editHearing.claimant ?? ""}
+                onClose={() => setShowRepHistory(false)}
+              />
+            )}
+            {showAuditTrail && (
+              <HearingAuditTrailModal
+                hearingId={editHearing.id}
+                claimant={editHearing.claimant ?? ""}
+                onClose={() => setShowAuditTrail(false)}
+              />
+            )}
           </div>,
           document.body,
         )}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   X,
@@ -12,9 +12,12 @@ import {
   AlertTriangle,
   CheckCircle2,
   Circle,
+  History,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { PostHrgDevRow } from "./actions";
+import { RepHistoryModal } from "@/components/modals/rep-history-modal";
+import { HearingAuditTrailModal } from "@/components/modals/hearing-audit-trail-modal";
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
@@ -250,6 +253,8 @@ interface Props {
 
 export function PostHrgDetailPanel({ row, onClose }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
+  const [showRepHistory, setShowRepHistory] = useState(false);
+  const [showAuditTrail, setShowAuditTrail] = useState(false);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -450,13 +455,26 @@ export function PostHrgDetailPanel({ row, onClose }: Props) {
             {/* People */}
             <Section title="People" icon={<User className="h-3.5 w-3.5" />}>
               <InfoRow label="Representative">
-                {row.representative_name || row.assigned_rep ? (
-                  <span className="text-xs font-medium">
-                    {row.representative_name || row.assigned_rep}
-                  </span>
-                ) : (
-                  <span className="text-xs text-muted-foreground">—</span>
-                )}
+                <div className="flex flex-col items-end gap-1">
+                  {row.representative_name || row.assigned_rep ? (
+                    <span className="text-xs font-medium">
+                      {row.representative_name || row.assigned_rep}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">—</span>
+                  )}
+                  {row.hearing_id && (
+                    <button
+                      type="button"
+                      onClick={() => setShowRepHistory(true)}
+                      className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                      title="View representative assignment history for this hearing"
+                    >
+                      <History className="h-3 w-3" />
+                      Rep History
+                    </button>
+                  )}
+                </div>
               </InfoRow>
               <InfoRow label="Responsible">
                 {row.person_responsible ? (
@@ -599,6 +617,23 @@ export function PostHrgDetailPanel({ row, onClose }: Props) {
           </div>
         </div>
 
+        {/* Audit Trail — only when the PHD row links to a hearing (the
+            audit trail is keyed by hearing_id). Rep History lives up in the
+            People section, below the rep name. */}
+        {row.hearing_id && (
+          <div className="shrink-0 border-t bg-muted/10 px-5 py-2.5">
+            <button
+              type="button"
+              onClick={() => setShowAuditTrail(true)}
+              className="w-full inline-flex items-center justify-center gap-1.5 rounded-md border border-border bg-background px-2 py-1.5 text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+              title="View the full activity history for this hearing"
+            >
+              <History className="h-3 w-3" />
+              Audit Log
+            </button>
+          </div>
+        )}
+
         {/* Footer */}
         <div className="shrink-0 border-t bg-muted/20 px-5 py-2.5 flex items-center justify-between">
           <p className="text-[10px] text-muted-foreground">
@@ -620,6 +655,21 @@ export function PostHrgDetailPanel({ row, onClose }: Props) {
           )}
         </div>
       </div>
+
+      {showRepHistory && row.hearing_id && (
+        <RepHistoryModal
+          hearingId={row.hearing_id}
+          claimant={row.claimant}
+          onClose={() => setShowRepHistory(false)}
+        />
+      )}
+      {showAuditTrail && row.hearing_id && (
+        <HearingAuditTrailModal
+          hearingId={row.hearing_id}
+          claimant={row.claimant}
+          onClose={() => setShowAuditTrail(false)}
+        />
+      )}
     </>,
     document.body,
   );
