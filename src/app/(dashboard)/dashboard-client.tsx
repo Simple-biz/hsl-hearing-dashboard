@@ -2224,6 +2224,25 @@ const HearingTable = memo(function HearingTable({
     value: d.name,
     label: d.name,
   }));
+  // Per-assignee background color for the "Docs Assigned" dropdown — mirrors
+  // the "Assigned To" select on representative-docs (same rep_docs_assignees
+  // source). Keyed by name (= InlineDropdown option label).
+  const docsAssigneeHexColors: Record<string, { bg: string; color: string }> =
+    {};
+  for (const d of repDocsAssignees) {
+    const c = d.bg_color;
+    if (c && /^#?[0-9a-fA-F]{6}$/.test(c)) {
+      const hex = c.replace("#", "");
+      const r = parseInt(hex.slice(0, 2), 16);
+      const g = parseInt(hex.slice(2, 4), 16);
+      const b = parseInt(hex.slice(4, 6), 16);
+      const isLight = (r * 299 + g * 587 + b * 114) / 1000 > 128;
+      docsAssigneeHexColors[d.name] = {
+        bg: c.startsWith("#") ? c : `#${c}`,
+        color: isLight ? "#1f2937" : "#ffffff",
+      };
+    }
+  }
   const teamOptions = mrTeams
     .filter((t) => t.is_active)
     .map((t) => ({
@@ -2376,6 +2395,7 @@ const HearingTable = memo(function HearingTable({
           <InlineDropdown
             value={hearing.rep_docs_assigned_to}
             options={docsAssigneeOptions}
+            hexColorMap={docsAssigneeHexColors}
             onSave={(v) => onUpdate(hearing.id, "rep_docs_assigned_to", v)}
             editable={editable}
           />
