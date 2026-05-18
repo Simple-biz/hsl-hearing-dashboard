@@ -2659,7 +2659,8 @@ export function MrPivotClient({ userRole, userName, ...data }: Props) {
           onClose={() => setShowPostHrg(false)}
           teams={data.medical_teams}
           mrStatusOptions={data.medical_record_status_options}
-          canEditNotes={data.permissions.canManage}
+          userName={userName}
+          userRole={userRole}
         />
       )}
 
