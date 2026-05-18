@@ -78,6 +78,13 @@ const ROLES_CAN_EDIT_REQUIREMENTS = [
   "post_hearing_admin",
 ];
 
+// Deadline edits are restricted to the same roles as Requirements.
+const ROLES_CAN_EDIT_DEADLINE = [
+  "system_admin",
+  "admin",
+  "post_hearing_admin",
+];
+
 interface CommonProps {
   claimant: string;
   hearingDateText?: string | null;
@@ -278,6 +285,7 @@ function HearingReview({
 
   const canEditNotes = ROLES_CAN_EDIT_NOTES.includes(userRole);
   const canEditReq = ROLES_CAN_EDIT_REQUIREMENTS.includes(userRole);
+  const canEditDeadline = ROLES_CAN_EDIT_DEADLINE.includes(userRole);
 
   // Fetch which record types the hearing has PHD rows for — drives the
   // "Also apply to" checkbox list. MR is always true (maps to hearings.*).
@@ -455,20 +463,23 @@ function HearingReview({
         onChange={handleDeadlineUserChange}
         onUpdate={handleUpdateDeadline}
         onClear={handleClearDeadline}
+        canEdit={canEditDeadline}
       />
-      <CascadeCheckboxes
-        available={availableCascadeTypes}
-        excludeType="MR"
-        selected={cascadeDeadlineTargets}
-        onToggle={(t) =>
-          setCascadeDeadlineTargets((prev) => {
-            const next = new Set(prev);
-            if (next.has(t)) next.delete(t);
-            else next.add(t);
-            return next;
-          })
-        }
-      />
+      {canEditDeadline && (
+        <CascadeCheckboxes
+          available={availableCascadeTypes}
+          excludeType="MR"
+          selected={cascadeDeadlineTargets}
+          onToggle={(t) =>
+            setCascadeDeadlineTargets((prev) => {
+              const next = new Set(prev);
+              if (next.has(t)) next.delete(t);
+              else next.add(t);
+              return next;
+            })
+          }
+        />
+      )}
       {(deadlinePrev || deadlineChangedBy) && (
         <div className="rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20 px-3 py-1.5 text-[11px] text-amber-800 dark:text-amber-300 space-y-0.5">
           {deadlinePrev && (
@@ -801,6 +812,7 @@ function PhdInternalReview({
 
   const canEditNotes = ROLES_CAN_EDIT_NOTES.includes(userRole);
   const canEditReq = ROLES_CAN_EDIT_REQUIREMENTS.includes(userRole);
+  const canEditDeadline = ROLES_CAN_EDIT_DEADLINE.includes(userRole);
 
   // Fetch which record types exist for the linked hearing so the modal can
   // offer "Also apply to" cascade checkboxes. No-op for orphan PHD rows.
@@ -967,8 +979,9 @@ function PhdInternalReview({
         onChange={handleDeadlineUserChange}
         onUpdate={handleUpdateDeadline}
         onClear={handleClearDeadline}
+        canEdit={canEditDeadline}
       />
-      {currentRecordType && (
+      {canEditDeadline && currentRecordType && (
         <CascadeCheckboxes
           available={availableCascadeTypes}
           excludeType={currentRecordType}
@@ -1339,11 +1352,14 @@ function DeadlineRow({
   onChange,
   onUpdate,
   onClear,
+  canEdit = true,
 }: {
   deadline: string;
   onChange: (v: string) => void;
   onUpdate: () => void;
   onClear: () => void;
+  /** When false, the deadline is shown read-only (role-gated). */
+  canEdit?: boolean;
 }) {
   const [text, setText] = useState<string>(() => isoToUs(deadline));
 
@@ -1372,6 +1388,19 @@ function DeadlineRow({
     setText(isoToUs(iso));
     onChange(iso);
   };
+
+  if (!canEdit) {
+    return (
+      <div className="space-y-1.5">
+        <label className="text-xs font-medium">Deadline Date</label>
+        <div className="flex items-center gap-2">
+          <span className="h-8 inline-flex items-center rounded-lg border bg-muted/40 px-3 text-xs tabular-nums text-foreground">
+            {deadline ? formatDate(deadline) : "No deadline set"}
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-1.5">
