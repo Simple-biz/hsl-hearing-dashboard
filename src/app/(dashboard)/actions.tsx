@@ -79,6 +79,7 @@ export interface RepDocsAssigneeRow {
   id: number;
   name: string;
   is_active: boolean;
+  bg_color: string | null;
 }
 
 export interface NextUnassignedRow {
@@ -197,7 +198,7 @@ export async function fetchDashboardData(
       "SELECT id, option_type, option_value, option_color FROM config_options WHERE is_active = true ORDER BY option_type, display_order",
     ),
     db.query(
-      "SELECT id, name, is_active FROM rep_docs_assignees WHERE is_active = true ORDER BY display_order",
+      "SELECT id, name, is_active, bg_color FROM rep_docs_assignees WHERE is_active = true ORDER BY display_order",
     ),
     db.query(`SELECT id, claimant, hearing_date::text, converted_time_est::text FROM hearings
       WHERE assigned_rep_id IS NULL AND (assignment_status IS NULL OR assignment_status = '') AND hearing_date >= CURRENT_DATE
