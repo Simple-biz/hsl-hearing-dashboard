@@ -26,12 +26,17 @@ export interface HearingRow {
   ovh_link: string | null;
   assignment_status: string | null;
   task_assigned: boolean;
+  task_assigned_at: string | null;
   rep_docs_complete: boolean;
+  rep_docs_complete_at: string | null;
   rep_docs_assigned_to: string | null;
   fee_agreement_complete: boolean;
+  fee_agreement_complete_at: string | null;
   five_day_notice: boolean;
+  five_day_notice_at: string | null;
   rfc_status: string | null;
   phi_sheet_complete: boolean;
+  phi_sheet_complete_at: string | null;
   post_hrg_review: boolean;
   post_hrg_notes: string | null;
   post_hrg_deadline: string | null;
@@ -473,8 +478,11 @@ export async function fetchHearingsPage(
         h.assigned_rep_id, h.mr_team_id, h.brief_assigned_to, h.medical_record_status,
         h.medical_record_link, h.claimant_link, h.chronicle_link, h.ovh_link,
         NULLIF(h.assignment_status::text, '') AS assignment_status,
-        h.task_assigned, h.rep_docs_complete, h.rep_docs_assigned_to,
-        h.fee_agreement_complete, h.five_day_notice, h.rfc_status, h.phi_sheet_complete,
+        h.task_assigned, h.task_assigned_at::text,
+        h.rep_docs_complete, h.rep_docs_complete_at::text, h.rep_docs_assigned_to,
+        h.fee_agreement_complete, h.fee_agreement_complete_at::text,
+        h.five_day_notice, h.five_day_notice_at::text,
+        h.rfc_status, h.phi_sheet_complete, h.phi_sheet_complete_at::text,
         h.post_hrg_review, h.post_hrg_notes, h.post_hrg_deadline::text,
         h.post_hrg_dev_status, h.post_hrg_requirements,
         h.post_hrg_deadline_prev::text, h.post_hrg_deadline_changed_by,
@@ -605,6 +613,16 @@ export async function updateHearing(
   if (!ALLOWED_FIELDS.includes(field)) {
     throw new Error(`Field "${field}" is not allowed for inline update`);
   }
+
+  // Boolean workflow checkboxes that carry a companion `<field>_at` timestamp
+  // column — toggling them stamps/clears that column (see the update below).
+  const CHECKBOX_STAMP_FIELDS = new Set([
+    "task_assigned",
+    "rep_docs_complete",
+    "fee_agreement_complete",
+    "five_day_notice",
+    "phi_sheet_complete",
+  ]);
 
   // ── Per-user field-access gate ────────────────────────────────────────
   // Falls through to role default when no override row exists; bypasses
@@ -756,6 +774,17 @@ export async function updateHearing(
         [hearingId, value, changedBy],
       );
     }
+  } else if (CHECKBOX_STAMP_FIELDS.has(field)) {
+    // Workflow checkbox — also stamp/clear the matching `_at` column so the
+    // dashboard can show the completion date under the checkbox (mirrors
+    // representative_docs). Ticked → NOW(); unticked → NULL.
+    await db.query(
+      `UPDATE hearings
+          SET ${field} = $1,
+              ${field}_at = CASE WHEN $1 THEN NOW() ELSE NULL END
+        WHERE id = $2`,
+      [value, hearingId],
+    );
   } else {
     // Perform the standard update
     await db.query(`UPDATE hearings SET ${field} = $1 WHERE id = $2`, [

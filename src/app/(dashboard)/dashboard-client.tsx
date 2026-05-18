@@ -139,6 +139,14 @@ type HearingBoolField =
   | "fee_agreement_complete"
   | "five_day_notice"
   | "phi_sheet_complete";
+// Workflow checkboxes that carry a companion `<field>_at` completion stamp.
+const CHECKBOX_STAMP_FIELDS: string[] = [
+  "task_assigned",
+  "rep_docs_complete",
+  "fee_agreement_complete",
+  "five_day_notice",
+  "phi_sheet_complete",
+];
 type UpdateValue = string | number | boolean | null;
 interface PostHrgNote {
   user: string;
@@ -480,20 +488,36 @@ function TeamBadge({
 }
 
 // ── Inline components ──
+// Compact date for the checkbox stamp — "May 7, 26" (matches representative-docs).
+function fmtCheckStamp(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "2-digit",
+  });
+}
+
 function InlineCheck({
   checked,
   onToggle,
   editable = true,
   color = "green",
+  stampedAt,
 }: {
   checked: boolean;
   onToggle: (v: boolean) => void;
   editable?: boolean;
   color?: "green" | "purple";
+  /** Completion timestamp — shown under the checkbox when checked. */
+  stampedAt?: string | null;
 }) {
   const accent = color === "purple" ? "accent-purple-600" : "accent-green-600";
+  const stamp = checked ? fmtCheckStamp(stampedAt) : "";
   return (
-    <div className="flex items-center justify-center">
+    <div className="flex flex-col items-center justify-center gap-0.5 leading-none">
       <input
         type="checkbox"
         checked={checked}
@@ -507,6 +531,11 @@ function InlineCheck({
           editable ? "cursor-pointer" : "cursor-default pointer-events-none",
         )}
       />
+      {stamp && (
+        <span className="text-[9px] leading-none text-muted-foreground tabular-nums">
+          {stamp}
+        </span>
+      )}
     </div>
   );
 }
@@ -2582,6 +2611,9 @@ const HearingTable = memo(function HearingTable({
         return (
           <InlineCheck
             checked={hearing[col.key as HearingBoolField]}
+            stampedAt={
+              hearing[`${col.key}_at` as keyof HearingRow] as string | null
+            }
             onToggle={(val) => onUpdate(hearing.id, col.key, val)}
             editable={editable}
           />
@@ -3058,6 +3090,13 @@ export function DashboardClient({
             const team = mrTeams.find((t) => t.id === Number(value));
             updated.mr_team_name = team?.team_name ?? null;
             updated.mr_team_color = team?.team_color ?? null;
+          }
+          // Workflow checkboxes carry a `<field>_at` stamp the server sets.
+          // Mirror it optimistically so the date shows immediately (the
+          // server's exact NOW() replaces it on the next refetch).
+          if (CHECKBOX_STAMP_FIELDS.includes(field)) {
+            (updated as unknown as Record<string, unknown>)[`${field}_at`] =
+              value ? new Date().toISOString() : null;
           }
           return updated;
         }),
