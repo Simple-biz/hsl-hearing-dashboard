@@ -349,24 +349,15 @@ export const VISIBLE_COLUMNS: Record<UserRole, string[]> = {
   link_editor: ["ALL"],
 };
 
-// User-level page restrictions (by user ID)
-export const PAGE_USER_IDS: Record<string, number[]> = {
-  mr_reports: [1, 7], // admin@hogansmith.com, vicky@hogansmith.com
-  import_rfc: [1], // admin@hogansmith.com only
-};
-
 // Helper functions
-export function canAccessPage(
-  role: UserRole,
-  page: string,
-  userId?: number,
-): boolean {
+//
+// Role-level page access only. Per-user page overrides — which generalize
+// the old hardcoded PAGE_USER_IDS allowlist (mr_reports, import_rfc) — now
+// live in the `user_page_access` table; use the override-aware resolver
+// `canUserAccessPage` / `getUserPageAccessMap` in src/lib/page-access.ts.
+export function canAccessPage(role: UserRole, page: string): boolean {
   const allowed = PAGE_ACCESS[page];
-  if (!allowed || !allowed.includes(role)) return false;
-  const userIds = PAGE_USER_IDS[page];
-  if (userIds && userId !== undefined) return userIds.includes(userId);
-  if (userIds && userId === undefined) return false;
-  return true;
+  return !!allowed && allowed.includes(role);
 }
 
 export function canEditField(role: UserRole, field: string): boolean {
