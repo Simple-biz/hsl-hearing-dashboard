@@ -490,6 +490,14 @@ export async function updateRepDocsField(
          WHERE id = $3`,
         [value ?? null, Number(session.user.id) || null, id],
       );
+      // Mirror back to the dashboard "Docs Assigned" column so the two
+      // pages stay in sync (admins edit on either, not both).
+      if (linkedHearingId) {
+        await db.query(
+          `UPDATE hearings SET rep_docs_assigned_to = $1 WHERE id = $2`,
+          [value ?? null, linkedHearingId],
+        );
+      }
     } else {
       await db.query(
         `UPDATE representative_docs

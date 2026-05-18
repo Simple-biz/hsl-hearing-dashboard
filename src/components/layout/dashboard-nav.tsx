@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useSession } from "next-auth/react";
 import { cn } from "@/lib/utils";
 import { canAccessPage, type UserRole } from "@/lib/roles";
+import { usePageAccess } from "@/context/page-access-context";
 
 interface NavItem {
   label: string;
@@ -40,11 +40,14 @@ interface DashboardNavProps {
 
 export function DashboardNav({ userRole, children }: DashboardNavProps) {
   const pathname = usePathname();
-  const { data: session } = useSession();
-  const userId = session?.user?.id as number | undefined;
+  // Effective page access from the layout (role default + per-user
+  // overrides). Falls back to role-based access if no provider is present.
+  const pageAccess = usePageAccess();
 
   const visibleItems = NAV_ITEMS.filter((item) =>
-    canAccessPage(userRole, item.page, userId),
+    pageAccess
+      ? pageAccess[item.page] === true
+      : canAccessPage(userRole, item.page),
   );
 
   // Deduplicate by href (Settings and Admin both go to /admin)

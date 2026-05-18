@@ -1,4 +1,7 @@
 import { requireAuth } from "@/lib/session";
+import { redirect } from "next/navigation";
+import type { UserRole } from "@/lib/roles";
+import { canUserAccessPage } from "@/lib/page-access";
 import { PostHrgClient } from "./post-hrg-client";
 import {
   fetchPostHrgDevPage,
@@ -24,14 +27,14 @@ export default async function PostHrgDevelopmentPage({
 }) {
   const session = await requireAuth();
 
-  const allowedRoles = [
-    "system_admin",
-    "admin",
-    "post_hearing_admin",
-    "post_hearing_staff",
-  ];
-  if (!allowedRoles.includes(session.user.role)) {
-    const { redirect } = await import("next/navigation");
+  // Server-side route protection — role default + per-user page overrides.
+  if (
+    !(await canUserAccessPage(
+      Number(session.user.id),
+      session.user.role as UserRole,
+      "post_hrg_development",
+    ))
+  ) {
     redirect("/");
   }
 

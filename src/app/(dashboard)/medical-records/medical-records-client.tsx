@@ -1785,6 +1785,26 @@ export function MrPivotClient({ userRole, userName, ...data }: Props) {
 
   // ── Virtualizer — flatten visible items into a single array ───────────────
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Manual refresh — re-pulls the current view (same `filters`, so search /
+  // status / page / sort are preserved) and restores scroll on the next
+  // frame so the user stays exactly where they were working.
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = useCallback(async () => {
+    const scrollTop = scrollRef.current?.scrollTop ?? 0;
+    setRefreshing(true);
+    try {
+      const res = await getHearingsPaginated(filters);
+      setHearings(res.hearings);
+      setTotalHearings(res.total);
+      setTotalPages(res.total_pages);
+    } finally {
+      setRefreshing(false);
+      requestAnimationFrame(() => {
+        if (scrollRef.current) scrollRef.current.scrollTop = scrollTop;
+      });
+    }
+  }, [filters]);
   const scrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isScrolling, setIsScrolling] = useState(false);
   const ROW_H = 44;
@@ -2254,6 +2274,21 @@ export function MrPivotClient({ userRole, userName, ...data }: Props) {
                   <span className="sm:hidden">RFC</span>
                 </button>
               )}
+              <button
+                onClick={handleRefresh}
+                disabled={refreshing}
+                title="Refresh table data without losing scroll, filters, or sort"
+                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border font-semibold transition-colors bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100 hover:border-sky-300 dark:bg-sky-950/30 dark:text-sky-300 dark:border-sky-800 dark:hover:bg-sky-950/50 dark:hover:border-sky-700 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                <RefreshCw
+                  size={12}
+                  className={cn(refreshing && "animate-spin")}
+                />
+                <span className="hidden sm:inline">
+                  {refreshing ? "Refreshing…" : "Refresh"}
+                </span>
+              </button>
+
               <button
                 onClick={() => setShowActivityLog(true)}
                 className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground font-semibold transition-colors"
