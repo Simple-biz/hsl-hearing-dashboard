@@ -1,5 +1,6 @@
 import { requireAuth } from "@/lib/session";
-import { canAccessPage, type UserRole } from "@/lib/roles";
+import { type UserRole } from "@/lib/roles";
+import { canUserAccessPage } from "@/lib/page-access";
 import { redirect } from "next/navigation";
 import { RepresentativeDocsClient } from "./representative-docs-client";
 import {
@@ -14,7 +15,13 @@ export default async function RepresentativeDocsPage() {
   const session = await requireAuth();
   const role = session.user.role as UserRole;
 
-  if (!canAccessPage(role, "representative_docs", Number(session.user.id))) {
+  if (
+    !(await canUserAccessPage(
+      Number(session.user.id),
+      role,
+      "representative_docs",
+    ))
+  ) {
     redirect("/");
   }
 

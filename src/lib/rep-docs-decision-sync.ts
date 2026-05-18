@@ -15,7 +15,13 @@ export function mapDecisionToRepDocsStatus(
 ): string | null {
   if (!decision) return null;
   const d = String(decision).toLowerCase().trim();
-  if (d.startsWith("withdrawal") || d === "dismissed" || d === "dismissal") {
+  if (
+    d.startsWith("withdrawal") ||
+    d.startsWith("wd ") ||
+    d === "dismissed" ||
+    d === "dismissal" ||
+    d === "wd clmt deceased"
+  ) {
     return "Withdrawn";
   }
   if (d === "continued") return "Postponed";
@@ -72,6 +78,22 @@ export async function syncRepDocsStatusForHearing(
   const status = mapDecisionToRepDocsStatus(decision);
 
   if (status) {
+    // Ensure the rep_docs row exists before writing. Rows are created lazily
+    // (only when the rep-docs page is opened), so a decision set from the
+    // dashboard on a hearing whose row doesn't exist yet would otherwise be
+    // lost — the row later gets created fresh with the default status,
+    // leaving a withdrawn hearing showing as active. Same >= 2026-03-01
+    // cutoff as ensureRowsForHearings so we don't start tracking
+    // intentionally-scoped-out pre-March hearings.
+    await db.query(
+      `INSERT INTO representative_docs (hearing_id)
+       SELECT id FROM hearings
+       WHERE id = $1
+         AND hearing_date IS NOT NULL
+         AND hearing_date >= DATE '2026-03-01'
+       ON CONFLICT (hearing_id) DO NOTHING`,
+      [hearingId],
+    );
     await db.query(
       `UPDATE representative_docs
        SET overall_status = $1, updated_at = NOW()
@@ -142,7 +164,9 @@ export async function syncRepDocsStatusForHearingIds(
     `UPDATE representative_docs rd
      SET overall_status = CASE
        WHEN LOWER(TRIM(h.hearing_decision_status)) LIKE 'withdrawal%'
-         OR LOWER(TRIM(h.hearing_decision_status)) IN ('dismissed', 'dismissal') THEN 'Withdrawn'
+         OR LOWER(TRIM(h.hearing_decision_status)) LIKE 'wd %'
+         OR LOWER(TRIM(h.hearing_decision_status)) IN
+            ('dismissed', 'dismissal', 'wd clmt deceased') THEN 'Withdrawn'
        WHEN LOWER(TRIM(h.hearing_decision_status)) = 'continued' THEN 'Postponed'
        WHEN LOWER(TRIM(h.hearing_decision_status)) IN ('favorable', 'fully favorable', 'partially favorable') THEN 'Favorable'
        ELSE rd.overall_status

@@ -795,6 +795,32 @@ export async function updateHearing(
     }
   }
 
+  // Keep rep-docs "Assigned To" in sync with the dashboard "Docs Assigned"
+  // column (both draw from the same rep_docs_assignees list) so admins don't
+  // have to update both pages. Ensures the rep_docs row exists first (same
+  // >= 2026-03-01 cutoff as ensureRowsForHearings) and clears any prior
+  // acknowledgement so the new assignee must re-ack — matching how rep-docs'
+  // own assigned_to edit behaves.
+  if (field === "rep_docs_assigned_to" && value !== oldValue) {
+    await db.query(
+      `INSERT INTO representative_docs (hearing_id)
+       SELECT id FROM hearings
+       WHERE id = $1 AND hearing_date IS NOT NULL
+         AND hearing_date >= DATE '2026-03-01'
+       ON CONFLICT (hearing_id) DO NOTHING`,
+      [hearingId],
+    );
+    await db.query(
+      `UPDATE representative_docs
+          SET assigned_to = $1,
+              rep_docs_acknowledged_at = NULL,
+              rep_docs_acknowledged_by = NULL,
+              updated_at = NOW()
+        WHERE hearing_id = $2`,
+      [value ?? null, hearingId],
+    );
+  }
+
   // ── Computed fields — skip activity log (they're side effects of other fields) ──
   const SILENT_FIELDS = ["converted_time_est"];
   if (SILENT_FIELDS.includes(field)) return { ok: true };

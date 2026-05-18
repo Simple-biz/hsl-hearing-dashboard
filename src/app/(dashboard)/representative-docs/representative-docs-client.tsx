@@ -24,6 +24,7 @@ import {
   AlertTriangle,
   Bell,
   MessageSquare,
+  RefreshCw,
 } from "lucide-react";
 import { StatCard, StatCardGrid } from "@/components/stat-card";
 import { AppHeader } from "@/components/layout/app-header";
@@ -660,6 +661,43 @@ export function RepresentativeDocsClient({
     ],
   );
 
+  // Manual refresh — re-pulls the current view (same filters / page / sort)
+  // and restores the scroll position on the next frame so the user stays
+  // exactly where they were working.
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = useCallback(async () => {
+    const scrollTop = tableScrollRef.current?.scrollTop ?? 0;
+    setRefreshing(true);
+    try {
+      const res = await fetchRepDocsPage({
+        page,
+        pageSize,
+        search,
+        status: statusFilter,
+        assignedTo: assigneeFilter,
+        ...buildDateParams(dateFilters),
+      });
+      setRecords(res.records);
+      setTotalFiltered(res.totalFiltered);
+      setBreakdown(res.breakdown);
+    } finally {
+      setRefreshing(false);
+      requestAnimationFrame(() => {
+        if (tableScrollRef.current)
+          tableScrollRef.current.scrollTop = scrollTop;
+      });
+    }
+  }, [
+    page,
+    pageSize,
+    search,
+    statusFilter,
+    assigneeFilter,
+    dateFilters,
+    buildDateParams,
+  ]);
+
   // Poll for new changes every 60s — lightweight count query only.
   // Shows a badge on the bell button; fires a toast when new changes appear.
   const prevChangeCountRef = useRef(0);
@@ -901,6 +939,24 @@ export function RepresentativeDocsClient({
         <DashboardNav userRole={userRole} />
 
         <div className="flex justify-end gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className={cn(
+              "h-8 gap-1.5 text-xs",
+              "bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100 hover:border-sky-300",
+              "dark:bg-sky-950/30 dark:text-sky-300 dark:border-sky-800 dark:hover:bg-sky-950/50 dark:hover:border-sky-700",
+              "disabled:opacity-60 disabled:cursor-not-allowed",
+            )}
+            onClick={handleRefresh}
+            disabled={refreshing}
+            title="Refresh table data without losing scroll, filters, or sort"
+          >
+            <RefreshCw
+              className={cn("h-3.5 w-3.5", refreshing && "animate-spin")}
+            />
+            {refreshing ? "Refreshing…" : "Refresh"}
+          </Button>
           <Button
             size="sm"
             variant="outline"
@@ -1209,6 +1265,7 @@ export function RepresentativeDocsClient({
             setNotesRow(row);
             setNotesAnchorRect(rect);
           }}
+          scrollRef={tableScrollRef}
         />
 
         {/* Bottom scroll hint */}
@@ -1388,6 +1445,7 @@ function RepDocsTable({
   onAcknowledge,
   onRowClick,
   onNotesClick,
+  scrollRef,
 }: {
   records: RepDocsRow[];
   assignees: RepDocsAssigneeOption[];
@@ -1398,6 +1456,8 @@ function RepDocsTable({
   onAcknowledge: (id: number) => void;
   onRowClick: (row: RepDocsRow) => void;
   onNotesClick: (row: RepDocsRow, rect: DOMRect) => void;
+  /** Lifted scroll-container ref so the parent can preserve scroll on refresh. */
+  scrollRef?: React.RefObject<HTMLDivElement | null>;
 }) {
   const parentRef = useRef<HTMLDivElement>(null);
   // 44 (original) — acknowledge badge sits beside the assignee dropdown,
@@ -1429,7 +1489,12 @@ function RepDocsTable({
       )}
     >
       <div
-        ref={parentRef}
+        ref={(node) => {
+          (
+            parentRef as React.MutableRefObject<HTMLDivElement | null>
+          ).current = node;
+          if (scrollRef) scrollRef.current = node;
+        }}
         className="overflow-x-auto overflow-y-auto"
         style={{ maxHeight: "calc(100vh - 340px)" }}
         onWheel={(e) => {
@@ -1787,7 +1852,7 @@ const RepDocsRowView = memo(
                     </option>
                   ))}
                 </select>
-                {!ackEligible || isWithdrawn ? null : isAcknowledged ? (
+                {!ackEligible ? null : isAcknowledged ? (
                   <div
                     title={`Acknowledged by ${ackName || "Unknown"}${ackDate ? ` on ${ackDate}` : ""}`}
                     className="flex w-14 shrink-0 flex-col items-center rounded-sm bg-green-100 px-0.5 py-0.5 leading-tight text-green-800 dark:bg-green-900/40 dark:text-green-300"
@@ -1804,7 +1869,7 @@ const RepDocsRowView = memo(
                       </span>
                     )}
                   </div>
-                ) : (
+                ) : isWithdrawn ? null : (
                   <button
                     type="button"
                     onClick={(e) => {

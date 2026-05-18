@@ -20,8 +20,7 @@ import {
   KeyRound,
   ChevronsUpDown,
 } from "lucide-react";
-import { useSession } from "next-auth/react";
-import { canAccessPage, type UserRole } from "@/lib/roles";
+import { type UserRole } from "@/lib/roles";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
@@ -155,18 +154,19 @@ interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
   userRole: UserRole;
   userName: string;
   userEmail?: string;
+  /** Effective per-page access (role default + per-user overrides). */
+  pageAccess: Record<string, boolean>;
 }
 
 export function AppSidebar({
   userRole,
   userName,
   userEmail,
+  pageAccess,
   ...props
 }: AppSidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const { data: session } = useSession();
-  const userId = session?.user?.id as number | undefined;
 
   const initials = userName
     .split(" ")
@@ -201,9 +201,9 @@ export function AppSidebar({
       {/* ── Content: Nav groups ── */}
       <SidebarContent>
         {NAV_GROUPS.map((group) => {
-          // Filter items by role
-          const visibleItems = group.items.filter((item) =>
-            canAccessPage(userRole, item.page, userId),
+          // Filter items by effective page access (role default + overrides)
+          const visibleItems = group.items.filter(
+            (item) => pageAccess[item.page] === true,
           );
           if (visibleItems.length === 0) return null;
 

@@ -249,6 +249,79 @@ export async function resetUserFieldAccess(
   return { success: true, cleared };
 }
 
+// ═══════════ PAGE ACCESS OVERRIDES ═══════════
+// Per-user page-access overrides on top of role defaults.
+// See src/lib/page-access.ts for the resolver and
+// src/lib/page-access-catalog.ts for the overridable pages.
+
+import {
+  listUserPageAccess,
+  setUserPageAccessRow,
+  resetUserPageAccessAll,
+  type UserPageAccessRow,
+} from "@/lib/page-access";
+import type { PageAccessKey } from "@/lib/page-access-catalog";
+
+/** Admin: load every page override for a user (drives the modal Pages tab). */
+export async function getUserPageAccess(
+  userId: number,
+): Promise<UserPageAccessRow[]> {
+  return listUserPageAccess(userId);
+}
+
+/**
+ * Admin: persist a single page checkbox change.
+ * - canAccess = true / false → upsert override row
+ * - canAccess = null         → delete override row (revert to role default)
+ */
+export async function setUserPageAccess(
+  userId: number,
+  pageKey: PageAccessKey,
+  canAccess: boolean | null,
+): Promise<{ success: true }> {
+  const session = await requireAuth();
+  await setUserPageAccessRow(
+    userId,
+    pageKey,
+    canAccess,
+    session.user.id ?? null,
+  );
+  const { rows } = await db.query(
+    "SELECT full_name FROM users WHERE id = $1",
+    [userId],
+  );
+  const target = rows[0]?.full_name || `User #${userId}`;
+  const verb =
+    canAccess === null ? "reset" : canAccess ? "granted" : "revoked";
+  await logAction(
+    "user_page_access_changed",
+    `${verb} page access "${pageKey}" for ${target}`,
+  );
+  return { success: true };
+}
+
+/**
+ * Admin: wipe every page override for a user (the modal's
+ * "Apply Role Defaults" button on the Pages tab).
+ */
+export async function resetUserPageAccess(
+  userId: number,
+): Promise<{ success: true; cleared: number }> {
+  const cleared = await resetUserPageAccessAll(userId);
+  if (cleared > 0) {
+    const { rows } = await db.query(
+      "SELECT full_name FROM users WHERE id = $1",
+      [userId],
+    );
+    const target = rows[0]?.full_name || `User #${userId}`;
+    await logAction(
+      "user_page_access_reset",
+      `Reset all page-access overrides for ${target} (${cleared} page${cleared === 1 ? "" : "s"})`,
+    );
+  }
+  return { success: true, cleared };
+}
+
 // ═══════════ CONFIG OPTIONS ═══════════
 
 export interface ConfigOption {
