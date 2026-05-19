@@ -43,6 +43,8 @@ function resolveRoleDefault(
     case "medical_records":
       return (MR_PIVOT_EDITABLE[fieldKey] ?? []).includes(role);
     case "post_hrg_development":
+      if (fieldKey === "requirements")
+        return role === "system_admin" || role === "admin";
       return PAGE_ACCESS.post_hrg_development.includes(role);
     case "representative_docs":
       return PAGE_ACCESS.representative_docs.includes(role);

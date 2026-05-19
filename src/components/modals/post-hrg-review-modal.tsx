@@ -72,13 +72,11 @@ const ROLES_CAN_EDIT_NOTES = [
   "post_hearing_staff",
 ];
 
-const ROLES_CAN_EDIT_REQUIREMENTS = [
-  "system_admin",
-  "admin",
-  "post_hearing_admin",
-];
+// Requirements — admins only (per the post-HRG team). Keep in sync with
+// EDITABLE_FIELDS.post_hrg_requirements in roles.ts.
+const ROLES_CAN_EDIT_REQUIREMENTS = ["system_admin", "admin"];
 
-// Deadline edits are restricted to the same roles as Requirements.
+// Deadline edits — system/admin + the post-hearing admin.
 const ROLES_CAN_EDIT_DEADLINE = [
   "system_admin",
   "admin",
@@ -95,6 +93,10 @@ interface CommonProps {
   // + scrollable but non-interactive) and a lock banner is shown. Used for
   // Completed / Records Closed PHD rows.
   readOnly?: boolean;
+  // When true, the Requirements field is shown read-only regardless of role.
+  // Used for MR PHD rows, where Requirements is mirror-driven by the row's
+  // Details Content (the single source of truth).
+  readOnlyRequirements?: boolean;
   onClose: () => void;
   // Fired after a successful "Also apply to" cascade so the parent can
   // patch sibling rows in local state without a page refresh. `targets`
@@ -167,6 +169,7 @@ function HearingReview({
   userName,
   userRole,
   readOnly,
+  readOnlyRequirements,
   onClose,
   hearingId,
   initialNotes,
@@ -257,7 +260,9 @@ function HearingReview({
           setNotes(parseNotes(data));
         } else {
           setNotes(parseNotes(data.post_hrg_notes));
-          if (!isEditingReqRef.current) {
+          // Read-only Requirements (MR rows) can't be "mid-edit", so always
+          // refresh it so the mirrored Details Content shows up live.
+          if (readOnlyRequirements || !isEditingReqRef.current) {
             setRequirements(data.post_hrg_requirements ?? "");
             setHasSavedReq(!!data.post_hrg_requirements);
           }
@@ -281,10 +286,13 @@ function HearingReview({
       active = false;
       clearInterval(id);
     };
-  }, [hearingId]);
+  }, [hearingId, readOnlyRequirements]);
 
   const canEditNotes = ROLES_CAN_EDIT_NOTES.includes(userRole);
-  const canEditReq = ROLES_CAN_EDIT_REQUIREMENTS.includes(userRole);
+  // MR rows mirror Details Content → Requirements, so Requirements is shown
+  // read-only here (Details Content is the source of truth).
+  const canEditReq =
+    !readOnlyRequirements && ROLES_CAN_EDIT_REQUIREMENTS.includes(userRole);
   const canEditDeadline = ROLES_CAN_EDIT_DEADLINE.includes(userRole);
 
   // Fetch which record types the hearing has PHD rows for — drives the
@@ -572,6 +580,12 @@ function HearingReview({
         <label className="text-xs font-medium text-red-700 dark:text-red-400">
           Requirements
         </label>
+        {readOnlyRequirements && (
+          <p className="text-[10px] text-muted-foreground">
+            🔗 Synced from this MR record&rsquo;s Details Content — edit it
+            there to change this.
+          </p>
+        )}
         {canEditReq ? (
           <>
             <textarea
@@ -610,19 +624,21 @@ function HearingReview({
             No requirements set.
           </p>
         )}
-        <CascadeCheckboxes
-          available={availableCascadeTypes}
-          excludeType="MR"
-          selected={cascadeReqTargets}
-          onToggle={(t) =>
-            setCascadeReqTargets((prev) => {
-              const next = new Set(prev);
-              if (next.has(t)) next.delete(t);
-              else next.add(t);
-              return next;
-            })
-          }
-        />
+        {canEditReq && (
+          <CascadeCheckboxes
+            available={availableCascadeTypes}
+            excludeType="MR"
+            selected={cascadeReqTargets}
+            onToggle={(t) =>
+              setCascadeReqTargets((prev) => {
+                const next = new Set(prev);
+                if (next.has(t)) next.delete(t);
+                else next.add(t);
+                return next;
+              })
+            }
+          />
+        )}
       </div>
 
       {/* Add note */}

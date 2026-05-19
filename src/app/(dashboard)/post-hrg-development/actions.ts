@@ -857,15 +857,16 @@ export async function updatePostHrgDevField(
 
   const DATE_FIELDS = ["hearing_date", "deadline", "new_due_date"];
 
-  // Get old value + hearing id for logging
+  // Get old value + hearing id + record type for logging / mirrors
   const { rows: oldRows } = await db.query(
-    `SELECT ${field}, claimant, hearing_id FROM post_hrg_development WHERE id = $1`,
+    `SELECT ${field}, claimant, hearing_id, record_type FROM post_hrg_development WHERE id = $1`,
     [id],
   );
   const oldValue = oldRows[0]?.[field];
   const claimant = oldRows[0]?.claimant || `Record #${id}`;
   const linkedHearingId =
     (oldRows[0]?.hearing_id as number | null) ?? undefined;
+  const recordType = String(oldRows[0]?.record_type || "");
 
   if (DATE_FIELDS.includes(field)) {
     await db.query(
@@ -877,6 +878,21 @@ export async function updatePostHrgDevField(
       `UPDATE post_hrg_development SET ${field} = $1 WHERE id = $2`,
       [value, id],
     );
+  }
+
+  // Mirror an MR row's Details Content into the linked hearing's
+  // post_hrg_requirements so the MR-mode Post HRG Review modal reflects it.
+  // One-way (Details → Requirements); the modal shows Requirements read-only
+  // for MR rows, so Details Content is the single source of truth.
+  if (field === "details" && recordType === "MR" && linkedHearingId) {
+    try {
+      await db.query(
+        `UPDATE hearings SET post_hrg_requirements = $1 WHERE id = $2`,
+        [value ?? null, linkedHearingId],
+      );
+    } catch (e) {
+      console.error("MR details → post_hrg_requirements mirror failed", e);
+    }
   }
 
   // Append to the per-row deadline history trail (mirrors the hearing-level
