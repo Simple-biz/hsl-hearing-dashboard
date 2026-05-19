@@ -35,8 +35,11 @@ export function resolveRoleDefault(
       // Anything not in the map = not editable on the pivot.
       return (MR_PIVOT_EDITABLE[fieldKey] ?? []).includes(role);
     case "post_hrg_development":
-      // Post HRG Dev: page-level access only, no per-field gating today.
-      // If the role can access the page, it can edit any field on it.
+      // Requirements is admin-only (matches ROLES_CAN_EDIT_REQUIREMENTS in
+      // post-hrg-review-modal.tsx) — system/admin curate the formal block.
+      if (fieldKey === "requirements")
+        return role === "system_admin" || role === "admin";
+      // Other fields: page-level access only — anyone on the page can edit.
       return PAGE_ACCESS.post_hrg_development.includes(role);
     case "representative_docs":
       // Same flat model as PHD.

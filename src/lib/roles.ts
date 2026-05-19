@@ -262,6 +262,9 @@ export const EDITABLE_FIELDS: Record<string, UserRole[]> = {
     "post_hearing_admin",
     "post_hearing_staff",
   ],
+  // Restricted to system_admin/admin only — same gate as
+  // post_hrg_requirements.
+  post_hrg_report: ["system_admin", "admin"],
   post_hrg_deadline: [
     "system_admin",
     "admin",
@@ -282,10 +285,10 @@ export const EDITABLE_FIELDS: Record<string, UserRole[]> = {
     "post_hearing_admin",
     "post_hearing_staff",
   ],
-  // Tighter than the other post_hrg_* fields — only the post-hearing team
-  // lead + admins curate the formal "Requirements" block. Must match the
-  // modal-side ROLES_CAN_EDIT_REQUIREMENTS gate in post-hrg-review-modal.tsx.
-  post_hrg_requirements: ["system_admin", "admin", "post_hearing_admin"],
+  // Admins only — the formal "Requirements" block is curated by system/admin
+  // roles per the post-HRG team. Must match the modal-side
+  // ROLES_CAN_EDIT_REQUIREMENTS gate in post-hrg-review-modal.tsx.
+  post_hrg_requirements: ["system_admin", "admin"],
   post_hrg_dev_status: [
     "system_admin",
     "admin",

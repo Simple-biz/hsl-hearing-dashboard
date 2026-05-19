@@ -37,6 +37,8 @@ export interface HearingRow {
   rfc_status: string | null;
   phi_sheet_complete: boolean;
   phi_sheet_complete_at: string | null;
+  post_hrg_report: boolean;
+  post_hrg_report_at: string | null;
   post_hrg_review: boolean;
   post_hrg_notes: string | null;
   post_hrg_deadline: string | null;
@@ -483,6 +485,7 @@ export async function fetchHearingsPage(
         h.fee_agreement_complete, h.fee_agreement_complete_at::text,
         h.five_day_notice, h.five_day_notice_at::text,
         h.rfc_status, h.phi_sheet_complete, h.phi_sheet_complete_at::text,
+        h.post_hrg_report, h.post_hrg_report_at::text,
         h.post_hrg_review, h.post_hrg_notes, h.post_hrg_deadline::text,
         h.post_hrg_dev_status, h.post_hrg_requirements,
         h.post_hrg_deadline_prev::text, h.post_hrg_deadline_changed_by,
@@ -585,6 +588,7 @@ export async function updateHearing(
     "post_hrg_deadline",
     "post_hrg_dev_status",
     "post_hrg_requirements",
+    "post_hrg_report",
     // Edit modal fields
     "claimant",
     "ssn_last_4",
@@ -622,6 +626,7 @@ export async function updateHearing(
     "fee_agreement_complete",
     "five_day_notice",
     "phi_sheet_complete",
+    "post_hrg_report",
   ]);
 
   // ── Per-user field-access gate ────────────────────────────────────────
@@ -849,6 +854,34 @@ export async function updateHearing(
         WHERE hearing_id = $2`,
       [value ?? null, hearingId],
     );
+  }
+
+  // Keep the linked MR Post HRG Development row's STATUS in sync with the
+  // dashboard "Post Hrg Dev" column (bidirectional — the PHD side mirrors
+  // back in updatePostHrgDevField). Scoped to record_type = 'MR', the
+  // canonical hearing-linked PHD row (same link as the Details →
+  // Requirements mirror). Best-effort: the hearings UPDATE already
+  // committed, so a sync failure must not roll back the dashboard edit.
+  if (field === "post_hrg_dev_status" && value !== oldValue) {
+    try {
+      const syncRes = await db.query(
+        `UPDATE post_hrg_development
+            SET status = $1,
+                updated_at = NOW()
+          WHERE hearing_id = $2 AND record_type = 'MR'
+          RETURNING id`,
+        [value ?? null, hearingId],
+      );
+      if ((syncRes.rowCount ?? 0) > 0) {
+        await logAction(
+          "post_hrg_dev_status_synced",
+          `Synced Post Hrg Dev status on ${syncRes.rowCount} MR record(s) for ${claimant}: '${oldValue ?? "(empty)"}' → '${value ?? "(empty)"}'`,
+          hearingId,
+        );
+      }
+    } catch (e) {
+      console.error("post_hrg_dev_status → PHD status sync failed", e);
+    }
   }
 
   // ── Computed fields — skip activity log (they're side effects of other fields) ──
