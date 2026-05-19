@@ -288,6 +288,12 @@ export function ImportCompareClient({ userRole }: { userRole: string }) {
 
   // Step 4: Select columns & update
   const [selectedFields, setSelectedFields] = useState<Set<string>>(new Set());
+  // Per-cell opt-out — keys are `${existing_id}:${field}`. A diff is applied
+  // only if its field is selected AND the cell is not in this set. Default
+  // empty = behaves like before (every selected-field diff applies); the
+  // admin un-checks individual cells to skip them (e.g. rows where the
+  // dashboard already has the correct value).
+  const [excludedCells, setExcludedCells] = useState<Set<string>>(new Set());
   const [updating, setUpdating] = useState(false);
   const [updateProgress, setUpdateProgress] = useState(0);
   const [updateStatus, setUpdateStatus] = useState("");
@@ -840,13 +846,54 @@ export function ImportCompareClient({ userRole }: { userRole: string }) {
     setSelectedFields(new Set());
   }, []);
 
-  // Records that will actually be updated (have diffs in selected fields)
+  // ── Per-cell selection helpers ──
+  const cellKey = (existingId: number, field: string) =>
+    `${existingId}:${field}`;
+  // A diff cell is applied only if its field is selected and it's not opted out.
+  const isCellApplied = useCallback(
+    (existingId: number, field: string) =>
+      selectedFields.has(field) &&
+      !excludedCells.has(cellKey(existingId, field)),
+    [selectedFields, excludedCells],
+  );
+  const toggleCell = useCallback((existingId: number, field: string) => {
+    setExcludedCells((prev) => {
+      const next = new Set(prev);
+      const k = `${existingId}:${field}`;
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+  }, []);
+
+  // Records that will actually be updated — have at least one selected-field
+  // diff that hasn't been individually opted out.
   const recordsToUpdate = useMemo(() => {
     if (!compareResult || selectedFields.size === 0) return [];
-    return compareResult.matched.filter((r) => {
-      return Object.keys(r.field_diffs).some((f) => selectedFields.has(f));
-    });
-  }, [compareResult, selectedFields]);
+    return compareResult.matched.filter((r) =>
+      Object.keys(r.field_diffs).some(
+        (f) =>
+          selectedFields.has(f) &&
+          !excludedCells.has(`${r.existing_id}:${f}`),
+      ),
+    );
+  }, [compareResult, selectedFields, excludedCells]);
+
+  // Diff-cell tallies (selected fields only) — drives the summary + confirm.
+  const cellCounts = useMemo(() => {
+    let applied = 0;
+    let excluded = 0;
+    if (!compareResult || selectedFields.size === 0)
+      return { applied, excluded };
+    for (const r of compareResult.matched) {
+      for (const f of Object.keys(r.field_diffs)) {
+        if (!selectedFields.has(f)) continue;
+        if (excludedCells.has(`${r.existing_id}:${f}`)) excluded++;
+        else applied++;
+      }
+    }
+    return { applied, excluded };
+  }, [compareResult, selectedFields, excludedCells]);
 
   // ── Apply updates ──
 
@@ -854,7 +901,7 @@ export function ImportCompareClient({ userRole }: { userRole: string }) {
     if (recordsToUpdate.length === 0 || selectedFields.size === 0) return;
 
     const fieldList = Array.from(selectedFields);
-    const confirmMsg = `Update ${recordsToUpdate.length} record(s) across ${fieldList.length} field(s)?\n\nFields: ${fieldList.map((f) => FIELD_LABELS[f] || f).join(", ")}`;
+    const confirmMsg = `Apply ${cellCounts.applied} update(s) across ${recordsToUpdate.length} record(s)?\n\nFields: ${fieldList.map((f) => FIELD_LABELS[f] || f).join(", ")}\n\nOnly the diff cells you left checked will be applied.`;
     if (!confirm(confirmMsg)) return;
 
     setUpdating(true);
@@ -875,8 +922,13 @@ export function ImportCompareClient({ userRole }: { userRole: string }) {
       ssn: rec.ssn,
       data: rec.data || currentSheet?.rows[rec.rowIndex],
       selected_fields: fieldList,
+      // Only selected fields whose cell hasn't been individually opted out.
       field_diffs: Object.fromEntries(
-        Object.entries(rec.field_diffs).filter(([k]) => selectedFields.has(k)),
+        Object.entries(rec.field_diffs).filter(
+          ([k]) =>
+            selectedFields.has(k) &&
+            !excludedCells.has(`${rec.existing_id}:${k}`),
+        ),
       ),
     }));
 
@@ -922,7 +974,15 @@ export function ImportCompareClient({ userRole }: { userRole: string }) {
       `Updated ${updated} record(s)${errors.length > 0 ? ` with ${errors.length} error(s)` : ""}`,
       errors.length > 0 ? "error" : "success",
     );
-  }, [recordsToUpdate, selectedFields, mapping, currentSheet, toast]);
+  }, [
+    recordsToUpdate,
+    selectedFields,
+    excludedCells,
+    cellCounts.applied,
+    mapping,
+    currentSheet,
+    toast,
+  ]);
 
   // ── Reset ──
 
@@ -1290,7 +1350,14 @@ export function ImportCompareClient({ userRole }: { userRole: string }) {
                     {selectedFields.size > 0 && (
                       <div className="mt-3 text-sm text-emerald-700 dark:text-emerald-400 font-medium">
                         ✅ {selectedFields.size} field(s) selected —{" "}
-                        {recordsToUpdate.length} record(s) will be updated
+                        {cellCounts.applied} update(s) across{" "}
+                        {recordsToUpdate.length} record(s)
+                        {cellCounts.excluded > 0 && (
+                          <span className="text-amber-600 dark:text-amber-400">
+                            {" "}
+                            · {cellCounts.excluded} cell(s) excluded
+                          </span>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1373,6 +1440,23 @@ export function ImportCompareClient({ userRole }: { userRole: string }) {
                   />
                 </div>
 
+                {/* Hint: per-row checkboxes only appear once the field is
+                    selected for update (single-field view). */}
+                {viewTab !== "_all" && !selectedFields.has(viewTab) && (
+                  <div className="mb-3 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+                    ☑ Tick the{" "}
+                    <button
+                      type="button"
+                      onClick={() => toggleField(viewTab)}
+                      className="font-semibold underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-200"
+                    >
+                      {FIELD_LABELS[viewTab] || viewTab}
+                    </button>{" "}
+                    field above (or click here) to choose which individual
+                    rows to apply — every row then gets its own checkbox.
+                  </div>
+                )}
+
                 {/* ── Diff preview table ── */}
                 <div className="max-h-125 overflow-auto rounded-lg border">
                   <table className="w-full text-xs">
@@ -1444,8 +1528,34 @@ export function ImportCompareClient({ userRole }: { userRole: string }) {
                               </td>
                               <td className="px-3 py-2">
                                 {diff ? (
-                                  <span className="text-emerald-600 dark:text-emerald-400 font-medium">
-                                    {diff.new || "(empty)"}
+                                  <span className="inline-flex items-center gap-2">
+                                    {selectedFields.has(viewTab) && (
+                                      <input
+                                        type="checkbox"
+                                        checked={isCellApplied(
+                                          rec.existing_id,
+                                          viewTab,
+                                        )}
+                                        onChange={() =>
+                                          toggleCell(rec.existing_id, viewTab)
+                                        }
+                                        title="Apply this update"
+                                        className="h-3.5 w-3.5 shrink-0 cursor-pointer accent-primary"
+                                      />
+                                    )}
+                                    <span
+                                      className={cn(
+                                        "text-emerald-600 dark:text-emerald-400 font-medium",
+                                        selectedFields.has(viewTab) &&
+                                          !isCellApplied(
+                                            rec.existing_id,
+                                            viewTab,
+                                          ) &&
+                                          "line-through opacity-50",
+                                      )}
+                                    >
+                                      {diff.new || "(empty)"}
+                                    </span>
                                   </span>
                                 ) : (
                                   <span className="text-muted-foreground">
@@ -1486,14 +1596,35 @@ export function ImportCompareClient({ userRole }: { userRole: string }) {
                                     const label = FIELD_LABELS[field] || field;
                                     const isFieldSelected =
                                       selectedFields.has(field);
+                                    const applied = isCellApplied(
+                                      rec.existing_id,
+                                      field,
+                                    );
                                     return (
                                       <div
                                         key={field}
                                         className={cn(
                                           "flex items-center gap-1.5 text-[11px]",
                                           isFieldSelected && "font-semibold",
+                                          isFieldSelected &&
+                                            !applied &&
+                                            "opacity-50",
                                         )}
                                       >
+                                        {isFieldSelected && (
+                                          <input
+                                            type="checkbox"
+                                            checked={applied}
+                                            onChange={() =>
+                                              toggleCell(
+                                                rec.existing_id,
+                                                field,
+                                              )
+                                            }
+                                            title="Apply this update"
+                                            className="h-3.5 w-3.5 shrink-0 cursor-pointer accent-primary"
+                                          />
+                                        )}
                                         <span
                                           className={cn(
                                             "shrink-0 font-semibold",
@@ -1502,7 +1633,6 @@ export function ImportCompareClient({ userRole }: { userRole: string }) {
                                               : "text-amber-700 dark:text-amber-400",
                                           )}
                                         >
-                                          {isFieldSelected ? "✓ " : ""}
                                           {label}:
                                         </span>
                                         <span
@@ -1515,7 +1645,12 @@ export function ImportCompareClient({ userRole }: { userRole: string }) {
                                           →
                                         </span>
                                         <span
-                                          className="text-emerald-600 dark:text-emerald-400 truncate max-w-24"
+                                          className={cn(
+                                            "text-emerald-600 dark:text-emerald-400 truncate max-w-24",
+                                            isFieldSelected &&
+                                              !applied &&
+                                              "line-through",
+                                          )}
                                           title={diff.new}
                                         >
                                           {diff.new || "(empty)"}
