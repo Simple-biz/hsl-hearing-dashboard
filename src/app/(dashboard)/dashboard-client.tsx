@@ -37,6 +37,8 @@ import {
   ArchiveRestore,
   RefreshCw,
   History,
+  Copy,
+  Check,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatCard, StatCardGrid } from "@/components/stat-card";
@@ -1191,6 +1193,8 @@ function ClaimantCell({
   const [editingField, setEditingField] = useState<ClaimantEditField | null>(
     null,
   );
+  // Brief "copied" feedback after the copy-name button is clicked.
+  const [copied, setCopied] = useState(false);
 
   const chronicleLink: string | null = hearing.chronicle_link ?? null;
   const canEditChronicle = chronicleEditable ?? editable ?? false;
@@ -1238,6 +1242,27 @@ function ClaimantCell({
         ) : (
           <p className="truncate text-xs font-medium">{hearing.claimant}</p>
         )}
+        <button
+          type="button"
+          onClick={async (e) => {
+            e.stopPropagation();
+            try {
+              await navigator.clipboard.writeText(hearing.claimant ?? "");
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1500);
+            } catch {
+              /* clipboard unavailable — no-op */
+            }
+          }}
+          className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-blue-600 hover:bg-muted"
+          title="Copy claimant name"
+        >
+          {copied ? (
+            <Check className="h-2.5 w-2.5 text-emerald-600" />
+          ) : (
+            <Copy className="h-2.5 w-2.5" />
+          )}
+        </button>
         {editable && (
           <button
             type="button"
