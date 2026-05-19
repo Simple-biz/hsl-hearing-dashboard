@@ -1341,7 +1341,9 @@ function isoToUs(iso: unknown): string {
   let s: string;
   if (iso instanceof Date) {
     if (Number.isNaN(iso.getTime())) return "";
-    s = `${iso.getFullYear()}-${String(iso.getMonth() + 1).padStart(2, "0")}-${String(iso.getDate()).padStart(2, "0")}`;
+    // Postgres `date` arrives as a JS Date at UTC midnight — use the UTC
+    // parts so a negative-UTC (US) browser doesn't read it as the prior day.
+    s = `${iso.getUTCFullYear()}-${String(iso.getUTCMonth() + 1).padStart(2, "0")}-${String(iso.getUTCDate()).padStart(2, "0")}`;
   } else {
     s = String(iso);
   }

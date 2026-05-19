@@ -236,7 +236,9 @@ function toYmd(v: unknown): string | null {
   if (v == null) return null;
   if (v instanceof Date) {
     if (Number.isNaN(v.getTime())) return null;
-    return `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, "0")}-${String(v.getDate()).padStart(2, "0")}`;
+    // A Postgres `date` arrives as a JS Date at UTC midnight — use the UTC
+    // parts so a negative-UTC (US) browser doesn't read it as the prior day.
+    return `${v.getUTCFullYear()}-${String(v.getUTCMonth() + 1).padStart(2, "0")}-${String(v.getUTCDate()).padStart(2, "0")}`;
   }
   const m = String(v).match(/^(\d{4})-(\d{2})-(\d{2})/);
   return m ? `${m[1]}-${m[2]}-${m[3]}` : null;
