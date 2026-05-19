@@ -972,6 +972,9 @@ function ResetPasswordModal({
   const [password, setPassword] = useState(generatePassword());
   const [forceChange, setForceChange] = useState(true);
   const [sendEmail, setSendEmail] = useState(true);
+  // Mutually exclusive with sendEmail — the tutorial email itself carries the
+  // new credentials, so sending both would just be duplicate password emails.
+  const [sendVideo, setSendVideo] = useState(false);
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState("");
 
@@ -983,7 +986,14 @@ function ResetPasswordModal({
         await resetUserPasswordCustom(user.id, password, forceChange);
         let msg = "Password reset successfully";
         if (forceChange) msg += " · User must change on next login";
-        if (sendEmail) {
+        if (sendVideo) {
+          try {
+            await sendVideoTutorialEmail(user.id, password);
+            msg += " · Tutorial email sent";
+          } catch {
+            msg += " · Tutorial email failed";
+          }
+        } else if (sendEmail) {
           try {
             await sendPasswordResetEmail(user.id, password);
             msg += " · Email sent";
@@ -1049,11 +1059,32 @@ function ResetPasswordModal({
           <label className="flex items-center gap-2.5 cursor-pointer">
             <input
               type="checkbox"
-              checked={sendEmail}
-              onChange={(e) => setSendEmail(e.target.checked)}
+              checked={sendEmail && !sendVideo}
+              onChange={(e) => {
+                setSendEmail(e.target.checked);
+                if (e.target.checked) setSendVideo(false);
+              }}
               className="h-4 w-4 rounded border-input accent-primary"
             />
             <span className="text-sm">Send new password to user via email</span>
+          </label>
+          <label className="flex items-center gap-2.5 cursor-pointer group">
+            <input
+              type="checkbox"
+              checked={sendVideo}
+              onChange={(e) => {
+                setSendVideo(e.target.checked);
+                if (e.target.checked) setSendEmail(false);
+              }}
+              className="h-4 w-4 rounded border-input accent-primary"
+            />
+            <div>
+              <span className="text-sm">Send scheduling video tutorial</span>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Sends the scheduling-system video email — includes the new
+                login credentials (replaces the plain password email).
+              </p>
+            </div>
           </label>
         </div>
       </div>
