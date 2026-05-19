@@ -37,6 +37,8 @@ import {
   ArchiveRestore,
   RefreshCw,
   History,
+  Copy,
+  Check,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatCard, StatCardGrid } from "@/components/stat-card";
@@ -138,7 +140,8 @@ type HearingBoolField =
   | "rep_docs_complete"
   | "fee_agreement_complete"
   | "five_day_notice"
-  | "phi_sheet_complete";
+  | "phi_sheet_complete"
+  | "post_hrg_report";
 // Workflow checkboxes that carry a companion `<field>_at` completion stamp.
 const CHECKBOX_STAMP_FIELDS: string[] = [
   "task_assigned",
@@ -146,6 +149,7 @@ const CHECKBOX_STAMP_FIELDS: string[] = [
   "fee_agreement_complete",
   "five_day_notice",
   "phi_sheet_complete",
+  "post_hrg_report",
 ];
 type UpdateValue = string | number | boolean | null;
 interface PostHrgNote {
@@ -1191,6 +1195,8 @@ function ClaimantCell({
   const [editingField, setEditingField] = useState<ClaimantEditField | null>(
     null,
   );
+  // Brief "copied" feedback after the copy-name button is clicked.
+  const [copied, setCopied] = useState(false);
 
   const chronicleLink: string | null = hearing.chronicle_link ?? null;
   const canEditChronicle = chronicleEditable ?? editable ?? false;
@@ -1238,6 +1244,27 @@ function ClaimantCell({
         ) : (
           <p className="truncate text-xs font-medium">{hearing.claimant}</p>
         )}
+        <button
+          type="button"
+          onClick={async (e) => {
+            e.stopPropagation();
+            try {
+              await navigator.clipboard.writeText(hearing.claimant ?? "");
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1500);
+            } catch {
+              /* clipboard unavailable — no-op */
+            }
+          }}
+          className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-blue-600 hover:bg-muted"
+          title="Copy claimant name"
+        >
+          {copied ? (
+            <Check className="h-2.5 w-2.5 text-emerald-600" />
+          ) : (
+            <Copy className="h-2.5 w-2.5" />
+          )}
+        </button>
         {editable && (
           <button
             type="button"
@@ -1817,6 +1844,7 @@ const COL_W = {
   hearing_time: 78,
   claimant: 175,
   ssn_last_4: 62,
+  post_hrg_report: 66,
   actions: 44,
 };
 const ALL_COLUMNS: ColumnDef[] = [
@@ -1844,6 +1872,12 @@ const ALL_COLUMNS: ColumnDef[] = [
     frozen: true,
   },
   { key: "ssn_last_4", label: "SSN", w: COL_W.ssn_last_4, frozen: true },
+  {
+    key: "post_hrg_report",
+    label: "Post HRG Report",
+    w: COL_W.post_hrg_report,
+    frozen: true,
+  },
   { key: "actions", label: "", w: COL_W.actions, frozen: true },
   { key: "alj", label: "ALJ", w: 150, sortable: true },
   { key: "location", label: "Location", w: 120, sortable: true },
@@ -2183,7 +2217,7 @@ const HearingTable = memo(function HearingTable({
   // Filter columns based on role visibility
   const visibleKeys = getVisibleColumns(userRole) || ["ALL"];
   const isRepView = visibleKeys[0] !== "ALL" && userRole === "rep";
-  const columns =
+  const baseColumns =
     visibleKeys[0] === "ALL"
       ? ALL_COLUMNS
       : ALL_COLUMNS.filter((col) => {
@@ -2213,6 +2247,8 @@ const HearingTable = memo(function HearingTable({
           };
         });
 
+  const columns = baseColumns;
+
   // Build option lists for dropdowns
   const moaOptions = configOptions
     .filter((o) => o.option_type === "manner_of_appearance")
@@ -2229,12 +2265,15 @@ const HearingTable = memo(function HearingTable({
   const briefOptions = configOptions
     .filter((o) => o.option_type === "brief_assignment")
     .map((o) => ({ value: o.option_value, label: o.option_value }));
+  // Single source of truth with the post-hrg-development STATUS column —
+  // both read config_options type 'post_hrg_workflow_status' so the value
+  // sets are identical (no Complete/Completed mapping needed).
   const postHrgDevOptions = configOptions
-    .filter((o) => o.option_type === "post_hrg_dev_status")
+    .filter((o) => o.option_type === "post_hrg_workflow_status")
     .map((o) => ({ value: o.option_value, label: o.option_value }));
   const postHrgDevHexColors: Record<string, { bg: string; color: string }> = {};
   for (const o of configOptions.filter(
-    (o) => o.option_type === "post_hrg_dev_status",
+    (o) => o.option_type === "post_hrg_workflow_status",
   )) {
     if (o.option_color) {
       // Determine text color based on brightness
@@ -2618,6 +2657,17 @@ const HearingTable = memo(function HearingTable({
             editable={editable}
           />
         );
+      case "post_hrg_report":
+        return (
+          <div className="flex justify-center">
+            <InlineCheck
+              checked={hearing.post_hrg_report}
+              stampedAt={hearing.post_hrg_report_at}
+              onToggle={(val) => onUpdate(hearing.id, col.key, val)}
+              editable={editable}
+            />
+          </div>
+        );
       default:
         return <span className="text-xs">-</span>;
     }
@@ -2676,7 +2726,10 @@ const HearingTable = memo(function HearingTable({
                     <th
                       key={col.key}
                       className={cn(
-                        "h-10 whitespace-nowrap border-b-2 border-border px-2 text-left text-[11px] font-bold uppercase tracking-wide text-foreground/80",
+                        "h-10 border-b-2 border-border px-2 text-left text-[11px] font-bold uppercase tracking-wide text-foreground/80",
+                        col.key === "post_hrg_report"
+                          ? "whitespace-normal"
+                          : "whitespace-nowrap",
                         headerBg,
                         col.sortable &&
                           "cursor-pointer select-none hover:text-foreground",
@@ -2701,6 +2754,11 @@ const HearingTable = memo(function HearingTable({
                             onChange={onToggleAll}
                             className="h-4 w-4 accent-purple-600 cursor-pointer"
                           />
+                        ) : col.key === "post_hrg_report" ? (
+                          <span className="flex flex-col leading-[1.1]">
+                            <span>Post HRG</span>
+                            <span>Report</span>
+                          </span>
                         ) : (
                           col.label
                         )}

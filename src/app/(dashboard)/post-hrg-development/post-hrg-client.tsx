@@ -4741,9 +4741,17 @@ export function PostHrgClient({
             readOnly={TERMINAL_STATUSES.includes(
               (postHrgModal.status || "").toLowerCase(),
             )}
+            // MR rows: Requirements mirrors the row's Details Content, so
+            // it's shown read-only here (Details Content is the source) and
+            // seeded directly from `details`.
+            readOnlyRequirements={postHrgModal.record_type === "MR"}
             initialNotes={postHrgModal.post_hrg_notes}
             initialDeadline={postHrgModal.post_hrg_deadline}
-            initialRequirements={null}
+            initialRequirements={
+              postHrgModal.record_type === "MR"
+                ? postHrgModal.details
+                : null
+            }
             initialDeadlinePrev={null}
             initialDeadlineChangedBy={null}
             onClose={() => setPostHrgModal(null)}
