@@ -262,6 +262,9 @@ export const EDITABLE_FIELDS: Record<string, UserRole[]> = {
     "post_hearing_admin",
     "post_hearing_staff",
   ],
+  // Restricted to system_admin/admin only — same gate as
+  // post_hrg_requirements.
+  post_hrg_report: ["system_admin", "admin"],
   post_hrg_deadline: [
     "system_admin",
     "admin",

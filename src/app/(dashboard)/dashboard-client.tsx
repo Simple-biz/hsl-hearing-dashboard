@@ -140,7 +140,8 @@ type HearingBoolField =
   | "rep_docs_complete"
   | "fee_agreement_complete"
   | "five_day_notice"
-  | "phi_sheet_complete";
+  | "phi_sheet_complete"
+  | "post_hrg_report";
 // Workflow checkboxes that carry a companion `<field>_at` completion stamp.
 const CHECKBOX_STAMP_FIELDS: string[] = [
   "task_assigned",
@@ -148,6 +149,7 @@ const CHECKBOX_STAMP_FIELDS: string[] = [
   "fee_agreement_complete",
   "five_day_notice",
   "phi_sheet_complete",
+  "post_hrg_report",
 ];
 type UpdateValue = string | number | boolean | null;
 interface PostHrgNote {
@@ -1842,6 +1844,7 @@ const COL_W = {
   hearing_time: 78,
   claimant: 175,
   ssn_last_4: 62,
+  post_hrg_report: 66,
   actions: 44,
 };
 const ALL_COLUMNS: ColumnDef[] = [
@@ -1869,6 +1872,12 @@ const ALL_COLUMNS: ColumnDef[] = [
     frozen: true,
   },
   { key: "ssn_last_4", label: "SSN", w: COL_W.ssn_last_4, frozen: true },
+  {
+    key: "post_hrg_report",
+    label: "Post HRG Report",
+    w: COL_W.post_hrg_report,
+    frozen: true,
+  },
   { key: "actions", label: "", w: COL_W.actions, frozen: true },
   { key: "alj", label: "ALJ", w: 150, sortable: true },
   { key: "location", label: "Location", w: 120, sortable: true },
@@ -2208,7 +2217,7 @@ const HearingTable = memo(function HearingTable({
   // Filter columns based on role visibility
   const visibleKeys = getVisibleColumns(userRole) || ["ALL"];
   const isRepView = visibleKeys[0] !== "ALL" && userRole === "rep";
-  const columns =
+  const baseColumns =
     visibleKeys[0] === "ALL"
       ? ALL_COLUMNS
       : ALL_COLUMNS.filter((col) => {
@@ -2237,6 +2246,8 @@ const HearingTable = memo(function HearingTable({
             w: repWidths[col.key] || col.w,
           };
         });
+
+  const columns = baseColumns;
 
   // Build option lists for dropdowns
   const moaOptions = configOptions
@@ -2643,6 +2654,17 @@ const HearingTable = memo(function HearingTable({
             editable={editable}
           />
         );
+      case "post_hrg_report":
+        return (
+          <div className="flex justify-center">
+            <InlineCheck
+              checked={hearing.post_hrg_report}
+              stampedAt={hearing.post_hrg_report_at}
+              onToggle={(val) => onUpdate(hearing.id, col.key, val)}
+              editable={editable}
+            />
+          </div>
+        );
       default:
         return <span className="text-xs">-</span>;
     }
@@ -2701,7 +2723,10 @@ const HearingTable = memo(function HearingTable({
                     <th
                       key={col.key}
                       className={cn(
-                        "h-10 whitespace-nowrap border-b-2 border-border px-2 text-left text-[11px] font-bold uppercase tracking-wide text-foreground/80",
+                        "h-10 border-b-2 border-border px-2 text-left text-[11px] font-bold uppercase tracking-wide text-foreground/80",
+                        col.key === "post_hrg_report"
+                          ? "whitespace-normal"
+                          : "whitespace-nowrap",
                         headerBg,
                         col.sortable &&
                           "cursor-pointer select-none hover:text-foreground",
@@ -2726,6 +2751,11 @@ const HearingTable = memo(function HearingTable({
                             onChange={onToggleAll}
                             className="h-4 w-4 accent-purple-600 cursor-pointer"
                           />
+                        ) : col.key === "post_hrg_report" ? (
+                          <span className="flex flex-col leading-[1.1]">
+                            <span>Post HRG</span>
+                            <span>Report</span>
+                          </span>
                         ) : (
                           col.label
                         )}
