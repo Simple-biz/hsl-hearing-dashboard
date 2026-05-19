@@ -2265,12 +2265,15 @@ const HearingTable = memo(function HearingTable({
   const briefOptions = configOptions
     .filter((o) => o.option_type === "brief_assignment")
     .map((o) => ({ value: o.option_value, label: o.option_value }));
+  // Single source of truth with the post-hrg-development STATUS column —
+  // both read config_options type 'post_hrg_workflow_status' so the value
+  // sets are identical (no Complete/Completed mapping needed).
   const postHrgDevOptions = configOptions
-    .filter((o) => o.option_type === "post_hrg_dev_status")
+    .filter((o) => o.option_type === "post_hrg_workflow_status")
     .map((o) => ({ value: o.option_value, label: o.option_value }));
   const postHrgDevHexColors: Record<string, { bg: string; color: string }> = {};
   for (const o of configOptions.filter(
-    (o) => o.option_type === "post_hrg_dev_status",
+    (o) => o.option_type === "post_hrg_workflow_status",
   )) {
     if (o.option_color) {
       // Determine text color based on brightness
