@@ -856,6 +856,34 @@ export async function updateHearing(
     );
   }
 
+  // Keep the linked MR Post HRG Development row's STATUS in sync with the
+  // dashboard "Post Hrg Dev" column (bidirectional — the PHD side mirrors
+  // back in updatePostHrgDevField). Scoped to record_type = 'MR', the
+  // canonical hearing-linked PHD row (same link as the Details →
+  // Requirements mirror). Best-effort: the hearings UPDATE already
+  // committed, so a sync failure must not roll back the dashboard edit.
+  if (field === "post_hrg_dev_status" && value !== oldValue) {
+    try {
+      const syncRes = await db.query(
+        `UPDATE post_hrg_development
+            SET status = $1,
+                updated_at = NOW()
+          WHERE hearing_id = $2 AND record_type = 'MR'
+          RETURNING id`,
+        [value ?? null, hearingId],
+      );
+      if ((syncRes.rowCount ?? 0) > 0) {
+        await logAction(
+          "post_hrg_dev_status_synced",
+          `Synced Post Hrg Dev status on ${syncRes.rowCount} MR record(s) for ${claimant}: '${oldValue ?? "(empty)"}' → '${value ?? "(empty)"}'`,
+          hearingId,
+        );
+      }
+    } catch (e) {
+      console.error("post_hrg_dev_status → PHD status sync failed", e);
+    }
+  }
+
   // ── Computed fields — skip activity log (they're side effects of other fields) ──
   const SILENT_FIELDS = ["converted_time_est"];
   if (SILENT_FIELDS.includes(field)) return { ok: true };

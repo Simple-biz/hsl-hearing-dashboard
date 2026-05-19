@@ -895,6 +895,24 @@ export async function updatePostHrgDevField(
     }
   }
 
+  // Mirror an MR row's STATUS into the linked hearing's post_hrg_dev_status
+  // so the dashboard "Post Hrg Dev" column reflects it (bidirectional — the
+  // dashboard side mirrors back in updateHearing). Scoped to MR, same
+  // canonical link as the Details → Requirements mirror above. Best-effort.
+  if (field === "status" && recordType === "MR" && linkedHearingId) {
+    try {
+      await db.query(
+        `UPDATE hearings SET post_hrg_dev_status = $1 WHERE id = $2`,
+        [value ?? null, linkedHearingId],
+      );
+    } catch (e) {
+      console.error(
+        "MR status → hearings.post_hrg_dev_status mirror failed",
+        e,
+      );
+    }
+  }
+
   // Append to the per-row deadline history trail (mirrors the hearing-level
   // post_hrg_deadline_history). Only on an actual change to a non-null date.
   if (
