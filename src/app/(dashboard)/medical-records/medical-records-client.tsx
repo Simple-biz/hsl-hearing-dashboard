@@ -1669,6 +1669,9 @@ export function MrPivotClient({ userRole, userName, ...data }: Props) {
   const [showTeamStats, setShowTeamStats] = useState(false);
   const [showActivityLog, setShowActivityLog] = useState(false);
   const [showWithdrawn, setShowWithdrawn] = useState(false);
+  const [showMrStatusModal, setShowMrStatusModal] = useState(false);
+  const [showAssignedByMonthModal, setShowAssignedByMonthModal] =
+    useState(false);
 
   // ── Per-row modal state ───────────────────────────────────────────────────
   const [postHrgHearing, setPostHrgHearing] = useState<Hearing | null>(null);
@@ -2201,10 +2204,63 @@ export function MrPivotClient({ userRole, userName, ...data }: Props) {
           </div>
         </div>
 
+        {/* ── Compact MR Status pill strip — at-a-glance per-status totals
+             rolled up across all teams. Click any pill (or the row) to open
+             the full per-team pivot in a modal. ─────────────────────────── */}
+        {(() => {
+          const totals: Record<string, number> = {};
+          for (const row of data.mrStatusByTeam) {
+            for (const [k, v] of Object.entries(row.statuses)) {
+              totals[k] = (totals[k] ?? 0) + (v as number);
+            }
+          }
+          const entries = Object.entries(totals).filter(([, n]) => n > 0);
+          if (entries.length === 0) return null;
+          // Order: known statuses first (by MR_STATUS_CLS key order), then
+          // any leftover/unknown values appended at the end.
+          const known = Object.keys(MR_STATUS_CLS);
+          entries.sort(([a], [b]) => {
+            const ia = known.indexOf(a);
+            const ib = known.indexOf(b);
+            return (
+              (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib) ||
+              a.localeCompare(b)
+            );
+          });
+          return (
+            <button
+              type="button"
+              onClick={() => setShowMrStatusModal(true)}
+              title="Click for full per-team MR Status breakdown"
+              className="w-full flex items-center gap-2 flex-wrap px-3 py-2 rounded-xl border border-border bg-card hover:bg-muted/40 transition-colors text-left"
+            >
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground shrink-0">
+                MR Status
+              </span>
+              {entries.map(([status, n]) => (
+                <span
+                  key={status}
+                  className={cn(
+                    "inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-semibold",
+                    MR_STATUS_CLS[status] ??
+                      "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300",
+                  )}
+                >
+                  <span>{status}</span>
+                  <span className="tabular-nums">{n}</span>
+                </span>
+              ))}
+              <span className="ml-auto text-[10px] text-muted-foreground shrink-0">
+                tap for details →
+              </span>
+            </button>
+          );
+        })()}
+
         {/* ── Main Hearings Card ────────────────────────────────────────── */}
         <div
           className="bg-card border border-border rounded-xl overflow-hidden flex flex-col"
-          style={{ maxHeight: "min(calc(100vh - 240px), 75vh)" }}
+          style={{ maxHeight: "calc(100vh - 240px)" }}
         >
           {/* Card header */}
           <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-border bg-muted/30 shrink-0">
@@ -2320,6 +2376,22 @@ export function MrPivotClient({ userRole, userName, ...data }: Props) {
                 className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground font-semibold transition-colors"
               >
                 <BarChart3 size={12} /> Stats
+              </button>
+
+              <button
+                onClick={() => setShowMrStatusModal(true)}
+                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground font-semibold transition-colors"
+                title="Medical Records Status (by team)"
+              >
+                📊 <span className="hidden sm:inline">MR Status</span>
+              </button>
+
+              <button
+                onClick={() => setShowAssignedByMonthModal(true)}
+                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground font-semibold transition-colors"
+                title="Assigned Cases by Month"
+              >
+                📅 <span className="hidden sm:inline">By Month</span>
               </button>
 
               <button
@@ -2614,38 +2686,6 @@ export function MrPivotClient({ userRole, userName, ...data }: Props) {
           </div>
         </div>
 
-        {/* ── Bottom Grid: Pivot + Assigned by Month ────────────────────── */}
-        <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-4 sm:gap-5">
-          {/* MR Status Pivot */}
-          <div className="bg-card border border-border rounded-xl overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30">
-              <span className="text-sm font-bold text-foreground">
-                📊 Medical Records Status
-              </span>
-              <button
-                onClick={() => exportPivotToCsv(data.mrStatusByTeam)}
-                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold transition-colors"
-              >
-                <Download size={12} /> Export CSV
-              </button>
-            </div>
-            <div className="overflow-auto max-h-96">
-              <MrStatusPivot rows={data.mrStatusByTeam} />
-            </div>
-          </div>
-
-          {/* Assigned by Month */}
-          <div className="bg-card border border-border rounded-xl overflow-hidden">
-            <div className="px-4 py-3 border-b border-border bg-muted/30">
-              <span className="text-sm font-bold text-foreground">
-                📅 Assigned Cases by Month
-              </span>
-            </div>
-            <div className="p-4 overflow-y-auto max-h-96">
-              <AssignedByMonth rows={data.groupedAssigned} />
-            </div>
-          </div>
-        </div>
       </div>
 
       {/* ── Modals ────────────────────────────────────────────────────────── */}
@@ -2661,6 +2701,76 @@ export function MrPivotClient({ userRole, userName, ...data }: Props) {
         userRole={userRole}
         userName={userName}
       />
+
+      {/* MR Status (per-team pivot) — moved from inline bottom grid into a
+          modal so the hearings table can use the full viewport. The compact
+          pill strip above the table summarises totals per status. */}
+      {showMrStatusModal &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+            onClick={() => setShowMrStatusModal(false)}
+          >
+            <div
+              className="bg-card border border-border rounded-xl shadow-2xl flex flex-col w-full max-w-5xl max-h-[85vh]"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30 shrink-0">
+                <span className="text-sm font-bold text-foreground">
+                  📊 Medical Records Status
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => exportPivotToCsv(data.mrStatusByTeam)}
+                    className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold transition-colors"
+                  >
+                    <Download size={12} /> Export CSV
+                  </button>
+                  <button
+                    onClick={() => setShowMrStatusModal(false)}
+                    className="text-muted-foreground hover:text-foreground rounded-md p-1.5 hover:bg-muted"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+              <div className="overflow-auto flex-1">
+                <MrStatusPivot rows={data.mrStatusByTeam} />
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+
+      {/* Assigned Cases by Month — moved into a modal alongside MR Status. */}
+      {showAssignedByMonthModal &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+            onClick={() => setShowAssignedByMonthModal(false)}
+          >
+            <div
+              className="bg-card border border-border rounded-xl shadow-2xl flex flex-col w-full max-w-md max-h-[85vh]"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30 shrink-0">
+                <span className="text-sm font-bold text-foreground">
+                  📅 Assigned Cases by Month
+                </span>
+                <button
+                  onClick={() => setShowAssignedByMonthModal(false)}
+                  className="text-muted-foreground hover:text-foreground rounded-md p-1.5 hover:bg-muted"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="p-4 overflow-y-auto flex-1">
+                <AssignedByMonth rows={data.groupedAssigned} />
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
 
       {/* Per-row Post HRG modal — opened from the 📝 button in each row */}
       {postHrgHearing && (
