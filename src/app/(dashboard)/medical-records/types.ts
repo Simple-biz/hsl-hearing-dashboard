@@ -159,6 +159,7 @@ export interface Hearing {
   post_hrg_deadline: string | null;
   medical_record_link: string | null;
   claimant_link: string | null;
+  chronicle_link: string | null;
   mr_team_assigned_at: string | null;
 }
 
