@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { X, Search, Loader2, ClipboardList } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { avatarColor, getInitials } from "@/lib/activity-avatar";
 import {
   fetchPostHrgActivityLog,
   type PostHrgActivityLog,
@@ -129,30 +130,6 @@ function formatDateTime(iso: string) {
     hour: "numeric",
     minute: "2-digit",
   });
-}
-
-function getInitials(name: string) {
-  return name
-    .split(" ")
-    .map((n) => n[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
-}
-
-const AVATAR_COLORS = [
-  "bg-blue-500",
-  "bg-violet-500",
-  "bg-emerald-500",
-  "bg-amber-500",
-  "bg-rose-500",
-  "bg-cyan-500",
-];
-function avatarColor(name: string) {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++)
-    hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 }
 
 interface Props {

@@ -106,6 +106,30 @@ const TEXT_FIELDS = new Set([
   "oho_assigned_to",
 ]);
 
+// Human-readable labels for activity-log entries. Mirrors the PHD page's
+// FIELD_LABELS map (post-hrg-development/actions.ts) so the audit-trail
+// format reads the same across pages:
+//   "<Label>: '<old>' → '<new>' for: <Claimant>"
+const FIELD_LABELS: Record<string, string> = {
+  // Workflow checkboxes
+  uploaded_noh: "Uploaded NOH",
+  sent_repdocs_to_cl: "Sent RepDocs to CL",
+  repdocs_signed: "RepDocs Signed",
+  contact_ltr: "Contact Letter",
+  repdocs_split: "RepDocs Split",
+  repdocs_uploaded_chronicle: "RepDocs Uploaded to Chronicle",
+  oho_confirmation: "OHO Confirmation",
+  // Checker checkboxes
+  checker_calendar: "Checker — Calendar",
+  checker_chronicle_claim: "Checker — Chronicle Claim",
+  checker_noh: "Checker — NOH",
+  checker_contact_ltr: "Checker — Contact Letter",
+  // Text fields
+  assigned_to: "Assigned To",
+  overall_status: "Overall Status",
+  oho_assigned_to: "OHO Assigned To",
+};
+
 // ─── Options ────────────────────────────────────────────────────────────────
 
 export async function fetchRepDocsAssignees(): Promise<
@@ -383,16 +407,27 @@ export async function updateRepDocsField(
 ) {
   const session = await requireAuth();
 
+  // Validate `field` upfront so the dynamic ${field} interpolation below is
+  // injection-safe. Mirrors the branch-and-throw pattern further down — just
+  // moved earlier so the SELECT/UPDATE statements can trust the value.
+  const isEditableField =
+    WORKFLOW_FIELD_SET.has(field) ||
+    CHECKER_FIELD_SET.has(field) ||
+    TEXT_FIELDS.has(field);
+  if (!isEditableField) {
+    throw new Error(`Field "${field}" is not editable`);
+  }
+
   // Per-user field-access gate (override > role default; rep bypassed)
   {
     const { requireFieldAccess } = await import("@/lib/field-access");
     await requireFieldAccess("representative_docs", field);
   }
 
-  // Resolve the linked hearing's id once so every logAction below can tag
-  // entries with it for per-hearing audit views. Cheap single-row lookup.
+  // Resolve linked hearing id, claimant, AND the field's current value in
+  // one shot so every logAction below can format old → new entries.
   const { rows: metaRows } = await db.query(
-    `SELECT h.id AS hearing_id, h.claimant
+    `SELECT rd.${field} AS old_value, h.id AS hearing_id, h.claimant
        FROM representative_docs rd
        JOIN hearings h ON h.id = rd.hearing_id
       WHERE rd.id = $1`,
@@ -403,6 +438,8 @@ export async function updateRepDocsField(
   const rowLabel = metaRows[0]?.claimant
     ? (metaRows[0].claimant as string).trim()
     : `rep-docs #${id}`;
+  const oldValue: unknown = metaRows[0]?.old_value;
+  const fieldLabel = FIELD_LABELS[field] ?? field;
 
   // Workflow checkbox: auto-timestamp
   if (WORKFLOW_FIELD_SET.has(field)) {
@@ -422,7 +459,7 @@ export async function updateRepDocsField(
 
     await logAction(
       "rep_docs_field_updated",
-      `${field} → ${boolVal ? "checked" : "unchecked"} for ${rowLabel}`,
+      `${fieldLabel}: '${oldValue ? "checked" : "unchecked"}' → '${boolVal ? "checked" : "unchecked"}' for: ${rowLabel}`,
       linkedHearingId,
     );
     return { success: true };
@@ -470,7 +507,7 @@ export async function updateRepDocsField(
 
     await logAction(
       "rep_docs_field_updated",
-      `${field} → ${boolVal ? "checked" : "unchecked"} for ${rowLabel}`,
+      `${fieldLabel}: '${oldValue ? "checked" : "unchecked"}' → '${boolVal ? "checked" : "unchecked"}' for: ${rowLabel}`,
       linkedHearingId,
     );
     return { success: true };
@@ -513,13 +550,11 @@ export async function updateRepDocsField(
 
     await logAction(
       "rep_docs_field_updated",
-      `${field} → '${value ?? "(empty)"}' for ${rowLabel}`,
+      `${fieldLabel}: '${oldValue ?? "(empty)"}' → '${value ?? "(empty)"}' for: ${rowLabel}`,
       linkedHearingId,
     );
     return { success: true };
   }
-
-  throw new Error(`Field "${field}" is not editable`);
 }
 
 // ─── Acknowledge: any logged-in user with page access can confirm they've ────

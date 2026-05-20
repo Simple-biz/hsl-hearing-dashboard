@@ -17,6 +17,11 @@ import {
   acknowledgeRepDocsChange,
   type RepDocsChange,
 } from "@/app/(dashboard)/representative-docs/actions";
+import {
+  avatarColor,
+  getInitials,
+  titleCaseAction,
+} from "@/lib/activity-avatar";
 
 const REP_CHANGE_ACTIONS = new Set([
   "rep_assigned",
@@ -392,44 +397,53 @@ export function RepDocsChangesModal({
             >
               {changes.map((c) => {
                 const isRepChange = REP_CHANGE_ACTIONS.has(c.action);
+                const author = c.userName ?? "System";
                 return (
                   <div
                     key={c.id}
                     className={cn(
-                      "flex items-start gap-3 rounded-md px-2 py-2 hover:bg-muted/30",
+                      "flex items-start gap-3 px-2 py-3 hover:bg-muted/30",
                       isNew(c.createdAt) &&
                         !c.acknowledged &&
                         "bg-blue-50/50 dark:bg-blue-950/20 border-l-2 border-l-blue-400",
                       c.acknowledged && "opacity-60",
                     )}
                   >
-                    <span
+                    {/* Avatar — colored circle with author's initials. */}
+                    <div
                       className={cn(
-                        "shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase",
-                        ACTION_STYLES[c.action] ||
-                          "bg-muted text-muted-foreground",
+                        "h-7 w-7 rounded-full shrink-0 flex items-center justify-center text-[10px] font-bold text-white mt-0.5",
+                        avatarColor(author),
                       )}
                     >
-                      {ACTION_LABELS[c.action] || c.action.replace(/_/g, " ")}
-                    </span>
+                      {getInitials(author)}
+                    </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs leading-relaxed">{c.description}</p>
-                      <div className="flex items-center gap-2 mt-0.5 text-[10px] text-muted-foreground">
-                        <span>{fmtTime(c.createdAt)}</span>
-                        {c.userName && (
-                          <span>
-                            by{" "}
-                            <span className="font-medium text-foreground">
-                              {c.userName}
-                            </span>
-                          </span>
-                        )}
+                      <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                        <span className="text-xs font-semibold text-foreground">
+                          {author}
+                        </span>
+                        <span
+                          className={cn(
+                            "inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold",
+                            ACTION_STYLES[c.action] ||
+                              "bg-muted text-muted-foreground",
+                          )}
+                        >
+                          {ACTION_LABELS[c.action] || titleCaseAction(c.action)}
+                        </span>
                         {isNew(c.createdAt) && !c.acknowledged && (
                           <span className="rounded bg-blue-100 px-1 py-0.5 text-[9px] font-semibold text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
                             NEW
                           </span>
                         )}
+                        <span className="text-[10px] text-muted-foreground ml-auto tabular-nums">
+                          {fmtTime(c.createdAt)}
+                        </span>
                       </div>
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        {c.description}
+                      </p>
                     </div>
                     {isRepChange && (
                       <label
