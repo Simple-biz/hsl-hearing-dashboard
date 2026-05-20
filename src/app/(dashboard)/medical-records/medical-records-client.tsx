@@ -14,6 +14,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { AppHeader } from "@/components/layout/app-header";
 import { DashboardNav } from "@/components/layout/dashboard-nav";
 import { Input } from "@/components/ui/input";
+import { ClaimantCopyButton } from "@/components/ui/claimant-copy-button";
 import {
   Select,
   SelectContent,
@@ -1395,6 +1396,7 @@ function HearingRow({
           ) : (
             <span className="text-foreground truncate">{h.claimant}</span>
           )}
+          <ClaimantCopyButton name={h.claimant} />
           {h.mr_team_id && (
             <span
               className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
