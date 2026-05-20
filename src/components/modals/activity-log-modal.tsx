@@ -5,6 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { X, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  avatarColor,
+  getInitials,
+  labelForAction,
+} from "@/lib/activity-avatar";
 import { fetchActivityLog } from "@/app/(dashboard)/actions";
 import type { ActivityLogEntry } from "@/app/(dashboard)/actions";
 import {
@@ -31,90 +36,10 @@ const CATEGORIES = [
   { key: "all", label: "📋 All" },
 ];
 
-// Friendly display labels for action keys. Falls back to a title-cased
-// version of the raw action when not listed (e.g. "schedule_updated" →
-// "Schedule Updated"). Matches the PHD activity modal's visual treatment.
-const ACTION_LABELS: Record<string, string> = {
-  user_login: "Login",
-  user_logout: "Logout",
-  rep_assigned: "Rep Assigned",
-  rep_unassigned: "Rep Unassigned",
-  rep_auto_assigned: "Auto-Assigned",
-  batch_auto_assign: "Batch Auto-Assign",
-  bulk_unassign: "Bulk Unassign",
-  status_assigned: "Assignment Status",
-  email_sent: "Email Sent",
-  email_failed: "Email Failed",
-  bulk_email: "Bulk Email",
-  field_updated: "Field Edit",
-  rep_docs_field_updated: "Field Edit",
-  post_hrg_dev_field_updated: "Field Edit",
-  post_hrg_note_added: "Note Added",
-  post_hrg_note_deleted: "Note Deleted",
-  post_hrg_deadline_updated: "Deadline Updated",
-  post_hrg_dev_created: "Created",
-  post_hrg_dev_auto_created: "Auto-Created",
-  post_hrg_dev_acknowledged: "Acknowledged",
-  post_hrg_dev_deleted: "Deleted",
-  post_hrg_dev_import: "Imported",
-  post_hrg_dev_phstatus_synced: "PH Status Synced",
-  post_hrg_dev_status_synced: "Dev Status Synced",
-  hearing_updated: "Hearing Updated",
-  hearing_created: "Hearing Created",
-  hearing_deleted: "Hearing Deleted",
-  hearing_imported: "Hearing Imported",
-  bulk_delete: "Bulk Delete",
-  bulk_migrate: "Bulk Migrate",
-  schedule_updated: "Schedule Updated",
-  schedule_lock_override: "Schedule Lock Override",
-  rep_created: "Rep Created",
-  rep_updated: "Rep Updated",
-  rep_deleted: "Rep Deleted",
-  token_revoked: "Token Revoked",
-  api_key_created: "API Key Created",
-  api_key_revoked: "API Key Revoked",
-  archive_chronicles: "Archive Chronicles",
-  unarchive_chronicles: "Unarchive Chronicles",
-  hearing_archived: "Hearing Archived",
-  hearing_unarchived: "Hearing Unarchived",
-  rep_docs_acknowledged: "Acknowledged",
-};
-
-function labelForAction(action: string): string {
-  if (ACTION_LABELS[action]) return ACTION_LABELS[action];
-  // Fallback — turn "snake_case_action" into "Snake Case Action"
-  return action
-    .split("_")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
-}
-
-// Deterministic avatar color from a name string. Same hash function as
-// post-hrg-activity-modal.tsx so a user's avatar is the same color across
-// every page that renders their activity entries.
-const AVATAR_COLORS = [
-  "bg-blue-500",
-  "bg-violet-500",
-  "bg-emerald-500",
-  "bg-amber-500",
-  "bg-rose-500",
-  "bg-cyan-500",
-];
-function avatarColor(name: string): string {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++)
-    hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
-}
-function getInitials(name: string): string {
-  return name
-    .split(" ")
-    .map((n) => n[0])
-    .filter(Boolean)
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
-}
+// Friendly action labels are now centralized in @/lib/activity-avatar
+// (ACTIVITY_ACTION_LABELS + labelForAction) so every activity-log surface
+// resolves the same key to the same display string. This file only keeps
+// the per-action chip color map below.
 
 const ACTION_COLORS: Record<string, string> = {
   // Auth

@@ -63,6 +63,7 @@ import { PostHrgModal } from "@/components/modals/post-hrg-modal";
 import { PostHrgReviewModal } from "@/components/modals/post-hrg-review-modal";
 import { TeamStatsModal } from "@/components/modals/team-stats-modal";
 import { ActivityLogModal } from "@/components/modals/activity-log-modal";
+import { PAGE_ACTION_SCOPES } from "@/lib/activity-avatar";
 import { MedicalRecordsDetailPanel } from "./medical-records-detail-panel";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -2737,7 +2738,37 @@ export function MrPivotClient({ userRole, userName, ...data }: Props) {
         teams={data.medical_teams}
       />
       {showActivityLog && (
-        <ActivityLogModal onClose={() => setShowActivityLog(false)} />
+        <ActivityLogModal
+          onClose={() => setShowActivityLog(false)}
+          title="📋 Medical Records Activity Log"
+          tabs={[
+            {
+              key: "all",
+              label: "📋 All Changes",
+              actions: [...PAGE_ACTION_SCOPES.medical_records],
+            },
+            {
+              key: "status",
+              label: "📊 Status",
+              actions: ["mr_status_updated"],
+            },
+            {
+              key: "team",
+              label: "👥 Team",
+              actions: ["mr_team_assigned"],
+            },
+            {
+              key: "link",
+              label: "🔗 MR Link",
+              actions: ["mr_link_updated"],
+            },
+            {
+              key: "tasks",
+              label: "✅ Tasks",
+              actions: ["task_assigned_updated", "five_day_notice_updated"],
+            },
+          ]}
+        />
       )}
       <WithdrawnModal
         open={showWithdrawn}
