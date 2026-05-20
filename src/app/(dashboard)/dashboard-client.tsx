@@ -743,7 +743,13 @@ function RepCell({
 
   const assignRep = (repId: number) => {
     onUpdate(hearing.id, "assigned_rep_id", repId);
-    onUpdate(hearing.id, "assignment_status", null);
+    // Defensive cleanup — only fire when there's actually a status to clear
+    // (e.g. reassigning a previously-withdrawn hearing). Skipping the no-op
+    // write keeps the activity log from showing a misleading "Set Assignment
+    // Status to 'cleared'" entry right after every rep assignment.
+    if (hearing.assignment_status) {
+      onUpdate(hearing.id, "assignment_status", null);
+    }
     close();
   };
   const unassign = () => {

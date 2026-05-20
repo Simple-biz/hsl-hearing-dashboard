@@ -1404,9 +1404,22 @@ function HearingRow({
             />
           )}
         </div>
-        {h.rep_name && (
-          <div className="text-[9px] text-muted-foreground truncate">
-            {h.rep_name}
+        {(h.rep_name || h.chronicle_link) && (
+          <div className="text-[9px] text-muted-foreground truncate flex items-center gap-1">
+            {h.rep_name && <span className="truncate">{h.rep_name}</span>}
+            {h.rep_name && h.chronicle_link && (
+              <span className="text-border">·</span>
+            )}
+            {h.chronicle_link && (
+              <a
+                href={h.chronicle_link}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium text-violet-600 hover:underline dark:text-violet-400"
+              >
+                Chronicle
+              </a>
+            )}
           </div>
         )}
       </div>
