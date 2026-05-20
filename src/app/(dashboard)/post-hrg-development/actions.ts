@@ -843,6 +843,7 @@ export async function updatePostHrgDevField(
     "remarks",
     "requirements",
     "indicator",
+    "record_type",
   ];
 
   if (!ALLOWED_FIELDS.includes(field)) {
@@ -910,6 +911,37 @@ export async function updatePostHrgDevField(
         "MR status → hearings.post_hrg_dev_status mirror failed",
         e,
       );
+    }
+  }
+
+  // When an admin RETAGS a row INTO MR (was something else, now MR), push the
+  // row's current details + status into the linked hearing's mirror columns
+  // so the dashboard reflects the correction immediately — otherwise nothing
+  // would update until someone next edits Details or status. Asymmetric on
+  // purpose: retagging OUT of MR does NOT clear hearing-side data (avoids a
+  // wrong-click silently wiping curated values; admin can clean up manually).
+  if (
+    field === "record_type" &&
+    String(value ?? "") === "MR" &&
+    String(oldValue ?? "") !== "MR" &&
+    linkedHearingId
+  ) {
+    try {
+      const { rows: cur } = await db.query(
+        `SELECT details, status FROM post_hrg_development WHERE id = $1`,
+        [id],
+      );
+      const curDetails = (cur[0]?.details as string | null) ?? null;
+      const curStatus = (cur[0]?.status as string | null) ?? null;
+      await db.query(
+        `UPDATE hearings
+            SET post_hrg_requirements = $1,
+                post_hrg_dev_status   = $2
+          WHERE id = $3`,
+        [curDetails, curStatus, linkedHearingId],
+      );
+    } catch (e) {
+      console.error("record_type retag-into-MR auto-mirror failed", e);
     }
   }
 
