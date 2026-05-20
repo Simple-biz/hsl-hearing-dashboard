@@ -5,6 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { X, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  avatarColor,
+  getInitials,
+  labelForAction,
+} from "@/lib/activity-avatar";
 import { fetchActivityLog } from "@/app/(dashboard)/actions";
 import type { ActivityLogEntry } from "@/app/(dashboard)/actions";
 import {
@@ -30,6 +35,11 @@ const CATEGORIES = [
   { key: "archived", label: "📦 Archived" },
   { key: "all", label: "📋 All" },
 ];
+
+// Friendly action labels are now centralized in @/lib/activity-avatar
+// (ACTIVITY_ACTION_LABELS + labelForAction) so every activity-log surface
+// resolves the same key to the same display string. This file only keeps
+// the per-action chip color map below.
 
 const ACTION_COLORS: Record<string, string> = {
   // Auth
@@ -380,51 +390,55 @@ export function ActivityLogModal({
                     loading && "opacity-50 pointer-events-none",
                   )}
                 >
-                  {ackEvents.map((ev) => (
-                    <div
-                      key={`${ev.ackUserId}-${ev.id}`}
-                      className="flex items-start gap-3 rounded-md px-2 py-2 hover:bg-muted/30"
-                    >
-                      <span
-                        className={cn(
-                          "shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase",
-                          "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30",
-                        )}
+                  {ackEvents.map((ev) => {
+                    const author = ev.ackUserName ?? "Unknown user";
+                    return (
+                      <div
+                        key={`${ev.ackUserId}-${ev.id}`}
+                        className="flex items-start gap-3 px-2 py-3 hover:bg-muted/30"
                       >
-                        ACK
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs leading-relaxed">
-                          <span className="font-medium text-foreground">
-                            {ev.ackUserName ?? "Unknown user"}
-                          </span>{" "}
-                          acknowledged:{" "}
-                          <span className="text-muted-foreground">
+                        {/* Avatar — circle with the acknowledging user's initials. */}
+                        <div
+                          className={cn(
+                            "h-7 w-7 rounded-full shrink-0 flex items-center justify-center text-[10px] font-bold text-white mt-0.5",
+                            avatarColor(author),
+                          )}
+                        >
+                          {getInitials(author)}
+                        </div>
+
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                            <span className="text-xs font-semibold text-foreground">
+                              {author}
+                            </span>
+                            <span
+                              className={cn(
+                                "inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold",
+                                "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400",
+                              )}
+                            >
+                              Acknowledged
+                            </span>
+                            <span className="text-[10px] text-muted-foreground ml-auto tabular-nums">
+                              {new Date(ev.acknowledgedAt).toLocaleString(
+                                "en-US",
+                                {
+                                  month: "short",
+                                  day: "numeric",
+                                  hour: "numeric",
+                                  minute: "2-digit",
+                                },
+                              )}
+                            </span>
+                          </div>
+                          <p className="text-xs text-muted-foreground leading-relaxed">
                             {ev.description}
-                          </span>
-                        </p>
-                        <div className="flex items-center gap-2 mt-0.5 text-[10px] text-muted-foreground">
-                          <span
-                            className={cn(
-                              "rounded px-1 py-0.5 font-medium",
-                              ACTION_COLORS[ev.action] ||
-                                "bg-muted text-muted-foreground",
-                            )}
-                          >
-                            {ev.action.replace(/_/g, " ")}
-                          </span>
-                          <span>
-                            {new Date(ev.acknowledgedAt).toLocaleString("en-US", {
-                              month: "short",
-                              day: "numeric",
-                              hour: "numeric",
-                              minute: "2-digit",
-                            })}
-                          </span>
+                          </p>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : null
             ) : loading && entries === null ? (
@@ -444,46 +458,57 @@ export function ActivityLogModal({
               >
                 {entries.map((entry) => {
                   const showAck = canAck(entry.action);
+                  const author = entry.user_name || "System";
                   return (
                     <div
                       key={entry.id}
                       className={cn(
-                        "flex items-start gap-3 rounded-md px-2 py-2 hover:bg-muted/30",
+                        "flex items-start gap-3 px-2 py-3 hover:bg-muted/30",
                         showAck && entry.acknowledged && "opacity-60",
                       )}
                     >
-                      <span
+                      {/* Avatar — colored circle with author's initials. */}
+                      <div
                         className={cn(
-                          "shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase",
-                          ACTION_COLORS[entry.action] ||
-                            "bg-muted text-muted-foreground",
+                          "h-7 w-7 rounded-full shrink-0 flex items-center justify-center text-[10px] font-bold text-white mt-0.5",
+                          avatarColor(author),
                         )}
                       >
-                        {entry.action.replace(/_/g, " ")}
-                      </span>
+                        {getInitials(author)}
+                      </div>
+
+                      {/* Content */}
                       <div className="flex-1 min-w-0">
-                        <p className="text-xs leading-relaxed">
+                        <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                          <span className="text-xs font-semibold text-foreground">
+                            {author}
+                          </span>
+                          <span
+                            className={cn(
+                              "inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold",
+                              ACTION_COLORS[entry.action] ||
+                                "bg-muted text-muted-foreground",
+                            )}
+                          >
+                            {labelForAction(entry.action)}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground ml-auto tabular-nums">
+                            {new Date(entry.created_at).toLocaleString(
+                              "en-US",
+                              {
+                                month: "short",
+                                day: "numeric",
+                                hour: "numeric",
+                                minute: "2-digit",
+                              },
+                            )}
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground leading-relaxed">
                           {entry.description}
                         </p>
-                        <div className="flex items-center gap-2 mt-0.5 text-[10px] text-muted-foreground">
-                          <span>
-                            {new Date(entry.created_at).toLocaleString("en-US", {
-                              month: "short",
-                              day: "numeric",
-                              hour: "numeric",
-                              minute: "2-digit",
-                            })}
-                          </span>
-                          {entry.user_name && (
-                            <span>
-                              by{" "}
-                              <span className="font-medium text-foreground">
-                                {entry.user_name}
-                              </span>
-                            </span>
-                          )}
-                        </div>
                       </div>
+
                       {showAck && (
                         <label
                           className="shrink-0 flex items-center gap-1.5 cursor-pointer text-[10px] text-muted-foreground hover:text-foreground select-none pt-0.5"
@@ -493,7 +518,9 @@ export function ActivityLogModal({
                             type="checkbox"
                             className="h-3.5 w-3.5 cursor-pointer accent-emerald-600"
                             checked={Boolean(entry.acknowledged)}
-                            onChange={(e) => toggleAck(entry.id, e.target.checked)}
+                            onChange={(e) =>
+                              toggleAck(entry.id, e.target.checked)
+                            }
                           />
                           <span>{entry.acknowledged ? "Seen" : "Ack"}</span>
                         </label>

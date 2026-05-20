@@ -69,6 +69,7 @@ import {
   ActivityLogModal,
   RepStatsModal,
 } from "@/components/modals";
+import { PAGE_ACTION_SCOPES } from "@/lib/activity-avatar";
 import { CsvCompareModal } from "@/components/modals/csv-compare-modal";
 import { RescheduledHistoryModal } from "@/components/modals/rescheduled-history-modal";
 import { AddToPostHrgModal } from "@/components/modals/add-to-post-hrg-modal";
@@ -4080,7 +4081,95 @@ export function DashboardClient({
         />
       )}
       {showActivityLog && (
-        <ActivityLogModal onClose={() => setShowActivityLog(false)} />
+        <ActivityLogModal
+          onClose={() => setShowActivityLog(false)}
+          title="📋 Dashboard Activity Log"
+          tabs={[
+            {
+              key: "all",
+              label: "📋 All",
+              actions: [...PAGE_ACTION_SCOPES.dashboard],
+            },
+            {
+              key: "fields",
+              label: "✏️ Field Edits",
+              actions: ["field_updated"],
+            },
+            {
+              key: "assignments",
+              label: "👤 Assignments",
+              actions: [
+                "rep_assigned",
+                "rep_unassigned",
+                "rep_auto_assigned",
+                "batch_auto_assign",
+                "bulk_unassign",
+                "status_assigned",
+              ],
+            },
+            {
+              key: "hearings",
+              label: "📅 Hearings",
+              actions: [
+                "hearing_created",
+                "hearing_updated",
+                "hearing_deleted",
+                "hearing_rescheduled",
+                "hearing_archived",
+                "hearing_unarchived",
+                "bulk_delete",
+                "bulk_migrate",
+                "bulk_migrate_to_raw",
+                "bulk_import",
+                "bulk_update",
+                "import_raw_hearings",
+                "clear_raw_hearings",
+              ],
+            },
+            {
+              key: "post_hrg",
+              label: "📝 Post HRG",
+              actions: [
+                "post_hrg_note_added",
+                "post_hrg_note_deleted",
+                "post_hrg_note_edited",
+                "post_hrg_deadline_updated",
+                "post_hrg_dev_phstatus_synced",
+                "post_hrg_dev_status_synced",
+              ],
+            },
+            {
+              key: "emails",
+              label: "📧 Emails",
+              actions: [
+                "email_sent",
+                "email_failed",
+                "bulk_email",
+                "hearing_reminder_sent",
+              ],
+            },
+            {
+              key: "schedule",
+              label: "🗓️ Schedule",
+              actions: [
+                "schedule_updated",
+                "schedule_lock",
+                "schedule_unlock",
+                "schedule_save",
+                "schedule_reset",
+                "schedule_lock_override",
+                "schedule_token_created",
+                "schedule_token_revoked",
+                "schedule_link_emailed",
+              ],
+            },
+            {
+              key: "archive",
+              label: "📦 Archive",
+              actions: ["archive_chronicles", "unarchive_chronicles"],
+            },
+          ]}
+        />
       )}
       {showRepStats && <RepStatsModal onClose={() => setShowRepStats(false)} />}
       {showRescheduledHistory && (

@@ -34,6 +34,11 @@ import {
 } from "./actions";
 import { fetchActivityLog } from "@/app/(dashboard)/actions";
 import type { ActivityLogEntry } from "@/app/(dashboard)/actions";
+import {
+  avatarColor,
+  getInitials,
+  labelForAction,
+} from "@/lib/activity-avatar";
 import type { AdminUser } from "./actions";
 import type { UserRole } from "@/lib/roles";
 import { UserAccessModal } from "@/components/modals/user-access-modal";
@@ -1356,39 +1361,52 @@ function ActivityTab() {
               loading && "opacity-50 pointer-events-none",
             )}
           >
-            {entries.map((entry) => (
-              <div
-                key={entry.id}
-                className="flex items-start gap-3 px-4 py-3 hover:bg-muted/30 transition-colors"
-              >
-                <span
-                  className={cn(
-                    "shrink-0 mt-0.5 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider",
-                    ACTION_COLORS[entry.action] ||
-                      "bg-muted text-muted-foreground",
-                  )}
+            {entries.map((entry) => {
+              const author = entry.user_name ?? "System";
+              return (
+                <div
+                  key={entry.id}
+                  className="flex items-start gap-3 px-4 py-3 hover:bg-muted/30 transition-colors"
                 >
-                  {entry.action.replace(/_/g, " ")}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm">{entry.description}</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    {new Date(entry.created_at).toLocaleString("en-US", {
-                      month: "short",
-                      day: "numeric",
-                      hour: "numeric",
-                      minute: "2-digit",
-                    })}
-                    {entry.user_name && (
-                      <>
-                        {" "}
-                        · <span className="font-medium">{entry.user_name}</span>
-                      </>
+                  {/* Avatar — colored circle with author's initials. */}
+                  <div
+                    className={cn(
+                      "h-7 w-7 rounded-full shrink-0 flex items-center justify-center text-[10px] font-bold text-white mt-0.5",
+                      avatarColor(author),
                     )}
-                  </p>
+                  >
+                    {getInitials(author)}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                      <span className="text-xs font-semibold text-foreground">
+                        {author}
+                      </span>
+                      <span
+                        className={cn(
+                          "inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold",
+                          ACTION_COLORS[entry.action] ||
+                            "bg-muted text-muted-foreground",
+                        )}
+                      >
+                        {labelForAction(entry.action)}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground ml-auto tabular-nums">
+                        {new Date(entry.created_at).toLocaleString("en-US", {
+                          month: "short",
+                          day: "numeric",
+                          hour: "numeric",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      {entry.description}
+                    </p>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : null}
       </Card>

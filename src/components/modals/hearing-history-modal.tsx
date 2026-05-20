@@ -8,6 +8,11 @@ import {
   fetchHearingHistory,
   type HearingHistoryEntry,
 } from "@/app/(dashboard)/hearing-history-actions";
+import {
+  avatarColor,
+  getInitials,
+  titleCaseAction,
+} from "@/lib/activity-avatar";
 
 // Fallback chip color for any action without an explicit entry in
 // `actionColors`. Keeps unknown action types readable.
@@ -244,36 +249,48 @@ export function HearingHistoryModal({
                 : "No history found for this hearing."}
             </p>
           ) : (
-            <ul className="space-y-2">
-              {filtered.map((e) => (
-                <li
-                  key={e.id}
-                  className="rounded-md border bg-background px-3 py-2 text-xs"
-                >
-                  <div className="flex items-center gap-2 mb-1">
-                    <span
+            <div className="divide-y divide-border/50">
+              {filtered.map((e) => {
+                const author = e.userName ?? "System";
+                return (
+                  <div
+                    key={e.id}
+                    className="flex items-start gap-3 px-2 py-3 hover:bg-muted/30"
+                  >
+                    {/* Avatar — colored circle with initials. */}
+                    <div
                       className={cn(
-                        "inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold",
-                        actionColors?.[e.action] ?? DEFAULT_CHIP,
+                        "h-7 w-7 rounded-full shrink-0 flex items-center justify-center text-[10px] font-bold text-white mt-0.5",
+                        avatarColor(author),
                       )}
                     >
-                      {actionLabels?.[e.action] ?? e.action}
-                    </span>
-                    <span className="text-[10px] text-muted-foreground tabular-nums">
-                      {formatTimestamp(e.createdAt)}
-                    </span>
-                    {e.userName && (
-                      <span className="text-[10px] text-muted-foreground ml-auto truncate">
-                        by {e.userName}
-                      </span>
-                    )}
+                      {getInitials(author)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                        <span className="text-xs font-semibold text-foreground">
+                          {author}
+                        </span>
+                        <span
+                          className={cn(
+                            "inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold",
+                            actionColors?.[e.action] ?? DEFAULT_CHIP,
+                          )}
+                        >
+                          {actionLabels?.[e.action] ?? titleCaseAction(e.action)}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground ml-auto tabular-nums">
+                          {formatTimestamp(e.createdAt)}
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        {e.description}
+                      </p>
+                    </div>
                   </div>
-                  <p className="text-xs text-foreground leading-snug">
-                    {e.description}
-                  </p>
-                </li>
-              ))}
-            </ul>
+                );
+              })}
+            </div>
           )}
         </div>
 
