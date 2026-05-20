@@ -35,9 +35,12 @@ export function resolveRoleDefault(
       // Anything not in the map = not editable on the pivot.
       return (MR_PIVOT_EDITABLE[fieldKey] ?? []).includes(role);
     case "post_hrg_development":
-      // Requirements is admin-only (matches ROLES_CAN_EDIT_REQUIREMENTS in
-      // post-hrg-review-modal.tsx) — system/admin curate the formal block.
-      if (fieldKey === "requirements")
+      // Requirements and record_type are admin-only. Requirements matches
+      // ROLES_CAN_EDIT_REQUIREMENTS in post-hrg-review-modal.tsx (system/admin
+      // curate the formal block). record_type is admin-only because mistagging
+      // shifts the row's downstream behavior (MR rows feed the dashboard
+      // sync), and correcting it is an admin-supervised operation.
+      if (fieldKey === "requirements" || fieldKey === "record_type")
         return role === "system_admin" || role === "admin";
       // Other fields: page-level access only — anyone on the page can edit.
       return PAGE_ACCESS.post_hrg_development.includes(role);
