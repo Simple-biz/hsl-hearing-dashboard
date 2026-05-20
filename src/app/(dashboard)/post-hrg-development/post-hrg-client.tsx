@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { AppHeader } from "@/components/layout";
 import { DashboardNav } from "@/components/layout/dashboard-nav";
 import { StatCard, StatCardGrid } from "@/components/stat-card";
+import { ClaimantCopyButton } from "@/components/ui/claimant-copy-button";
 import type { UserRole } from "@/lib/roles";
 import { resolveFieldAccess } from "@/lib/field-access";
 import * as XLSX from "xlsx";
@@ -732,6 +733,7 @@ function ClaimantCell({
             {record.claimant}
           </p>
         )}
+        <ClaimantCopyButton name={record.claimant} />
         {showTypeBadge && <RecordTypeBadge type={record.record_type} />}
         {isNew && (
           <span

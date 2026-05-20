@@ -14,6 +14,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ClaimantCopyButton } from "@/components/ui/claimant-copy-button";
 import {
   Search,
   X,
@@ -459,6 +460,7 @@ function ClaimantCell({
             {row.claimant}
           </p>
         )}
+        <ClaimantCopyButton name={row.claimant} />
       </div>
 
       <div className="flex items-center gap-1">
