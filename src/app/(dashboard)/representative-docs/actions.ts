@@ -357,11 +357,11 @@ async function recomputeOverallStatus(id: number) {
 }
 
 // Resolve a rep_docs row to a human-readable label for activity-log entries.
-// Joins through to `hearings.claimant` so the changes modal shows
-// "Smith, John (rep-docs #1887)" instead of an opaque "rep-docs #1887".
-// Falls back to the raw id-only format if the row has no claimant or doesn't
-// exist (defensive — shouldn't happen in practice since callers just updated
-// or read the row).
+// Joins through to `hearings.claimant` so the changes modal shows the name
+// rather than an opaque internal id. The structured target_id column on the
+// log row still carries the rep_docs id for any audit/lookup needs.
+// Falls back to the raw id-only format only when there's no claimant (rare /
+// defensive — and in that case the id is genuinely the only identifier).
 async function repDocsLabel(id: number): Promise<string> {
   const { rows } = await db.query(
     `SELECT h.claimant
@@ -371,7 +371,7 @@ async function repDocsLabel(id: number): Promise<string> {
     [id],
   );
   const claimant = (rows[0]?.claimant as string | undefined)?.trim();
-  return claimant ? `${claimant} (rep-docs #${id})` : `rep-docs #${id}`;
+  return claimant ?? `rep-docs #${id}`;
 }
 
 // ─── Update a single field (inline edit) ────────────────────────────────────
@@ -401,7 +401,7 @@ export async function updateRepDocsField(
   const linkedHearingId =
     (metaRows[0]?.hearing_id as number | null) ?? undefined;
   const rowLabel = metaRows[0]?.claimant
-    ? `${(metaRows[0].claimant as string).trim()} (rep-docs #${id})`
+    ? (metaRows[0].claimant as string).trim()
     : `rep-docs #${id}`;
 
   // Workflow checkbox: auto-timestamp
@@ -1032,7 +1032,7 @@ export async function addRepDocsNote(
 
   await logAction(
     "rep_docs_field_updated",
-    `notes → added note for rep-docs #${repDocsId} (${rows[0].claimant})`,
+    `notes → added note for ${rows[0].claimant}`,
     (rows[0].hearing_id as number | null) ?? undefined,
   );
 
@@ -1068,7 +1068,7 @@ export async function deleteRepDocsNote(
 
   await logAction(
     "rep_docs_field_updated",
-    `notes → deleted note for rep-docs #${repDocsId} (${rows[0].claimant})`,
+    `notes → deleted note for ${rows[0].claimant}`,
     (rows[0].hearing_id as number | null) ?? undefined,
   );
 
