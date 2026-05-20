@@ -31,6 +31,91 @@ const CATEGORIES = [
   { key: "all", label: "📋 All" },
 ];
 
+// Friendly display labels for action keys. Falls back to a title-cased
+// version of the raw action when not listed (e.g. "schedule_updated" →
+// "Schedule Updated"). Matches the PHD activity modal's visual treatment.
+const ACTION_LABELS: Record<string, string> = {
+  user_login: "Login",
+  user_logout: "Logout",
+  rep_assigned: "Rep Assigned",
+  rep_unassigned: "Rep Unassigned",
+  rep_auto_assigned: "Auto-Assigned",
+  batch_auto_assign: "Batch Auto-Assign",
+  bulk_unassign: "Bulk Unassign",
+  status_assigned: "Assignment Status",
+  email_sent: "Email Sent",
+  email_failed: "Email Failed",
+  bulk_email: "Bulk Email",
+  field_updated: "Field Edit",
+  rep_docs_field_updated: "Field Edit",
+  post_hrg_dev_field_updated: "Field Edit",
+  post_hrg_note_added: "Note Added",
+  post_hrg_note_deleted: "Note Deleted",
+  post_hrg_deadline_updated: "Deadline Updated",
+  post_hrg_dev_created: "Created",
+  post_hrg_dev_auto_created: "Auto-Created",
+  post_hrg_dev_acknowledged: "Acknowledged",
+  post_hrg_dev_deleted: "Deleted",
+  post_hrg_dev_import: "Imported",
+  post_hrg_dev_phstatus_synced: "PH Status Synced",
+  post_hrg_dev_status_synced: "Dev Status Synced",
+  hearing_updated: "Hearing Updated",
+  hearing_created: "Hearing Created",
+  hearing_deleted: "Hearing Deleted",
+  hearing_imported: "Hearing Imported",
+  bulk_delete: "Bulk Delete",
+  bulk_migrate: "Bulk Migrate",
+  schedule_updated: "Schedule Updated",
+  schedule_lock_override: "Schedule Lock Override",
+  rep_created: "Rep Created",
+  rep_updated: "Rep Updated",
+  rep_deleted: "Rep Deleted",
+  token_revoked: "Token Revoked",
+  api_key_created: "API Key Created",
+  api_key_revoked: "API Key Revoked",
+  archive_chronicles: "Archive Chronicles",
+  unarchive_chronicles: "Unarchive Chronicles",
+  hearing_archived: "Hearing Archived",
+  hearing_unarchived: "Hearing Unarchived",
+  rep_docs_acknowledged: "Acknowledged",
+};
+
+function labelForAction(action: string): string {
+  if (ACTION_LABELS[action]) return ACTION_LABELS[action];
+  // Fallback — turn "snake_case_action" into "Snake Case Action"
+  return action
+    .split("_")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+// Deterministic avatar color from a name string. Same hash function as
+// post-hrg-activity-modal.tsx so a user's avatar is the same color across
+// every page that renders their activity entries.
+const AVATAR_COLORS = [
+  "bg-blue-500",
+  "bg-violet-500",
+  "bg-emerald-500",
+  "bg-amber-500",
+  "bg-rose-500",
+  "bg-cyan-500",
+];
+function avatarColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++)
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
+function getInitials(name: string): string {
+  return name
+    .split(" ")
+    .map((n) => n[0])
+    .filter(Boolean)
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
+}
+
 const ACTION_COLORS: Record<string, string> = {
   // Auth
   user_login: "bg-green-100 text-green-700 dark:bg-green-900/30",
@@ -380,51 +465,55 @@ export function ActivityLogModal({
                     loading && "opacity-50 pointer-events-none",
                   )}
                 >
-                  {ackEvents.map((ev) => (
-                    <div
-                      key={`${ev.ackUserId}-${ev.id}`}
-                      className="flex items-start gap-3 rounded-md px-2 py-2 hover:bg-muted/30"
-                    >
-                      <span
-                        className={cn(
-                          "shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase",
-                          "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30",
-                        )}
+                  {ackEvents.map((ev) => {
+                    const author = ev.ackUserName ?? "Unknown user";
+                    return (
+                      <div
+                        key={`${ev.ackUserId}-${ev.id}`}
+                        className="flex items-start gap-3 px-2 py-3 hover:bg-muted/30"
                       >
-                        ACK
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs leading-relaxed">
-                          <span className="font-medium text-foreground">
-                            {ev.ackUserName ?? "Unknown user"}
-                          </span>{" "}
-                          acknowledged:{" "}
-                          <span className="text-muted-foreground">
+                        {/* Avatar — circle with the acknowledging user's initials. */}
+                        <div
+                          className={cn(
+                            "h-7 w-7 rounded-full shrink-0 flex items-center justify-center text-[10px] font-bold text-white mt-0.5",
+                            avatarColor(author),
+                          )}
+                        >
+                          {getInitials(author)}
+                        </div>
+
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                            <span className="text-xs font-semibold text-foreground">
+                              {author}
+                            </span>
+                            <span
+                              className={cn(
+                                "inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold",
+                                "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400",
+                              )}
+                            >
+                              Acknowledged
+                            </span>
+                            <span className="text-[10px] text-muted-foreground ml-auto tabular-nums">
+                              {new Date(ev.acknowledgedAt).toLocaleString(
+                                "en-US",
+                                {
+                                  month: "short",
+                                  day: "numeric",
+                                  hour: "numeric",
+                                  minute: "2-digit",
+                                },
+                              )}
+                            </span>
+                          </div>
+                          <p className="text-xs text-muted-foreground leading-relaxed">
                             {ev.description}
-                          </span>
-                        </p>
-                        <div className="flex items-center gap-2 mt-0.5 text-[10px] text-muted-foreground">
-                          <span
-                            className={cn(
-                              "rounded px-1 py-0.5 font-medium",
-                              ACTION_COLORS[ev.action] ||
-                                "bg-muted text-muted-foreground",
-                            )}
-                          >
-                            {ev.action.replace(/_/g, " ")}
-                          </span>
-                          <span>
-                            {new Date(ev.acknowledgedAt).toLocaleString("en-US", {
-                              month: "short",
-                              day: "numeric",
-                              hour: "numeric",
-                              minute: "2-digit",
-                            })}
-                          </span>
+                          </p>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : null
             ) : loading && entries === null ? (
@@ -444,46 +533,57 @@ export function ActivityLogModal({
               >
                 {entries.map((entry) => {
                   const showAck = canAck(entry.action);
+                  const author = entry.user_name || "System";
                   return (
                     <div
                       key={entry.id}
                       className={cn(
-                        "flex items-start gap-3 rounded-md px-2 py-2 hover:bg-muted/30",
+                        "flex items-start gap-3 px-2 py-3 hover:bg-muted/30",
                         showAck && entry.acknowledged && "opacity-60",
                       )}
                     >
-                      <span
+                      {/* Avatar — colored circle with author's initials. */}
+                      <div
                         className={cn(
-                          "shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase",
-                          ACTION_COLORS[entry.action] ||
-                            "bg-muted text-muted-foreground",
+                          "h-7 w-7 rounded-full shrink-0 flex items-center justify-center text-[10px] font-bold text-white mt-0.5",
+                          avatarColor(author),
                         )}
                       >
-                        {entry.action.replace(/_/g, " ")}
-                      </span>
+                        {getInitials(author)}
+                      </div>
+
+                      {/* Content */}
                       <div className="flex-1 min-w-0">
-                        <p className="text-xs leading-relaxed">
+                        <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                          <span className="text-xs font-semibold text-foreground">
+                            {author}
+                          </span>
+                          <span
+                            className={cn(
+                              "inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold",
+                              ACTION_COLORS[entry.action] ||
+                                "bg-muted text-muted-foreground",
+                            )}
+                          >
+                            {labelForAction(entry.action)}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground ml-auto tabular-nums">
+                            {new Date(entry.created_at).toLocaleString(
+                              "en-US",
+                              {
+                                month: "short",
+                                day: "numeric",
+                                hour: "numeric",
+                                minute: "2-digit",
+                              },
+                            )}
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground leading-relaxed">
                           {entry.description}
                         </p>
-                        <div className="flex items-center gap-2 mt-0.5 text-[10px] text-muted-foreground">
-                          <span>
-                            {new Date(entry.created_at).toLocaleString("en-US", {
-                              month: "short",
-                              day: "numeric",
-                              hour: "numeric",
-                              minute: "2-digit",
-                            })}
-                          </span>
-                          {entry.user_name && (
-                            <span>
-                              by{" "}
-                              <span className="font-medium text-foreground">
-                                {entry.user_name}
-                              </span>
-                            </span>
-                          )}
-                        </div>
                       </div>
+
                       {showAck && (
                         <label
                           className="shrink-0 flex items-center gap-1.5 cursor-pointer text-[10px] text-muted-foreground hover:text-foreground select-none pt-0.5"
@@ -493,7 +593,9 @@ export function ActivityLogModal({
                             type="checkbox"
                             className="h-3.5 w-3.5 cursor-pointer accent-emerald-600"
                             checked={Boolean(entry.acknowledged)}
-                            onChange={(e) => toggleAck(entry.id, e.target.checked)}
+                            onChange={(e) =>
+                              toggleAck(entry.id, e.target.checked)
+                            }
                           />
                           <span>{entry.acknowledged ? "Seen" : "Ack"}</span>
                         </label>
