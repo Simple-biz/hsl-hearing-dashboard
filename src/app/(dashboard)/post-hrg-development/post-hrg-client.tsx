@@ -4838,6 +4838,37 @@ export function PostHrgClient({
       <PostHrgDetailPanel
         row={detailPanel}
         onClose={() => setDetailPanel(null)}
+        userRole={userRole as UserRole}
+        onRecordTypeChange={async (id, value) => {
+          const next = value as PostHrgRecordType;
+          const prevPanel = detailPanel;
+          const prevRow = records.find((r) => r.id === id);
+          // Optimistic — flip both the visible grid row and the open panel
+          // so the UI reflects the change immediately.
+          setRecords((rs) =>
+            rs.map((r) => (r.id === id ? { ...r, record_type: next } : r)),
+          );
+          setDetailPanel((p) =>
+            p && p.id === id ? { ...p, record_type: next } : p,
+          );
+          try {
+            await updatePostHrgDevField(id, "record_type", next);
+            refreshStats();
+          } catch (e) {
+            // Roll back both
+            if (prevRow) {
+              setRecords((rs) => rs.map((r) => (r.id === id ? prevRow : r)));
+            }
+            if (prevPanel && prevPanel.id === id) {
+              setDetailPanel(prevPanel);
+            }
+            const message =
+              e instanceof Error
+                ? e.message
+                : "Update failed — change rolled back";
+            toast(message);
+          }
+        }}
       />
       <PostHrgReportsModal
         open={showReportsModal}

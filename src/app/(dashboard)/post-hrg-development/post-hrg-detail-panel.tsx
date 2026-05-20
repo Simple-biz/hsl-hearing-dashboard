@@ -16,8 +16,16 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { PostHrgDevRow } from "./actions";
+import type { UserRole } from "@/lib/roles";
 import { RepHistoryModal } from "@/components/modals/rep-history-modal";
 import { HearingAuditTrailModal } from "@/components/modals/hearing-audit-trail-modal";
+
+const RECORD_TYPE_OPTIONS = ["MR", "POST_HRG", "REP"] as const;
+const RECORD_TYPE_COLORS: Record<string, { bg: string; color: string }> = {
+  MR: { bg: "#DBEAFE", color: "#1E40AF" },
+  POST_HRG: { bg: "#EDE9FE", color: "#5B21B6" },
+  REP: { bg: "#FEF3C7", color: "#92400E" },
+};
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
@@ -249,9 +257,20 @@ const INDICATOR_OPTIONS: {
 interface Props {
   row: PostHrgDevRow | null;
   onClose: () => void;
+  userRole?: UserRole;
+  /** Called when the admin retypes record_type. Parent owns the persistence
+   *  + state sync (records list and the open panel snapshot). */
+  onRecordTypeChange?: (id: number, value: string) => void | Promise<void>;
 }
 
-export function PostHrgDetailPanel({ row, onClose }: Props) {
+export function PostHrgDetailPanel({
+  row,
+  onClose,
+  userRole,
+  onRecordTypeChange,
+}: Props) {
+  const canEditRecordType =
+    userRole === "system_admin" || userRole === "admin";
   const panelRef = useRef<HTMLDivElement>(null);
   const [showRepHistory, setShowRepHistory] = useState(false);
   const [showAuditTrail, setShowAuditTrail] = useState(false);
@@ -347,10 +366,59 @@ export function PostHrgDetailPanel({ row, onClose }: Props) {
 
               {/* Subline */}
               <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground flex-wrap">
-                {row.claim_type && <span>{row.claim_type}</span>}
+                {(() => {
+                  const rt = row.record_type ?? "";
+                  const c = RECORD_TYPE_COLORS[rt];
+                  if (canEditRecordType) {
+                    return (
+                      <select
+                        value={rt}
+                        onChange={(e) => {
+                          const next = e.target.value;
+                          if (next === rt) return;
+                          onRecordTypeChange?.(row.id, next);
+                        }}
+                        className="rounded-full px-2 py-0.5 text-[10px] font-semibold border focus:outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer"
+                        style={
+                          c
+                            ? {
+                                backgroundColor: c.bg,
+                                color: c.color,
+                                borderColor: c.color + "40",
+                              }
+                            : undefined
+                        }
+                        title="Record type (admin only)"
+                      >
+                        {!rt && <option value="">—</option>}
+                        {RECORD_TYPE_OPTIONS.map((o) => (
+                          <option key={o} value={o}>
+                            {o}
+                          </option>
+                        ))}
+                      </select>
+                    );
+                  }
+                  return rt ? (
+                    <span
+                      className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                      style={
+                        c ? { backgroundColor: c.bg, color: c.color } : undefined
+                      }
+                    >
+                      {rt}
+                    </span>
+                  ) : null;
+                })()}
+                {row.claim_type && (
+                  <>
+                    <span className="text-border">·</span>
+                    <span>{row.claim_type}</span>
+                  </>
+                )}
                 {row.ssn_last_4 && (
                   <>
-                    {row.claim_type && <span className="text-border">·</span>}
+                    <span className="text-border">·</span>
                     <span className="font-mono">···· {row.ssn_last_4}</span>
                   </>
                 )}
