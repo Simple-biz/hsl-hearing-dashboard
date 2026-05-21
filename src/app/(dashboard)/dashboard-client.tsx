@@ -3705,27 +3705,11 @@ export function DashboardClient({
         }
       />
       <div className="flex min-w-0 flex-col gap-3 p-3 sm:gap-4 sm:p-4 lg:p-6">
-        {/* Navbar with page links + action buttons (matches old dashboard) */}
+        {/* Navbar with page links + action buttons (matches old dashboard).
+            The Refresh button was previously here — it moved into the
+            pagination bar directly above the table so it sits with the
+            workspace it refreshes. */}
         <DashboardNav userRole={userRole}>
-          <Button
-            variant="outline"
-            size="sm"
-            className={cn(
-              "h-7 gap-1.5 text-[11px]",
-              "bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100 hover:border-sky-300",
-              "dark:bg-sky-950/30 dark:text-sky-300 dark:border-sky-800 dark:hover:bg-sky-950/50 dark:hover:border-sky-700",
-              "disabled:opacity-60 disabled:cursor-not-allowed",
-              BTN_PRESS,
-            )}
-            onClick={handleRefresh}
-            disabled={refreshing}
-            title="Refresh table data without losing scroll, filters, or sort"
-          >
-            <RefreshCw
-              className={cn("h-3.5 w-3.5", refreshing && "animate-spin")}
-            />
-            {refreshing ? "Refreshing…" : "Refresh"}
-          </Button>
           {showAdminButtons && (
             <>
               <Button
@@ -3835,6 +3819,27 @@ export function DashboardClient({
             {totalFiltered !== totalCount && ` (filtered from ${totalCount})`}
           </span>
           <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+            {/* Refresh — sits directly above the table since its sole job is
+                to refetch the table data without losing scroll/filters/sort. */}
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn(
+                "h-7 gap-1.5 text-xs",
+                "bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100 hover:border-sky-300",
+                "dark:bg-sky-950/30 dark:text-sky-300 dark:border-sky-800 dark:hover:bg-sky-950/50 dark:hover:border-sky-700",
+                "disabled:opacity-60 disabled:cursor-not-allowed",
+                BTN_PRESS,
+              )}
+              onClick={handleRefresh}
+              disabled={refreshing}
+              title="Refresh table data without losing scroll, filters, or sort"
+            >
+              <RefreshCw
+                className={cn("h-3.5 w-3.5", refreshing && "animate-spin")}
+              />
+              {refreshing ? "Refreshing…" : "Refresh"}
+            </Button>
             {showActivityLogBtn && (
               <Button
                 variant="outline"
