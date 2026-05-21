@@ -3923,7 +3923,7 @@ export function DashboardClient({
               value={String(pageSize)}
               onChange={(e) => handlePageSizeChange(Number(e.target.value))}
             >
-              {[25, 50, 100, 200, 500].map((s) => (
+              {[25, 50, 100, 200, 500, 1000].map((s) => (
                 <option key={s} value={String(s)}>
                   {s} / page
                 </option>
