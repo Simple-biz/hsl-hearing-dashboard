@@ -294,9 +294,24 @@ export async function POST(req: NextRequest) {
 
       updated++;
 
+      // Clean, user-readable date. Inputs may be a JS Date (from h.* — whose
+      // raw toString() leaks "GMT+0000 (Coordinated Universal Time)") or a
+      // "YYYY-MM-DD" string from parseDate(). Format in UTC so a date-only
+      // value isn't shifted a day by the server's local zone.
+      const fmtLogDate = (d: unknown): string => {
+        if (!d) return "—";
+        const date = d instanceof Date ? d : new Date(String(d));
+        if (isNaN(date.getTime())) return String(d);
+        return date.toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+          timeZone: "UTC",
+        });
+      };
       await logAction(
         "hearing_rescheduled",
-        `Rescheduled hearing #${originalId}: "${original.claimant}" (${original.hearing_date}) → "${newClaimant}" (${newHearingDate})${original.rep_name ? ` | Prev rep: ${original.rep_name}` : ""}`,
+        `Rescheduled ${original.claimant}: ${fmtLogDate(original.hearing_date)} → ${fmtLogDate(newHearingDate)}${original.rep_name ? ` · Prev rep: ${original.rep_name}` : ""}`,
       );
     } catch (e) {
       errors.push(`Row ${rec.row}: ${(e as Error).message}`);
