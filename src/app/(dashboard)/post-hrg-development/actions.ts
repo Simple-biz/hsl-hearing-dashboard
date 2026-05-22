@@ -1588,9 +1588,41 @@ export async function cascadePhdField(
   if (updated > 0) {
     const { logAction } = await import("@/lib/activity-log");
     const label = field === "deadline" ? "Deadline" : "Requirements";
+
+    // Resolve the claimant so the entry reads "for: <name>" like the other
+    // activity-log messages — instead of an internal "hearing #<id>".
+    let claimant = "";
+    try {
+      const { rows } = await db.query(
+        "SELECT claimant FROM hearings WHERE id = $1",
+        [hearingId],
+      );
+      claimant = (rows[0]?.claimant as string | undefined)?.trim() ?? "";
+    } catch {
+      /* best-effort — fall back to no name */
+    }
+
+    // Clean value display: deadline → "Mon D, YYYY" (UTC); cleared → marker.
+    let valueDisplay: string;
+    if (value === null || value === "") {
+      valueDisplay = "(cleared)";
+    } else if (field === "deadline") {
+      const d = new Date(value);
+      valueDisplay = isNaN(d.getTime())
+        ? value
+        : d.toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+            timeZone: "UTC",
+          });
+    } else {
+      valueDisplay = value;
+    }
+
     await logAction(
       "post_hrg_dev_cascade",
-      `Cascaded ${label} to ${targets.join(", ")} on hearing #${hearingId}: '${value ?? "(cleared)"}' (${updated} row${updated === 1 ? "" : "s"})`,
+      `Cascaded ${label} to ${targets.join(", ")}: '${valueDisplay}' (${updated} row${updated === 1 ? "" : "s"})${claimant ? ` for: ${claimant}` : ""}`,
       hearingId,
     );
   }
