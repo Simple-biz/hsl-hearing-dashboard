@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useTransition, useEffect, useRef } from "react";
+import { useState, useTransition, useEffect, useRef, Fragment } from "react";
 import { AppHeader } from "@/components/layout/app-header";
 import { DashboardNav } from "@/components/layout/dashboard-nav";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { StatCard, StatCardGrid } from "@/components/stat-card";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -268,93 +268,6 @@ function UsersTab({
         </Button>
       </div>
 
-      {editing && (
-        <Card className="border-amber-200 bg-amber-50/50 dark:border-amber-800 dark:bg-amber-950/20">
-          <CardHeader className="pb-3 pt-4 px-4">
-            <CardTitle className="text-sm">
-              Editing: {editing.full_name}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="px-4 pb-4">
-            <form
-              action={async (form: FormData) => {
-                const data = {
-                  id: editing.id,
-                  full_name: form.get("full_name") as string,
-                  email: form.get("email") as string,
-                  role: form.get("role") as string,
-                };
-                startTransition(async () => {
-                  await saveUser(data);
-                  setUsers(
-                    users.map((u) =>
-                      u.id === data.id ? { ...u, ...data } : u,
-                    ),
-                  );
-                  setEditing(null);
-                  showToast(`✓ ${data.full_name} updated`);
-                });
-              }}
-              className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end"
-            >
-              <div>
-                <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
-                  Full Name
-                </label>
-                <Input
-                  name="full_name"
-                  defaultValue={editing.full_name}
-                  required
-                  className="h-9 text-sm"
-                />
-              </div>
-              <div>
-                <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
-                  Email
-                </label>
-                <Input
-                  name="email"
-                  type="email"
-                  defaultValue={editing.email}
-                  required
-                  className="h-9 text-sm"
-                />
-              </div>
-              <div>
-                <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
-                  Role
-                </label>
-                <select
-                  name="role"
-                  defaultValue={editing.role}
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                >
-                  {ALL_ROLES.map((r) => (
-                    <option key={r.value} value={r.value}>
-                      {r.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex gap-2">
-                <Button size="sm" type="submit" className="h-9">
-                  Save
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  type="button"
-                  className="h-9"
-                  onClick={() => setEditing(null)}
-                >
-                  Cancel
-                </Button>
-              </div>
-            </form>
-          </CardContent>
-        </Card>
-      )}
-
       <Card>
         <div className="overflow-hidden rounded-lg">
           <table className="w-full">
@@ -379,11 +292,12 @@ function UsersTab({
             </thead>
             <tbody className="divide-y">
               {filtered.map((user) => (
+                <Fragment key={user.id}>
                 <tr
-                  key={user.id}
                   className={cn(
                     "hover:bg-muted/40 transition-colors",
                     !user.is_active && "opacity-50",
+                    editing?.id === user.id && "bg-amber-50/60 dark:bg-amber-950/20",
                   )}
                 >
                   <td className="px-4 py-3">
@@ -515,6 +429,91 @@ function UsersTab({
                     </div>
                   </td>
                 </tr>
+
+                {/* Inline edit form — renders directly below the row being
+                    edited so the form sits with its user, not at page top. */}
+                {editing?.id === user.id && (
+                  <tr className="bg-amber-50/60 dark:bg-amber-950/20">
+                    <td colSpan={5} className="px-4 py-3">
+                      <form
+                        action={async (form: FormData) => {
+                          const data = {
+                            id: user.id,
+                            full_name: form.get("full_name") as string,
+                            email: form.get("email") as string,
+                            role: form.get("role") as string,
+                          };
+                          startTransition(async () => {
+                            await saveUser(data);
+                            setUsers(
+                              users.map((u) =>
+                                u.id === data.id ? { ...u, ...data } : u,
+                              ),
+                            );
+                            setEditing(null);
+                            showToast(`✓ ${data.full_name} updated`);
+                          });
+                        }}
+                        className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end"
+                      >
+                        <div>
+                          <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                            Full Name
+                          </label>
+                          <Input
+                            name="full_name"
+                            defaultValue={user.full_name}
+                            required
+                            className="h-9 text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                            Email
+                          </label>
+                          <Input
+                            name="email"
+                            type="email"
+                            defaultValue={user.email}
+                            required
+                            className="h-9 text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                            Role
+                          </label>
+                          <select
+                            name="role"
+                            defaultValue={user.role}
+                            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                          >
+                            {ALL_ROLES.map((r) => (
+                              <option key={r.value} value={r.value}>
+                                {r.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button size="sm" type="submit" className="h-9">
+                            Save
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            type="button"
+                            className="h-9"
+                            onClick={() => setEditing(null)}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </form>
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               ))}
               {filtered.length === 0 && (
                 <tr>
