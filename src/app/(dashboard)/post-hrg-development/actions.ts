@@ -993,10 +993,31 @@ export async function updatePostHrgDevField(
   };
 
   const label = FIELD_LABELS[field] || field;
+
+  // Format a value for the activity-log message. Date fields (deadline,
+  // hearing_date, new_due_date) arrive from the DB as a JS Date — whose raw
+  // toString() leaks "GMT+0000 (Coordinated Universal Time)" — so render
+  // those as a clean "Mon D, YYYY" in UTC. Everything else stringifies as-is.
+  const fmtLogValue = (v: unknown): string => {
+    if (v === null || v === undefined || v === "") return "(empty)";
+    if (DATE_FIELDS.includes(field)) {
+      const date = v instanceof Date ? v : new Date(String(v));
+      if (!isNaN(date.getTime())) {
+        return date.toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+          timeZone: "UTC",
+        });
+      }
+    }
+    return String(v);
+  };
+
   const { logAction } = await import("@/lib/activity-log");
   await logAction(
     "post_hrg_dev_field_updated",
-    `${label}: '${oldValue ?? "(empty)"}' → '${value ?? "(empty)"}' for: ${claimant}`,
+    `${label}: '${fmtLogValue(oldValue)}' → '${fmtLogValue(value)}' for: ${claimant}`,
     linkedHearingId,
   );
 }
