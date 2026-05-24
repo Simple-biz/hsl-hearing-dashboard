@@ -34,9 +34,80 @@ jobs:
 
       - run: npm ci
 
+      - name: Preflight production migration safety checks
+        env:
+          NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          PRODUCTION_DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+
+          fail() {
+            echo "::error::$1"
+            exit 1
+          }
+
+          [ -n "${NEON_PROJECT_ID:-}" ] || fail "NEON_PROJECT_ID is missing."
+          [ -n "${NEON_API_KEY:-}" ] || fail "NEON_API_KEY is missing."
+          [ -n "${PRODUCTION_DATABASE_URL:-}" ] || fail "PRODUCTION_DATABASE_URL is missing."
+
+          node <<'NODE'
+          const requiredScripts = ["db:status", "db:migrate"];
+          const packageJson = require("./package.json");
+
+          for (const script of requiredScripts) {
+            if (!packageJson.scripts?.[script]) {
+              throw new Error(`Missing package.json script: ${script}`);
+            }
+          }
+
+          const rawUrl = process.env.PRODUCTION_DATABASE_URL;
+
+          let url;
+          try {
+            url = new URL(rawUrl);
+          } catch {
+            throw new Error("PRODUCTION_DATABASE_URL is not a valid URL.");
+          }
+
+          if (!["postgres:", "postgresql:"].includes(url.protocol)) {
+            throw new Error("PRODUCTION_DATABASE_URL must start with postgres:// or postgresql://.");
+          }
+
+          if (url.hostname.includes("-pooler")) {
+            throw new Error("PRODUCTION_DATABASE_URL appears to be a pooled Neon URL. Use the direct non-pooler URL for migrations.");
+          }
+
+          if (["localhost", "127.0.0.1"].includes(url.hostname)) {
+            throw new Error("PRODUCTION_DATABASE_URL points to a local database. Refusing to run production migrations.");
+          }
+
+          const sslMode = url.searchParams.get("sslmode");
+          if (sslMode !== "require") {
+            throw new Error("PRODUCTION_DATABASE_URL must include sslmode=require.");
+          }
+
+          console.log("Production database URL shape looks safe.");
+          NODE
+
+          mapfile -t migration_files < <(find src/migrations -maxdepth 1 -type f -name "*.sql" | sort)
+
+          if [ "${#migration_files[@]}" -eq 0 ]; then
+            fail "No active migration files found in src/migrations."
+          fi
+
+          for file in "${migration_files[@]}"; do
+            grep -q '^-- migrate:up' "$file" || fail "$file is missing -- migrate:up."
+            grep -q '^-- migrate:down' "$file" || fail "$file is missing -- migrate:down."
+          done
+
+          echo "Preflight production migration safety checks passed."
+
       - name: Prepare migration audit metadata
         id: meta
         run: |
+          set -euo pipefail
+
           STAMP="$(TZ=Asia/Manila date +'%Y%m%d-%H%M%S-pht')"
           BACKUP_BRANCH="backup-prod-pre-migration-${STAMP}-run-${{ github.run_id }}"
           EXPIRES_AT="$(date -u -d '+14 days' +'%Y-%m-%dT%H:%M:%SZ')"
@@ -72,8 +143,36 @@ jobs:
           api_key: ${{ secrets.NEON_API_KEY }}
           expires_at: ${{ steps.meta.outputs.expires_at }}
 
+      - name: Verify pre-migration backup branch
+        id: verify-backup
+        env:
+          BACKUP_BRANCH_NAME: ${{ steps.meta.outputs.backup_branch }}
+          BACKUP_BRANCH_ID: ${{ steps.create-backup.outputs.branch_id }}
+          BACKUP_CREATED: ${{ steps.create-backup.outputs.created }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${BACKUP_BRANCH_ID:-}" ]; then
+            echo "::error::Pre-migration backup branch ID is missing. Refusing to run production migrations."
+            exit 1
+          fi
+
+          if [ "${BACKUP_CREATED:-}" != "true" ]; then
+            echo "::error::Pre-migration backup branch was not newly created. Refusing to run production migrations."
+            exit 1
+          fi
+
+          echo "backup_ready=true" >> "$GITHUB_OUTPUT"
+
+          echo "Verified backup branch:"
+          echo "Branch name: ${BACKUP_BRANCH_NAME}"
+          echo "Branch ID: ${BACKUP_BRANCH_ID}"
+          echo "Created: ${BACKUP_CREATED}"
+
       - name: Record backup branch details
         run: |
+          set -euo pipefail
+
           cat > migration-audit/pre-migration-backup.txt <<EOF
           backup_branch=${{ steps.meta.outputs.backup_branch }}
           backup_branch_id=${{ steps.create-backup.outputs.branch_id }}
@@ -86,22 +185,24 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
         run: |
-          set -o pipefail
+          set -euo pipefail
           npm run db:status 2>&1 | tee migration-audit/db-status-before.txt
 
       - name: Apply migrations
+        id: apply-migrations
+        if: ${{ steps.verify-backup.outputs.backup_ready == 'true' }}
         env:
           DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
         run: |
-          set -o pipefail
+          set -euo pipefail
           npm run db:migrate 2>&1 | tee migration-audit/db-migrate.txt
 
       - name: Confirm migrations applied
-        if: always()
+        if: ${{ always() && (steps.apply-migrations.outcome == 'success' || steps.apply-migrations.outcome == 'failure') }}
         env:
           DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
         run: |
-          set -o pipefail
+          set -euo pipefail
           npm run db:status 2>&1 | tee migration-audit/db-status-after.txt
 
       - name: Write production migration summary
@@ -128,7 +229,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload production migration audit artifact
-        if: always()
+        if: ${{ always() && hashFiles('migration-audit/**') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: production-migration-audit-${{ steps.meta.outputs.stamp }}-${{ github.run_id }}
