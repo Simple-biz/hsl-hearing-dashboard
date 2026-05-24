@@ -14,6 +14,7 @@ jobs:
   migrate-production:
     name: Apply migrations to production
     runs-on: ubuntu-latest
+
     environment:
       name: production
 
@@ -23,6 +24,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - uses: actions/setup-node@v4
         with:
@@ -31,17 +34,103 @@ jobs:
 
       - run: npm ci
 
-      - name: Show pending migrations
+      - name: Prepare migration audit metadata
+        id: meta
+        run: |
+          STAMP="$(TZ=Asia/Manila date +'%Y%m%d-%H%M%S-pht')"
+          BACKUP_BRANCH="backup-prod-pre-migration-${STAMP}-run-${{ github.run_id }}"
+          EXPIRES_AT="$(date -u -d '+14 days' +'%Y-%m-%dT%H:%M:%SZ')"
+
+          mkdir -p migration-audit
+
+          {
+            echo "stamp=${STAMP}"
+            echo "backup_branch=${BACKUP_BRANCH}"
+            echo "expires_at=${EXPIRES_AT}"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "workflow=${{ github.workflow }}"
+            echo "run_id=${{ github.run_id }}"
+            echo "run_number=${{ github.run_number }}"
+            echo "actor=${{ github.actor }}"
+            echo "sha=${{ github.sha }}"
+            echo "ref=${{ github.ref }}"
+            echo "backup_branch=${BACKUP_BRANCH}"
+            echo "expires_at=${EXPIRES_AT}"
+          } > migration-audit/run-metadata.txt
+
+          git diff --name-only HEAD^ HEAD -- src/migrations > migration-audit/changed-migration-files.txt || true
+
+      - name: Create pre-migration production backup branch
+        id: create-backup
+        uses: neondatabase/create-branch-action@v6
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch_name: ${{ steps.meta.outputs.backup_branch }}
+          parent_branch: production
+          api_key: ${{ secrets.NEON_API_KEY }}
+          expires_at: ${{ steps.meta.outputs.expires_at }}
+
+      - name: Record backup branch details
+        run: |
+          cat > migration-audit/pre-migration-backup.txt <<EOF
+          backup_branch=${{ steps.meta.outputs.backup_branch }}
+          backup_branch_id=${{ steps.create-backup.outputs.branch_id }}
+          parent_branch=production
+          expires_at=${{ steps.meta.outputs.expires_at }}
+          workflow_run_url=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+
+      - name: Show pending migrations before applying
         env:
           DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
-        run: npm run db:status
+        run: |
+          set -o pipefail
+          npm run db:status 2>&1 | tee migration-audit/db-status-before.txt
 
       - name: Apply migrations
         env:
           DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
-        run: npm run db:migrate
+        run: |
+          set -o pipefail
+          npm run db:migrate 2>&1 | tee migration-audit/db-migrate.txt
 
       - name: Confirm migrations applied
+        if: always()
         env:
           DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
-        run: npm run db:status
+        run: |
+          set -o pipefail
+          npm run db:status 2>&1 | tee migration-audit/db-status-after.txt
+
+      - name: Write production migration summary
+        if: always()
+        run: |
+          {
+            echo "## Production Migration Audit"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Actor | \`${{ github.actor }}\` |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| Pre-migration backup branch | \`${{ steps.meta.outputs.backup_branch }}\` |"
+            echo "| Backup branch ID | \`${{ steps.create-backup.outputs.branch_id }}\` |"
+            echo "| Parent branch | \`production\` |"
+            echo "| Backup expires at | \`${{ steps.meta.outputs.expires_at }}\` |"
+            echo "| Run ID | \`${{ github.run_id }}\` |"
+            echo ""
+            echo "### Changed migration files"
+            echo ""
+            echo "\`\`\`txt"
+            cat migration-audit/changed-migration-files.txt || true
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload production migration audit artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-migration-audit-${{ steps.meta.outputs.stamp }}-${{ github.run_id }}
+          path: migration-audit/
+          retention-days: 30
