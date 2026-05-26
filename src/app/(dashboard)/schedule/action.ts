@@ -1,6 +1,7 @@
 "use server";
 
 import { db } from "@/lib/db";
+import { excludeWithdrawnSql } from "@/lib/hearing-filters";
 
 export interface AvailabilityDay {
   date: string;
@@ -84,10 +85,13 @@ export async function getHearingsForMonth(
   );
   const lastDay = `${yearMonth}-${String(lastDayDate.getDate()).padStart(2, "0")}`;
 
+  // Withdrawn cases must not appear in the rep schedule calendar. Filter at
+  // the query level using the shared rep-facing exclusion (no table alias).
   const { rows } = await db.query(
     `SELECT hearing_date::text AS date, claimant, converted_time_est::text AS time, alj
      FROM hearings
      WHERE assigned_rep_id = $1 AND hearing_date BETWEEN $2 AND $3
+       AND ${excludeWithdrawnSql("")}
      ORDER BY hearing_date, converted_time_est`,
     [repId, firstDay, lastDay],
   );
