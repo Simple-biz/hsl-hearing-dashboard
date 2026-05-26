@@ -39,6 +39,9 @@ jobs:
           NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           PRODUCTION_DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+        # This step performs a series of safety checks before applying migrations to the production database.
+        # It validates the presence and format of necessary environment variables, checks that the database URL is
+        # not pointing to a local database or a pooled Neon URL, and ensures that the migration files have the required structure.
         run: |
           set -euo pipefail
 
@@ -105,6 +108,10 @@ jobs:
 
       - name: Prepare migration audit metadata
         id: meta
+        # This step prepares metadata for auditing the production migration. It generates a timestamp, 
+        # constructs a backup branch name based on the current date and time, and calculates an expiration time for the backup branch. 
+        # It also records various details about the GitHub Actions run, such as the actor, commit SHA, and reason for the migration, 
+        # and saves this information to both the step outputs and a file in the migration-audit directory.
         run: |
           set -euo pipefail
 
@@ -149,6 +156,10 @@ jobs:
           BACKUP_BRANCH_NAME: ${{ steps.meta.outputs.backup_branch }}
           BACKUP_BRANCH_ID: ${{ steps.create-backup.outputs.branch_id }}
           BACKUP_CREATED: ${{ steps.create-backup.outputs.created }}
+        # This step verifies that the backup branch was successfully created.
+        # It checks that the branch ID is present and that the branch was newly created (as opposed to already existing).
+        # If either of these conditions is not met, it logs an error and exits with a
+        # non-zero status to indicate failure. If the backup branch is verified successfully, it sets an output variable to indicate that the backup is ready.
         run: |
           set -euo pipefail
 
@@ -170,6 +181,7 @@ jobs:
           echo "Created: ${BACKUP_CREATED}"
 
       - name: Record backup branch details
+        # This step records the details of the pre-migration backup branch to a file in the migration-audit directory.
         run: |
           set -euo pipefail
 
@@ -207,6 +219,9 @@ jobs:
 
       - name: Write production migration summary
         if: always()
+        # This step writes a summary of the production migration to the GitHub Actions summary. 
+        # It includes details about the backup branch that was created before the migration, 
+        # as well as a list of the migration files that were changed in the commit that triggered the workflow.  
         run: |
           {
             echo "## Production Migration Audit"
