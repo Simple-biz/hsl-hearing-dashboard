@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { excludeWithdrawnSql } from "@/lib/hearing-filters";
 
 /**
  * Hearing Reminders Cron Job
@@ -50,7 +51,9 @@ export async function GET(request: Request) {
         targetDate.setDate(targetDate.getDate() + interval.days);
         const targetDateStr = targetDate.toISOString().split("T")[0];
 
-        // Get hearings needing this reminder
+        // Get hearings needing this reminder. Withdrawn cases are excluded
+        // at the query level (shared rep-facing filter) so no reminder side
+        // effects (webhook send + hearing_reminders insert) occur for them.
         const { rows: hearings } = await db.query(
           `SELECT h.id, r.email AS rep_email, r.name AS rep_name
            FROM hearings h
@@ -60,6 +63,7 @@ export async function GET(request: Request) {
              AND r.is_active = true
              AND r.email IS NOT NULL
              AND r.email != ''
+             AND ${excludeWithdrawnSql("h")}
              AND NOT EXISTS (
                SELECT 1 FROM hearing_reminders hr
                WHERE hr.hearing_id = h.id
