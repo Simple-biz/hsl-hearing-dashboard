@@ -44,7 +44,6 @@ import { cn } from "@/lib/utils";
 import { StatCard, StatCardGrid } from "@/components/stat-card";
 import {
   canManage,
-  canSeeCheckbox,
   canSeeAdminButtons,
   canSeeActivityLog,
   canSeeRepStats,
@@ -3494,6 +3493,47 @@ export function DashboardClient({
   const showExport = canExport(userRole);
   const hasManageAccess = canManage(userRole);
 
+  // Per-button gates for the floating bulk-action toolbar. Each one resolves
+  // role default + per-user override from the Access Overrides modal. The
+  // bar's overall visibility is driven by selection count (bulkBarRef), but
+  // each button only renders when its capability is granted to this user.
+  const canBulkAutoAssign = resolveFieldAccess(
+    effectiveRole,
+    "dashboard",
+    "bulk_auto_assign",
+    fieldOverrides,
+  );
+  const canBulkAddToPostHrg = resolveFieldAccess(
+    effectiveRole,
+    "dashboard",
+    "bulk_add_to_post_hrg",
+    fieldOverrides,
+  );
+  const canBulkUnassign = resolveFieldAccess(
+    effectiveRole,
+    "dashboard",
+    "bulk_unassign",
+    fieldOverrides,
+  );
+  const canBulkArchive = resolveFieldAccess(
+    effectiveRole,
+    "dashboard",
+    "bulk_archive",
+    fieldOverrides,
+  );
+  const canBulkDelete = resolveFieldAccess(
+    effectiveRole,
+    "dashboard",
+    "bulk_delete",
+    fieldOverrides,
+  );
+  const canBulkEmailSelected = resolveFieldAccess(
+    effectiveRole,
+    "dashboard",
+    "bulk_email_selected",
+    fieldOverrides,
+  );
+
   // Scroll sync for sticky horizontal scrollbar
   const tableScrollRef = useRef<HTMLDivElement>(null);
 
@@ -4016,7 +4056,12 @@ export function DashboardClient({
             representatives={representatives}
             mrTeams={mrTeams}
             repDocsAssignees={repDocsAssignees}
-            showCheckbox={canSeeCheckbox(effectiveRole)}
+            showCheckbox={resolveFieldAccess(
+              effectiveRole,
+              "dashboard",
+              "bulk_select",
+              fieldOverrides,
+            )}
             onToggleAll={toggleAll}
             scrollRef={tableScrollRef}
           />
@@ -4678,114 +4723,126 @@ export function DashboardClient({
               >
                 0 selected
               </span>
-              <Button
-                size="sm"
-                className={cn(
-                  "h-7 gap-1.5 text-[11px] bg-purple-600 hover:bg-purple-700",
-                  BTN_PRESS,
-                )}
-                onClick={async () => {
-                  if (
-                    !confirm(
-                      `Auto-assign ${selectedIdsRef.current.size} selected hearings?`,
+              {canBulkAutoAssign && (
+                <Button
+                  size="sm"
+                  className={cn(
+                    "h-7 gap-1.5 text-[11px] bg-purple-600 hover:bg-purple-700",
+                    BTN_PRESS,
+                  )}
+                  onClick={async () => {
+                    if (
+                      !confirm(
+                        `Auto-assign ${selectedIdsRef.current.size} selected hearings?`,
+                      )
                     )
-                  )
-                    return;
-                  const ids = Array.from(selectedIdsRef.current);
-                  setAutoAssignStatus({
-                    hearingId: 0,
-                    state: "loading",
-                    message: `Assigning ${ids.length} hearings...`,
-                  });
-                  try {
-                    const result = await bulkAutoAssignSelected(ids);
+                      return;
+                    const ids = Array.from(selectedIdsRef.current);
                     setAutoAssignStatus({
                       hearingId: 0,
-                      state: "success",
-                      message: `${result.assigned} assigned, ${result.failed} failed`,
+                      state: "loading",
+                      message: `Assigning ${ids.length} hearings...`,
                     });
-                    clearSelection();
-                    fetchPage(filters, page, pageSize, sortKey, sortDir);
-                  } catch (e: unknown) {
-                    setAutoAssignStatus({
-                      hearingId: 0,
-                      state: "error",
-                      message: e instanceof Error ? e.message : "Failed",
-                    });
+                    try {
+                      const result = await bulkAutoAssignSelected(ids);
+                      setAutoAssignStatus({
+                        hearingId: 0,
+                        state: "success",
+                        message: `${result.assigned} assigned, ${result.failed} failed`,
+                      });
+                      clearSelection();
+                      fetchPage(filters, page, pageSize, sortKey, sortDir);
+                    } catch (e: unknown) {
+                      setAutoAssignStatus({
+                        hearingId: 0,
+                        state: "error",
+                        message: e instanceof Error ? e.message : "Failed",
+                      });
+                    }
+                    setTimeout(() => setAutoAssignStatus(null), 4000);
+                  }}
+                >
+                  ⚡ Auto-Assign
+                </Button>
+              )}
+              {canBulkAddToPostHrg && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={cn(
+                    "h-7 gap-1.5 text-[11px] text-blue-600 border-blue-300 hover:bg-blue-50 dark:text-blue-400 dark:border-blue-800 dark:hover:bg-blue-950",
+                    BTN_PRESS,
+                  )}
+                  onClick={() =>
+                    setAddToPostHrgState({
+                      open: true,
+                      hearingIds: Array.from(selectedIdsRef.current),
+                    })
                   }
-                  setTimeout(() => setAutoAssignStatus(null), 4000);
-                }}
-              >
-                ⚡ Auto-Assign
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className={cn(
-                  "h-7 gap-1.5 text-[11px] text-blue-600 border-blue-300 hover:bg-blue-50 dark:text-blue-400 dark:border-blue-800 dark:hover:bg-blue-950",
-                  BTN_PRESS,
-                )}
-                onClick={() =>
-                  setAddToPostHrgState({
-                    open: true,
-                    hearingIds: Array.from(selectedIdsRef.current),
-                  })
-                }
-              >
-                <ClipboardList className="h-3 w-3" /> Add to Post HRG
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className={cn("h-7 gap-1.5 text-[11px]", BTN_PRESS)}
-                onClick={handleBulkUnassign}
-              >
-                🔄 Unassign
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className={cn(
-                  "h-7 gap-1.5 text-[11px] text-amber-600 border-amber-300 hover:bg-amber-50 dark:text-amber-400 dark:border-amber-800 dark:hover:bg-amber-950",
-                  BTN_PRESS,
-                )}
-                onClick={handleBulkArchive}
-              >
-                <Archive className="h-3 w-3" /> Archive
-              </Button>
-              <Button
-                variant="destructive"
-                size="sm"
-                className={cn("h-7 gap-1.5 text-[11px]", BTN_PRESS)}
-                onClick={handleBulkDelete}
-              >
-                🗑️ Delete
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className={cn("h-7 gap-1.5 text-[11px]", BTN_PRESS)}
-                onClick={async () => {
-                  if (
-                    !confirm(
-                      `Email reps for ${selectedIdsRef.current.size} selected hearings?`,
+                >
+                  <ClipboardList className="h-3 w-3" /> Add to Post HRG
+                </Button>
+              )}
+              {canBulkUnassign && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={cn("h-7 gap-1.5 text-[11px]", BTN_PRESS)}
+                  onClick={handleBulkUnassign}
+                >
+                  🔄 Unassign
+                </Button>
+              )}
+              {canBulkArchive && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={cn(
+                    "h-7 gap-1.5 text-[11px] text-amber-600 border-amber-300 hover:bg-amber-50 dark:text-amber-400 dark:border-amber-800 dark:hover:bg-amber-950",
+                    BTN_PRESS,
+                  )}
+                  onClick={handleBulkArchive}
+                >
+                  <Archive className="h-3 w-3" /> Archive
+                </Button>
+              )}
+              {canBulkDelete && (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className={cn("h-7 gap-1.5 text-[11px]", BTN_PRESS)}
+                  onClick={handleBulkDelete}
+                >
+                  🗑️ Delete
+                </Button>
+              )}
+              {canBulkEmailSelected && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={cn("h-7 gap-1.5 text-[11px]", BTN_PRESS)}
+                  onClick={async () => {
+                    if (
+                      !confirm(
+                        `Email reps for ${selectedIdsRef.current.size} selected hearings?`,
+                      )
                     )
-                  )
-                    return;
-                  const ids = Array.from(selectedIdsRef.current);
-                  try {
-                    const result = await bulkEmailSelected(ids);
-                    alert(
-                      `Emailed ${result.emailsSent} reps (${result.emailsFailed} failed${result.skippedNoRep > 0 ? `, ${result.skippedNoRep} unassigned` : ""})`,
-                    );
-                    clearSelection();
-                  } catch (e: unknown) {
-                    alert(e instanceof Error ? e.message : "Email failed");
-                  }
-                }}
-              >
-                📧 Email Selected
-              </Button>
+                      return;
+                    const ids = Array.from(selectedIdsRef.current);
+                    try {
+                      const result = await bulkEmailSelected(ids);
+                      alert(
+                        `Emailed ${result.emailsSent} reps (${result.emailsFailed} failed${result.skippedNoRep > 0 ? `, ${result.skippedNoRep} unassigned` : ""})`,
+                      );
+                      clearSelection();
+                    } catch (e: unknown) {
+                      alert(e instanceof Error ? e.message : "Email failed");
+                    }
+                  }}
+                >
+                  📧 Email Selected
+                </Button>
+              )}
             </div>
             <Button
               variant="ghost"

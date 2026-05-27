@@ -128,6 +128,16 @@ export const PAGE_ACCESS: Record<string, UserRole[]> = {
 export const EDITABLE_FIELDS: Record<string, UserRole[]> = {
   // Representative assignment — hearings team
   assigned_rep_id: ["system_admin", "admin", "manager", "hearings_admin"],
+  // Bulk-action capabilities — defaults match canSeeAdminButtons /
+  // canSeeCheckbox so existing user defaults don't shift. Per-user
+  // exceptions are granted via the Access Overrides modal.
+  bulk_select: ["system_admin", "admin", "manager", "hearings_admin"],
+  bulk_auto_assign: ["system_admin", "admin", "manager", "hearings_admin"],
+  bulk_add_to_post_hrg: ["system_admin", "admin", "manager", "hearings_admin"],
+  bulk_unassign: ["system_admin", "admin", "manager", "hearings_admin"],
+  bulk_archive: ["system_admin", "admin", "manager", "hearings_admin"],
+  bulk_delete: ["system_admin", "admin", "manager", "hearings_admin"],
+  bulk_email_selected: ["system_admin", "admin", "manager", "hearings_admin"],
   assignment_status: ["system_admin", "admin", "manager", "hearings_admin"],
 
   // PHI Sheet, MOA, Decision Status — core hearings admin fields
