@@ -82,6 +82,47 @@ export const FIELD_ACCESS_CATALOG: FieldAccessPage[] = [
         label: "Post HRG Dev Status",
         group: "Post HRG",
       },
+      // — Bulk Actions —
+      // `bulk_select` is the MASTER toggle (controls the row + select-all
+      // checkboxes). The 6 per-button keys gate individual entries on the
+      // floating bulk-action toolbar that appears after rows are selected.
+      // The modal renders the per-button rows disabled when bulk_select is
+      // off — see user-access-modal.tsx for the nested UX.
+      {
+        key: "bulk_select",
+        label: "Row Selection Checkboxes (master)",
+        group: "Bulk Actions",
+      },
+      {
+        key: "bulk_auto_assign",
+        label: "Auto-Assign Selected",
+        group: "Bulk Actions",
+      },
+      {
+        key: "bulk_add_to_post_hrg",
+        label: "Add Selected to Post HRG",
+        group: "Bulk Actions",
+      },
+      {
+        key: "bulk_unassign",
+        label: "Unassign Selected",
+        group: "Bulk Actions",
+      },
+      {
+        key: "bulk_archive",
+        label: "Archive Selected",
+        group: "Bulk Actions",
+      },
+      {
+        key: "bulk_delete",
+        label: "Delete Selected",
+        group: "Bulk Actions",
+      },
+      {
+        key: "bulk_email_selected",
+        label: "Email Selected",
+        group: "Bulk Actions",
+      },
     ],
   },
   // ── Medical Records (MR Pivot) ────────────────────────────────────────

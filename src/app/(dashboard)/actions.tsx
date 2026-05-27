@@ -1187,6 +1187,14 @@ export async function deleteDashboardPostHrgNote(
 }
 
 export async function deleteHearing(hearingId: number) {
+  // Server-side gate — deleting a hearing requires the bulk_delete capability
+  // (role default OR explicit override). Covers both the single-row delete
+  // and the bulk-delete loop, which both route through this function. Without
+  // this, DELETE ran with no authorization at all.
+  {
+    const { requireFieldAccess } = await import("@/lib/field-access");
+    await requireFieldAccess("dashboard", "bulk_delete");
+  }
   const { logAction, getClaimantName } = await import("@/lib/activity-log");
   const claimant = await getClaimantName(hearingId);
   await db.query("DELETE FROM hearings WHERE id = $1", [hearingId]);
@@ -1969,6 +1977,13 @@ export async function bulkAutoAssignSelected(
   hearingIds: number[],
   distributionMode: "priority" | "balanced" | "workload" = "priority",
 ) {
+  // Server-side gate — caller must have the bulk_auto_assign capability
+  // (role default OR explicit override from the Access Overrides modal).
+  // Throws on denial; the client surfaces it as a failed action.
+  {
+    const { requireFieldAccess } = await import("@/lib/field-access");
+    await requireFieldAccess("dashboard", "bulk_auto_assign");
+  }
   const { assignSingleHearing } = await import("@/lib/auto-assign");
   const { logAction } = await import("@/lib/activity-log");
   const { rows: repRows } = await db.query(
@@ -1993,6 +2008,10 @@ export async function bulkAutoAssignSelected(
 
 // ── Bulk email selected hearing reps ──
 export async function bulkEmailSelected(hearingIds: number[]) {
+  {
+    const { requireFieldAccess } = await import("@/lib/field-access");
+    await requireFieldAccess("dashboard", "bulk_email_selected");
+  }
   const { logAction } = await import("@/lib/activity-log");
   // Get distinct reps for the selected hearings
   const { rows } = await db.query(
@@ -2341,6 +2360,10 @@ export async function archiveHearings(
   hearingIds: number[],
   archivedBy: string,
 ) {
+  {
+    const { requireFieldAccess } = await import("@/lib/field-access");
+    await requireFieldAccess("dashboard", "bulk_archive");
+  }
   const { logAction } = await import("@/lib/activity-log");
   let archived = 0;
   let failed = 0;

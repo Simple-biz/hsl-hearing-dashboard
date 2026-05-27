@@ -497,6 +497,20 @@ export function UserAccessModal({ open, user, onClose }: Props) {
                             const checked = effective.get(f.key) ?? false;
                             const isOverride = savedOverrides.has(f.key);
                             const isDirtyField = dirtyFields.includes(f.key);
+                            // Nested-gate UX for the dashboard's "Bulk Actions"
+                            // group: the 6 per-button keys are inert when the
+                            // master `bulk_select` is off (no row checkboxes
+                            // → buttons can never reach the user anyway). The
+                            // saved checked state is preserved; the row is
+                            // visually disabled until the master is re-enabled.
+                            const isBulkSubButton =
+                              pageKey === "dashboard" &&
+                              f.key.startsWith("bulk_") &&
+                              f.key !== "bulk_select";
+                            const masterBulkOn =
+                              effective.get("bulk_select") ?? false;
+                            const subDisabled =
+                              isBulkSubButton && !masterBulkOn;
                             return (
                               <label
                                 key={f.key}
@@ -505,13 +519,20 @@ export function UserAccessModal({ open, user, onClose }: Props) {
                                   isDirtyField &&
                                     "bg-blue-50 dark:bg-blue-950/30",
                                   saving && "opacity-50 cursor-wait",
+                                  subDisabled &&
+                                    "opacity-40 cursor-not-allowed hover:bg-transparent",
                                 )}
+                                title={
+                                  subDisabled
+                                    ? "Enable 'Row Selection Checkboxes (master)' first to grant per-button access"
+                                    : undefined
+                                }
                               >
                                 <input
                                   type="checkbox"
                                   checked={checked}
                                   onChange={() => toggleField(f.key)}
-                                  disabled={saving}
+                                  disabled={saving || subDisabled}
                                   className="h-4 w-4 rounded border-border accent-primary cursor-pointer disabled:cursor-not-allowed"
                                 />
                                 <span className="flex-1 text-xs">
