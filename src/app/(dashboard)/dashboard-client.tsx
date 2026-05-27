@@ -689,21 +689,27 @@ const WITHDRAWAL_TYPES = [
 //   • Assigned    → rep badge + caret → menu (Change Rep / Unassign /
 //                   Withdrawal)
 //   • Withdrawn   → status badge + caret → menu (Assign a Rep / Clear Status)
-// View-only roles (no canManage) fall back to a plain badge.
+// Editability is fully driven by `editable`, which the parent resolves via
+// resolveFieldAccess (role default + per-user override from the Access
+// Overrides modal). Users without edit access fall back to a plain badge.
 function RepCell({
   hearing,
   representatives,
-  userRole,
+  editable,
   onUpdate,
   onAutoAssign,
 }: {
   hearing: HearingRow;
   representatives: RepRow[];
-  userRole: UserRole;
+  /** Resolved from resolveFieldAccess(role, "dashboard", "assigned_rep_id",
+   *  overrides). Already factors in role defaults + per-user overrides from
+   *  the Access Overrides modal — RepCell must use this, not its own
+   *  hardcoded role check, otherwise overrides are silently ignored. */
+  editable: boolean;
   onUpdate: (id: number, field: string, value: UpdateValue) => void;
   onAutoAssign: (id: number) => void;
 }) {
-  const canEdit = canManage(userRole);
+  const canEdit = editable;
   const isAssigned = !!hearing.assigned_rep_id;
   const hasStatus = !!hearing.assignment_status && !isAssigned;
 
@@ -2384,7 +2390,7 @@ const HearingTable = memo(function HearingTable({
           <RepCell
             hearing={hearing}
             representatives={representatives}
-            userRole={userRole}
+            editable={editable}
             onUpdate={onUpdate}
             onAutoAssign={onAutoAssign}
           />
