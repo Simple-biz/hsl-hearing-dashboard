@@ -431,8 +431,8 @@ export function PublicScheduleClient({
             </p>
             <p className="text-xs text-amber-600">
               Contact{" "}
-              <a href="mailto:haya@hogansmith.com" className="underline">
-                haya@hogansmith.com
+              <a href="mailto:claudia@hogansmith.com" className="underline">
+                claudia@hogansmith.com
               </a>{" "}
               for changes.
             </p>
