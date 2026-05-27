@@ -847,7 +847,7 @@ export function ScheduleClient({
                 </p>
                 <p className="text-xs text-amber-600 dark:text-amber-400">
                   {!isAdmin
-                    ? "Contact haya@hogansmith.com for changes."
+                    ? "Contact claudia@hogansmith.com for changes."
                     : "You can unlock as admin to allow the rep to edit."}
                 </p>
               </div>
