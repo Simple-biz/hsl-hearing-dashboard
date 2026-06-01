@@ -62,14 +62,18 @@ function teamHex(color: string | null | undefined): string {
 
 // ─── CSV Export ───────────────────────────────────────────────────────────────
 
+// Comments come from the DB either as plain text or as a JSON array of
+// `{ author, content }` entries (older notes format). Both shapes are
+// flattened into a single readable string here.
+type CommentNote = { author?: string; content?: string };
+
 function flattenComments(raw: string | null): string {
   if (!raw) return "";
   try {
-    const parsed = JSON.parse(raw);
+    const parsed: unknown = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return parsed
-        .map((n: any) => `[${n.author ?? "Unknown"}] ${n.content ?? ""}`)
+      return (parsed as CommentNote[])
+        .map((n) => `[${n.author ?? "Unknown"}] ${n.content ?? ""}`)
         .join(" | ");
     }
   } catch {
