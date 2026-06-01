@@ -1260,8 +1260,35 @@ function ClaimantCell({
           type="button"
           onClick={async (e) => {
             e.stopPropagation();
+            // Copy claimant. If a MyCase link exists, write both HTML and
+            // plain-text formats: rich-text targets (Outlook, Gmail, Word,
+            // Slack) paste a clickable "Jane Doe" hyperlink; plain-text
+            // targets (Notepad, terminal) get "Name\nLink" as a safe
+            // fallback. Without a link, just plain name as before.
+            const name = hearing.claimant ?? "";
+            const link = hearing.claimant_link ?? "";
+            const esc = (s: string) =>
+              s
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;");
             try {
-              await navigator.clipboard.writeText(hearing.claimant ?? "");
+              if (link && typeof ClipboardItem !== "undefined") {
+                const html = `<a href="${esc(link)}">${esc(name)}</a>`;
+                const plain = `${name}\n${link}`;
+                await navigator.clipboard.write([
+                  new ClipboardItem({
+                    "text/html": new Blob([html], { type: "text/html" }),
+                    "text/plain": new Blob([plain], { type: "text/plain" }),
+                  }),
+                ]);
+              } else {
+                // No link, or older browser without ClipboardItem support.
+                await navigator.clipboard.writeText(
+                  link ? `${name}\n${link}` : name,
+                );
+              }
               setCopied(true);
               setTimeout(() => setCopied(false), 1500);
             } catch {
@@ -1269,7 +1296,11 @@ function ClaimantCell({
             }
           }}
           className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-blue-600 hover:bg-muted"
-          title="Copy claimant name"
+          title={
+            hearing.claimant_link
+              ? "Copy claimant name + MyCase link"
+              : "Copy claimant name"
+          }
         >
           {copied ? (
             <Check className="h-2.5 w-2.5 text-emerald-600" />
