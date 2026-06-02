@@ -8,6 +8,7 @@ import {
   FileUp,
   FileText,
   ClipboardList,
+  ClipboardPlus,
   FolderCheck,
   BarChart3,
   Users,
@@ -52,7 +53,9 @@ interface NavItem {
   label: string;
   href: string;
   icon: React.ElementType;
-  page: string; // key in PAGE_ACCESS
+  page: string; // key in PAGE_ACCESS — ignored when external is true
+  /** External URL — opens in a new tab and skips the PAGE_ACCESS gate. */
+  external?: boolean;
 }
 
 interface NavGroup {
@@ -94,6 +97,13 @@ const NAV_GROUPS: NavGroup[] = [
         href: "/import-rfc",
         icon: FileUp,
         page: "import_rfc",
+      },
+      {
+        label: "Pre Hearing MR",
+        href: "https://pre-hearing-medical-records-manager.vercel.app/",
+        icon: ClipboardPlus,
+        page: "pre_hearing_mr",
+        external: true,
       },
     ],
   },
@@ -201,9 +211,10 @@ export function AppSidebar({
       {/* ── Content: Nav groups ── */}
       <SidebarContent>
         {NAV_GROUPS.map((group) => {
-          // Filter items by effective page access (role default + overrides)
-          const visibleItems = group.items.filter(
-            (item) => pageAccess[item.page] === true,
+          // External items bypass the PAGE_ACCESS gate — they live outside
+          // this app and have their own auth.
+          const visibleItems = group.items.filter((item) =>
+            item.external ? true : pageAccess[item.page] === true,
           );
           if (visibleItems.length === 0) return null;
 
@@ -215,8 +226,9 @@ export function AppSidebar({
                   {visibleItems.map((item) => {
                     const Icon = item.icon;
                     const isActive =
-                      pathname === item.href ||
-                      (item.href !== "/" && pathname.startsWith(item.href));
+                      !item.external &&
+                      (pathname === item.href ||
+                        (item.href !== "/" && pathname.startsWith(item.href)));
 
                     return (
                       <SidebarMenuItem key={item.href}>
@@ -225,10 +237,21 @@ export function AppSidebar({
                           isActive={isActive}
                           tooltip={item.label}
                         >
-                          <Link href={item.href}>
-                            <Icon />
-                            <span>{item.label}</span>
-                          </Link>
+                          {item.external ? (
+                            <a
+                              href={item.href}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              <Icon />
+                              <span>{item.label}</span>
+                            </a>
+                          ) : (
+                            <Link href={item.href}>
+                              <Icon />
+                              <span>{item.label}</span>
+                            </Link>
+                          )}
                         </SidebarMenuButton>
                       </SidebarMenuItem>
                     );
