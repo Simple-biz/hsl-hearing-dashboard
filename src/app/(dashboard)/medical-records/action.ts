@@ -767,7 +767,7 @@ export async function toggleTaskAssigned(
 
 export async function toggleCredited(
   hearingId: number,
-  value: boolean,
+  value: boolean | null,
 ): Promise<{ success: boolean }> {
   const { requireFieldAccess } = await import("@/lib/field-access");
   await requireFieldAccess("medical_records", "credited");
@@ -775,7 +775,11 @@ export async function toggleCredited(
     `UPDATE hearings SET credited = $1 WHERE id = $2`,
     [value, hearingId],
   );
-  await logActivity("credited_updated", `Credited set to ${value} for hearing #${hearingId}`);
+  const label = value === null ? "unverified" : value ? "credited" : "not credited";
+  await logActivity(
+    "credited_updated",
+    `Credited set to ${label} for hearing #${hearingId}`,
+  );
   return { success: true };
 }
 

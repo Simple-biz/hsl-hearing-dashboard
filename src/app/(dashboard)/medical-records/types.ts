@@ -154,7 +154,8 @@ export interface Hearing {
   manner_of_appearance: string | null;
   task_assigned: boolean;
   five_day_notice: boolean;
-  credited: boolean;
+  /** null = unverified, true = credited, false = verified-and-not-credited. */
+  credited: boolean | null;
   post_hrg_review: string | null;
   post_hrg_deadline: string | null;
   medical_record_link: string | null;

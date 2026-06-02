@@ -285,7 +285,7 @@ export function MedicalRecordsDetailPanel({ row, onClose }: Props) {
           <Section title="Status" icon={<Clock className="h-3.5 w-3.5" />}>
             <CheckRow label="Task Assigned" checked={row.task_assigned} />
             <CheckRow label="5-Day Notice" checked={row.five_day_notice} />
-            <CheckRow label="Credited" checked={row.credited} />
+            <CheckRow label="Credited" checked={row.credited === true} />
             <CheckRow
               label="Post HRG Review"
               checked={!!row.post_hrg_review}
