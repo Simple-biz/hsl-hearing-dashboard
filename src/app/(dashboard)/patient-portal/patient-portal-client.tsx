@@ -566,21 +566,33 @@ function AddEditModal({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
               <div>
                 <label className={lbl}>Date</label>
-                <input
-                  type="date"
-                  className={inp}
-                  value={form.entry_date}
-                  onChange={(e) => set("entry_date", e.target.value)}
-                />
+                <div
+                  className={cn(inp, "bg-muted/40 text-muted-foreground")}
+                  title="Auto-set to the creation date"
+                >
+                  {fmtDate(form.entry_date) || "—"}
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  Set automatically when the entry is created.
+                </p>
               </div>
               <div>
                 <label className={lbl}>Hearing Date</label>
-                <input
-                  type="date"
-                  className={inp}
-                  value={form.hearing_date}
-                  onChange={(e) => set("hearing_date", e.target.value)}
-                />
+                <div
+                  className={cn(inp, "bg-muted/40 text-muted-foreground")}
+                  title={
+                    form.hearing_id !== null
+                      ? "Live from the linked hearing — updates if the dashboard reschedules"
+                      : "Pick a claimant to link a hearing"
+                  }
+                >
+                  {fmtDate(form.hearing_date) || "—"}
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  {form.hearing_id !== null
+                    ? "Live from hearings — edit in the dashboard if it changes."
+                    : "Link a claimant below to pull the hearing date."}
+                </p>
               </div>
             </div>
             <div>
@@ -600,6 +612,7 @@ function AddEditModal({
                     client_name: r.claimant,
                     mycase_link: r.claimant_link ?? p.mycase_link,
                     hearing_id: r.hearing_id,
+                    hearing_date: r.hearing_date ?? p.hearing_date,
                   }));
                 }}
                 onClear={() => {

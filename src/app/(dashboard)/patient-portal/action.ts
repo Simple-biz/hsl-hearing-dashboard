@@ -252,7 +252,10 @@ export async function getPortalEntries(
   const { rows } = await db.query(
     `SELECT p.*,
             p.entry_date::text   AS entry_date,
-            p.hearing_date::text AS hearing_date,
+            -- Live hearing_date from the linked hearing wins over the stored
+            -- p.hearing_date; falls back to the stored value for legacy
+            -- entries with no hearing_id (or a deleted hearing).
+            COALESCE(h.hearing_date::text, p.hearing_date::text) AS hearing_date,
             s.name     AS specialist_name,
             s.bg_color AS specialist_color,
             h.chronicle_link AS chronicle_link,
@@ -315,14 +318,19 @@ export async function addPortalEntry(
       : Number(input.hearing_id);
 
   const { rows } = await db.query(
+    // entry_date is server-enforced to "today in Eastern time" — client input
+    // is ignored so the displayed creation date can't be tampered with. We
+    // use America/New_York (not literal 'EST') so DST is handled correctly.
+    // Neon sessions run in UTC by default, so a raw CURRENT_DATE would roll
+    // over at 7pm/8pm Eastern — not what users expect.
     `INSERT INTO mr_patient_portal
        (entry_date, hearing_date, client_name, provider, mycase_link,
         portal_link, portal_username, portal_password, got_mr, approved_by_tl,
         mr_specialist_id, hearing_id, created_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+     VALUES ((NOW() AT TIME ZONE 'America/New_York')::date,
+             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
      RETURNING id`,
     [
-      input.entry_date || null,
       input.hearing_date || null,
       input.client_name.trim(),
       input.provider || null,
@@ -395,14 +403,15 @@ export async function updatePortalEntry(
       : Number(input.hearing_id);
 
   await db.query(
+    // entry_date is intentionally omitted — it's set at INSERT time and
+    // immutable thereafter (the modal shows it as read-only).
     `UPDATE mr_patient_portal SET
-       entry_date = $1, hearing_date = $2, client_name = $3, provider = $4,
-       mycase_link = $5, portal_link = $6, portal_username = $7, portal_password = $8,
-       got_mr = $9, approved_by_tl = $10, mr_specialist_id = $11, hearing_id = $12,
+       hearing_date = $1, client_name = $2, provider = $3,
+       mycase_link = $4, portal_link = $5, portal_username = $6, portal_password = $7,
+       got_mr = $8, approved_by_tl = $9, mr_specialist_id = $10, hearing_id = $11,
        updated_at = NOW()
-     WHERE id = $13`,
+     WHERE id = $12`,
     [
-      input.entry_date || null,
       input.hearing_date || null,
       input.client_name.trim(),
       input.provider || null,
@@ -426,8 +435,8 @@ export async function updatePortalEntry(
   return { success: true };
 }
 
+// entry_date is intentionally excluded — it's set at INSERT and immutable.
 const ALLOWED_FIELDS = [
-  "entry_date",
   "hearing_date",
   "client_name",
   "provider",
