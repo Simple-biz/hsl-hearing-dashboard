@@ -1148,8 +1148,16 @@ const PortalRow = memo(function PortalRow({
 
   return (
     <div
-      className="grid px-2 py-1.5 border-b border-border/40 hover:bg-muted/30 dark:hover:bg-muted/70 transition-colors text-[11px] items-center"
-      style={{ gridTemplateColumns: PORTAL_GRID, minWidth: PORTAL_MIN_W }}
+      className="grid px-2 border-b border-border/40 hover:bg-muted/30 dark:hover:bg-muted/70 transition-colors text-[11px] items-center"
+      style={{
+        gridTemplateColumns: PORTAL_GRID,
+        // Single explicit row that fills the wrapper height. Without this,
+        // the implicit row sizes to content (~30px) and the border-b sits
+        // mid-row, with subsequent content visible below the divider.
+        gridTemplateRows: "1fr",
+        minWidth: PORTAL_MIN_W,
+        height: "100%",
+      }}
     >
       {/* Date */}
       <div className="px-1">
@@ -1394,8 +1402,12 @@ export function PatientPortalClient(data: PortalPageData) {
 
   // Row virtualization for the desktop grid — keeps 500/1000 per_page snappy
   // by only mounting rows visible in the scroll viewport (plus overscan).
-  // Rows are fixed-height after we forced single-line Provider truncation.
-  const ROW_H = 32;
+  // We use a fixed row height (not measureElement) because PortalRow's two-
+  // line claimant cell + grid layout produces measurement timing issues
+  // where translateY positions stack before re-measurement completes.
+  // ROW_H is the height that comfortably fits ClaimantNameDisplay's tallest
+  // form (name on line 1, claim_type · Chronicle on line 2).
+  const ROW_H = 52;
   const rowVirtualizer = useVirtualizer({
     count: entries.length,
     getScrollElement: () => desktopScrollRef.current,
@@ -1755,7 +1767,9 @@ export function PatientPortalClient(data: PortalPageData) {
                           left: 0,
                           right: 0,
                           transform: `translateY(${vRow.start}px)`,
+                          height: `${ROW_H}px`,
                           minWidth: PORTAL_MIN_W,
+                          overflow: "hidden",
                         }}
                       >
                         <PortalRow
