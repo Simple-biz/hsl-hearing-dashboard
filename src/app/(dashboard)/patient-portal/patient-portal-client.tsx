@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import {
   useState,
@@ -6,7 +6,6 @@ import {
   useTransition,
   useCallback,
   useRef,
-  type ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
 import { AppHeader } from "@/components/layout/app-header";
@@ -21,10 +20,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
-  Eye,
+  Pencil,
   Check,
   StickyNote,
-  FileText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -32,12 +30,12 @@ import {
   getPortalEntries,
   addPortalEntry,
   updatePortalEntry,
-  updatePortalField,
   deletePortalEntry,
   getPortalNotes,
   addPortalNote,
   getPortalActivityLog,
   getPortalActivityUsers,
+  searchClaimantsForPortal,
 } from "./action";
 import type {
   PortalPageData,
@@ -47,6 +45,7 @@ import type {
   PortalNote,
   PortalActivityEntry,
   MrSpecialist,
+  ClaimantSearchResult,
 } from "./action";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -60,6 +59,16 @@ function fmtDate(d: string | null | undefined) {
     day: "numeric",
     year: "2-digit",
   });
+}
+
+// Legacy mr_patient_portal rows stored client_name as "Last, First M." while
+// hearings.claimant uses "First Last" — flip legacy rows on display so the
+// table matches the format the rest of the app shows.
+function formatClaimantName(raw: string | null | undefined): string {
+  if (!raw) return "";
+  const m = raw.match(/^([^,]+),\s*(.+)$/);
+  if (m) return `${m[2].trim()} ${m[1].trim()}`;
+  return raw;
 }
 
 function isLight(hex: string): boolean {
@@ -224,7 +233,9 @@ function NotesModal({
         {/* Sub-header: client + provider */}
         <div className="px-4 py-2 bg-muted/30 border-b shrink-0">
           <p className="text-xs text-muted-foreground">
-            <span className="font-medium text-foreground">{clientName}</span>
+            <span className="font-medium text-foreground">
+              {formatClaimantName(clientName)}
+            </span>
             {provider && <> · {provider}</>}
           </p>
         </div>
@@ -310,96 +321,6 @@ function NotesModal({
   );
 }
 
-// ─── Link Edit Modal ──────────────────────────────────────────────────────────
-
-function LinkModal({
-  open,
-  id,
-  field,
-  title,
-  currentUrl,
-  onClose,
-  onSaved,
-}: {
-  open: boolean;
-  id: number;
-  field: "mycase_link" | "portal_link";
-  title: string;
-  currentUrl: string;
-  onClose: () => void;
-  onSaved: (id: number, field: string, url: string) => void;
-}) {
-  const [url, setUrl] = useState(currentUrl);
-  const [saving, setSaving] = useState(false);
-
-  // Parent passes key={id+field} so this remounts on each new link —
-  // no useEffect needed to sync url from currentUrl.
-
-  const handleSave = async () => {
-    setSaving(true);
-    const r = await updatePortalField(id, field, url);
-    setSaving(false);
-    if (r.success) {
-      onSaved(id, field, url);
-      onClose();
-    }
-  };
-
-  if (!open) return null;
-
-  return (
-    <div
-      className="fixed inset-0 z-70 flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-sm rounded-xl border bg-card shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between border-b bg-muted/50 px-4 py-3">
-          <h3 className="text-sm font-semibold">🔗 {title}</h3>
-          <button onClick={onClose} aria-label="Close link editor">
-            <X className="h-4 w-4 text-muted-foreground" />
-          </button>
-        </div>
-        <div className="px-4 py-4 space-y-3">
-          <div>
-            <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-1 block">
-              URL
-            </label>
-            <input
-              type="url"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://…"
-              className="w-full text-xs rounded-lg border border-border bg-muted px-3 py-2 text-foreground focus:outline-none focus:border-primary"
-            />
-            <p className="text-[10px] text-muted-foreground mt-1">
-              Enter the full URL
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center justify-end gap-2 border-t px-4 py-2.5">
-          <button
-            onClick={onClose}
-            className="text-xs px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground disabled:opacity-50 flex items-center gap-1"
-          >
-            {saving && <Loader2 size={10} className="animate-spin" />}
-            Save Link
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ─── Add / Edit Entry Modal ───────────────────────────────────────────────────
 
 type EntryForm = {
@@ -413,14 +334,149 @@ type EntryForm = {
   portal_password: string;
   got_mr: boolean;
   approved_by_tl: boolean;
+  mr_specialist_id: number | null;
+  hearing_id: number | null;
 };
+
+// ─── Claimant Search Combobox ────────────────────────────────────────────────
+// Typeahead over the hearings table. On pick, calls onPick with the matched
+// hearing — the modal uses that to auto-fill client_name + mycase_link +
+// hearing_id. Typing a name that doesn't match any hearing is allowed (the
+// entry is saved with hearing_id = null and just the typed name).
+
+function ClaimantSearchInput({
+  value,
+  hearingId,
+  onChange,
+  onPick,
+  onClear,
+}: {
+  value: string;
+  hearingId: number | null;
+  onChange: (name: string) => void;
+  onPick: (r: ClaimantSearchResult) => void;
+  onClear: () => void;
+}) {
+  const [results, setResults] = useState<ClaimantSearchResult[]>([]);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, []);
+
+  function runSearch(q: string) {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (q.trim().length < 2) {
+      setResults([]);
+      return;
+    }
+    setLoading(true);
+    debounceRef.current = setTimeout(async () => {
+      const r = await searchClaimantsForPortal(q);
+      setResults(r);
+      setLoading(false);
+      setOpen(true);
+    }, 250);
+  }
+
+  const inputCls =
+    "w-full rounded-lg border border-border bg-muted px-3 py-2 text-xs text-foreground focus:outline-none focus:border-primary";
+
+  return (
+    <div ref={boxRef} className="relative">
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          className={inputCls}
+          value={value}
+          onChange={(e) => {
+            onChange(e.target.value);
+            runSearch(e.target.value);
+          }}
+          onFocus={() => {
+            if (results.length > 0) setOpen(true);
+          }}
+          placeholder="Search claimant in hearings…"
+        />
+        {hearingId !== null && (
+          <button
+            type="button"
+            onClick={onClear}
+            className="shrink-0 text-[10px] px-2 py-1 rounded border border-border text-muted-foreground hover:bg-muted whitespace-nowrap"
+            title="Unlink from hearing — keeps name, clears auto-filled link"
+          >
+            Unlink
+          </button>
+        )}
+      </div>
+      {hearingId !== null && (
+        <p className="text-[10px] text-emerald-600 mt-0.5">
+          ✓ Linked to hearing #{hearingId} — chronicle link will update live
+        </p>
+      )}
+      {open && (
+        <div className="absolute z-10 mt-1 w-full max-h-64 overflow-y-auto rounded-lg border border-border bg-card shadow-lg">
+          {loading && (
+            <div className="px-3 py-2 text-[11px] text-muted-foreground flex items-center gap-2">
+              <Loader2 size={10} className="animate-spin" /> Searching…
+            </div>
+          )}
+          {!loading && results.length === 0 && (
+            <div className="px-3 py-2 text-[11px] text-muted-foreground">
+              No matches. Press save to keep the typed name (no hearing link).
+            </div>
+          )}
+          {!loading &&
+            results.map((r) => (
+              <button
+                key={r.hearing_id}
+                type="button"
+                onClick={() => {
+                  onPick(r);
+                  setOpen(false);
+                }}
+                className="w-full text-left px-3 py-2 hover:bg-muted border-b border-border/40 last:border-0"
+              >
+                <div className="text-xs font-medium text-foreground truncate">
+                  {r.claimant}
+                </div>
+                <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                  {r.claim_type && <span>{r.claim_type}</span>}
+                  {r.hearing_date && <span>· {fmtDate(r.hearing_date)}</span>}
+                  {r.claimant_link && (
+                    <span className="text-blue-600">· MyCase</span>
+                  )}
+                  {r.chronicle_link && (
+                    <span className="text-violet-600">· Chronicle</span>
+                  )}
+                </div>
+              </button>
+            ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function AddEditModal({
   entry,
+  specialists,
+  canAssignSpecialist,
   onClose,
   onSaved,
 }: {
   entry: PortalEntry | null; // null = add mode
+  specialists: MrSpecialist[];
+  canAssignSpecialist: boolean;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -438,9 +494,11 @@ function AddEditModal({
     portal_password: entry?.portal_password ?? "",
     got_mr: entry?.got_mr ?? false,
     approved_by_tl: entry?.approved_by_tl ?? false,
+    mr_specialist_id: entry?.mr_specialist_id ?? null,
+    hearing_id: entry?.hearing_id ?? null,
   });
 
-  const set = (k: keyof EntryForm, v: string | boolean) =>
+  const set = (k: keyof EntryForm, v: string | boolean | number | null) =>
     setForm((p) => ({ ...p, [k]: v }));
 
   async function handleSave() {
@@ -508,34 +566,88 @@ function AddEditModal({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
               <div>
                 <label className={lbl}>Date</label>
-                <input
-                  type="date"
-                  className={inp}
-                  value={form.entry_date}
-                  onChange={(e) => set("entry_date", e.target.value)}
-                />
+                <div
+                  className={cn(inp, "bg-muted/40 text-muted-foreground")}
+                  title="Auto-set to the creation date"
+                >
+                  {fmtDate(form.entry_date) || "—"}
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  Set automatically when the entry is created.
+                </p>
               </div>
               <div>
                 <label className={lbl}>Hearing Date</label>
-                <input
-                  type="date"
-                  className={inp}
-                  value={form.hearing_date}
-                  onChange={(e) => set("hearing_date", e.target.value)}
-                />
+                <div
+                  className={cn(inp, "bg-muted/40 text-muted-foreground")}
+                  title={
+                    form.hearing_id !== null
+                      ? "Live from the linked hearing — updates if the dashboard reschedules"
+                      : "Pick a claimant to link a hearing"
+                  }
+                >
+                  {fmtDate(form.hearing_date) || "—"}
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  {form.hearing_id !== null
+                    ? "Live from hearings — edit in the dashboard if it changes."
+                    : "Link a claimant below to pull the hearing date."}
+                </p>
               </div>
             </div>
             <div>
               <label className={lbl}>
-                Client Name <span className="text-red-500">*</span>
+                Search Claimant <span className="text-red-500">*</span>
               </label>
-              <input
-                type="text"
-                className={inp}
+              <ClaimantSearchInput
                 value={form.client_name}
-                onChange={(e) => set("client_name", e.target.value)}
-                placeholder="Last, First"
+                hearingId={form.hearing_id}
+                onChange={(name) => {
+                  // Free typing — keep the existing link unless user clears it
+                  setForm((p) => ({ ...p, client_name: name }));
+                }}
+                onPick={(r) => {
+                  setForm((p) => ({
+                    ...p,
+                    client_name: r.claimant,
+                    mycase_link: r.claimant_link ?? p.mycase_link,
+                    hearing_id: r.hearing_id,
+                    hearing_date: r.hearing_date ?? p.hearing_date,
+                  }));
+                }}
+                onClear={() => {
+                  setForm((p) => ({ ...p, hearing_id: null }));
+                }}
               />
+            </div>
+            {/* MR Specialist — available in both Add and Edit modes. Permission
+                gated identically to the inline-row dropdown; server-side gate
+                in updatePortalEntry only enforces on an actual value change. */}
+            <div className="mt-3">
+              <label className={lbl}>MR Specialist</label>
+              <select
+                className={inp}
+                value={form.mr_specialist_id ?? ""}
+                onChange={(e) =>
+                  set(
+                    "mr_specialist_id",
+                    e.target.value ? Number(e.target.value) : null,
+                  )
+                }
+                disabled={!canAssignSpecialist}
+                title={
+                  !canAssignSpecialist
+                    ? "Only Admin, Manager, MR Admin, or MR Lead can assign specialists"
+                    : undefined
+                }
+              >
+                <option value="">— Unassigned —</option>
+                {specialists.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 
@@ -846,285 +958,18 @@ function ActivityLogModal({
   );
 }
 
-// ─── Detail Row (module-level — must NOT be defined inside a component) ───────
-
-const DETAIL_LABEL_CLS =
-  "text-[10px] uppercase font-semibold text-muted-foreground tracking-wider";
-const DETAIL_VALUE_CLS = "text-xs font-medium text-foreground";
-
-function DetailRow({
-  label,
-  children,
-}: {
-  label: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="flex items-start gap-4 py-1.5 border-b border-border/40 last:border-0">
-      <span className={cn(DETAIL_LABEL_CLS, "w-32 shrink-0 pt-0.5")}>
-        {label}
-      </span>
-      <span className={DETAIL_VALUE_CLS}>{children}</span>
-    </div>
-  );
-}
-
-// ─── View Details Modal ───────────────────────────────────────────────────────
-
-function ViewDetailsModal({
-  entry,
-  onClose,
-  onEdit,
-}: {
-  entry: PortalEntry | null;
-  onClose: () => void;
-  onEdit: (e: PortalEntry) => void;
-}) {
-  const [tab, setTab] = useState<"info" | "activity">("info");
-  const [activities, setActivities] = useState<PortalActivityEntry[]>([]);
-  const [loadingAct, startActTransition] = useTransition();
-
-  useEffect(() => {
-    if (!entry || tab !== "activity") return;
-    startActTransition(async () => {
-      const r = await getPortalActivityLog({ page: 1, entry_id: entry.id });
-      setActivities(r.entries);
-    });
-  }, [entry, tab]);
-
-  if (!entry) return null;
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-2xl max-h-[88vh] flex flex-col rounded-xl border bg-card shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between border-b bg-muted/50 px-5 py-4 shrink-0">
-          <h2 className="text-sm font-semibold">📋 {entry.client_name}</h2>
-          <button onClick={onClose} aria-label="Close details">
-            <X className="h-5 w-5 text-muted-foreground" />
-          </button>
-        </div>
-
-        {/* Tabs */}
-        <div className="flex gap-1 px-5 pt-3 border-b shrink-0">
-          {(["info", "activity"] as const).map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={cn(
-                "text-xs px-3 py-1.5 rounded-t-lg border-b-2 font-medium transition-colors",
-                tab === t
-                  ? "border-primary text-primary"
-                  : "border-transparent text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {t === "info" ? "📄 Information" : "📝 Activity Log"}
-            </button>
-          ))}
-        </div>
-
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto px-5 py-4">
-          {tab === "info" && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
-                  📅 Dates
-                </p>
-                <DetailRow label="Entry Date">
-                  {fmtDate(entry.entry_date)}
-                </DetailRow>
-                <DetailRow label="Hearing Date">
-                  {fmtDate(entry.hearing_date)}
-                </DetailRow>
-                <DetailRow label="Specialist">
-                  {entry.specialist_name ? (
-                    <span
-                      className="px-2 py-0.5 rounded text-[10px] font-medium"
-                      style={specStyle(entry.specialist_color)}
-                    >
-                      {entry.specialist_name}
-                    </span>
-                  ) : (
-                    "—"
-                  )}
-                </DetailRow>
-              </div>
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
-                  🏥 Provider
-                </p>
-                <DetailRow label="Provider">{entry.provider ?? "—"}</DetailRow>
-                <DetailRow label="MyCase Link">
-                  {entry.mycase_link ? (
-                    <a
-                      href={entry.mycase_link}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-primary hover:underline flex items-center gap-1"
-                    >
-                      <ExternalLink size={10} />
-                      Open Link
-                    </a>
-                  ) : (
-                    "—"
-                  )}
-                </DetailRow>
-                <DetailRow label="Portal Link">
-                  {entry.portal_link ? (
-                    <a
-                      href={entry.portal_link}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-primary hover:underline flex items-center gap-1"
-                    >
-                      <ExternalLink size={10} />
-                      Open Link
-                    </a>
-                  ) : (
-                    "—"
-                  )}
-                </DetailRow>
-              </div>
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
-                  🔐 Credentials
-                </p>
-                <DetailRow label="Username">
-                  <span className="flex items-center gap-1.5">
-                    {entry.portal_username ?? "—"}
-                    {entry.portal_username && (
-                      <button
-                        onClick={() =>
-                          navigator.clipboard.writeText(entry.portal_username!)
-                        }
-                        className="text-muted-foreground hover:text-primary"
-                        aria-label="Copy username"
-                      >
-                        <Copy size={10} />
-                      </button>
-                    )}
-                  </span>
-                </DetailRow>
-                <DetailRow label="Password">
-                  <span className="flex items-center gap-1.5">
-                    {entry.portal_password ?? "—"}
-                    {entry.portal_password && (
-                      <button
-                        onClick={() =>
-                          navigator.clipboard.writeText(entry.portal_password!)
-                        }
-                        className="text-muted-foreground hover:text-primary"
-                        aria-label="Copy password"
-                      >
-                        <Copy size={10} />
-                      </button>
-                    )}
-                  </span>
-                </DetailRow>
-              </div>
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
-                  ✅ Status
-                </p>
-                <DetailRow label="Got MR?">
-                  <span
-                    className={cn(
-                      "px-2 py-0.5 rounded text-[10px] font-medium",
-                      entry.got_mr
-                        ? "bg-emerald-100 text-emerald-700"
-                        : "bg-amber-100 text-amber-700",
-                    )}
-                  >
-                    {entry.got_mr ? "✅ Yes" : "⏳ No"}
-                  </span>
-                </DetailRow>
-                <DetailRow label="Approved by TL">
-                  {entry.approved_by_tl ? (
-                    <span className="text-blue-500 font-bold">✓ Yes</span>
-                  ) : (
-                    <span className="text-muted-foreground">No</span>
-                  )}
-                </DetailRow>
-              </div>
-            </div>
-          )}
-
-          {tab === "activity" &&
-            (loadingAct ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-              </div>
-            ) : activities.length === 0 ? (
-              <p className="text-center text-sm text-muted-foreground py-12">
-                No activity recorded for this entry.
-              </p>
-            ) : (
-              <div className="space-y-0.5">
-                {activities.map((a) => (
-                  <div
-                    key={a.id}
-                    className="flex gap-3 px-2 py-2 hover:bg-muted/30 rounded"
-                  >
-                    <span className="text-[9px] font-bold uppercase bg-blue-100 text-blue-700 rounded px-1.5 py-0.5 h-fit mt-0.5 shrink-0">
-                      {a.action.replace(/^portal_/, "").replace(/_/g, " ")}
-                    </span>
-                    <div>
-                      <p className="text-xs">{a.details}</p>
-                      <p className="text-[10px] text-muted-foreground mt-0.5">
-                        {new Date(a.created_at).toLocaleString()}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ))}
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-end gap-2 border-t px-5 py-3 shrink-0">
-          <button
-            onClick={onClose}
-            className="text-xs px-4 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground"
-          >
-            Close
-          </button>
-          <button
-            onClick={() => {
-              onEdit(entry);
-              onClose();
-            }}
-            className="text-xs px-4 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90"
-          >
-            ✏️ Edit Entry
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ─── Mobile Card ─────────────────────────────────────────────────────────────
 // Shown on small screens instead of the wide data grid.
 
 function PortalMobileCard({
   entry,
   permissions,
-  onViewDetails,
   onEdit,
   onDelete,
   onOpenNotes,
-  onOpenLink,
 }: {
   entry: PortalEntry;
   permissions: PortalPageData["permissions"];
-  onViewDetails: (e: PortalEntry) => void;
   onEdit: (e: PortalEntry) => void;
   onDelete: (id: number) => void;
   onOpenNotes: (
@@ -1132,12 +977,6 @@ function PortalMobileCard({
     field: "username" | "password" | "approved" | "got_mr",
     clientName: string,
     provider: string | null,
-  ) => void;
-  onOpenLink: (
-    id: number,
-    field: "mycase_link" | "portal_link",
-    title: string,
-    url: string,
   ) => void;
 }) {
   const { canEdit, canManage } = permissions;
@@ -1149,7 +988,7 @@ function PortalMobileCard({
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="font-semibold text-sm text-primary truncate">
-            {entry.client_name}
+            {formatClaimantName(entry.client_name)}
           </p>
           {entry.provider && (
             <p className="text-[11px] text-muted-foreground truncate">
@@ -1158,20 +997,13 @@ function PortalMobileCard({
           )}
         </div>
         <div className="flex items-center gap-1 shrink-0">
-          <button
-            onClick={() => onViewDetails(entry)}
-            className="p-1.5 rounded hover:bg-muted text-muted-foreground"
-            aria-label="View details"
-          >
-            <Eye size={14} />
-          </button>
           {canEdit && (
             <button
               onClick={() => onEdit(entry)}
               className="p-1.5 rounded hover:bg-muted text-muted-foreground"
               aria-label="Edit entry"
             >
-              <FileText size={14} />
+              <Pencil size={14} />
             </button>
           )}
           {canManage && (
@@ -1213,52 +1045,32 @@ function PortalMobileCard({
       </div>
 
       {/* Links row */}
-      <div className="flex items-center gap-2 flex-wrap">
-        {entry.mycase_link ? (
-          <a
-            href={entry.mycase_link}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1 text-[10px] bg-primary text-primary-foreground px-2 py-0.5 rounded"
-          >
-            <ExternalLink size={9} />
-            MyCase
-          </a>
-        ) : (
-          canEdit && (
-            <button
-              onClick={() =>
-                onOpenLink(entry.id, "mycase_link", "📄 MyCase Link", "")
-              }
-              className="text-[10px] border border-dashed border-border rounded px-2 py-0.5 text-muted-foreground"
+      {(entry.mycase_link || entry.portal_link) && (
+        <div className="flex items-center gap-2 flex-wrap">
+          {entry.mycase_link && (
+            <a
+              href={entry.mycase_link}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-[10px] bg-primary text-primary-foreground px-2 py-0.5 rounded"
             >
-              + MyCase
-            </button>
-          )
-        )}
-        {entry.portal_link ? (
-          <a
-            href={entry.portal_link}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1 text-[10px] bg-emerald-600 text-white px-2 py-0.5 rounded"
-          >
-            <ExternalLink size={9} />
-            Portal
-          </a>
-        ) : (
-          canEdit && (
-            <button
-              onClick={() =>
-                onOpenLink(entry.id, "portal_link", "🔗 Portal Link", "")
-              }
-              className="text-[10px] border border-dashed border-border rounded px-2 py-0.5 text-muted-foreground"
+              <ExternalLink size={9} />
+              MyCase
+            </a>
+          )}
+          {entry.portal_link && (
+            <a
+              href={entry.portal_link}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-[10px] bg-emerald-600 text-white px-2 py-0.5 rounded"
             >
-              + Portal
-            </button>
-          )
-        )}
-      </div>
+              <ExternalLink size={9} />
+              Portal
+            </a>
+          )}
+        </div>
+      )}
 
       {/* Credentials */}
       {(entry.portal_username || entry.portal_password) && (
@@ -1387,46 +1199,125 @@ function PortalMobileCard({
 // ─── Portal Table Row ─────────────────────────────────────────────────────────
 // Shared grid — header and rows must use identical values.
 // Date(90) | HearingDate(90) | Specialist(130) | ClientName(160) | Provider(130) |
-// MyCase(75) | PortalLink(75) | Username(160) | Password(140) | GotMR(70) | ApprovedTL(95) | Actions(70)
+// PortalLink(75) | Username(160) | Password(140) | GotMR(70) | ApprovedTL(95) | Actions(70)
+// MyCase column removed — the link is now reachable from the claimant name.
 const PORTAL_GRID =
-  "90px 90px 130px 160px 130px 75px 75px 160px 140px 70px 95px 70px";
-const PORTAL_MIN_W = "1335px";
+  "90px 90px 130px 160px 130px 75px 160px 140px 70px 95px 70px";
+const PORTAL_MIN_W = "1260px";
+
+// ─── Claimant Name Display (ClaimantCell-style) ──────────────────────────────
+// Mirrors the dashboard's claimant cell so a portal entry "looks like" a
+// hearings row: name links to mycase, copy button, claim type + chronicle
+// button. chronicle_link and claim_type are joined live from hearings (via
+// the LEFT JOIN in getPortalEntries) so edits on the dashboard flow through.
+
+function ClaimantNameDisplay({ entry }: { entry: PortalEntry }) {
+  const [copied, setCopied] = useState(false);
+  const name = formatClaimantName(entry.client_name);
+  const mycase = entry.mycase_link ?? null;
+  const chronicle = entry.chronicle_link ?? null;
+
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const esc = (s: string) =>
+      s
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    try {
+      if (mycase && typeof ClipboardItem !== "undefined") {
+        const html = `<a href="${esc(mycase)}">${esc(name)}</a>`;
+        const plain = `${name}\n${mycase}`;
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            "text/html": new Blob([html], { type: "text/html" }),
+            "text/plain": new Blob([plain], { type: "text/plain" }),
+          }),
+        ]);
+      } else {
+        await navigator.clipboard.writeText(mycase ? `${name}\n${mycase}` : name);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard unavailable */
+    }
+  };
+
+  return (
+    <div className="min-w-0">
+      <div className="flex items-center gap-1 min-w-0">
+        {mycase ? (
+          <button
+            type="button"
+            onClick={() => window.open(mycase, "_blank", "noopener,noreferrer")}
+            className="truncate text-[11px] font-medium text-blue-600 hover:underline dark:text-blue-400 text-left"
+          >
+            {name}
+          </button>
+        ) : (
+          <strong className="truncate text-[11px] font-medium text-foreground">
+            {name}
+          </strong>
+        )}
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-blue-600 hover:bg-muted"
+          title={mycase ? "Copy name + MyCase link" : "Copy name"}
+        >
+          {copied ? (
+            <Check className="h-2.5 w-2.5 text-emerald-600" />
+          ) : (
+            <Copy className="h-2.5 w-2.5" />
+          )}
+        </button>
+      </div>
+      {(entry.claim_type || chronicle) && (
+        <div className="flex items-center gap-1.5 mt-0.5">
+          {entry.claim_type && (
+            <span className="truncate text-[9px] text-muted-foreground">
+              {entry.claim_type}
+            </span>
+          )}
+          {chronicle && (
+            <button
+              type="button"
+              onClick={() =>
+                window.open(chronicle, "_blank", "noopener,noreferrer")
+              }
+              className="text-[9px] font-medium text-violet-600 hover:underline dark:text-violet-400"
+            >
+              Chronicle
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function PortalRow({
   entry,
-  specialists,
   permissions,
-  onUpdate,
   onDelete,
-  onViewDetails,
+  onEdit,
   onOpenNotes,
-  onOpenLink,
 }: {
   entry: PortalEntry;
-  specialists: MrSpecialist[];
   permissions: PortalPageData["permissions"];
-  onUpdate: (id: number, field: string, value: unknown) => void;
   onDelete: (id: number) => void;
-  onViewDetails: (e: PortalEntry) => void;
+  onEdit: (e: PortalEntry) => void;
   onOpenNotes: (
     id: number,
     field: "username" | "password" | "approved" | "got_mr",
     clientName: string,
     provider: string | null,
   ) => void;
-  onOpenLink: (
-    id: number,
-    field: "mycase_link" | "portal_link",
-    title: string,
-    url: string,
-  ) => void;
 }) {
-  const { canEdit, canManage, canAssignSpecialist } = permissions;
-  const spec = specialists.find((s) => s.id === entry.mr_specialist_id);
-  const specColor = entry.specialist_color ?? spec?.bg_color;
-
-  const inp =
-    "text-[10px] border border-border rounded px-1.5 py-0.5 bg-card text-foreground focus:outline-none focus:border-primary";
+  const { canEdit, canManage } = permissions;
+  const specColor = entry.specialist_color;
 
   return (
     <div
@@ -1435,65 +1326,17 @@ function PortalRow({
     >
       {/* Date */}
       <div className="px-1">
-        {canEdit ? (
-          <input
-            type="date"
-            value={entry.entry_date ?? ""}
-            className={cn(inp, "w-full")}
-            onChange={(e) => onUpdate(entry.id, "entry_date", e.target.value)}
-          />
-        ) : (
-          <span>{fmtDate(entry.entry_date)}</span>
-        )}
+        <span>{fmtDate(entry.entry_date)}</span>
       </div>
 
       {/* Hearing Date */}
       <div className="px-1 text-center">
-        {canEdit ? (
-          <input
-            type="date"
-            value={entry.hearing_date ?? ""}
-            className={cn(inp, "w-full")}
-            onChange={(e) => onUpdate(entry.id, "hearing_date", e.target.value)}
-          />
-        ) : (
-          <span>{fmtDate(entry.hearing_date)}</span>
-        )}
+        <span>{fmtDate(entry.hearing_date)}</span>
       </div>
 
       {/* Specialist */}
       <div className="px-1">
-        {canEdit ? (
-          <select
-            value={entry.mr_specialist_id ?? ""}
-            className="w-full text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer font-medium"
-            style={
-              specColor
-                ? specStyle(specColor)
-                : { backgroundColor: "#f3f4f6", color: "#374151" }
-            }
-            onChange={(e) =>
-              onUpdate(
-                entry.id,
-                "mr_specialist_id",
-                e.target.value ? Number(e.target.value) : null,
-              )
-            }
-            disabled={!canAssignSpecialist}
-            title={
-              !canAssignSpecialist
-                ? "Only Admin, Manager, MR Admin, or MR Lead can assign specialists"
-                : undefined
-            }
-          >
-            <option value="">— Select —</option>
-            {specialists.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        ) : entry.specialist_name ? (
+        {entry.specialist_name ? (
           <span
             className="px-1.5 py-0.5 rounded text-[10px] font-medium"
             style={specStyle(specColor ?? null)}
@@ -1505,122 +1348,32 @@ function PortalRow({
         )}
       </div>
 
-      {/* Client Name */}
+      {/* Client Name — ClaimantCell-style: name (linked to mycase), copy,
+          claim_type + chronicle button. Same visual language as
+          dashboard-client so the row "looks like" a hearings row. */}
       <div className="px-1 min-w-0">
-        {canEdit ? (
-          <input
-            type="text"
-            value={entry.client_name}
-            className={cn(inp, "w-full")}
-            onChange={(e) => onUpdate(entry.id, "client_name", e.target.value)}
-          />
-        ) : (
-          <strong className="text-foreground truncate block">
-            {entry.client_name}
-          </strong>
-        )}
+        <ClaimantNameDisplay entry={entry} />
       </div>
 
       {/* Provider */}
       <div className="px-1 min-w-0">
-        {canEdit ? (
-          <input
-            type="text"
-            value={entry.provider ?? ""}
-            className={cn(inp, "w-full")}
-            placeholder="Add provider…"
-            onChange={(e) => onUpdate(entry.id, "provider", e.target.value)}
-          />
-        ) : (
-          <span className="text-[11px] leading-tight wrap-break-word line-clamp-2">
-            {entry.provider ?? "—"}
-          </span>
-        )}
-      </div>
-
-      {/* MyCase Link */}
-      <div className="px-1 flex justify-center items-center gap-1 whitespace-nowrap">
-        {entry.mycase_link ? (
-          <>
-            <a
-              href={entry.mycase_link}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center text-[9px] bg-primary text-primary-foreground px-1.5 py-0.5 rounded hover:bg-primary/80"
-            >
-              <ExternalLink size={8} className="mr-0.5" />
-              📄
-            </a>
-            {canEdit && (
-              <button
-                onClick={() =>
-                  onOpenLink(
-                    entry.id,
-                    "mycase_link",
-                    "📄 MyCase Link",
-                    entry.mycase_link!,
-                  )
-                }
-                className="text-[9px] border border-border px-1 py-0.5 rounded hover:bg-muted"
-                aria-label="Edit MyCase link"
-              >
-                ✏️
-              </button>
-            )}
-          </>
-        ) : canEdit ? (
-          <button
-            onClick={() =>
-              onOpenLink(entry.id, "mycase_link", "📄 MyCase Link", "")
-            }
-            className="text-[10px] text-muted-foreground hover:text-foreground border border-dashed border-border rounded px-1.5 py-0.5"
-          >
-            + Link
-          </button>
-        ) : (
-          <span className="text-muted-foreground/30">—</span>
-        )}
+        <span className="text-[11px] leading-tight wrap-break-word line-clamp-2">
+          {entry.provider ?? "—"}
+        </span>
       </div>
 
       {/* Portal Link */}
       <div className="px-1 flex justify-center items-center gap-1 whitespace-nowrap">
         {entry.portal_link ? (
-          <>
-            <a
-              href={entry.portal_link}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center text-[9px] bg-emerald-600 text-white px-1.5 py-0.5 rounded hover:bg-emerald-700"
-            >
-              <ExternalLink size={8} className="mr-0.5" />
-              🔗
-            </a>
-            {canEdit && (
-              <button
-                onClick={() =>
-                  onOpenLink(
-                    entry.id,
-                    "portal_link",
-                    "🔗 Portal Link",
-                    entry.portal_link!,
-                  )
-                }
-                className="text-[9px] border border-border px-1 py-0.5 rounded hover:bg-muted"
-                aria-label="Edit portal link"
-              >
-                ✏️
-              </button>
-            )}
-          </>
-        ) : canEdit ? (
-          <button
-            onClick={() =>
-              onOpenLink(entry.id, "portal_link", "🔗 Portal Link", "")
-            }
-            className="text-[10px] text-muted-foreground hover:text-foreground border border-dashed border-border rounded px-1.5 py-0.5"
+          <a
+            href={entry.portal_link}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center text-[9px] bg-emerald-600 text-white px-1.5 py-0.5 rounded hover:bg-emerald-700"
           >
-            + Link
-          </button>
+            <ExternalLink size={8} className="mr-0.5" />
+            🔗
+          </a>
         ) : (
           <span className="text-muted-foreground/30">—</span>
         )}
@@ -1628,21 +1381,9 @@ function PortalRow({
 
       {/* Username */}
       <div className="px-1 flex items-center gap-1 min-w-0">
-        {canEdit ? (
-          <input
-            type="text"
-            value={entry.portal_username ?? ""}
-            className={cn(inp, "flex-1 min-w-0")}
-            placeholder="Username"
-            onChange={(e) =>
-              onUpdate(entry.id, "portal_username", e.target.value)
-            }
-          />
-        ) : (
-          <span className="flex-1 text-[10px] truncate">
-            {entry.portal_username ?? "—"}
-          </span>
-        )}
+        <span className="flex-1 text-[10px] truncate">
+          {entry.portal_username ?? "—"}
+        </span>
         <button
           onClick={() =>
             onOpenNotes(entry.id, "username", entry.client_name, entry.provider)
@@ -1662,21 +1403,9 @@ function PortalRow({
 
       {/* Password */}
       <div className="px-1 flex items-center gap-1 min-w-0">
-        {canEdit ? (
-          <input
-            type="text"
-            value={entry.portal_password ?? ""}
-            className={cn(inp, "flex-1 min-w-0")}
-            placeholder="Password"
-            onChange={(e) =>
-              onUpdate(entry.id, "portal_password", e.target.value)
-            }
-          />
-        ) : (
-          <span className="flex-1 text-[10px]">
-            {entry.portal_password ? "••••••" : "—"}
-          </span>
-        )}
+        <span className="flex-1 text-[10px]">
+          {entry.portal_password ? "••••••" : "—"}
+        </span>
         {entry.portal_password && (
           <button
             onClick={() =>
@@ -1707,36 +1436,16 @@ function PortalRow({
 
       {/* Got MR? */}
       <div className="px-1 flex items-center gap-1">
-        {canEdit ? (
-          <select
-            value={entry.got_mr ? "1" : "0"}
-            className={cn(
-              "w-full text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer font-medium",
-              entry.got_mr
-                ? "bg-emerald-100 text-emerald-700"
-                : "bg-red-50 text-red-600",
-            )}
-            onChange={(e) =>
-              onUpdate(entry.id, "got_mr", e.target.value === "1")
-            }
-          >
-            <option value="0">No</option>
-            <option value="1">Yes</option>
-          </select>
-        ) : (
-          <span
-            className={cn(
-              "px-1.5 py-0.5 rounded text-[10px] font-medium",
-              entry.got_mr
-                ? "bg-emerald-100 text-emerald-700"
-                : "bg-amber-100 text-amber-600",
-            )}
-          >
-            {entry.got_mr ? "✅ Yes" : "⏳ No"}
-          </span>
-        )}
-
-        {/* ✅ NEW NOTES BUTTON */}
+        <span
+          className={cn(
+            "px-1.5 py-0.5 rounded text-[10px] font-medium",
+            entry.got_mr
+              ? "bg-emerald-100 text-emerald-700"
+              : "bg-amber-100 text-amber-600",
+          )}
+        >
+          {entry.got_mr ? "✅ Yes" : "⏳ No"}
+        </span>
         <button
           onClick={() =>
             onOpenNotes(entry.id, "got_mr", entry.client_name, entry.provider)
@@ -1755,17 +1464,7 @@ function PortalRow({
 
       {/* Approved by TL */}
       <div className="px-1 flex items-center justify-center gap-1">
-        {canEdit ? (
-          <input
-            type="checkbox"
-            checked={entry.approved_by_tl}
-            className="w-4 h-4 cursor-pointer accent-blue-500"
-            onChange={(e) =>
-              onUpdate(entry.id, "approved_by_tl", e.target.checked)
-            }
-            aria-label="Approved by TL"
-          />
-        ) : entry.approved_by_tl ? (
+        {entry.approved_by_tl ? (
           <Check size={14} className="text-blue-500" />
         ) : (
           <span className="text-muted-foreground/30 text-xs">—</span>
@@ -1789,14 +1488,16 @@ function PortalRow({
 
       {/* Actions */}
       <div className="px-1 flex items-center justify-center gap-0.5">
-        <button
-          onClick={() => onViewDetails(entry)}
-          className="text-[10px] p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
-          title="View Details"
-          aria-label="View details"
-        >
-          <Eye size={13} />
-        </button>
+        {canEdit && (
+          <button
+            onClick={() => onEdit(entry)}
+            className="text-[10px] p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+            title="Edit"
+            aria-label="Edit entry"
+          >
+            <Pencil size={13} />
+          </button>
+        )}
         {canManage && (
           <button
             onClick={() => onDelete(entry.id)}
@@ -1835,7 +1536,6 @@ export function PatientPortalClient(data: PortalPageData) {
   // Modal state
   const [showAdd, setShowAdd] = useState(false);
   const [editEntry, setEditEntry] = useState<PortalEntry | null>(null);
-  const [viewEntry, setViewEntry] = useState<PortalEntry | null>(null);
   const [showActivity, setShowActivity] = useState(false);
   const [notesState, setNotesState] = useState<{
     open: boolean;
@@ -1844,13 +1544,6 @@ export function PatientPortalClient(data: PortalPageData) {
     clientName: string;
     provider: string | null;
   }>({ open: false, id: 0, field: "username", clientName: "", provider: null });
-  const [linkState, setLinkState] = useState<{
-    open: boolean;
-    id: number;
-    field: "mycase_link" | "portal_link";
-    title: string;
-    currentUrl: string;
-  }>({ open: false, id: 0, field: "mycase_link", title: "", currentUrl: "" });
 
   const searchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1880,14 +1573,6 @@ export function PatientPortalClient(data: PortalPageData) {
     load(next);
   };
 
-  // Optimistic field update — fire-and-forget server action
-  const handleUpdate = (id: number, field: string, value: unknown) => {
-    updatePortalField(id, field, value as string | number | boolean | null);
-    setEntries((prev) =>
-      prev.map((e) => (e.id === id ? { ...e, [field]: value } : e)),
-    );
-  };
-
   const handleDelete = async (id: number) => {
     if (!confirm("Delete this portal entry?")) return;
     const r = await deletePortalEntry(id);
@@ -1896,12 +1581,6 @@ export function PatientPortalClient(data: PortalPageData) {
       setTotal((t) => t - 1);
       setStats((s) => ({ ...s, total: s.total - 1 }));
     }
-  };
-
-  const handleLinkSaved = (id: number, field: string, url: string) => {
-    setEntries((prev) =>
-      prev.map((e) => (e.id === id ? { ...e, [field]: url || null } : e)),
-    );
   };
 
   const curPage = filters.page ?? 1;
@@ -2082,7 +1761,6 @@ export function PatientPortalClient(data: PortalPageData) {
                   key={e.id}
                   entry={e}
                   permissions={data.permissions}
-                  onViewDetails={(entry) => setViewEntry(entry)}
                   onEdit={(entry) => setEditEntry(entry)}
                   onDelete={handleDelete}
                   onOpenNotes={(id, field, cn, prov) =>
@@ -2092,15 +1770,6 @@ export function PatientPortalClient(data: PortalPageData) {
                       field,
                       clientName: cn,
                       provider: prov,
-                    })
-                  }
-                  onOpenLink={(id, field, title, url) =>
-                    setLinkState({
-                      open: true,
-                      id,
-                      field,
-                      title,
-                      currentUrl: url,
                     })
                   }
                 />
@@ -2123,7 +1792,6 @@ export function PatientPortalClient(data: PortalPageData) {
                 <div className="px-1 text-left">MR Specialist</div>
                 <div className="px-1">Client Name</div>
                 <div className="px-1">Provider</div>
-                <div className="px-1 text-center">MyCase</div>
                 <div className="px-1 text-center">Portal Link</div>
                 <div className="px-1">Username</div>
                 <div className="px-1">Password</div>
@@ -2150,11 +1818,9 @@ export function PatientPortalClient(data: PortalPageData) {
                     <PortalRow
                       key={e.id}
                       entry={e}
-                      specialists={data.specialists}
                       permissions={data.permissions}
-                      onUpdate={handleUpdate}
                       onDelete={handleDelete}
-                      onViewDetails={(entry) => setViewEntry(entry)}
+                      onEdit={(entry) => setEditEntry(entry)}
                       onOpenNotes={(id, field, cn, prov) =>
                         setNotesState({
                           open: true,
@@ -2162,15 +1828,6 @@ export function PatientPortalClient(data: PortalPageData) {
                           field,
                           clientName: cn,
                           provider: prov,
-                        })
-                      }
-                      onOpenLink={(id, field, title, url) =>
-                        setLinkState({
-                          open: true,
-                          id,
-                          field,
-                          title,
-                          currentUrl: url,
                         })
                       }
                     />
@@ -2226,6 +1883,8 @@ export function PatientPortalClient(data: PortalPageData) {
       {(showAdd || editEntry) && (
         <AddEditModal
           entry={editEntry}
+          specialists={data.specialists}
+          canAssignSpecialist={data.permissions.canAssignSpecialist}
           onClose={() => {
             setShowAdd(false);
             setEditEntry(null);
@@ -2246,26 +1905,6 @@ export function PatientPortalClient(data: PortalPageData) {
         provider={notesState.provider}
         canEdit={data.permissions.canEdit}
         onClose={() => setNotesState((p) => ({ ...p, open: false }))}
-      />
-
-      <LinkModal
-        key={`link-${linkState.id}-${linkState.field}`}
-        open={linkState.open}
-        id={linkState.id}
-        field={linkState.field}
-        title={linkState.title}
-        currentUrl={linkState.currentUrl}
-        onClose={() => setLinkState((p) => ({ ...p, open: false }))}
-        onSaved={handleLinkSaved}
-      />
-
-      <ViewDetailsModal
-        entry={viewEntry}
-        onClose={() => setViewEntry(null)}
-        onEdit={(e) => {
-          setEditEntry(e);
-          setViewEntry(null);
-        }}
       />
 
       <ActivityLogModal
