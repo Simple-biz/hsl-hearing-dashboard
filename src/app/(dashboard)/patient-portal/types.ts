@@ -5,6 +5,7 @@
 export const PORTAL_ACTIONS = [
   "portal_entry_created",
   "portal_field_updated",
+  "portal_specialist_assigned",
   "portal_entry_deleted",
   "portal_bulk_import",
   "portal_note_added",
