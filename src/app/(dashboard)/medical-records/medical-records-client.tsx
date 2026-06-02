@@ -27,6 +27,7 @@ import {
   Download,
   Loader2,
   X,
+  Check,
   BarChart3,
   FileText,
   ClipboardList,
@@ -94,6 +95,19 @@ const TEAM_HEX: Record<string, string> = {
 function teamHex(color: string | null | undefined): string {
   if (!color) return "#9ca3af";
   return TEAM_HEX[color] ?? color;
+}
+
+// Compact stamp for the workflow-checkbox completion date — "May 7, 26".
+// Matches fmtCheckStamp in dashboard-client + representative-docs.
+function fmtCheckStamp(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "2-digit",
+  });
 }
 
 function fmtTime(raw: string | null | undefined): string {
@@ -196,7 +210,7 @@ function exportHearingsToCsv(hearings: Hearing[]) {
     h.hearing_decision_status ?? "",
     h.manner_of_appearance ?? "",
     h.task_assigned ? "Yes" : "No",
-    h.credited ? "Yes" : "No",
+    h.credited === null ? "" : h.credited ? "Yes" : "No",
     h.five_day_notice ? "Yes" : "No",
     h.post_hrg_review ?? "",
     h.medical_record_link ?? "",
@@ -1283,9 +1297,22 @@ function HearingRow({
     MOA_CLS[h.manner_of_appearance ?? ""] ??
     "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300";
 
+  // Whole-row tint by credited state. Light mode uses pale 50-shade bg;
+  // dark mode uses a brighter 500-shade at low opacity so it actually reads
+  // against the near-black surface (900-shade at low opacity disappears).
+  const creditedRowCls =
+    h.credited === true
+      ? "bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-500/20 dark:hover:bg-emerald-500/30"
+      : h.credited === false
+        ? "bg-rose-50 hover:bg-rose-100 dark:bg-rose-500/20 dark:hover:bg-rose-500/30"
+        : "hover:bg-blue-500/10 dark:hover:bg-blue-400/15";
+
   return (
     <div
-      className="grid gap-x-2 px-4 border-b border-border/40 cursor-pointer transition-colors text-[11px] items-center hover:bg-blue-500/10 dark:hover:bg-blue-400/15"
+      className={cn(
+        "grid gap-x-2 px-4 border-b border-border/40 cursor-pointer transition-colors text-[11px] items-center",
+        creditedRowCls,
+      )}
       style={{
         gridTemplateColumns: GRID_COLS,
         minWidth: MIN_W,
@@ -1454,15 +1481,52 @@ function HearingRow({
         </span>
       )}
 
-      {/* Credited — checkbox centered */}
+      {/* Credited — 3-state dropdown (— / ✓ / ✗). null = unverified is the
+          default for new rows; ✓ = credited; ✗ = verified-and-not-credited. */}
       <div className="flex justify-center">
-        <input
-          type="checkbox"
-          checked={h.credited}
-          disabled={!permissions.canEditCredited}
-          className="w-3.5 h-3.5 accent-blue-500 cursor-pointer disabled:cursor-default"
-          onChange={(e) => onUpdate(h.id, "credited", e.target.checked)}
-        />
+        {permissions.canEditCredited ? (
+          <select
+            value={h.credited === null ? "" : h.credited ? "true" : "false"}
+            onChange={(e) => {
+              const v = e.target.value;
+              const next: boolean | null =
+                v === "" ? null : v === "true";
+              onUpdate(h.id, "credited", next);
+            }}
+            className={cn(
+              "text-xs px-1.5 py-0.5 rounded border cursor-pointer font-medium",
+              h.credited === true &&
+                "bg-emerald-100 border-emerald-300 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
+              h.credited === false &&
+                "bg-red-100 border-red-300 text-red-700 dark:bg-red-900/30 dark:text-red-300",
+              h.credited === null &&
+                "bg-card border-border text-muted-foreground",
+            )}
+            title={
+              h.credited === null
+                ? "Unverified"
+                : h.credited
+                  ? "Credited"
+                  : "Not credited"
+            }
+            aria-label="Credited status"
+          >
+            <option value="">—</option>
+            <option value="true">✓</option>
+            <option value="false">✗</option>
+          </select>
+        ) : h.credited === true ? (
+          <Check className="h-4 w-4 text-emerald-600" aria-label="Credited" />
+        ) : h.credited === false ? (
+          <X className="h-4 w-4 text-red-500" aria-label="Not credited" />
+        ) : (
+          <span
+            className="text-xs text-muted-foreground/40"
+            aria-label="Unverified"
+          >
+            —
+          </span>
+        )}
       </div>
 
       {/* HRG Decision Status — colored badge select */}
@@ -1526,8 +1590,9 @@ function HearingRow({
         </span>
       )}
 
-      {/* 5-Day — checkbox centered */}
-      <div className="flex justify-center">
+      {/* 5-Day — checkbox with completion-date stamp below when ticked.
+          Matches the dashboard's InlineCheck for workflow checkboxes. */}
+      <div className="flex flex-col items-center justify-center gap-0.5 leading-none">
         <input
           type="checkbox"
           checked={h.five_day_notice}
@@ -1535,6 +1600,11 @@ function HearingRow({
           className="w-3.5 h-3.5 accent-emerald-500 cursor-pointer disabled:cursor-default"
           onChange={(e) => onUpdate(h.id, "five_day_notice", e.target.checked)}
         />
+        {h.five_day_notice && h.five_day_notice_at && (
+          <span className="text-[9px] leading-none text-muted-foreground tabular-nums">
+            {fmtCheckStamp(h.five_day_notice_at)}
+          </span>
+        )}
       </div>
 
       {/* Post HRG — deadline-aware badge (matches dashboard / PHD pages) */}
@@ -1724,26 +1794,17 @@ export function MrPivotClient({ userRole, userName, ...data }: Props) {
   }
 
   // ── Row update handler ────────────────────────────────────────────────────
+  // Optimistic: applies the change to local state first so the UI feels
+  // instant, then fires the server action. If the server throws (auth fail,
+  // DB error, etc.) we revert the row to the pre-edit snapshot and surface
+  // the error in the console + toast. Cuts perceived latency from
+  // ~300-1000ms (dev with await) to ~0ms.
   async function handleUpdate(id: number, field: string, value: unknown) {
-    const hearing = hearings.find((h) => h.id === id);
-    const claimant = hearing?.claimant ?? "";
+    const snapshot = hearings.find((h) => h.id === id);
+    if (!snapshot) return;
+    const claimant = snapshot.claimant ?? "";
 
-    const actions: Record<string, (v: unknown) => Promise<unknown>> = {
-      medical_record_status: (v) => updateMrStatus(id, v as string),
-      hearing_decision_status: (v) =>
-        updateHearingDecisionStatus(id, v as string),
-      mr_team: (v) => updateMrTeam(id, v as number | null),
-      task_assigned: (v) => toggleTaskAssigned(id, v as boolean),
-      credited: (v) => toggleCredited(id, v as boolean),
-      manner_of_appearance: (v) => updateMoa(id, v as string),
-      medical_record_link: (v) => updateWorksheetLink(id, v as string),
-    };
-    await actions[field]?.(value);
-
-    // Show feedback toast
-    showToast(field, value, claimant);
-
-    // mr_team needs to update mr_team_id + derive mr_team_name/color from teams list
+    // 1) Apply the change locally before awaiting anything.
     if (field === "mr_team") {
       const teamId = value as number | null;
       const team = teamId
@@ -1762,11 +1823,48 @@ export function MrPivotClient({ userRole, userName, ...data }: Props) {
             : h,
         ),
       );
-      // Refresh round robin immediately so the indicator reflects the new assignment
-      getRoundRobinState().then(setRoundRobin);
+    } else if (field === "five_day_notice") {
+      // Mirror the server's NOW() stamp so the date shows immediately.
+      // The next refetch corrects the exact ms.
+      const stamp = value ? new Date().toISOString() : null;
+      setHearings((prev) =>
+        prev.map((h) =>
+          h.id === id
+            ? { ...h, five_day_notice: value as boolean, five_day_notice_at: stamp }
+            : h,
+        ),
+      );
     } else {
       setHearings((prev) =>
         prev.map((h) => (h.id === id ? { ...h, [field]: value } : h)),
+      );
+    }
+
+    // 2) Fire the server action. On failure, revert.
+    const actions: Record<string, (v: unknown) => Promise<unknown>> = {
+      medical_record_status: (v) => updateMrStatus(id, v as string),
+      hearing_decision_status: (v) =>
+        updateHearingDecisionStatus(id, v as string),
+      mr_team: (v) => updateMrTeam(id, v as number | null),
+      task_assigned: (v) => toggleTaskAssigned(id, v as boolean),
+      credited: (v) => toggleCredited(id, v as boolean | null),
+      manner_of_appearance: (v) => updateMoa(id, v as string),
+      medical_record_link: (v) => updateWorksheetLink(id, v as string),
+    };
+    try {
+      await actions[field]?.(value);
+      showToast(field, value, claimant);
+      // mr_team also refreshes the round-robin indicator
+      if (field === "mr_team") {
+        getRoundRobinState().then(setRoundRobin);
+      }
+    } catch (err) {
+      console.error(`[handleUpdate] ${field} failed — reverting`, err);
+      setHearings((prev) => prev.map((h) => (h.id === id ? snapshot : h)));
+      window.alert(
+        `Could not save ${field.replace(/_/g, " ")} — change reverted.\n${
+          err instanceof Error ? err.message : String(err)
+        }`,
       );
     }
   }

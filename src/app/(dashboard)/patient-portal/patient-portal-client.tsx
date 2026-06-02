@@ -6,7 +6,9 @@ import {
   useTransition,
   useCallback,
   useRef,
+  memo,
 } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useRouter } from "next/navigation";
 import { AppHeader } from "@/components/layout/app-header";
 import {
@@ -17,12 +19,11 @@ import {
   ClipboardList,
   Loader2,
   X,
-  ChevronLeft,
-  ChevronRight,
   Copy,
   Pencil,
   Check,
   StickyNote,
+  RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -33,8 +34,6 @@ import {
   deletePortalEntry,
   getPortalNotes,
   addPortalNote,
-  getPortalActivityLog,
-  getPortalActivityUsers,
   searchClaimantsForPortal,
 } from "./action";
 import type {
@@ -43,10 +42,11 @@ import type {
   PortalFilters,
   PortalStats,
   PortalNote,
-  PortalActivityEntry,
   MrSpecialist,
   ClaimantSearchResult,
 } from "./action";
+import { PORTAL_ACTIONS } from "./types";
+import { ActivityLogModal } from "@/components/modals";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -775,193 +775,11 @@ function AddEditModal({
   );
 }
 
-// ─── Activity Log Modal ───────────────────────────────────────────────────────
-
-function ActivityLogModal({
-  open,
-  onClose,
-}: {
-  open: boolean;
-  onClose: () => void;
-}) {
-  const [entries, setEntries] = useState<PortalActivityEntry[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [actLoading, startActTransition] = useTransition();
-  const [dateRange, setDateRange] = useState<
-    "all" | "today" | "week" | "month"
-  >("all");
-  const [userId, setUserId] = useState("");
-  const [users, setUsers] = useState<Array<{ id: number; full_name: string }>>(
-    [],
-  );
-  const totalPages = Math.max(1, Math.ceil(total / 50));
-
-  const load = useCallback((p: number, dr: string, uid: string) => {
-    startActTransition(async () => {
-      const r = await getPortalActivityLog({
-        page: p,
-        date_range: dr as "all",
-        user_id: uid || undefined,
-      });
-      setEntries(r.entries);
-      setTotal(r.total);
-    });
-  }, []);
-
-  useEffect(() => {
-    if (!open) return;
-    getPortalActivityUsers().then((u) => setUsers(u));
-    load(1, dateRange, userId);
-  }, [open, load]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  if (!open) return null;
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-2xl max-h-[80vh] flex flex-col rounded-xl border bg-card shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between border-b bg-muted/50 px-5 py-4 shrink-0">
-          <h2 className="text-sm font-semibold">
-            📋 Patient Portal Activity Log
-          </h2>
-          <button onClick={onClose} aria-label="Close activity log">
-            <X className="h-5 w-5 text-muted-foreground" />
-          </button>
-        </div>
-
-        {/* Filters */}
-        <div className="flex flex-wrap items-center gap-2 border-b px-5 py-2 shrink-0">
-          <select
-            value={dateRange}
-            onChange={(e) => {
-              const v = e.target.value as typeof dateRange;
-              setDateRange(v);
-              setPage(1);
-              load(1, v, userId);
-            }}
-            className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer"
-          >
-            <option value="all">All Time</option>
-            <option value="today">Today</option>
-            <option value="week">This Week</option>
-            <option value="month">This Month</option>
-          </select>
-          <select
-            value={userId}
-            onChange={(e) => {
-              setUserId(e.target.value);
-              setPage(1);
-              load(1, dateRange, e.target.value);
-            }}
-            className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer"
-          >
-            <option value="">All Users</option>
-            {users.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.full_name}
-              </option>
-            ))}
-          </select>
-          <span className="ml-auto text-xs text-muted-foreground">
-            {total} entries
-          </span>
-        </div>
-
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto px-5 py-3">
-          {actLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-            </div>
-          ) : entries.length === 0 ? (
-            <p className="text-center text-sm text-muted-foreground py-12">
-              No activity found.
-            </p>
-          ) : (
-            <div className="space-y-0.5">
-              {entries.map((e) => (
-                <div
-                  key={e.id}
-                  className="flex items-start gap-3 rounded px-2 py-2 hover:bg-muted/30"
-                >
-                  <span className="shrink-0 text-[9px] font-bold uppercase bg-blue-100 text-blue-700 rounded px-1.5 py-0.5 mt-0.5">
-                    {e.action.replace(/^portal_/, "").replace(/_/g, " ")}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs">{e.details}</p>
-                    <div className="flex gap-2 text-[10px] text-muted-foreground mt-0.5">
-                      <span>
-                        {new Date(e.created_at).toLocaleString("en-US", {
-                          month: "short",
-                          day: "numeric",
-                          hour: "numeric",
-                          minute: "2-digit",
-                        })}
-                      </span>
-                      {e.user_name && (
-                        <span>
-                          by{" "}
-                          <span className="font-medium text-foreground">
-                            {e.user_name}
-                          </span>
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Pagination footer */}
-        <div className="flex items-center justify-between border-t px-5 py-2.5 shrink-0">
-          <span className="text-xs text-muted-foreground">
-            Page {page} of {totalPages}
-          </span>
-          <div className="flex gap-1">
-            <button
-              disabled={page <= 1 || actLoading}
-              onClick={() => {
-                const p = page - 1;
-                setPage(p);
-                load(p, dateRange, userId);
-              }}
-              className="h-7 w-7 flex items-center justify-center rounded border disabled:opacity-40 hover:bg-muted"
-              aria-label="Previous page"
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
-            </button>
-            <button
-              disabled={page >= totalPages || actLoading}
-              onClick={() => {
-                const p = page + 1;
-                setPage(p);
-                load(p, dateRange, userId);
-              }}
-              className="h-7 w-7 flex items-center justify-center rounded border disabled:opacity-40 hover:bg-muted"
-              aria-label="Next page"
-            >
-              <ChevronRight className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ─── Mobile Card ─────────────────────────────────────────────────────────────
 // Shown on small screens instead of the wide data grid.
 
-function PortalMobileCard({
+const PortalMobileCard = memo(function PortalMobileCard({
   entry,
   permissions,
   onEdit,
@@ -983,7 +801,7 @@ function PortalMobileCard({
   const specColor = entry.specialist_color;
 
   return (
-    <div className="border-b border-border/40 px-4 py-3 space-y-2 hover:bg-muted/20 transition-colors">
+    <div className="border-b border-border/40 px-4 py-3 space-y-2 hover:bg-muted/20 dark:hover:bg-muted/60 transition-colors">
       {/* Header row: client + actions */}
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
@@ -1079,6 +897,15 @@ function PortalMobileCard({
             <span className="flex items-center gap-1">
               <span className="text-muted-foreground">User:</span>
               <span className="font-mono">{entry.portal_username}</span>
+              <button
+                onClick={() =>
+                  navigator.clipboard.writeText(entry.portal_username!)
+                }
+                className="text-muted-foreground hover:text-primary"
+                aria-label="Copy username"
+              >
+                <Copy size={10} />
+              </button>
               <button
                 onClick={() =>
                   onOpenNotes(
@@ -1194,7 +1021,7 @@ function PortalMobileCard({
       </div>
     </div>
   );
-}
+});
 
 // ─── Portal Table Row ─────────────────────────────────────────────────────────
 // Shared grid — header and rows must use identical values.
@@ -1298,7 +1125,7 @@ function ClaimantNameDisplay({ entry }: { entry: PortalEntry }) {
   );
 }
 
-function PortalRow({
+const PortalRow = memo(function PortalRow({
   entry,
   permissions,
   onDelete,
@@ -1321,7 +1148,7 @@ function PortalRow({
 
   return (
     <div
-      className="grid px-2 py-1.5 border-b border-border/40 hover:bg-muted/30 transition-colors text-[11px] items-center"
+      className="grid px-2 py-1.5 border-b border-border/40 hover:bg-muted/30 dark:hover:bg-muted/70 transition-colors text-[11px] items-center"
       style={{ gridTemplateColumns: PORTAL_GRID, minWidth: PORTAL_MIN_W }}
     >
       {/* Date */}
@@ -1357,7 +1184,10 @@ function PortalRow({
 
       {/* Provider */}
       <div className="px-1 min-w-0">
-        <span className="text-[11px] leading-tight wrap-break-word line-clamp-2">
+        <span
+          className="text-[11px] leading-tight truncate block"
+          title={entry.provider ?? undefined}
+        >
           {entry.provider ?? "—"}
         </span>
       </div>
@@ -1384,6 +1214,17 @@ function PortalRow({
         <span className="flex-1 text-[10px] truncate">
           {entry.portal_username ?? "—"}
         </span>
+        {entry.portal_username && (
+          <button
+            onClick={() =>
+              navigator.clipboard.writeText(entry.portal_username!)
+            }
+            className="shrink-0 text-muted-foreground hover:text-primary p-0.5 rounded"
+            aria-label="Copy username"
+          >
+            <Copy size={10} />
+          </button>
+        )}
         <button
           onClick={() =>
             onOpenNotes(entry.id, "username", entry.client_name, entry.provider)
@@ -1511,7 +1352,7 @@ function PortalRow({
       </div>
     </div>
   );
-}
+});
 
 // ─── Main Client Component ────────────────────────────────────────────────────
 export function PatientPortalClient(data: PortalPageData) {
@@ -1546,6 +1387,21 @@ export function PatientPortalClient(data: PortalPageData) {
   }>({ open: false, id: 0, field: "username", clientName: "", provider: null });
 
   const searchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Scroll containers — one each for the mobile card list and the desktop
+  // grid body. The refresh handler restores whichever is currently visible.
+  const desktopScrollRef = useRef<HTMLDivElement>(null);
+  const mobileScrollRef = useRef<HTMLDivElement>(null);
+
+  // Row virtualization for the desktop grid — keeps 500/1000 per_page snappy
+  // by only mounting rows visible in the scroll viewport (plus overscan).
+  // Rows are fixed-height after we forced single-line Provider truncation.
+  const ROW_H = 32;
+  const rowVirtualizer = useVirtualizer({
+    count: entries.length,
+    getScrollElement: () => desktopScrollRef.current,
+    estimateSize: () => ROW_H,
+    overscan: 10,
+  });
 
   const load = useCallback((f: PortalFilters) => {
     startTransition(async () => {
@@ -1555,6 +1411,29 @@ export function PatientPortalClient(data: PortalPageData) {
       setTotalPages(r.total_pages);
     });
   }, []);
+
+  // Manual refresh — re-pulls the current view (active filters / sort / page)
+  // and restores scroll position so the user stays where they were. Bypasses
+  // startTransition so we can await the fetch and restore on next frame.
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = useCallback(async () => {
+    const dTop = desktopScrollRef.current?.scrollTop ?? 0;
+    const mTop = mobileScrollRef.current?.scrollTop ?? 0;
+    setRefreshing(true);
+    try {
+      const r = await getPortalEntries(filters);
+      setEntries(r.entries);
+      setTotal(r.total);
+      setTotalPages(r.total_pages);
+    } finally {
+      setRefreshing(false);
+      requestAnimationFrame(() => {
+        if (desktopScrollRef.current)
+          desktopScrollRef.current.scrollTop = dTop;
+        if (mobileScrollRef.current) mobileScrollRef.current.scrollTop = mTop;
+      });
+    }
+  }, [filters]);
 
   // Initial load
   useEffect(() => {
@@ -1573,7 +1452,9 @@ export function PatientPortalClient(data: PortalPageData) {
     load(next);
   };
 
-  const handleDelete = async (id: number) => {
+  // Stable handlers — passed to memoized PortalRow / PortalMobileCard.
+  // Inline arrow fns would create a new ref every render, defeating memo().
+  const handleDelete = useCallback(async (id: number) => {
     if (!confirm("Delete this portal entry?")) return;
     const r = await deletePortalEntry(id);
     if (r.success) {
@@ -1581,7 +1462,29 @@ export function PatientPortalClient(data: PortalPageData) {
       setTotal((t) => t - 1);
       setStats((s) => ({ ...s, total: s.total - 1 }));
     }
-  };
+  }, []);
+
+  const handleEdit = useCallback((entry: PortalEntry) => {
+    setEditEntry(entry);
+  }, []);
+
+  const handleOpenNotes = useCallback(
+    (
+      id: number,
+      field: "username" | "password" | "approved" | "got_mr",
+      clientName: string,
+      provider: string | null,
+    ) => {
+      setNotesState({
+        open: true,
+        id,
+        field,
+        clientName,
+        provider,
+      });
+    },
+    [],
+  );
 
   const curPage = filters.page ?? 1;
   const perPage = filters.per_page as number;
@@ -1719,6 +1622,23 @@ export function PatientPortalClient(data: PortalPageData) {
 
             {/* Right-side actions */}
             <div className="ml-auto flex items-center gap-2 flex-wrap">
+              {/* Refresh — refetches with current filters/sort/page and
+                  restores scroll position so the user stays put. Class set
+                  mirrors the medical-records refresh button exactly. */}
+              <button
+                onClick={handleRefresh}
+                disabled={refreshing}
+                title="Refresh table data without losing scroll, filters, or sort"
+                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border font-semibold transition-colors bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100 hover:border-sky-300 dark:bg-sky-950/30 dark:text-sky-300 dark:border-sky-800 dark:hover:bg-sky-950/50 dark:hover:border-sky-700 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                <RefreshCw
+                  size={12}
+                  className={cn(refreshing && "animate-spin")}
+                />
+                <span className="hidden sm:inline">
+                  {refreshing ? "Refreshing…" : "Refresh"}
+                </span>
+              </button>
               <button
                 onClick={() => setShowActivity(true)}
                 className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground transition-colors"
@@ -1745,7 +1665,10 @@ export function PatientPortalClient(data: PortalPageData) {
             </div>
           </div>
           {/* ── Mobile: card list (hidden on sm+) ─────────────────────────── */}
-          <div className="block sm:hidden flex-1 overflow-y-auto min-h-0">
+          <div
+            ref={mobileScrollRef}
+            className="block sm:hidden flex-1 overflow-y-auto min-h-0"
+          >
             {isPending && (
               <div className="flex items-center justify-center py-12">
                 <Loader2 size={24} className="animate-spin text-primary" />
@@ -1761,17 +1684,9 @@ export function PatientPortalClient(data: PortalPageData) {
                   key={e.id}
                   entry={e}
                   permissions={data.permissions}
-                  onEdit={(entry) => setEditEntry(entry)}
+                  onEdit={handleEdit}
                   onDelete={handleDelete}
-                  onOpenNotes={(id, field, cn, prov) =>
-                    setNotesState({
-                      open: true,
-                      id,
-                      field,
-                      clientName: cn,
-                      provider: prov,
-                    })
-                  }
+                  onOpenNotes={handleOpenNotes}
                 />
               ))
             )}
@@ -1801,39 +1716,60 @@ export function PatientPortalClient(data: PortalPageData) {
               </div>
             </div>
 
-            {/* Scrollable body */}
-            <div className="flex-1 overflow-y-auto overflow-x-auto min-h-0 relative">
+            {/* Scrollable body — virtualized: only the rows visible in the
+                viewport (plus a small overscan buffer) are mounted, so the
+                page stays snappy even at 1000 entries per page. */}
+            <div
+              ref={desktopScrollRef}
+              className="flex-1 overflow-y-auto overflow-x-auto min-h-0 relative"
+            >
               {isPending && (
                 <div className="absolute inset-0 bg-background/70 flex items-center justify-center z-10">
                   <Loader2 size={28} className="animate-spin text-primary" />
                 </div>
               )}
-              <div style={{ minWidth: PORTAL_MIN_W }}>
-                {!isPending && entries.length === 0 ? (
-                  <div className="text-center py-16 text-sm text-muted-foreground">
-                    No entries found.
-                  </div>
-                ) : (
-                  entries.map((e) => (
-                    <PortalRow
-                      key={e.id}
-                      entry={e}
-                      permissions={data.permissions}
-                      onDelete={handleDelete}
-                      onEdit={(entry) => setEditEntry(entry)}
-                      onOpenNotes={(id, field, cn, prov) =>
-                        setNotesState({
-                          open: true,
-                          id,
-                          field,
-                          clientName: cn,
-                          provider: prov,
-                        })
-                      }
-                    />
-                  ))
-                )}
-              </div>
+              {!isPending && entries.length === 0 ? (
+                <div
+                  className="text-center py-16 text-sm text-muted-foreground"
+                  style={{ minWidth: PORTAL_MIN_W }}
+                >
+                  No entries found.
+                </div>
+              ) : (
+                <div
+                  style={{
+                    minWidth: PORTAL_MIN_W,
+                    height: rowVirtualizer.getTotalSize(),
+                    position: "relative",
+                  }}
+                >
+                  {rowVirtualizer.getVirtualItems().map((vRow) => {
+                    const e = entries[vRow.index];
+                    if (!e) return null;
+                    return (
+                      <div
+                        key={e.id}
+                        style={{
+                          position: "absolute",
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          transform: `translateY(${vRow.start}px)`,
+                          minWidth: PORTAL_MIN_W,
+                        }}
+                      >
+                        <PortalRow
+                          entry={e}
+                          permissions={data.permissions}
+                          onDelete={handleDelete}
+                          onEdit={handleEdit}
+                          onOpenNotes={handleOpenNotes}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>{" "}
           {/* end sm:contents */}
@@ -1852,9 +1788,11 @@ export function PatientPortalClient(data: PortalPageData) {
                 }
                 className="text-xs px-2 py-1 rounded-lg border border-border bg-card text-foreground cursor-pointer"
               >
-                <option value={25}>25/page</option>
-                <option value={50}>50/page</option>
-                <option value={100}>100/page</option>
+                {[25, 50, 100, 200, 500, 1000].map((s) => (
+                  <option key={s} value={s}>
+                    {s} / page
+                  </option>
+                ))}
               </select>
               <button
                 disabled={curPage <= 1 || isPending}
@@ -1907,10 +1845,13 @@ export function PatientPortalClient(data: PortalPageData) {
         onClose={() => setNotesState((p) => ({ ...p, open: false }))}
       />
 
-      <ActivityLogModal
-        open={showActivity}
-        onClose={() => setShowActivity(false)}
-      />
+      {showActivity && (
+        <ActivityLogModal
+          title="📋 Patient Portal Activity Log"
+          scopedActions={PORTAL_ACTIONS}
+          onClose={() => setShowActivity(false)}
+        />
+      )}
     </>
   );
 }

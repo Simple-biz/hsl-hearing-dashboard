@@ -8,6 +8,7 @@ import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "./theme-toggle";
+import { FontSizeButton } from "./font-size-button";
 import { useNotifications } from "@/context/notification-context";
 
 interface AppHeaderProps {
@@ -194,6 +195,7 @@ export function AppHeader({ title, subtitle, actions }: AppHeaderProps) {
 
         {/* Page-specific actions */}
         {actions}
+        <FontSizeButton />
         <ThemeToggle />
       </div>
     </header>

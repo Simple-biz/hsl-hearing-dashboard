@@ -8,7 +8,6 @@ import {
   ChevronRight,
   Loader2,
   FileText,
-  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ModalShell } from "@/components/modals/modal-shell";
@@ -305,25 +304,38 @@ function HearingRow({
         )}
       </div>
 
-      {/* Credited */}
+      {/* Credited — 3-state (— / ✓ / ✗) matching the main Medical Records
+          table. null = unverified, true = credited, false = not credited. */}
       <div className="text-center">
         {permissions.canEditCredited ? (
-          <input
-            type="checkbox"
-            checked={h.credited}
-            className="w-4 h-4 cursor-pointer accent-blue-500"
-            onChange={(e) => onUpdate(h.id, "credited", e.target.checked)}
-          />
-        ) : (
-          <span
-            className={
-              h.credited
-                ? "text-blue-500 font-bold"
-                : "text-muted-foreground/40"
-            }
+          <select
+            value={h.credited === null ? "" : h.credited ? "true" : "false"}
+            onChange={(e) => {
+              const v = e.target.value;
+              const next: boolean | null = v === "" ? null : v === "true";
+              onUpdate(h.id, "credited", next);
+            }}
+            className={cn(
+              "text-xs px-1.5 py-0.5 rounded border cursor-pointer font-medium",
+              h.credited === true &&
+                "bg-emerald-100 border-emerald-300 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300",
+              h.credited === false &&
+                "bg-red-100 border-red-300 text-red-700 dark:bg-red-900/30 dark:text-red-300",
+              h.credited === null &&
+                "bg-card border-border text-muted-foreground",
+            )}
+            aria-label="Credited status"
           >
-            {h.credited ? "✓" : "—"}
-          </span>
+            <option value="">—</option>
+            <option value="true">✓</option>
+            <option value="false">✗</option>
+          </select>
+        ) : h.credited === true ? (
+          <span className="text-emerald-600 font-bold">✓</span>
+        ) : h.credited === false ? (
+          <span className="text-red-500 font-bold">✗</span>
+        ) : (
+          <span className="text-muted-foreground/40">—</span>
         )}
       </div>
 
@@ -570,7 +582,7 @@ export function HearingsModal({
         updateHearingDecisionStatus(id, v as string),
       mr_team: (v) => updateMrTeam(id, v as number | null),
       task_assigned: (v) => toggleTaskAssigned(id, v as boolean),
-      credited: (v) => toggleCredited(id, v as boolean),
+      credited: (v) => toggleCredited(id, v as boolean | null),
       manner_of_appearance: (v) => updateMoa(id, v as string),
       five_day_notice: (v) => toggleFiveDayNotice(id, v as boolean),
     };
