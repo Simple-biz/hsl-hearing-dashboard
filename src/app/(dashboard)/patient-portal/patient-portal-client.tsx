@@ -21,6 +21,7 @@ import {
   Pencil,
   Check,
   StickyNote,
+  RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -1372,6 +1373,10 @@ export function PatientPortalClient(data: PortalPageData) {
   }>({ open: false, id: 0, field: "username", clientName: "", provider: null });
 
   const searchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Scroll containers — one each for the mobile card list and the desktop
+  // grid body. The refresh handler restores whichever is currently visible.
+  const desktopScrollRef = useRef<HTMLDivElement>(null);
+  const mobileScrollRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback((f: PortalFilters) => {
     startTransition(async () => {
@@ -1381,6 +1386,29 @@ export function PatientPortalClient(data: PortalPageData) {
       setTotalPages(r.total_pages);
     });
   }, []);
+
+  // Manual refresh — re-pulls the current view (active filters / sort / page)
+  // and restores scroll position so the user stays where they were. Bypasses
+  // startTransition so we can await the fetch and restore on next frame.
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = useCallback(async () => {
+    const dTop = desktopScrollRef.current?.scrollTop ?? 0;
+    const mTop = mobileScrollRef.current?.scrollTop ?? 0;
+    setRefreshing(true);
+    try {
+      const r = await getPortalEntries(filters);
+      setEntries(r.entries);
+      setTotal(r.total);
+      setTotalPages(r.total_pages);
+    } finally {
+      setRefreshing(false);
+      requestAnimationFrame(() => {
+        if (desktopScrollRef.current)
+          desktopScrollRef.current.scrollTop = dTop;
+        if (mobileScrollRef.current) mobileScrollRef.current.scrollTop = mTop;
+      });
+    }
+  }, [filters]);
 
   // Initial load
   useEffect(() => {
@@ -1545,6 +1573,23 @@ export function PatientPortalClient(data: PortalPageData) {
 
             {/* Right-side actions */}
             <div className="ml-auto flex items-center gap-2 flex-wrap">
+              {/* Refresh — refetches with current filters/sort/page and
+                  restores scroll position so the user stays put. Class set
+                  mirrors the medical-records refresh button exactly. */}
+              <button
+                onClick={handleRefresh}
+                disabled={refreshing}
+                title="Refresh table data without losing scroll, filters, or sort"
+                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border font-semibold transition-colors bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100 hover:border-sky-300 dark:bg-sky-950/30 dark:text-sky-300 dark:border-sky-800 dark:hover:bg-sky-950/50 dark:hover:border-sky-700 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                <RefreshCw
+                  size={12}
+                  className={cn(refreshing && "animate-spin")}
+                />
+                <span className="hidden sm:inline">
+                  {refreshing ? "Refreshing…" : "Refresh"}
+                </span>
+              </button>
               <button
                 onClick={() => setShowActivity(true)}
                 className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground transition-colors"
@@ -1571,7 +1616,10 @@ export function PatientPortalClient(data: PortalPageData) {
             </div>
           </div>
           {/* ── Mobile: card list (hidden on sm+) ─────────────────────────── */}
-          <div className="block sm:hidden flex-1 overflow-y-auto min-h-0">
+          <div
+            ref={mobileScrollRef}
+            className="block sm:hidden flex-1 overflow-y-auto min-h-0"
+          >
             {isPending && (
               <div className="flex items-center justify-center py-12">
                 <Loader2 size={24} className="animate-spin text-primary" />
@@ -1628,7 +1676,10 @@ export function PatientPortalClient(data: PortalPageData) {
             </div>
 
             {/* Scrollable body */}
-            <div className="flex-1 overflow-y-auto overflow-x-auto min-h-0 relative">
+            <div
+              ref={desktopScrollRef}
+              className="flex-1 overflow-y-auto overflow-x-auto min-h-0 relative"
+            >
               {isPending && (
                 <div className="absolute inset-0 bg-background/70 flex items-center justify-center z-10">
                   <Loader2 size={28} className="animate-spin text-primary" />
