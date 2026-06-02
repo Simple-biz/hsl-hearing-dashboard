@@ -1,7 +1,17 @@
 "use client";
 
-import { useState, useEffect, useTransition } from "react";
-import { ChevronLeft, ChevronRight, Loader2, ClipboardList } from "lucide-react";
+import { useState, useEffect, useTransition, useCallback, useRef } from "react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  ClipboardList,
+  Check,
+  X,
+  RefreshCw,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import { ClaimantCopyButton } from "@/components/ui/claimant-copy-button";
 import { ModalShell } from "@/components/modals/modal-shell";
 import { PostHrgReviewModal } from "@/components/modals/post-hrg-review-modal";
 import {
@@ -13,7 +23,6 @@ import type {
   MrTeam,
   HearingFilters,
 } from "@/app/(dashboard)/medical-records/action";
-import { cn } from "@/lib/utils";
 
 interface Props {
   open: boolean;
@@ -103,6 +112,10 @@ export function PostHrgModal({ open, onClose, teams, mrStatusOptions, hearingId,
     sort_order: "desc", page: 1, per_page: 50,
   });
 
+  // Scroll container for the table body — used to restore scroll position
+  // after manual refresh.
+  const scrollRef = useRef<HTMLDivElement>(null);
+
   function load(f: HearingFilters) {
     startTransition(async () => {
       const res = await getPostHrgHearings(f);
@@ -116,6 +129,26 @@ export function PostHrgModal({ open, onClose, teams, mrStatusOptions, hearingId,
       }
     });
   }
+
+  // Manual refresh — refetches with current filters/sort/page and restores
+  // scroll position so the user stays put. Bypasses startTransition so we
+  // can await the fetch.
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = useCallback(async () => {
+    const top = scrollRef.current?.scrollTop ?? 0;
+    setRefreshing(true);
+    try {
+      const res = await getPostHrgHearings(filters);
+      setHearings(res.hearings);
+      setTotal(res.total);
+      setTotalPages(res.total_pages);
+    } finally {
+      setRefreshing(false);
+      requestAnimationFrame(() => {
+        if (scrollRef.current) scrollRef.current.scrollTop = top;
+      });
+    }
+  }, [filters]);
 
   useEffect(() => {
     if (open) load(filters);
@@ -174,11 +207,24 @@ export function PostHrgModal({ open, onClose, teams, mrStatusOptions, hearingId,
           <option value="">All MR Statuses</option>
           {mrStatusOptions.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
+        {/* Refresh — refetches with current filters/sort/page and restores
+            scroll position. Same class set as the other refresh buttons. */}
+        <button
+          onClick={handleRefresh}
+          disabled={refreshing}
+          title="Refresh table data without losing scroll, filters, or sort"
+          className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border font-semibold transition-colors bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100 hover:border-sky-300 dark:bg-sky-950/30 dark:text-sky-300 dark:border-sky-800 dark:hover:bg-sky-950/50 dark:hover:border-sky-700 disabled:opacity-60 disabled:cursor-not-allowed"
+        >
+          <RefreshCw size={12} className={cn(refreshing && "animate-spin")} />
+          <span className="hidden sm:inline">
+            {refreshing ? "Refreshing…" : "Refresh"}
+          </span>
+        </button>
         <span className="ml-auto text-xs text-muted-foreground self-center">{total} hearing{total !== 1 ? "s" : ""}</span>
       </div>
 
       {/* Table */}
-      <div className="flex-1 overflow-auto min-h-0">
+      <div ref={scrollRef} className="flex-1 overflow-auto min-h-0">
         {isPending ? (
           <div className="flex items-center justify-center py-20">
             <Loader2 size={24} className="animate-spin text-primary" />
@@ -195,18 +241,29 @@ export function PostHrgModal({ open, onClose, teams, mrStatusOptions, hearingId,
                 <th className="px-3 py-2.5 text-left whitespace-nowrap">Rep</th>
                 <th className="px-3 py-2.5 text-left whitespace-nowrap">MR Team</th>
                 <th className="px-3 py-2.5 text-left whitespace-nowrap">MR Status</th>
+                <th className="px-3 py-2.5 text-center whitespace-nowrap">Credited</th>
                 <th className="px-3 py-2.5 text-left whitespace-nowrap">Status</th>
                 <th className="px-3 py-2.5 text-center whitespace-nowrap">MOA</th>
                 <th className="px-3 py-2.5 text-center whitespace-nowrap">5-Day</th>
                 <th className="px-3 py-2.5 text-center whitespace-nowrap">Post HRG</th>
-                <th className="px-3 py-2.5 text-center whitespace-nowrap">Link</th>
               </tr>
             </thead>
             <tbody>
-              {hearings.map((h) => (
+              {hearings.map((h) => {
+                // Match the row tint scheme used in the main MR table.
+                const creditedRowCls =
+                  h.credited === true
+                    ? "bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-500/20 dark:hover:bg-emerald-500/30"
+                    : h.credited === false
+                      ? "bg-rose-50 hover:bg-rose-100 dark:bg-rose-500/20 dark:hover:bg-rose-500/30"
+                      : "hover:bg-muted/30";
+                return (
                 <tr
                   key={h.id}
-                  className="border-b border-border/40 transition-colors hover:bg-muted/30"
+                  className={cn(
+                    "border-b border-border/40 transition-colors",
+                    creditedRowCls,
+                  )}
                 >
                   {/* Hearing Date */}
                   <td className="px-3 py-2 whitespace-nowrap font-medium text-foreground">
@@ -216,9 +273,49 @@ export function PostHrgModal({ open, onClose, teams, mrStatusOptions, hearingId,
                   <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
                     {fmtTime(h.converted_time_est)}
                   </td>
-                  {/* Claimant */}
-                  <td className="px-3 py-2">
-                    <div className="font-semibold text-foreground">{h.claimant}</div>
+                  {/* Claimant — unified ClaimantCell pattern: hyperlinked
+                      name (MyCase / claimant_link) + copy button, then
+                      claim_type · Chronicle below. Matches the dashboard,
+                      medical-records, post-hrg-development, and rep-docs
+                      pages so the layout is globally consistent. */}
+                  <td className="px-3 py-2 min-w-0">
+                    <div className="flex items-center gap-1 min-w-0">
+                      {h.claimant_link ? (
+                        <a
+                          href={h.claimant_link}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="truncate text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+                        >
+                          {h.claimant}
+                        </a>
+                      ) : (
+                        <span className="truncate text-xs font-medium text-foreground">
+                          {h.claimant}
+                        </span>
+                      )}
+                      <ClaimantCopyButton
+                        name={h.claimant}
+                        link={h.claimant_link}
+                      />
+                    </div>
+                    {(h.claim_type || h.chronicle_link) && (
+                      <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-muted-foreground">
+                        {h.claim_type && (
+                          <span className="truncate">{h.claim_type}</span>
+                        )}
+                        {h.chronicle_link && (
+                          <a
+                            href={h.chronicle_link}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-medium text-violet-600 hover:underline dark:text-violet-400"
+                          >
+                            Chronicle
+                          </a>
+                        )}
+                      </div>
+                    )}
                   </td>
                   {/* Rep */}
                   <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">
@@ -242,6 +339,27 @@ export function PostHrgModal({ open, onClose, teams, mrStatusOptions, hearingId,
                         {h.medical_record_status}
                       </span>
                     ) : <span className="text-muted-foreground/50">—</span>}
+                  </td>
+                  {/* Credited — read-only mirror of the main MR table. */}
+                  <td className="px-3 py-2 text-center">
+                    {h.credited === true ? (
+                      <Check
+                        className="inline h-4 w-4 text-emerald-600"
+                        aria-label="Credited"
+                      />
+                    ) : h.credited === false ? (
+                      <X
+                        className="inline h-4 w-4 text-red-500"
+                        aria-label="Not credited"
+                      />
+                    ) : (
+                      <span
+                        className="text-muted-foreground/40"
+                        aria-label="Unverified"
+                      >
+                        —
+                      </span>
+                    )}
                   </td>
                   {/* Hearing Decision Status */}
                   <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">
@@ -295,21 +413,9 @@ export function PostHrgModal({ open, onClose, teams, mrStatusOptions, hearingId,
                       )}
                     </button>
                   </td>
-                  {/* Worksheet link */}
-                  <td className="px-3 py-2 text-center whitespace-nowrap">
-                    {h.medical_record_link ? (
-                      <a
-                        href={h.medical_record_link}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-[9px] bg-blue-600 text-white px-1.5 py-0.5 rounded hover:bg-blue-700"
-                      >
-                        📋
-                      </a>
-                    ) : <span className="text-[10px] text-muted-foreground hover:text-foreground cursor-default">+ Link</span>}
-                  </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         )}
