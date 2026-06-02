@@ -789,8 +789,13 @@ export async function toggleFiveDayNotice(
 ): Promise<{ success: boolean }> {
   const { requireFieldAccess } = await import("@/lib/field-access");
   await requireFieldAccess("medical_records", "five_day_notice");
+  // Stamp the companion _at column on tick, clear it on untick — same
+  // pattern the dashboard uses (CHECKBOX_STAMP_FIELDS in actions.tsx).
   await db.query(
-    `UPDATE hearings SET five_day_notice = $1 WHERE id = $2`,
+    `UPDATE hearings
+        SET five_day_notice = $1,
+            five_day_notice_at = CASE WHEN $1 THEN NOW() ELSE NULL END
+      WHERE id = $2`,
     [value, hearingId],
   );
   await logActivity("five_day_notice_updated", `5-Day Notice set to ${value} for hearing #${hearingId}`);
@@ -1281,7 +1286,7 @@ export async function getPostHrgHearings(
       `SELECT
          h.id, h.claimant, h.hearing_date::text, h.converted_time_est,
          h.medical_record_status, h.hearing_decision_status,
-         h.manner_of_appearance, h.five_day_notice, h.task_assigned,
+         h.manner_of_appearance, h.five_day_notice, h.five_day_notice_at::text, h.task_assigned,
          h.credited, h.post_hrg_review, h.post_hrg_deadline, h.post_hrg_notes,
          h.medical_record_link, h.claimant_link, h.chronicle_link, h.claim_type, h.mr_team_id,
          r.name       AS rep_name,

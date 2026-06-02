@@ -97,6 +97,19 @@ function teamHex(color: string | null | undefined): string {
   return TEAM_HEX[color] ?? color;
 }
 
+// Compact stamp for the workflow-checkbox completion date — "May 7, 26".
+// Matches fmtCheckStamp in dashboard-client + representative-docs.
+function fmtCheckStamp(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "2-digit",
+  });
+}
+
 function fmtTime(raw: string | null | undefined): string {
   if (!raw) return "";
   const [hStr, mStr] = raw.split(":");
@@ -1577,8 +1590,9 @@ function HearingRow({
         </span>
       )}
 
-      {/* 5-Day — checkbox centered */}
-      <div className="flex justify-center">
+      {/* 5-Day — checkbox with completion-date stamp below when ticked.
+          Matches the dashboard's InlineCheck for workflow checkboxes. */}
+      <div className="flex flex-col items-center justify-center gap-0.5 leading-none">
         <input
           type="checkbox"
           checked={h.five_day_notice}
@@ -1586,6 +1600,11 @@ function HearingRow({
           className="w-3.5 h-3.5 accent-emerald-500 cursor-pointer disabled:cursor-default"
           onChange={(e) => onUpdate(h.id, "five_day_notice", e.target.checked)}
         />
+        {h.five_day_notice && h.five_day_notice_at && (
+          <span className="text-[9px] leading-none text-muted-foreground tabular-nums">
+            {fmtCheckStamp(h.five_day_notice_at)}
+          </span>
+        )}
       </div>
 
       {/* Post HRG — deadline-aware badge (matches dashboard / PHD pages) */}
@@ -1801,6 +1820,17 @@ export function MrPivotClient({ userRole, userName, ...data }: Props) {
                 mr_team_color: team?.team_color ?? null,
                 mr_team_type: team?.team_type ?? null,
               }
+            : h,
+        ),
+      );
+    } else if (field === "five_day_notice") {
+      // Mirror the server's NOW() stamp so the date shows immediately.
+      // The next refetch corrects the exact ms.
+      const stamp = value ? new Date().toISOString() : null;
+      setHearings((prev) =>
+        prev.map((h) =>
+          h.id === id
+            ? { ...h, five_day_notice: value as boolean, five_day_notice_at: stamp }
             : h,
         ),
       );

@@ -65,6 +65,19 @@ function safeDate(d: string | Date | null | undefined): Date | null {
   return isNaN(parsed.getTime()) ? null : parsed;
 }
 
+// Compact stamp for the workflow-checkbox completion date — "May 7, 26".
+// Matches fmtCheckStamp in dashboard-client + representative-docs.
+function fmtCheckStamp(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "2-digit",
+  });
+}
+
 function fmtDate(d: string | Date | null) {
   if (!d) return "—";
   // If it's already a Date object, use it directly
@@ -373,18 +386,42 @@ export function PostHrgModal({ open, onClose, teams, mrStatusOptions, hearingId,
                       </span>
                     ) : <span className="text-muted-foreground/50">—</span>}
                   </td>
-                  {/* 5-Day */}
+                  {/* 5-Day — checkbox with completion-date stamp below
+                      when ticked. Same pattern as the dashboard's
+                      InlineCheck for workflow checkboxes. */}
                   <td className="px-3 py-2 text-center">
-                    <input
-                      type="checkbox"
-                      checked={!!h.five_day_notice}
-                      className="w-3.5 h-3.5 accent-emerald-500 cursor-pointer"
-                      onChange={async (e) => {
-                        const val = e.target.checked;
-                        setHearings((prev) => prev.map((r) => r.id === h.id ? { ...r, five_day_notice: val } : r));
-                        await toggleFiveDayNotice(h.id, val);
-                      }}
-                    />
+                    <div className="flex flex-col items-center justify-center gap-0.5 leading-none">
+                      <input
+                        type="checkbox"
+                        checked={!!h.five_day_notice}
+                        className="w-3.5 h-3.5 accent-emerald-500 cursor-pointer"
+                        onChange={async (e) => {
+                          const val = e.target.checked;
+                          // Optimistic — mirror the server's NOW() stamp so
+                          // the date shows immediately on tick / clears on
+                          // untick. The next refetch corrects the exact ms.
+                          setHearings((prev) =>
+                            prev.map((r) =>
+                              r.id === h.id
+                                ? {
+                                    ...r,
+                                    five_day_notice: val,
+                                    five_day_notice_at: val
+                                      ? new Date().toISOString()
+                                      : null,
+                                  }
+                                : r,
+                            ),
+                          );
+                          await toggleFiveDayNotice(h.id, val);
+                        }}
+                      />
+                      {h.five_day_notice && h.five_day_notice_at && (
+                        <span className="text-[9px] leading-none text-muted-foreground tabular-nums">
+                          {fmtCheckStamp(h.five_day_notice_at)}
+                        </span>
+                      )}
+                    </div>
                   </td>
                   {/* Post HRG — opens the Post HRG Review modal */}
                   <td className="px-3 py-2">

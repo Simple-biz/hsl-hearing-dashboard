@@ -154,6 +154,10 @@ export interface Hearing {
   manner_of_appearance: string | null;
   task_assigned: boolean;
   five_day_notice: boolean;
+  /** ISO timestamp stamped when five_day_notice was toggled to true;
+   *  cleared (null) when toggled back to false. Mirrors the dashboard's
+   *  CHECKBOX_STAMP_FIELDS pattern. */
+  five_day_notice_at: string | null;
   /** null = unverified, true = credited, false = verified-and-not-credited. */
   credited: boolean | null;
   post_hrg_review: string | null;
