@@ -195,3 +195,22 @@ body {
 .dark [data-sidebar] ::-webkit-scrollbar-thumb {
   background: var(--color-zinc-600);
 }
+
+/* ─── User-adjustable UI scale ─────────────────────────────────────────
+ * Driven by data-font-size on <html>. The header FontSizeButton writes
+ * this attribute (with localStorage persistence) and a small pre-
+ * hydration script in app/layout.tsx applies it before paint to
+ * prevent FOUC.
+ *
+ * `zoom` is used instead of font-size scaling because this app has many
+ * arbitrary pixel sizes (text-[10px], fixed row heights, etc.) — zoom
+ * scales them all proportionally. Default (md) = no zoom.
+ *
+ * Zoom is applied to <html> (NOT <body>) so that `position: fixed`
+ * modal overlays (which use `inset-0`) still align to the real viewport.
+ * Putting zoom on <body> caused modals to size themselves to the
+ * zoomed body coordinate space and overflow the screen.
+ */
+html[data-font-size="sm"] { zoom: 0.875; }
+html[data-font-size="lg"] { zoom: 1.125; }
+html[data-font-size="xl"] { zoom: 1.25; }
