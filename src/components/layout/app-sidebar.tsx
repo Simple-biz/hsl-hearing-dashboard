@@ -53,8 +53,8 @@ interface NavItem {
   label: string;
   href: string;
   icon: React.ElementType;
-  page: string; // key in PAGE_ACCESS — ignored when external is true
-  /** External URL — opens in a new tab and skips the PAGE_ACCESS gate. */
+  page: string; // key in PAGE_ACCESS
+  /** External URL — renders as <a target="_blank">. Still gated by PAGE_ACCESS. */
   external?: boolean;
 }
 
@@ -211,10 +211,11 @@ export function AppSidebar({
       {/* ── Content: Nav groups ── */}
       <SidebarContent>
         {NAV_GROUPS.map((group) => {
-          // External items bypass the PAGE_ACCESS gate — they live outside
-          // this app and have their own auth.
-          const visibleItems = group.items.filter((item) =>
-            item.external ? true : pageAccess[item.page] === true,
+          // Filter items by effective page access (role default + overrides).
+          // External items go through the same gate — `external` only changes
+          // how the link is rendered, not who can see it.
+          const visibleItems = group.items.filter(
+            (item) => pageAccess[item.page] === true,
           );
           if (visibleItems.length === 0) return null;
 

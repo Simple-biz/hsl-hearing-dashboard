@@ -18,7 +18,8 @@ export type PageAccessKey =
   | "mr_reports"
   | "import_rfc"
   | "representative_docs"
-  | "post_hrg_development";
+  | "post_hrg_development"
+  | "pre_hearing_mr";
 
 export interface PageAccessEntry {
   /** Must match the key used in PAGE_ACCESS / page route guards. */
@@ -44,6 +45,7 @@ export const PAGE_ACCESS_CATALOG: PageAccessEntry[] = [
   { key: "medical_records", label: "Medical Records (MR Pivot)" },
   { key: "post_hrg_development", label: "Post HRG Development" },
   { key: "representative_docs", label: "Representative Docs" },
+  { key: "pre_hearing_mr", label: "Pre Hearing MR (external)" },
   // Hidden from the admin UI for now — allowlist behavior is unchanged
   // (still user-1/7 only); pending confirmation with the MR Reports /
   // Import RFC users. Listed here so allowlist enforcement keeps working.
