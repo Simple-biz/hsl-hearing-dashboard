@@ -15,7 +15,10 @@ export type {
   ClaimantSearchResult,
 } from "../patient-portal/types";
 
-import { derivePortalPermissions } from "../patient-portal/types";
+import {
+  derivePortalPermissions,
+  PORTAL_ACTIONS,
+} from "../patient-portal/types";
 import type {
   PortalUserRole,
   PortalEntry,
@@ -608,14 +611,6 @@ export async function addPortalNote(
 
 // ─── Activity Log ─────────────────────────────────────────────────────────────
 
-const PORTAL_ACTIONS = [
-  "portal_entry_created",
-  "portal_field_updated",
-  "portal_entry_deleted",
-  "portal_bulk_import",
-  "portal_note_added",
-  "portal_note_deleted",
-];
 
 export async function getPortalActivityLog(filters: {
   page?: number;

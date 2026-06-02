@@ -1,6 +1,16 @@
 // types.ts — interfaces and sync helpers for the Patient Portal page.
 // Kept separate from action.ts so "use server" only exports async functions.
 
+/** All action keys this page emits — used to scope the activity log modal. */
+export const PORTAL_ACTIONS = [
+  "portal_entry_created",
+  "portal_field_updated",
+  "portal_entry_deleted",
+  "portal_bulk_import",
+  "portal_note_added",
+  "portal_note_deleted",
+];
+
 export type PortalUserRole =
   | "system_admin"
   | "admin"

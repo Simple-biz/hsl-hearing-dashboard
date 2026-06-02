@@ -17,8 +17,6 @@ import {
   ClipboardList,
   Loader2,
   X,
-  ChevronLeft,
-  ChevronRight,
   Copy,
   Pencil,
   Check,
@@ -33,8 +31,6 @@ import {
   deletePortalEntry,
   getPortalNotes,
   addPortalNote,
-  getPortalActivityLog,
-  getPortalActivityUsers,
   searchClaimantsForPortal,
 } from "./action";
 import type {
@@ -43,10 +39,11 @@ import type {
   PortalFilters,
   PortalStats,
   PortalNote,
-  PortalActivityEntry,
   MrSpecialist,
   ClaimantSearchResult,
 } from "./action";
+import { PORTAL_ACTIONS } from "./types";
+import { ActivityLogModal } from "@/components/modals";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -775,188 +772,6 @@ function AddEditModal({
   );
 }
 
-// ─── Activity Log Modal ───────────────────────────────────────────────────────
-
-function ActivityLogModal({
-  open,
-  onClose,
-}: {
-  open: boolean;
-  onClose: () => void;
-}) {
-  const [entries, setEntries] = useState<PortalActivityEntry[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [actLoading, startActTransition] = useTransition();
-  const [dateRange, setDateRange] = useState<
-    "all" | "today" | "week" | "month"
-  >("all");
-  const [userId, setUserId] = useState("");
-  const [users, setUsers] = useState<Array<{ id: number; full_name: string }>>(
-    [],
-  );
-  const totalPages = Math.max(1, Math.ceil(total / 50));
-
-  const load = useCallback((p: number, dr: string, uid: string) => {
-    startActTransition(async () => {
-      const r = await getPortalActivityLog({
-        page: p,
-        date_range: dr as "all",
-        user_id: uid || undefined,
-      });
-      setEntries(r.entries);
-      setTotal(r.total);
-    });
-  }, []);
-
-  useEffect(() => {
-    if (!open) return;
-    getPortalActivityUsers().then((u) => setUsers(u));
-    load(1, dateRange, userId);
-  }, [open, load]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  if (!open) return null;
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-2xl max-h-[80vh] flex flex-col rounded-xl border bg-card shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between border-b bg-muted/50 px-5 py-4 shrink-0">
-          <h2 className="text-sm font-semibold">
-            📋 Patient Portal Activity Log
-          </h2>
-          <button onClick={onClose} aria-label="Close activity log">
-            <X className="h-5 w-5 text-muted-foreground" />
-          </button>
-        </div>
-
-        {/* Filters */}
-        <div className="flex flex-wrap items-center gap-2 border-b px-5 py-2 shrink-0">
-          <select
-            value={dateRange}
-            onChange={(e) => {
-              const v = e.target.value as typeof dateRange;
-              setDateRange(v);
-              setPage(1);
-              load(1, v, userId);
-            }}
-            className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer"
-          >
-            <option value="all">All Time</option>
-            <option value="today">Today</option>
-            <option value="week">This Week</option>
-            <option value="month">This Month</option>
-          </select>
-          <select
-            value={userId}
-            onChange={(e) => {
-              setUserId(e.target.value);
-              setPage(1);
-              load(1, dateRange, e.target.value);
-            }}
-            className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer"
-          >
-            <option value="">All Users</option>
-            {users.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.full_name}
-              </option>
-            ))}
-          </select>
-          <span className="ml-auto text-xs text-muted-foreground">
-            {total} entries
-          </span>
-        </div>
-
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto px-5 py-3">
-          {actLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-            </div>
-          ) : entries.length === 0 ? (
-            <p className="text-center text-sm text-muted-foreground py-12">
-              No activity found.
-            </p>
-          ) : (
-            <div className="space-y-0.5">
-              {entries.map((e) => (
-                <div
-                  key={e.id}
-                  className="flex items-start gap-3 rounded px-2 py-2 hover:bg-muted/30"
-                >
-                  <span className="shrink-0 text-[9px] font-bold uppercase bg-blue-100 text-blue-700 rounded px-1.5 py-0.5 mt-0.5">
-                    {e.action.replace(/^portal_/, "").replace(/_/g, " ")}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs">{e.details}</p>
-                    <div className="flex gap-2 text-[10px] text-muted-foreground mt-0.5">
-                      <span>
-                        {new Date(e.created_at).toLocaleString("en-US", {
-                          month: "short",
-                          day: "numeric",
-                          hour: "numeric",
-                          minute: "2-digit",
-                        })}
-                      </span>
-                      {e.user_name && (
-                        <span>
-                          by{" "}
-                          <span className="font-medium text-foreground">
-                            {e.user_name}
-                          </span>
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Pagination footer */}
-        <div className="flex items-center justify-between border-t px-5 py-2.5 shrink-0">
-          <span className="text-xs text-muted-foreground">
-            Page {page} of {totalPages}
-          </span>
-          <div className="flex gap-1">
-            <button
-              disabled={page <= 1 || actLoading}
-              onClick={() => {
-                const p = page - 1;
-                setPage(p);
-                load(p, dateRange, userId);
-              }}
-              className="h-7 w-7 flex items-center justify-center rounded border disabled:opacity-40 hover:bg-muted"
-              aria-label="Previous page"
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
-            </button>
-            <button
-              disabled={page >= totalPages || actLoading}
-              onClick={() => {
-                const p = page + 1;
-                setPage(p);
-                load(p, dateRange, userId);
-              }}
-              className="h-7 w-7 flex items-center justify-center rounded border disabled:opacity-40 hover:bg-muted"
-              aria-label="Next page"
-            >
-              <ChevronRight className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ─── Mobile Card ─────────────────────────────────────────────────────────────
 // Shown on small screens instead of the wide data grid.
@@ -983,7 +798,7 @@ function PortalMobileCard({
   const specColor = entry.specialist_color;
 
   return (
-    <div className="border-b border-border/40 px-4 py-3 space-y-2 hover:bg-muted/20 transition-colors">
+    <div className="border-b border-border/40 px-4 py-3 space-y-2 hover:bg-muted/20 dark:hover:bg-muted/60 transition-colors">
       {/* Header row: client + actions */}
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
@@ -1321,7 +1136,7 @@ function PortalRow({
 
   return (
     <div
-      className="grid px-2 py-1.5 border-b border-border/40 hover:bg-muted/30 transition-colors text-[11px] items-center"
+      className="grid px-2 py-1.5 border-b border-border/40 hover:bg-muted/30 dark:hover:bg-muted/70 transition-colors text-[11px] items-center"
       style={{ gridTemplateColumns: PORTAL_GRID, minWidth: PORTAL_MIN_W }}
     >
       {/* Date */}
@@ -1384,6 +1199,17 @@ function PortalRow({
         <span className="flex-1 text-[10px] truncate">
           {entry.portal_username ?? "—"}
         </span>
+        {entry.portal_username && (
+          <button
+            onClick={() =>
+              navigator.clipboard.writeText(entry.portal_username!)
+            }
+            className="shrink-0 text-muted-foreground hover:text-primary p-0.5 rounded"
+            aria-label="Copy username"
+          >
+            <Copy size={10} />
+          </button>
+        )}
         <button
           onClick={() =>
             onOpenNotes(entry.id, "username", entry.client_name, entry.provider)
@@ -1907,10 +1733,13 @@ export function PatientPortalClient(data: PortalPageData) {
         onClose={() => setNotesState((p) => ({ ...p, open: false }))}
       />
 
-      <ActivityLogModal
-        open={showActivity}
-        onClose={() => setShowActivity(false)}
-      />
+      {showActivity && (
+        <ActivityLogModal
+          title="📋 Patient Portal Activity Log"
+          scopedActions={PORTAL_ACTIONS}
+          onClose={() => setShowActivity(false)}
+        />
+      )}
     </>
   );
 }
