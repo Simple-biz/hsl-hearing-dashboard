@@ -637,7 +637,7 @@ function AddEditModal({
                 disabled={!canAssignSpecialist}
                 title={
                   !canAssignSpecialist
-                    ? "Only Admin, Manager, MR Admin, or MR Lead can assign specialists"
+                    ? "Only Admin, Manager, MR Admin, MR Lead, or MR Agent can assign specialists"
                     : undefined
                 }
               >
