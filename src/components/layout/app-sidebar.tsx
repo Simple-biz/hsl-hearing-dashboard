@@ -8,6 +8,7 @@ import {
   FileUp,
   FileText,
   ClipboardList,
+  ClipboardPlus,
   FolderCheck,
   BarChart3,
   Users,
@@ -53,6 +54,8 @@ interface NavItem {
   href: string;
   icon: React.ElementType;
   page: string; // key in PAGE_ACCESS
+  /** External URL — renders as <a target="_blank">. Still gated by PAGE_ACCESS. */
+  external?: boolean;
 }
 
 interface NavGroup {
@@ -94,6 +97,13 @@ const NAV_GROUPS: NavGroup[] = [
         href: "/import-rfc",
         icon: FileUp,
         page: "import_rfc",
+      },
+      {
+        label: "Pre Hearing MR",
+        href: "https://pre-hearing-medical-records-manager.vercel.app/",
+        icon: ClipboardPlus,
+        page: "pre_hearing_mr",
+        external: true,
       },
     ],
   },
@@ -201,7 +211,9 @@ export function AppSidebar({
       {/* ── Content: Nav groups ── */}
       <SidebarContent>
         {NAV_GROUPS.map((group) => {
-          // Filter items by effective page access (role default + overrides)
+          // Filter items by effective page access (role default + overrides).
+          // External items go through the same gate — `external` only changes
+          // how the link is rendered, not who can see it.
           const visibleItems = group.items.filter(
             (item) => pageAccess[item.page] === true,
           );
@@ -215,8 +227,9 @@ export function AppSidebar({
                   {visibleItems.map((item) => {
                     const Icon = item.icon;
                     const isActive =
-                      pathname === item.href ||
-                      (item.href !== "/" && pathname.startsWith(item.href));
+                      !item.external &&
+                      (pathname === item.href ||
+                        (item.href !== "/" && pathname.startsWith(item.href)));
 
                     return (
                       <SidebarMenuItem key={item.href}>
@@ -225,10 +238,21 @@ export function AppSidebar({
                           isActive={isActive}
                           tooltip={item.label}
                         >
-                          <Link href={item.href}>
-                            <Icon />
-                            <span>{item.label}</span>
-                          </Link>
+                          {item.external ? (
+                            <a
+                              href={item.href}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              <Icon />
+                              <span>{item.label}</span>
+                            </a>
+                          ) : (
+                            <Link href={item.href}>
+                              <Icon />
+                              <span>{item.label}</span>
+                            </Link>
+                          )}
                         </SidebarMenuButton>
                       </SidebarMenuItem>
                     );

@@ -70,6 +70,14 @@ export const PAGE_ACCESS: Record<string, UserRole[]> = {
     "mr_agent",
     "mr_lead",
   ],
+  pre_hearing_mr: [
+    "system_admin",
+    "admin",
+    "manager",
+    "mr_admin",
+    "mr_agent",
+    "mr_lead",
+  ],
   rfc: ["system_admin", "admin", "manager", "mr_admin", "mr_agent", "mr_lead"],
   import_rfc: [
     "system_admin",
