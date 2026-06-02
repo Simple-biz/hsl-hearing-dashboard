@@ -394,13 +394,19 @@ export async function updatePortalEntry(
     if (proposed !== currentSpecialist) {
       const role = session.user.role ?? "";
       if (
-        !["system_admin", "admin", "manager", "mr_admin", "mr_lead"].includes(
-          role,
-        )
+        ![
+          "system_admin",
+          "admin",
+          "manager",
+          "mr_admin",
+          "mr_lead",
+          "mr_agent",
+        ].includes(role)
       ) {
         return {
           success: false,
-          message: "Only Admin or MR Admin can assign specialists",
+          message:
+            "Only Admin, Manager, MR Admin, MR Lead, or MR Agent can assign specialists",
         };
       }
     }
@@ -436,6 +442,37 @@ export async function updatePortalEntry(
       id,
     ],
   );
+
+  // If the MR specialist changed, emit a dedicated log entry so the activity
+  // log can show "MR Specialist Assigned" rather than a generic "Field Edit".
+  // Falls through to the generic update log too so multi-field saves still
+  // produce a complete trail.
+  if (nextSpecialist !== currentSpecialist) {
+    const lookup = async (sid: number | null): Promise<string | null> => {
+      if (!sid) return null;
+      const r = await db.query(
+        "SELECT name FROM mr_specialists WHERE id = $1",
+        [sid],
+      );
+      return (r.rows[0]?.name as string | undefined) ?? null;
+    };
+    const [prevName, nextName] = await Promise.all([
+      lookup(currentSpecialist),
+      lookup(nextSpecialist),
+    ]);
+    const claimant = input.client_name.trim();
+    let msg: string;
+    if (nextName && !prevName) {
+      msg = `Assigned MR Specialist '${nextName}' to: ${claimant}`;
+    } else if (!nextName && prevName) {
+      msg = `Unassigned MR Specialist (was '${prevName}') for: ${claimant}`;
+    } else if (nextName && prevName) {
+      msg = `Reassigned MR Specialist from '${prevName}' to '${nextName}' for: ${claimant}`;
+    } else {
+      msg = `MR Specialist change for: ${claimant}`;
+    }
+    await logAction("portal_specialist_assigned", msg);
+  }
 
   await logAction(
     "portal_field_updated",
@@ -475,13 +512,19 @@ export async function updatePortalField(
   if (field === "mr_specialist_id") {
     const role = session.user.role ?? "";
     if (
-      !["system_admin", "admin", "manager", "mr_admin", "mr_lead"].includes(
-        role,
-      )
+      ![
+        "system_admin",
+        "admin",
+        "manager",
+        "mr_admin",
+        "mr_lead",
+        "mr_agent",
+      ].includes(role)
     )
       return {
         success: false,
-        message: "Only Admin or MR Admin can assign specialists",
+        message:
+          "Only Admin, Manager, MR Admin, MR Lead, or MR Agent can assign specialists",
       };
   }
 

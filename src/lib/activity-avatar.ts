@@ -106,6 +106,7 @@ export const ACTIVITY_ACTION_LABELS: Record<string, string> = {
   portal_entry_created: "Entry Created",
   portal_entry_deleted: "Entry Deleted",
   portal_field_updated: "Field Edit",
+  portal_specialist_assigned: "MR Specialist Assigned",
   portal_bulk_import: "Bulk Import",
   portal_note_added: "Note Added",
   portal_note_deleted: "Note Deleted",
@@ -197,6 +198,7 @@ export const PAGE_ACTION_SCOPES: Record<string, readonly string[]> = {
   patient_portal: [
     "portal_bulk_import",
     "portal_field_updated",
+    "portal_specialist_assigned",
     "portal_entry_created",
     "portal_entry_deleted",
   ],
