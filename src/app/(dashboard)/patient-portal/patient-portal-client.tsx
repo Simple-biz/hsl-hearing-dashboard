@@ -6,7 +6,9 @@ import {
   useTransition,
   useCallback,
   useRef,
+  memo,
 } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useRouter } from "next/navigation";
 import { AppHeader } from "@/components/layout/app-header";
 import {
@@ -777,7 +779,7 @@ function AddEditModal({
 // ─── Mobile Card ─────────────────────────────────────────────────────────────
 // Shown on small screens instead of the wide data grid.
 
-function PortalMobileCard({
+const PortalMobileCard = memo(function PortalMobileCard({
   entry,
   permissions,
   onEdit,
@@ -897,6 +899,15 @@ function PortalMobileCard({
               <span className="font-mono">{entry.portal_username}</span>
               <button
                 onClick={() =>
+                  navigator.clipboard.writeText(entry.portal_username!)
+                }
+                className="text-muted-foreground hover:text-primary"
+                aria-label="Copy username"
+              >
+                <Copy size={10} />
+              </button>
+              <button
+                onClick={() =>
                   onOpenNotes(
                     entry.id,
                     "username",
@@ -1010,7 +1021,7 @@ function PortalMobileCard({
       </div>
     </div>
   );
-}
+});
 
 // ─── Portal Table Row ─────────────────────────────────────────────────────────
 // Shared grid — header and rows must use identical values.
@@ -1114,7 +1125,7 @@ function ClaimantNameDisplay({ entry }: { entry: PortalEntry }) {
   );
 }
 
-function PortalRow({
+const PortalRow = memo(function PortalRow({
   entry,
   permissions,
   onDelete,
@@ -1173,7 +1184,10 @@ function PortalRow({
 
       {/* Provider */}
       <div className="px-1 min-w-0">
-        <span className="text-[11px] leading-tight wrap-break-word line-clamp-2">
+        <span
+          className="text-[11px] leading-tight truncate block"
+          title={entry.provider ?? undefined}
+        >
           {entry.provider ?? "—"}
         </span>
       </div>
@@ -1338,7 +1352,7 @@ function PortalRow({
       </div>
     </div>
   );
-}
+});
 
 // ─── Main Client Component ────────────────────────────────────────────────────
 export function PatientPortalClient(data: PortalPageData) {
@@ -1377,6 +1391,17 @@ export function PatientPortalClient(data: PortalPageData) {
   // grid body. The refresh handler restores whichever is currently visible.
   const desktopScrollRef = useRef<HTMLDivElement>(null);
   const mobileScrollRef = useRef<HTMLDivElement>(null);
+
+  // Row virtualization for the desktop grid — keeps 500/1000 per_page snappy
+  // by only mounting rows visible in the scroll viewport (plus overscan).
+  // Rows are fixed-height after we forced single-line Provider truncation.
+  const ROW_H = 32;
+  const rowVirtualizer = useVirtualizer({
+    count: entries.length,
+    getScrollElement: () => desktopScrollRef.current,
+    estimateSize: () => ROW_H,
+    overscan: 10,
+  });
 
   const load = useCallback((f: PortalFilters) => {
     startTransition(async () => {
@@ -1427,7 +1452,9 @@ export function PatientPortalClient(data: PortalPageData) {
     load(next);
   };
 
-  const handleDelete = async (id: number) => {
+  // Stable handlers — passed to memoized PortalRow / PortalMobileCard.
+  // Inline arrow fns would create a new ref every render, defeating memo().
+  const handleDelete = useCallback(async (id: number) => {
     if (!confirm("Delete this portal entry?")) return;
     const r = await deletePortalEntry(id);
     if (r.success) {
@@ -1435,7 +1462,29 @@ export function PatientPortalClient(data: PortalPageData) {
       setTotal((t) => t - 1);
       setStats((s) => ({ ...s, total: s.total - 1 }));
     }
-  };
+  }, []);
+
+  const handleEdit = useCallback((entry: PortalEntry) => {
+    setEditEntry(entry);
+  }, []);
+
+  const handleOpenNotes = useCallback(
+    (
+      id: number,
+      field: "username" | "password" | "approved" | "got_mr",
+      clientName: string,
+      provider: string | null,
+    ) => {
+      setNotesState({
+        open: true,
+        id,
+        field,
+        clientName,
+        provider,
+      });
+    },
+    [],
+  );
 
   const curPage = filters.page ?? 1;
   const perPage = filters.per_page as number;
@@ -1635,17 +1684,9 @@ export function PatientPortalClient(data: PortalPageData) {
                   key={e.id}
                   entry={e}
                   permissions={data.permissions}
-                  onEdit={(entry) => setEditEntry(entry)}
+                  onEdit={handleEdit}
                   onDelete={handleDelete}
-                  onOpenNotes={(id, field, cn, prov) =>
-                    setNotesState({
-                      open: true,
-                      id,
-                      field,
-                      clientName: cn,
-                      provider: prov,
-                    })
-                  }
+                  onOpenNotes={handleOpenNotes}
                 />
               ))
             )}
@@ -1675,7 +1716,9 @@ export function PatientPortalClient(data: PortalPageData) {
               </div>
             </div>
 
-            {/* Scrollable body */}
+            {/* Scrollable body — virtualized: only the rows visible in the
+                viewport (plus a small overscan buffer) are mounted, so the
+                page stays snappy even at 1000 entries per page. */}
             <div
               ref={desktopScrollRef}
               className="flex-1 overflow-y-auto overflow-x-auto min-h-0 relative"
@@ -1685,32 +1728,48 @@ export function PatientPortalClient(data: PortalPageData) {
                   <Loader2 size={28} className="animate-spin text-primary" />
                 </div>
               )}
-              <div style={{ minWidth: PORTAL_MIN_W }}>
-                {!isPending && entries.length === 0 ? (
-                  <div className="text-center py-16 text-sm text-muted-foreground">
-                    No entries found.
-                  </div>
-                ) : (
-                  entries.map((e) => (
-                    <PortalRow
-                      key={e.id}
-                      entry={e}
-                      permissions={data.permissions}
-                      onDelete={handleDelete}
-                      onEdit={(entry) => setEditEntry(entry)}
-                      onOpenNotes={(id, field, cn, prov) =>
-                        setNotesState({
-                          open: true,
-                          id,
-                          field,
-                          clientName: cn,
-                          provider: prov,
-                        })
-                      }
-                    />
-                  ))
-                )}
-              </div>
+              {!isPending && entries.length === 0 ? (
+                <div
+                  className="text-center py-16 text-sm text-muted-foreground"
+                  style={{ minWidth: PORTAL_MIN_W }}
+                >
+                  No entries found.
+                </div>
+              ) : (
+                <div
+                  style={{
+                    minWidth: PORTAL_MIN_W,
+                    height: rowVirtualizer.getTotalSize(),
+                    position: "relative",
+                  }}
+                >
+                  {rowVirtualizer.getVirtualItems().map((vRow) => {
+                    const e = entries[vRow.index];
+                    if (!e) return null;
+                    return (
+                      <div
+                        key={e.id}
+                        style={{
+                          position: "absolute",
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          transform: `translateY(${vRow.start}px)`,
+                          minWidth: PORTAL_MIN_W,
+                        }}
+                      >
+                        <PortalRow
+                          entry={e}
+                          permissions={data.permissions}
+                          onDelete={handleDelete}
+                          onEdit={handleEdit}
+                          onOpenNotes={handleOpenNotes}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>{" "}
           {/* end sm:contents */}
@@ -1729,9 +1788,11 @@ export function PatientPortalClient(data: PortalPageData) {
                 }
                 className="text-xs px-2 py-1 rounded-lg border border-border bg-card text-foreground cursor-pointer"
               >
-                <option value={25}>25/page</option>
-                <option value={50}>50/page</option>
-                <option value={100}>100/page</option>
+                {[25, 50, 100, 200, 500, 1000].map((s) => (
+                  <option key={s} value={s}>
+                    {s} / page
+                  </option>
+                ))}
               </select>
               <button
                 disabled={curPage <= 1 || isPending}

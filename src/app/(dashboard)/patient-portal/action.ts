@@ -236,9 +236,10 @@ export async function getPortalEntries(
   const dir = filters.sort_order === "asc" ? "ASC" : "DESC";
   const page = Math.max(1, filters.page ?? 1);
   const isAll = filters.per_page === "all";
+  // Cap matches the largest option in the page-size dropdown.
   const perPage = isAll
-    ? 500
-    : Math.min(500, (filters.per_page as number) ?? 50);
+    ? 1000
+    : Math.min(1000, (filters.per_page as number) ?? 50);
   const offset = (page - 1) * perPage;
 
   // Count query (reuses same params)
