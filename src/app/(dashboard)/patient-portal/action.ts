@@ -304,13 +304,19 @@ export async function addPortalEntry(
   ) {
     const role = session.user.role ?? "";
     if (
-      !["system_admin", "admin", "manager", "mr_admin", "mr_lead"].includes(
-        role,
-      )
+      ![
+        "system_admin",
+        "admin",
+        "manager",
+        "mr_admin",
+        "mr_lead",
+        "mr_agent",
+      ].includes(role)
     ) {
       return {
         success: false,
-        message: "Only Admin or MR Admin can assign specialists",
+        message:
+          "Only Admin, Manager, MR Admin, MR Lead, or MR Agent can assign specialists",
       };
     }
     specialistId = Number(input.mr_specialist_id);

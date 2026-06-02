@@ -23,7 +23,7 @@ export type PortalUserRole =
 export interface PortalPermissions {
   canManage: boolean; // system_admin | admin | manager | mr_admin | mr_lead | hearings_admin
   canEdit: boolean; // system_admin | admin | manager | mr_admin | mr_lead | mr_agent | hearings_admin
-  canAssignSpecialist: boolean; // system_admin | admin | mr_admin only
+  canAssignSpecialist: boolean; // system_admin | admin | manager | mr_admin | mr_lead | mr_agent
 }
 
 export function derivePortalPermissions(
@@ -47,7 +47,14 @@ export function derivePortalPermissions(
       "mr_agent",
       "hearings_admin",
     ].includes(role),
-    canAssignSpecialist: ["system_admin", "admin", "mr_admin"].includes(role),
+    canAssignSpecialist: [
+      "system_admin",
+      "admin",
+      "manager",
+      "mr_admin",
+      "mr_lead",
+      "mr_agent",
+    ].includes(role),
   };
 }
 
