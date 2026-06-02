@@ -12,6 +12,7 @@ export type {
   PortalPageData,
   PortalAddEntryInput,
   PortalActivityEntry,
+  ClaimantSearchResult,
 } from "../patient-portal/types";
 
 import { derivePortalPermissions } from "../patient-portal/types";
@@ -25,6 +26,7 @@ import type {
   PortalPageData,
   PortalAddEntryInput,
   PortalActivityEntry,
+  ClaimantSearchResult,
 } from "../patient-portal/types";
 
 import { db } from "@/lib/db";
@@ -71,6 +73,7 @@ function mapRow(row: Record<string, any>): PortalEntry {
     got_mr: Boolean(row.got_mr),
     approved_by_tl: Boolean(row.approved_by_tl),
     mr_specialist_id: row.mr_specialist_id ?? null,
+    hearing_id: row.hearing_id ?? null,
     username_notes: parseNotes(row.username_notes),
     password_notes: parseNotes(row.password_notes),
     got_mr_notes: parseNotes(row.got_mr_notes),
@@ -81,7 +84,48 @@ function mapRow(row: Record<string, any>): PortalEntry {
     // Joined columns from mr_specialists
     specialist_name: row.specialist_name ?? null,
     specialist_color: row.specialist_color ?? null,
+    // Joined live from hearings (when p.hearing_id is set)
+    chronicle_link: row.chronicle_link ?? null,
+    claim_type: row.claim_type ?? null,
   };
+}
+
+// ─── Claimant Search ──────────────────────────────────────────────────────────
+
+/**
+ * Typeahead search over the hearings table by claimant name. Used by the
+ * patient-portal Add/Edit modal to look up a hearing and auto-fill
+ * client_name + mycase_link from the matching hearing. The chronicle_link is
+ * not stored on the portal entry — it is read live from the linked hearing.
+ */
+export async function searchClaimantsForPortal(
+  query: string,
+): Promise<ClaimantSearchResult[]> {
+  await requireAuth();
+  const q = query.trim();
+  if (q.length < 2) return [];
+
+  const { rows } = await db.query(
+    `SELECT h.id            AS hearing_id,
+            h.claimant      AS claimant,
+            h.hearing_date::text AS hearing_date,
+            h.claim_type    AS claim_type,
+            h.claimant_link AS claimant_link,
+            h.chronicle_link AS chronicle_link
+     FROM hearings h
+     WHERE h.claimant ILIKE $1
+     ORDER BY h.hearing_date DESC NULLS LAST, h.id DESC
+     LIMIT 20`,
+    [`%${q}%`],
+  );
+  return rows.map((r) => ({
+    hearing_id: r.hearing_id,
+    claimant: r.claimant,
+    hearing_date: r.hearing_date ?? null,
+    claim_type: r.claim_type ?? null,
+    claimant_link: r.claimant_link ?? null,
+    chronicle_link: r.chronicle_link ?? null,
+  }));
 }
 
 // ─── Page Bootstrap ───────────────────────────────────────────────────────────
@@ -116,11 +160,12 @@ export async function getPortalPageData(): Promise<PortalPageData> {
     "SELECT id, name, bg_color, display_order, is_active FROM mr_specialists WHERE is_active = true ORDER BY display_order",
   );
 
-  // Available months derived from hearing_date (latest 12)
+  // Available months derived from created_at (latest 12) — matches the
+  // "Newest First" sort, which orders by created_at.
   const { rows: dateRows } = await db.query(
-    `SELECT DISTINCT TO_CHAR(hearing_date, 'YYYY-MM') AS val
+    `SELECT DISTINCT TO_CHAR(created_at, 'YYYY-MM') AS val
      FROM mr_patient_portal
-     WHERE hearing_date IS NOT NULL
+     WHERE created_at IS NOT NULL
      ORDER BY val DESC
      LIMIT 12`,
   );
@@ -166,10 +211,10 @@ export async function getPortalEntries(
     conditions.push("p.got_mr = false");
   }
 
-  // Month filter (YYYY-MM on hearing_date)
+  // Month filter (YYYY-MM on created_at) — matches the Newest First sort.
   if (filters.month) {
     p++;
-    conditions.push(`TO_CHAR(p.hearing_date, 'YYYY-MM') = $${p}`);
+    conditions.push(`TO_CHAR(p.created_at, 'YYYY-MM') = $${p}`);
     params.push(filters.month);
   }
 
@@ -209,11 +254,14 @@ export async function getPortalEntries(
             p.entry_date::text   AS entry_date,
             p.hearing_date::text AS hearing_date,
             s.name     AS specialist_name,
-            s.bg_color AS specialist_color
+            s.bg_color AS specialist_color,
+            h.chronicle_link AS chronicle_link,
+            h.claim_type     AS claim_type
      FROM mr_patient_portal p
      LEFT JOIN mr_specialists s ON s.id = p.mr_specialist_id
+     LEFT JOIN hearings h        ON h.id = p.hearing_id
      WHERE ${where}
-     ORDER BY p.entry_date ${dir} NULLS LAST, p.id ${dir}
+     ORDER BY p.created_at ${dir} NULLS LAST, p.id ${dir}
      ${limitClause}`,
     dataParams,
   );
@@ -237,11 +285,41 @@ export async function addPortalEntry(
 
   const session = await requireAuth();
 
+  // Normalize + permission-gate the optional MR specialist assignment. Same
+  // rule as the inline-edit gate in updatePortalField — only privileged roles
+  // can assign a specialist. Unassigned (null / empty / 0) bypasses the gate
+  // since "no assignment" requires no permission.
+  let specialistId: number | null = null;
+  if (
+    input.mr_specialist_id !== undefined &&
+    input.mr_specialist_id !== null &&
+    input.mr_specialist_id !== 0
+  ) {
+    const role = session.user.role ?? "";
+    if (
+      !["system_admin", "admin", "manager", "mr_admin", "mr_lead"].includes(
+        role,
+      )
+    ) {
+      return {
+        success: false,
+        message: "Only Admin or MR Admin can assign specialists",
+      };
+    }
+    specialistId = Number(input.mr_specialist_id);
+  }
+
+  const hearingId =
+    input.hearing_id === undefined || input.hearing_id === null
+      ? null
+      : Number(input.hearing_id);
+
   const { rows } = await db.query(
     `INSERT INTO mr_patient_portal
        (entry_date, hearing_date, client_name, provider, mycase_link,
-        portal_link, portal_username, portal_password, got_mr, approved_by_tl, created_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+        portal_link, portal_username, portal_password, got_mr, approved_by_tl,
+        mr_specialist_id, hearing_id, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
      RETURNING id`,
     [
       input.entry_date || null,
@@ -254,6 +332,8 @@ export async function addPortalEntry(
       input.portal_password || null,
       Boolean(input.got_mr),
       Boolean(input.approved_by_tl),
+      specialistId,
+      hearingId,
       Number(session.user.id),
     ],
   );
@@ -273,12 +353,54 @@ export async function updatePortalEntry(
   if (!input.client_name?.trim())
     return { success: false, message: "Client name is required" };
 
+  const session = await requireAuth();
+
+  // Fetch current specialist so we can decide whether the input represents
+  // an actual change. Only changes are gated — a non-permitted user editing
+  // other fields can still save (their disabled dropdown carries the same
+  // value back, which we treat as a no-op).
+  const { rows: cur } = await db.query(
+    "SELECT mr_specialist_id FROM mr_patient_portal WHERE id = $1",
+    [id],
+  );
+  const currentSpecialist: number | null =
+    (cur[0]?.mr_specialist_id as number | null) ?? null;
+
+  let nextSpecialist: number | null = currentSpecialist;
+  if (input.mr_specialist_id !== undefined) {
+    const proposed: number | null =
+      input.mr_specialist_id === null ||
+      Number(input.mr_specialist_id) === 0
+        ? null
+        : Number(input.mr_specialist_id);
+    if (proposed !== currentSpecialist) {
+      const role = session.user.role ?? "";
+      if (
+        !["system_admin", "admin", "manager", "mr_admin", "mr_lead"].includes(
+          role,
+        )
+      ) {
+        return {
+          success: false,
+          message: "Only Admin or MR Admin can assign specialists",
+        };
+      }
+    }
+    nextSpecialist = proposed;
+  }
+
+  const hearingId =
+    input.hearing_id === undefined || input.hearing_id === null
+      ? null
+      : Number(input.hearing_id);
+
   await db.query(
     `UPDATE mr_patient_portal SET
        entry_date = $1, hearing_date = $2, client_name = $3, provider = $4,
        mycase_link = $5, portal_link = $6, portal_username = $7, portal_password = $8,
-       got_mr = $9, approved_by_tl = $10, updated_at = NOW()
-     WHERE id = $11`,
+       got_mr = $9, approved_by_tl = $10, mr_specialist_id = $11, hearing_id = $12,
+       updated_at = NOW()
+     WHERE id = $13`,
     [
       input.entry_date || null,
       input.hearing_date || null,
@@ -290,6 +412,8 @@ export async function updatePortalEntry(
       input.portal_password || null,
       Boolean(input.got_mr),
       Boolean(input.approved_by_tl),
+      nextSpecialist,
+      hearingId,
       id,
     ],
   );

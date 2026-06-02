@@ -70,16 +70,21 @@ export interface PortalEntry {
   got_mr: boolean;
   approved_by_tl: boolean;
   mr_specialist_id: number | null;
+  hearing_id: number | null;
   username_notes: PortalNote[];
   password_notes: PortalNote[];
   approved_notes: PortalNote[];
   created_at: string;
   updated_at: string;
   created_by: number | null;
-  // Joined
+  // Joined from mr_specialists
   specialist_name: string | null;
   specialist_color: string | null;
   got_mr_notes: PortalNote[];
+  // Joined live from hearings (when hearing_id is set) — chronicle_link mirrors
+  // the dashboard's value, so edits there flow through to the patient portal.
+  chronicle_link: string | null;
+  claim_type: string | null;
 }
 
 export interface PortalStats {
@@ -125,6 +130,21 @@ export interface PortalAddEntryInput {
   portal_password?: string;
   got_mr?: boolean;
   approved_by_tl?: boolean;
+  /** Optional MR specialist assignment at creation time. Server-gated to the
+   *  same roles allowed to assign via the inline dropdown. */
+  mr_specialist_id?: number | null;
+  /** FK to hearings.id when the entry was created from a claimant search.
+   *  Enables live read of chronicle_link / claim_type via JOIN. */
+  hearing_id?: number | null;
+}
+
+export interface ClaimantSearchResult {
+  hearing_id: number;
+  claimant: string;
+  hearing_date: string | null;
+  claim_type: string | null;
+  claimant_link: string | null;
+  chronicle_link: string | null;
 }
 
 export interface PortalActivityEntry {
