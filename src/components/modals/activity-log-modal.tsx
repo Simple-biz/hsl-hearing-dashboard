@@ -92,6 +92,13 @@ const ACTION_COLORS: Record<string, string> = {
     "bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-900/30",
   hearing_archived: "bg-amber-100 text-amber-700 dark:bg-amber-900/30",
   hearing_unarchived: "bg-teal-100 text-teal-700 dark:bg-teal-900/30",
+  // Patient Portal
+  portal_entry_created: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30",
+  portal_entry_deleted: "bg-red-100 text-red-700 dark:bg-red-900/30",
+  portal_field_updated: "bg-blue-100 text-blue-700 dark:bg-blue-900/30",
+  portal_bulk_import: "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30",
+  portal_note_added: "bg-sky-100 text-sky-700 dark:bg-sky-900/30",
+  portal_note_deleted: "bg-orange-100 text-orange-700 dark:bg-orange-900/30",
 };
 
 export interface ActivityLogTab {

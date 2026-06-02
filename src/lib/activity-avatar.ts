@@ -102,6 +102,13 @@ export const ACTIVITY_ACTION_LABELS: Record<string, string> = {
   hearing_archived: "Hearing Archived",
   hearing_unarchived: "Hearing Unarchived",
   rep_docs_acknowledged: "Acknowledged",
+  // Patient Portal
+  portal_entry_created: "Entry Created",
+  portal_entry_deleted: "Entry Deleted",
+  portal_field_updated: "Field Edit",
+  portal_bulk_import: "Bulk Import",
+  portal_note_added: "Note Added",
+  portal_note_deleted: "Note Deleted",
 };
 
 /** Look up a friendly label; falls back to title-cased snake_case. */

@@ -105,7 +105,8 @@ export interface Hearing {
   five_day: boolean;
   post_hrg_review: boolean;
   assignment_timestamp: string | null;
-  credited: boolean;
+  /** null = unverified, true = credited, false = verified-and-not-credited. */
+  credited: boolean | null;
   // Joined fields
   representative?: Representative;
   mr_team?: MrTeam;

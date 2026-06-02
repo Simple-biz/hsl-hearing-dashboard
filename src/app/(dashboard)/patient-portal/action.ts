@@ -15,7 +15,10 @@ export type {
   ClaimantSearchResult,
 } from "../patient-portal/types";
 
-import { derivePortalPermissions } from "../patient-portal/types";
+import {
+  derivePortalPermissions,
+  PORTAL_ACTIONS,
+} from "../patient-portal/types";
 import type {
   PortalUserRole,
   PortalEntry,
@@ -233,9 +236,10 @@ export async function getPortalEntries(
   const dir = filters.sort_order === "asc" ? "ASC" : "DESC";
   const page = Math.max(1, filters.page ?? 1);
   const isAll = filters.per_page === "all";
+  // Cap matches the largest option in the page-size dropdown.
   const perPage = isAll
-    ? 500
-    : Math.min(500, (filters.per_page as number) ?? 50);
+    ? 1000
+    : Math.min(1000, (filters.per_page as number) ?? 50);
   const offset = (page - 1) * perPage;
 
   // Count query (reuses same params)
@@ -608,14 +612,6 @@ export async function addPortalNote(
 
 // ─── Activity Log ─────────────────────────────────────────────────────────────
 
-const PORTAL_ACTIONS = [
-  "portal_entry_created",
-  "portal_field_updated",
-  "portal_entry_deleted",
-  "portal_bulk_import",
-  "portal_note_added",
-  "portal_note_deleted",
-];
 
 export async function getPortalActivityLog(filters: {
   page?: number;
