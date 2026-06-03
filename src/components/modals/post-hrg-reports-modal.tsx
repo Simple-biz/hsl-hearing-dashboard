@@ -38,8 +38,9 @@ interface ReportData {
   byIndicator: Record<string, number>;
 
   // Timeliness
-  overdueCount: number;
-  dueSoonCount: number; // deadline within 7 days
+  overdueCount: number;       // deadline-based (past deadline, not completed/cancelled)
+  incompleteCount: number;    // status-based (status IN the configured incomplete list)
+  dueSoonCount: number;       // deadline within 7 days
   completedThisMonth: number;
   avgDaysToDeadline: number | null;
 
@@ -58,8 +59,19 @@ interface ReportData {
 
   // Raw rows (for the detail table)
   overdueRows: PostHrgDevRow[];
+  incompleteRows: PostHrgDevRow[];
   unacknowledgedRows: PostHrgDevRow[];
 }
+
+// Statuses that count toward the "Incomplete" tile. Case-insensitive match.
+// Source of truth: the Post HRG team's manual classification — overdue
+// (deadline-based) is a separate metric handled by `overdueCount`.
+const INCOMPLETE_STATUSES = new Set([
+  "incomplete",
+  "extended",
+  "in progress",
+  "cl is unable to provide",
+]);
 
 type ReportTab =
   | "summary"
@@ -100,6 +112,7 @@ function computeReport(rows: PostHrgDevRow[]): ReportData {
     byDocsNeeded: {},
     byIndicator: {},
     overdueCount: 0,
+    incompleteCount: 0,
     dueSoonCount: 0,
     completedThisMonth: 0,
     avgDaysToDeadline: null,
@@ -111,6 +124,7 @@ function computeReport(rows: PostHrgDevRow[]): ReportData {
     acknowledgedCount: 0,
     byHearingMonth: {},
     overdueRows: [],
+    incompleteRows: [],
     unacknowledgedRows: [],
   };
 
@@ -146,7 +160,18 @@ function computeReport(rows: PostHrgDevRow[]): ReportData {
     const ind = r.indicator || "none";
     data.byIndicator[ind] = (data.byIndicator[ind] || 0) + 1;
 
-    // Overdue
+    // Incomplete (status-based) — counts rows whose configured status is in
+    // the Post HRG team's "incomplete work" list. Separate from the
+    // deadline-based "overdue" metric below.
+    {
+      const statusLower = (r.status || "").toLowerCase().trim();
+      if (INCOMPLETE_STATUSES.has(statusLower)) {
+        data.incompleteCount++;
+        data.incompleteRows.push(r);
+      }
+    }
+
+    // Overdue (deadline-based) — used for Due-in-7-Days + avg deadline tiles.
     if (
       r.deadline &&
       r.status?.toLowerCase() !== "completed" &&
@@ -498,7 +523,8 @@ function exportToCSV(report: ReportData, rows: PostHrgDevRow[]) {
   lines.push("");
   lines.push("--- SUMMARY ---");
   lines.push(`Total Records,${report.totalRecords}`);
-  lines.push(`Overdue,${report.overdueCount}`);
+  lines.push(`Incomplete (status-based),${report.incompleteCount}`);
+  lines.push(`Overdue (past deadline),${report.overdueCount}`);
   lines.push(`Due within 7 days,${report.dueSoonCount}`);
   lines.push(`Unacknowledged (NEW),${report.unacknowledgedCount}`);
   lines.push(`Completed this month,${report.completedThisMonth}`);
@@ -817,9 +843,9 @@ export function PostHrgReportsModal({ open, onClose, recordType }: Props) {
                     <MetricCard
                       icon={<AlertTriangle className="h-4 w-4 text-red-500" />}
                       label="Incomplete"
-                      value={report.overdueCount}
+                      value={report.incompleteCount}
                       accent={
-                        report.overdueCount > 0
+                        report.incompleteCount > 0
                           ? "border-red-200 dark:border-red-800"
                           : undefined
                       }
@@ -1103,10 +1129,10 @@ export function PostHrgReportsModal({ open, onClose, recordType }: Props) {
                     <MetricCard
                       icon={<AlertTriangle className="h-4 w-4 text-red-500" />}
                       label="Incomplete"
-                      value={report.overdueCount}
-                      sub="Past deadline, not completed"
+                      value={report.incompleteCount}
+                      sub="Status: Incomplete / Extended / In Progress / CL unable"
                       accent={
-                        report.overdueCount > 0
+                        report.incompleteCount > 0
                           ? "border-red-200 dark:border-red-800"
                           : undefined
                       }
