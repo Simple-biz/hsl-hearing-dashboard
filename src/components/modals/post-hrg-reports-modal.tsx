@@ -168,13 +168,16 @@ function computeReport(rows: PostHrgDevRow[]): ReportData {
       }
     }
 
-    // Completed this month
-    if (
-      r.status?.toLowerCase() === "completed" &&
-      r.updated_at &&
-      new Date(r.updated_at) >= startOfMonth
-    ) {
-      data.completedThisMonth++;
+    // Completed this month — prefer completed_at (set by DB trigger when
+    // status moved to Completed); fall back to updated_at for legacy rows.
+    // updated_at drifts on every edit, so leaning on it caused stale
+    // Completed rows to be counted any time someone touched them after
+    // the start of the month.
+    {
+      const at = r.completed_at ?? r.updated_at;
+      if (r.status?.toLowerCase() === "completed" && at && new Date(at) >= startOfMonth) {
+        data.completedThisMonth++;
+      }
     }
 
     // Checkboxes

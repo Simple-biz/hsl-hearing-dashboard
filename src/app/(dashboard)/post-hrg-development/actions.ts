@@ -40,6 +40,9 @@ export interface PostHrgDevRow {
   ssn_last_4: string | null;
   created_at: string;
   updated_at: string;
+  /** Set by the DB trigger when status transitions to 'Completed'. Cleared
+   *  when status transitions away. NULL if the row has never been Completed. */
+  completed_at: string | null;
   created_by: number | null;
   updated_by: number | null;
   post_hrg_notes: string | null;
@@ -354,7 +357,7 @@ export async function fetchPostHrgDevPage(
         p.details_notes, p.person_responsible_notes,
         p.em_sent_task_created_notes, p.ext_letter_sent_notes,
         p.status_notes,
-        p.created_at::text, p.updated_at::text,
+        p.created_at::text, p.updated_at::text, p.completed_at::text,
         p.created_by, p.updated_by,
         p.acknowledged_at::text AS acknowledged_at,
         p.acknowledged_by_name,
@@ -396,7 +399,7 @@ export async function fetchPostHrgDevRecords(): Promise<PostHrgDevRow[]> {
       p.details_notes, p.person_responsible_notes,
       p.em_sent_task_created_notes, p.ext_letter_sent_notes,
       p.status_notes,
-      p.created_at::text, p.updated_at::text,
+      p.created_at::text, p.updated_at::text, p.completed_at::text,
       p.created_by, p.updated_by,
       p.acknowledged_at::text AS acknowledged_at,
       p.acknowledged_by_name,
@@ -516,7 +519,7 @@ export async function fetchPostHrgCompletedRecords(
         p.details_notes, p.person_responsible_notes,
         p.em_sent_task_created_notes, p.ext_letter_sent_notes,
         p.status_notes,
-        p.created_at::text, p.updated_at::text,
+        p.created_at::text, p.updated_at::text, p.completed_at::text,
         p.created_by, p.updated_by,
         p.acknowledged_at::text AS acknowledged_at,
         p.acknowledged_by_name,
