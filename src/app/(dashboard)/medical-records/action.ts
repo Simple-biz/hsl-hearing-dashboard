@@ -1292,7 +1292,17 @@ export async function getPostHrgHearings(
          r.name       AS rep_name,
          t.team_name  AS mr_team_name,
          t.team_color AS mr_team_color,
-         t.team_type  AS mr_team_type
+         t.team_type  AS mr_team_type,
+         -- MR PHD status: this modal is the medical-records team's view, so we
+         -- only need the status of the MR record_type PHD row for each hearing.
+         -- A hearing typically has at most one MR PHD row, but MIN keeps the
+         -- expression deterministic in the rare case there are duplicates.
+         (
+           SELECT MIN(p.status)
+           FROM post_hrg_development p
+           WHERE p.hearing_id = h.id
+             AND p.record_type = 'MR'
+         ) AS phd_mr_status
        FROM hearings h
        LEFT JOIN representatives r ON h.assigned_rep_id = r.id
        LEFT JOIN mr_teams t        ON h.mr_team_id = t.id

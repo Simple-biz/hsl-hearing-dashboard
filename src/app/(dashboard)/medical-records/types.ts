@@ -167,6 +167,9 @@ export interface Hearing {
   chronicle_link: string | null;
   claim_type: string | null;
   mr_team_assigned_at: string | null;
+  /** Status of the linked MR-type post_hrg_development row. NULL when the
+   *  hearing has no MR PHD row (e.g. POST_HRG/REP-only, or no PHD yet). */
+  phd_mr_status: string | null;
 }
 
 export interface MrStatusByTeam {
