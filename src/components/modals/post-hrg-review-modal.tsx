@@ -260,9 +260,25 @@ function HearingReview({
           setNotes(parseNotes(data));
         } else {
           setNotes(parseNotes(data.post_hrg_notes));
-          // Read-only Requirements (MR rows) can't be "mid-edit", so always
-          // refresh it so the mirrored Details Content shows up live.
-          if (readOnlyRequirements || !isEditingReqRef.current) {
+          // Requirements refresh — careful here:
+          //   • MR rows (readOnlyRequirements=true) seed initialRequirements
+          //     directly from the linked PHD row's details column, which is
+          //     the source of truth. hearings.post_hrg_requirements is only
+          //     populated by a mirror that runs ONLY when PHD details are
+          //     edited via updatePostHrgDevField — so for rows whose details
+          //     were imported (never edited), the mirror has never run and
+          //     hearings.post_hrg_requirements is NULL. We must NOT let the
+          //     poll wipe a populated display with that NULL.
+          //   • Non-MR rows store Requirements directly on the hearing, so
+          //     the poll value is authoritative.
+          if (readOnlyRequirements) {
+            // Only ADOPT a poll value if it's non-empty (i.e. the mirror
+            // has run and has actual content to show). Empty stays as-is.
+            if (data.post_hrg_requirements) {
+              setRequirements(data.post_hrg_requirements);
+              setHasSavedReq(true);
+            }
+          } else if (!isEditingReqRef.current) {
             setRequirements(data.post_hrg_requirements ?? "");
             setHasSavedReq(!!data.post_hrg_requirements);
           }
