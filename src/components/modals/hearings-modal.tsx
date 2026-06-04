@@ -40,6 +40,19 @@ import type {
 
 // ─── Colour helpers ───────────────────────────────────────────────────────────
 
+// Compact stamp for the workflow-checkbox completion date — "May 7, 26".
+// Matches fmtCheckStamp in dashboard-client + medical-records-client.
+function fmtCheckStamp(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "2-digit",
+  });
+}
+
 function fmtTime(raw: string | null | undefined): string {
   if (!raw) return "";
   const [hStr, mStr] = raw.split(":");
@@ -446,24 +459,20 @@ function HearingRowInner({
         )}
       </div>
 
-      {/* 5-Day — interactive checkbox matching MR page */}
-      <div className="flex justify-center">
-        {permissions.canEditFiveDay ? (
-          <input
-            type="checkbox"
-            checked={h.five_day_notice}
-            className="w-3.5 h-3.5 accent-emerald-500 cursor-pointer"
-            onChange={(e) =>
-              onUpdate(h.id, "five_day_notice", e.target.checked)
-            }
-          />
-        ) : (
-          <input
-            type="checkbox"
-            checked={h.five_day_notice}
-            disabled
-            className="w-3.5 h-3.5 accent-emerald-500 cursor-default"
-          />
+      {/* 5-Day — checkbox with completion-date stamp below when ticked.
+          Matches the MR Pivot pattern (medical-records-client.tsx). */}
+      <div className="flex flex-col items-center justify-center gap-0.5 leading-none">
+        <input
+          type="checkbox"
+          checked={h.five_day_notice}
+          disabled={!permissions.canEditFiveDay}
+          className="w-3.5 h-3.5 accent-emerald-500 cursor-pointer disabled:cursor-default"
+          onChange={(e) => onUpdate(h.id, "five_day_notice", e.target.checked)}
+        />
+        {h.five_day_notice && h.five_day_notice_at && (
+          <span className="text-[9px] leading-none text-muted-foreground tabular-nums">
+            {fmtCheckStamp(h.five_day_notice_at)}
+          </span>
         )}
       </div>
 
@@ -675,10 +684,40 @@ export function HearingsModal({
         manner_of_appearance: (v) => updateMoa(id, v as string),
         five_day_notice: (v) => toggleFiveDayNotice(id, v as boolean),
       };
-      await actions[field]?.(value);
-      setHearings((prev) =>
-        prev.map((h) => (h.id === id ? { ...h, [field]: value } : h)),
-      );
+
+      // Snapshot the previous row in case we need to revert on server error.
+      let snapshot: Hearing | undefined;
+      setHearings((prev) => {
+        const idx = prev.findIndex((h) => h.id === id);
+        if (idx < 0) return prev;
+        snapshot = prev[idx];
+        // Optimistic patch — flip the field immediately so the checkbox/select
+        // visually updates without waiting for the server roundtrip. For
+        // five_day_notice we also stamp/clear the companion `_at` column the
+        // way the server does (mirrors the MR Pivot's pattern).
+        const patch: Partial<Hearing> = { [field]: value as Hearing[keyof Hearing] };
+        if (field === "five_day_notice") {
+          (patch as Partial<Hearing>).five_day_notice_at = value
+            ? new Date().toISOString()
+            : null;
+        }
+        const next = prev.slice();
+        next[idx] = { ...snapshot, ...patch };
+        return next;
+      });
+
+      try {
+        await actions[field]?.(value);
+      } catch (err) {
+        // Revert on failure so the UI matches the server.
+        if (snapshot) {
+          const original = snapshot;
+          setHearings((prev) =>
+            prev.map((h) => (h.id === id ? original : h)),
+          );
+        }
+        console.error(`[hearings-modal] ${field} failed — reverted`, err);
+      }
     },
     [],
   );
@@ -1071,7 +1110,7 @@ export function HearingsModal({
           userRole={userRole}
           initialNotes={null}
           initialDeadline={postHrgHearing.post_hrg_deadline}
-          initialRequirements={null}
+          initialRequirements={postHrgHearing.post_hrg_requirements}
           initialDeadlinePrev={null}
           initialDeadlineChangedBy={null}
           onClose={() => setPostHrgHearing(null)}
@@ -1082,6 +1121,9 @@ export function HearingsModal({
             }
             if (patch.post_hrg_review !== undefined) {
               mrPatch.post_hrg_review = patch.post_hrg_review ? "true" : null;
+            }
+            if (patch.post_hrg_requirements !== undefined) {
+              mrPatch.post_hrg_requirements = patch.post_hrg_requirements;
             }
             setHearings((prev) =>
               prev.map((h) =>
