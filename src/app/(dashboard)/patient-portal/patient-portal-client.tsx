@@ -24,6 +24,9 @@ import {
   Check,
   StickyNote,
   RefreshCw,
+  Eye,
+  EyeOff,
+  History,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -31,6 +34,7 @@ import {
   getPortalEntries,
   addPortalEntry,
   updatePortalEntry,
+  updatePortalField,
   deletePortalEntry,
   getPortalNotes,
   addPortalNote,
@@ -47,6 +51,7 @@ import type {
 } from "./action";
 import { PORTAL_ACTIONS } from "./types";
 import { ActivityLogModal } from "@/components/modals";
+import { PortalEntryAuditTrailModal } from "@/components/modals/portal-entry-audit-trail-modal";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -471,12 +476,16 @@ function AddEditModal({
   entry,
   specialists,
   canAssignSpecialist,
+  canSetApproval,
   onClose,
   onSaved,
 }: {
   entry: PortalEntry | null; // null = add mode
   specialists: MrSpecialist[];
   canAssignSpecialist: boolean;
+  /** Tighter than canEdit — only system_admin / admin / mr_admin can flip
+   *  the Approved by TL field. Non-permitted users see a disabled select. */
+  canSetApproval: boolean;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -739,15 +748,30 @@ function AddEditModal({
               <div>
                 <label className={lbl}>Approved by TL</label>
                 <select
-                  className={inp}
+                  className={cn(
+                    inp,
+                    !canSetApproval &&
+                      "cursor-not-allowed opacity-60 bg-muted/30",
+                  )}
                   value={form.approved_by_tl ? "1" : "0"}
                   onChange={(e) =>
                     set("approved_by_tl", e.target.value === "1")
+                  }
+                  disabled={!canSetApproval}
+                  title={
+                    !canSetApproval
+                      ? "Only Admin or MR Admin can change this"
+                      : undefined
                   }
                 >
                   <option value="0">No</option>
                   <option value="1">Yes</option>
                 </select>
+                {!canSetApproval && (
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    Locked — only Admin or MR Admin can flip this.
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -1025,12 +1049,21 @@ const PortalMobileCard = memo(function PortalMobileCard({
 
 // ─── Portal Table Row ─────────────────────────────────────────────────────────
 // Shared grid — header and rows must use identical values.
-// Date(90) | HearingDate(90) | Specialist(130) | ClientName(160) | Provider(130) |
-// PortalLink(75) | Username(160) | Password(140) | GotMR(70) | ApprovedTL(95) | Actions(70)
+// Date(90) | HearingDate(90) | Specialist(130) | ClientName(160) | Provider(160+) |
+// PortalLink(95) | Username(160) | Password(180) | GotMR(100) | ApprovedTL(95) | Actions(95)
 // MyCase column removed — the link is now reachable from the claimant name.
+// Provider uses `minmax(160px, 1fr)` so it (a) has reasonable baseline width,
+// and (b) absorbs any extra horizontal space on wide screens — preventing a
+// trailing gap after the Actions column. Password is a fixed 180px so the
+// revealed value + Eye + Copy + Notes icons all fit without truncation.
+// PortalLink + GotMR widened (75→95, 70→100) so their content has enough
+// horizontal slack to render visibly centered against the column header
+// (at the previous widths, content nearly filled the column edge-to-edge
+// and `justify-center` had almost no room to act). Actions widened
+// (70→95) to fit the new History button alongside Edit + Delete.
 const PORTAL_GRID =
-  "90px 90px 130px 160px 130px 75px 160px 140px 70px 95px 70px";
-const PORTAL_MIN_W = "1260px";
+  "90px 90px 130px 160px minmax(160px,1fr) 95px 160px 180px 100px 95px 95px";
+const PORTAL_MIN_W = "1355px";
 
 // ─── Claimant Name Display (ClaimantCell-style) ──────────────────────────────
 // Mirrors the dashboard's claimant cell so a portal entry "looks like" a
@@ -1125,12 +1158,31 @@ function ClaimantNameDisplay({ entry }: { entry: PortalEntry }) {
   );
 }
 
-const PortalRow = memo(function PortalRow({
+const PortalRow = memo(function PortalRow(props: {
+  entry: PortalEntry;
+  permissions: PortalPageData["permissions"];
+  onDelete: (id: number) => void;
+  onEdit: (e: PortalEntry) => void;
+  onOpenNotes: (
+    id: number,
+    field: "username" | "password" | "approved" | "got_mr",
+    clientName: string,
+    provider: string | null,
+  ) => void;
+  onToggleApproved?: (id: number, next: boolean) => void;
+  onOpenHistory?: (e: PortalEntry) => void;
+}) {
+  return <PortalRowInner {...props} />;
+});
+
+function PortalRowInner({
   entry,
   permissions,
   onDelete,
   onEdit,
   onOpenNotes,
+  onToggleApproved,
+  onOpenHistory,
 }: {
   entry: PortalEntry;
   permissions: PortalPageData["permissions"];
@@ -1142,9 +1194,14 @@ const PortalRow = memo(function PortalRow({
     clientName: string,
     provider: string | null,
   ) => void;
+  onToggleApproved?: (id: number, next: boolean) => void;
+  onOpenHistory?: (e: PortalEntry) => void;
 }) {
   const { canEdit, canManage } = permissions;
   const specColor = entry.specialist_color;
+  // Per-row reveal state — resets when the row unmounts (e.g. virtualizer
+  // scrolls it off-screen), so passwords don't stay visible indefinitely.
+  const [showPassword, setShowPassword] = useState(false);
 
   return (
     <div
@@ -1250,21 +1307,42 @@ const PortalRow = memo(function PortalRow({
         </button>
       </div>
 
-      {/* Password */}
-      <div className="px-1 flex items-center gap-1 min-w-0">
-        <span className="flex-1 text-[10px]">
-          {entry.portal_password ? "••••••" : "—"}
+      {/* Password — extra pr-3 creates visible breathing room before the
+          Got MR? column so the notes button doesn't crowd against it. */}
+      <div className="px-1 pr-3 flex items-center gap-1 min-w-0">
+        <span
+          className={cn(
+            "flex-1 text-[10px] truncate",
+            showPassword && "font-mono",
+          )}
+          title={showPassword ? entry.portal_password ?? undefined : undefined}
+        >
+          {entry.portal_password
+            ? showPassword
+              ? entry.portal_password
+              : "••••••"
+            : "—"}
         </span>
         {entry.portal_password && (
-          <button
-            onClick={() =>
-              navigator.clipboard.writeText(entry.portal_password!)
-            }
-            className="shrink-0 text-muted-foreground hover:text-primary p-0.5 rounded"
-            aria-label="Copy password"
-          >
-            <Copy size={10} />
-          </button>
+          <>
+            <button
+              onClick={() => setShowPassword((v) => !v)}
+              className="shrink-0 text-muted-foreground hover:text-primary p-0.5 rounded"
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              title={showPassword ? "Hide password" : "Show password"}
+            >
+              {showPassword ? <EyeOff size={10} /> : <Eye size={10} />}
+            </button>
+            <button
+              onClick={() =>
+                navigator.clipboard.writeText(entry.portal_password!)
+              }
+              className="shrink-0 text-muted-foreground hover:text-primary p-0.5 rounded"
+              aria-label="Copy password"
+            >
+              <Copy size={10} />
+            </button>
+          </>
         )}
         <button
           onClick={() =>
@@ -1283,8 +1361,13 @@ const PortalRow = memo(function PortalRow({
         </button>
       </div>
 
-      {/* Got MR? */}
-      <div className="px-1 flex items-center gap-1">
+      {/* Got MR? — badge is the focal point and sits at TRUE column center
+          via `justify-center` on the only flow child. Notes button is
+          absolutely positioned to the right so its width doesn't bias the
+          flex-group's visual center away from the badge (previously the
+          badge+button group was centered, which placed the badge slightly
+          left of column center). */}
+      <div className="px-1 flex items-center justify-center relative">
         <span
           className={cn(
             "px-1.5 py-0.5 rounded text-[10px] font-medium",
@@ -1300,43 +1383,85 @@ const PortalRow = memo(function PortalRow({
             onOpenNotes(entry.id, "got_mr", entry.client_name, entry.provider)
           }
           className={cn(
-            "text-[9px] px-1 py-0.5 rounded border",
+            "absolute right-1 top-1/2 -translate-y-1/2 text-[9px] px-1 py-0.5 rounded border",
             entry.got_mr_notes.length > 0
               ? "bg-blue-100 border-blue-300 text-blue-700"
               : "border-border text-muted-foreground hover:bg-muted",
           )}
+          aria-label={`Got MR notes (${entry.got_mr_notes.length})`}
         >
           <StickyNote size={9} className="inline" />
           {entry.got_mr_notes.length > 0 ? entry.got_mr_notes.length : ""}
         </button>
       </div>
 
-      {/* Approved by TL */}
-      <div className="px-1 flex items-center justify-center gap-1">
-        {entry.approved_by_tl ? (
-          <Check size={14} className="text-blue-500" />
-        ) : (
-          <span className="text-muted-foreground/30 text-xs">—</span>
-        )}
-        <button
-          onClick={() =>
-            onOpenNotes(entry.id, "approved", entry.client_name, entry.provider)
-          }
-          className={cn(
-            "text-[9px] px-1 py-0.5 rounded border transition-colors",
-            entry.approved_notes.length > 0
-              ? "bg-blue-100 border-blue-300 text-blue-700"
-              : "border-border text-muted-foreground hover:bg-muted",
+      {/* Approved by TL — inline-editable checkbox with completion-date
+          stamp below when ticked. Editable only when canSetApproval (tighter
+          than canEdit by design — system_admin / admin / mr_admin only).
+          Falls back to the read-only check/dash for everyone else; stamp
+          shows in both modes when present. */}
+      <div className="px-1 flex flex-col items-center justify-center gap-0.5 leading-none">
+        <div className="flex items-center justify-center gap-1">
+          {permissions.canSetApproval && onToggleApproved ? (
+            <input
+              type="checkbox"
+              checked={entry.approved_by_tl}
+              onChange={(e) => onToggleApproved(entry.id, e.target.checked)}
+              className="w-3.5 h-3.5 accent-blue-500 cursor-pointer"
+              title={
+                entry.approved_by_tl
+                  ? "Unapprove this entry"
+                  : "Approve this entry"
+              }
+              aria-label="Approved by TL"
+            />
+          ) : entry.approved_by_tl ? (
+            <Check size={14} className="text-blue-500" />
+          ) : (
+            <span className="text-muted-foreground/30 text-xs">—</span>
           )}
-          aria-label={`Approval notes (${entry.approved_notes.length})`}
-        >
-          <StickyNote size={9} className="inline" />
-          {entry.approved_notes.length > 0 ? entry.approved_notes.length : ""}
-        </button>
+          <button
+            onClick={() =>
+              onOpenNotes(
+                entry.id,
+                "approved",
+                entry.client_name,
+                entry.provider,
+              )
+            }
+            className={cn(
+              "text-[9px] px-1 py-0.5 rounded border transition-colors",
+              entry.approved_notes.length > 0
+                ? "bg-blue-100 border-blue-300 text-blue-700"
+                : "border-border text-muted-foreground hover:bg-muted",
+            )}
+            aria-label={`Approval notes (${entry.approved_notes.length})`}
+          >
+            <StickyNote size={9} className="inline" />
+            {entry.approved_notes.length > 0
+              ? entry.approved_notes.length
+              : ""}
+          </button>
+        </div>
+        {entry.approved_by_tl && entry.approved_by_tl_at && (
+          <span className="text-[9px] leading-none text-muted-foreground tabular-nums">
+            {fmtDate(entry.approved_by_tl_at)}
+          </span>
+        )}
       </div>
 
       {/* Actions */}
       <div className="px-1 flex items-center justify-center gap-0.5">
+        {onOpenHistory && (
+          <button
+            onClick={() => onOpenHistory(entry)}
+            className="text-[10px] p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+            title="View activity log for this entry"
+            aria-label="View entry history"
+          >
+            <History size={13} />
+          </button>
+        )}
         {canEdit && (
           <button
             onClick={() => onEdit(entry)}
@@ -1360,7 +1485,7 @@ const PortalRow = memo(function PortalRow({
       </div>
     </div>
   );
-});
+}
 
 // ─── Main Client Component ────────────────────────────────────────────────────
 export function PatientPortalClient(data: PortalPageData) {
@@ -1376,11 +1501,30 @@ export function PatientPortalClient(data: PortalPageData) {
     search: "",
     mr_status: "",
     month: "",
+    year: "",
+    date_preset: "",
+    date_from: "",
+    date_to: "",
     specialist: "",
     sort_order: "desc",
     page: 1,
     per_page: 50,
   });
+
+  // Available years derived from data.availableMonths (YYYY-MM values),
+  // descending so the newest year sits at the top of the dropdown.
+  const availableYears = Array.from(
+    new Set(
+      data.availableMonths
+        .map((m) => m.val.slice(0, 4))
+        .filter((y) => /^\d{4}$/.test(y)),
+    ),
+  ).sort((a, b) => b.localeCompare(a));
+
+  const MONTH_OPTIONS = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+  ] as const;
 
   // Modal state
   const [showAdd, setShowAdd] = useState(false);
@@ -1479,6 +1623,51 @@ export function PatientPortalClient(data: PortalPageData) {
   const handleEdit = useCallback((entry: PortalEntry) => {
     setEditEntry(entry);
   }, []);
+
+  // Per-row audit-trail modal — mirrors the dashboard's Hearing Audit Trail.
+  const [historyEntry, setHistoryEntry] = useState<PortalEntry | null>(null);
+  const handleOpenHistory = useCallback((entry: PortalEntry) => {
+    setHistoryEntry(entry);
+  }, []);
+
+  // Inline toggle for Approved by TL — optimistic flip + stamp, revert on
+  // server error. Wired into the row so admins can flip the value without
+  // opening the modal. The companion `_at` column is mirrored client-side
+  // so the date stamp under the checkbox appears immediately; the next
+  // refetch overwrites with the server's exact NOW() (ms diff, invisible).
+  const handleToggleApproved = useCallback(
+    async (id: number, next: boolean) => {
+      let prev = false;
+      let prevAt: string | null = null;
+      const stamp = next ? new Date().toISOString() : null;
+      setEntries((curr) =>
+        curr.map((e) => {
+          if (e.id !== id) return e;
+          prev = e.approved_by_tl;
+          prevAt = e.approved_by_tl_at;
+          return { ...e, approved_by_tl: next, approved_by_tl_at: stamp };
+        }),
+      );
+      // Stats badge mirrors the change so the "Approved" tile updates instantly.
+      setStats((s) => ({ ...s, approved: s.approved + (next ? 1 : -1) }));
+      try {
+        const r = await updatePortalField(id, "approved_by_tl", next);
+        if (!r.success) throw new Error(r.message ?? "Update failed");
+      } catch (err) {
+        // Revert both row and stats on failure.
+        setEntries((curr) =>
+          curr.map((e) =>
+            e.id === id
+              ? { ...e, approved_by_tl: prev, approved_by_tl_at: prevAt }
+              : e,
+          ),
+        );
+        setStats((s) => ({ ...s, approved: s.approved + (prev ? 1 : -1) }));
+        console.error("[patient-portal] approved_by_tl toggle failed", err);
+      }
+    },
+    [],
+  );
 
   const handleOpenNotes = useCallback(
     (
@@ -1588,19 +1777,51 @@ export function PatientPortalClient(data: PortalPageData) {
               <option value="pending">⏳ Pending</option>
             </select>
 
-            {/* Month */}
+            {/* Month — abbreviation only (Jan–Dec), independent of year. */}
             <select
-              value={filters.month}
+              value={filters.month || ""}
               onChange={(e) => applyFilter({ month: e.target.value })}
               className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer"
             >
               <option value="">All Months</option>
-              {data.availableMonths.map((m) => (
-                <option key={m.val} value={m.val}>
-                  {m.label}
+              {MONTH_OPTIONS.map((m) => (
+                <option key={m} value={m}>
+                  {m}
                 </option>
               ))}
             </select>
+
+            {/* Year — 4-digit, derived from data.availableMonths. */}
+            <select
+              value={filters.year || ""}
+              onChange={(e) => applyFilter({ year: e.target.value })}
+              className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer"
+            >
+              <option value="">All Years</option>
+              {availableYears.map((y) => (
+                <option key={y} value={y}>
+                  {y}
+                </option>
+              ))}
+            </select>
+
+            {/* Date — single calendar input, filters entries created on the
+                picked day. Internally sets date_preset="specific" + date_from
+                so the existing server-side handling applies. */}
+            <input
+              type="date"
+              value={filters.date_from || ""}
+              onChange={(e) =>
+                applyFilter({
+                  date_preset: e.target.value ? "specific" : "",
+                  date_from: e.target.value,
+                  date_to: "",
+                })
+              }
+              aria-label="Filter by date created"
+              title="Filter entries created on this date"
+              className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer"
+            />
 
             {/* Specialist */}
             <select
@@ -1624,6 +1845,10 @@ export function PatientPortalClient(data: PortalPageData) {
                   search: "",
                   mr_status: "",
                   month: "",
+                  year: "",
+                  date_preset: "",
+                  date_from: "",
+                  date_to: "",
                   specialist: "",
                 })
               }
@@ -1719,12 +1944,28 @@ export function PatientPortalClient(data: PortalPageData) {
                 <div className="px-1 text-left">MR Specialist</div>
                 <div className="px-1">Client Name</div>
                 <div className="px-1">Provider</div>
-                <div className="px-1 text-center">Portal Link</div>
+                {/* Headers using `flex justify-center` instead of
+                    `text-center` so they share the EXACT same centering
+                    mechanism as the body cells below them — eliminates the
+                    subtle horizontal drift between header text and body
+                    content that `text-center` vs `justify-center` can
+                    produce when each cell measures content slightly
+                    differently. */}
+                <div className="px-1 flex flex-col items-center justify-center leading-tight text-center">
+                  <span>Portal</span>
+                  <span>Link</span>
+                </div>
                 <div className="px-1">Username</div>
-                <div className="px-1">Password</div>
-                <div className="px-1 text-center">Got MR?</div>
-                <div className="px-1 text-center">Approved TL</div>
-                <div className="px-1 text-center">Actions</div>
+                <div className="px-1 pr-3">Password</div>
+                <div className="px-1 flex items-center justify-center leading-tight">
+                  Got MR?
+                </div>
+                <div className="px-1 flex items-center justify-center leading-tight">
+                  Approved TL
+                </div>
+                <div className="px-1 flex items-center justify-center">
+                  Actions
+                </div>
               </div>
             </div>
 
@@ -1778,6 +2019,8 @@ export function PatientPortalClient(data: PortalPageData) {
                           onDelete={handleDelete}
                           onEdit={handleEdit}
                           onOpenNotes={handleOpenNotes}
+                          onToggleApproved={handleToggleApproved}
+                          onOpenHistory={handleOpenHistory}
                         />
                       </div>
                     );
@@ -1837,6 +2080,7 @@ export function PatientPortalClient(data: PortalPageData) {
           entry={editEntry}
           specialists={data.specialists}
           canAssignSpecialist={data.permissions.canAssignSpecialist}
+          canSetApproval={data.permissions.canSetApproval}
           onClose={() => {
             setShowAdd(false);
             setEditEntry(null);
@@ -1864,6 +2108,13 @@ export function PatientPortalClient(data: PortalPageData) {
           title="📋 Patient Portal Activity Log"
           scopedActions={PORTAL_ACTIONS}
           onClose={() => setShowActivity(false)}
+        />
+      )}
+      {historyEntry && (
+        <PortalEntryAuditTrailModal
+          entryId={historyEntry.id}
+          clientName={historyEntry.client_name}
+          onClose={() => setHistoryEntry(null)}
         />
       )}
     </>
