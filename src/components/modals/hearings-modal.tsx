@@ -10,6 +10,7 @@ import {
   FileText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ClaimantCopyButton } from "@/components/ui/claimant-copy-button";
 import { ModalShell } from "@/components/modals/modal-shell";
 import { PostHrgReviewModal } from "@/components/modals/post-hrg-review-modal";
 import {
@@ -179,23 +180,40 @@ function HearingRow({
         minWidth: "1180px",
       }}
     >
-      {/* Claimant */}
-      <div className="font-semibold truncate">
-        {h.claimant_link ? (
-          <a
-            href={h.claimant_link}
-            target="_blank"
-            rel="noreferrer"
-            className="text-blue-500 hover:text-blue-400 underline truncate"
-          >
-            {h.claimant}
-          </a>
-        ) : (
-          <span className="text-foreground truncate">{h.claimant}</span>
-        )}
-        {h.rep_name && (
-          <div className="text-[10px] text-muted-foreground font-normal truncate">
-            {h.rep_name}
+      {/* Claimant — matches MR Pivot pattern: MyCase-linked name + copy button
+          on top, rep · Chronicle below. */}
+      <div className="min-w-0">
+        <div className="font-semibold truncate flex items-center gap-1">
+          {h.claimant_link ? (
+            <a
+              href={h.claimant_link}
+              target="_blank"
+              rel="noreferrer"
+              className="text-blue-500 hover:text-blue-400 underline truncate"
+            >
+              {h.claimant}
+            </a>
+          ) : (
+            <span className="text-foreground truncate">{h.claimant}</span>
+          )}
+          <ClaimantCopyButton name={h.claimant} link={h.claimant_link} />
+        </div>
+        {(h.rep_name || h.chronicle_link) && (
+          <div className="text-[10px] text-muted-foreground font-normal truncate flex items-center gap-1">
+            {h.rep_name && <span className="truncate">{h.rep_name}</span>}
+            {h.rep_name && h.chronicle_link && (
+              <span className="text-border">·</span>
+            )}
+            {h.chronicle_link && (
+              <a
+                href={h.chronicle_link}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium text-violet-600 hover:underline dark:text-violet-400"
+              >
+                Chronicle
+              </a>
+            )}
           </div>
         )}
       </div>
@@ -854,29 +872,32 @@ export function HearingsModal({
         {/* ── Pagination Footer — flex-shrink-0 ──────────────────────────── */}
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-t border-border bg-muted/20 shrink-0">
           <span className="text-xs text-muted-foreground">
-            Showing{" "}
-            {((filters.page ?? 1) - 1) * (filters.per_page as number) + 1}–
-            {Math.min(
-              (filters.page ?? 1) * (filters.per_page as number),
-              total,
-            )}{" "}
-            of {total}
+            {(() => {
+              // Guard against non-numeric per_page values (e.g. stale "all"
+              // from a previous build's URL/session) — fall back to 50 so the
+              // range math doesn't produce NaN.
+              const perPage =
+                typeof filters.per_page === "number" && filters.per_page > 0
+                  ? filters.per_page
+                  : 50;
+              const page = filters.page ?? 1;
+              const start = total === 0 ? 0 : (page - 1) * perPage + 1;
+              const end = Math.min(page * perPage, total);
+              return `Showing ${start}–${end} of ${total}`;
+            })()}
           </span>
           <div className="flex items-center gap-2">
             <select
               value={filters.per_page}
               onChange={(e) =>
-                applyFilter({
-                  per_page:
-                    e.target.value === "all" ? "all" : Number(e.target.value),
-                })
+                applyFilter({ per_page: Number(e.target.value) })
               }
               className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer"
             >
-              <option value={50}>50/page</option>
-              <option value={100}>100/page</option>
-              <option value={200}>200/page</option>
-              <option value="all">Show All</option>
+              <option value={50}>50 / page</option>
+              <option value={100}>100 / page</option>
+              <option value={200}>200 / page</option>
+              <option value={500}>500 / page</option>
             </select>
             <button
               onClick={() => goPage(1)}
