@@ -1646,7 +1646,7 @@ const COLUMNS: {
   frozen?: boolean;
 }[] = [
   { key: "indicator", label: "", w: 80, frozen: true },
-  { key: "claimant", label: "Claimant", w: 175, sortable: true, frozen: true },
+  { key: "claimant", label: "Claimant", w: 230, sortable: true, frozen: true },
   { key: "ssn_last_4", label: "SSN", w: 62, frozen: true },
   {
     key: "hearing_date",
@@ -1671,7 +1671,7 @@ const COLUMNS: {
   { key: "status", label: "Status", w: 150, sortable: true },
   // new_due_date REMOVED — replaced with post_hrg_review
   { key: "post_hrg_review", label: "Post HRG Review", w: 140 },
-  { key: "remarks", label: "Remarks", w: 200 },
+  { key: "remarks", label: "Remarks", w: 145 },
   // Admin-only trash icon. Cell renders empty for non-admin roles so the
   // column adds no visible affordance for them; width is small enough to
   // not waste horizontal space.
