@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useTransition } from "react";
+import { useState, useEffect, useCallback, useRef, useTransition } from "react";
 import {
   RefreshCw,
   Download,
@@ -553,6 +553,28 @@ export function HearingsModal({
     });
   }, []);
 
+  // Manual refresh — refetches with current filters/sort/page and restores
+  // scroll position so the user stays put. Bypasses startTransition so we
+  // can await the fetch and show a spinner on the button itself.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = useCallback(async () => {
+    const top = scrollRef.current?.scrollTop ?? 0;
+    setRefreshing(true);
+    try {
+      const res = await getHearingsPaginated(filters);
+      setHearings(res.hearings);
+      setTotal(res.total);
+      setTotalPages(res.total_pages);
+      setStats(res.stats);
+    } finally {
+      setRefreshing(false);
+      requestAnimationFrame(() => {
+        if (scrollRef.current) scrollRef.current.scrollTop = top;
+      });
+    }
+  }, [filters]);
+
   useEffect(() => {
     if (open) load(filters);
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -611,10 +633,15 @@ export function HearingsModal({
         actions={
           <>
             <button
-              onClick={() => load(filters)}
-              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground font-semibold transition-colors"
+              onClick={handleRefresh}
+              disabled={refreshing}
+              title="Refresh table data without losing scroll, filters, or sort"
+              className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border font-semibold transition-colors bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100 hover:border-sky-300 dark:bg-sky-950/30 dark:text-sky-300 dark:border-sky-800 dark:hover:bg-sky-950/50 dark:hover:border-sky-700 disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              <RefreshCw size={12} /> Refresh
+              <RefreshCw size={12} className={cn(refreshing && "animate-spin")} />
+              <span className="hidden sm:inline">
+                {refreshing ? "Refreshing…" : "Refresh"}
+              </span>
             </button>
             <button className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold transition-colors">
               <Download size={12} /> Export CSV
@@ -740,7 +767,7 @@ export function HearingsModal({
         <StatsBar stats={stats} />
 
         {/* ── Scrollable table area — single horizontal scroll container for header + rows ── */}
-        <div className="flex-1 overflow-auto relative min-h-0">
+        <div ref={scrollRef} className="flex-1 overflow-auto relative min-h-0">
           {isPending && (
             <div className="absolute inset-0 bg-background/70 flex items-center justify-center z-10">
               <Loader2 size={32} className="animate-spin text-primary" />
