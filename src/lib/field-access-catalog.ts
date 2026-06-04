@@ -82,6 +82,7 @@ export const FIELD_ACCESS_CATALOG: FieldAccessPage[] = [
         label: "Post HRG Dev Status",
         group: "Post HRG",
       },
+      { key: "post_hrg_report", label: "Post HRG Report", group: "Post HRG" },
       // — Bulk Actions —
       // `bulk_select` is the MASTER toggle (controls the row + select-all
       // checkboxes). The 6 per-button keys gate individual entries on the
