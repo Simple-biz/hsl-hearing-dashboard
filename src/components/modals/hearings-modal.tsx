@@ -1,6 +1,14 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, useTransition } from "react";
+import {
+  memo,
+  startTransition,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import {
   RefreshCw,
   Download,
@@ -142,14 +150,22 @@ const DATE_RANGE_OPTIONS = [
   { value: "this_month", label: "This Month" },
   { value: "next_week", label: "Next Week" },
   { value: "next_month", label: "Next Month" },
+  { value: "specific", label: "Specific Date" },
   { value: "custom", label: "Custom Range…" },
 ];
 
+const MONTH_OPTIONS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+] as const;
+
 // ─── HearingRow ───────────────────────────────────────────────────────────────
 // Native selects/checkboxes are intentional — they live inside a fixed-column
-// data grid where shadcn Select would break the compact layout.
+// data grid where shadcn Select would break the compact layout. Wrapped in
+// memo so unrelated rows don't re-render when the parent's expand-state
+// changes; relies on `onUpdate` having a stable reference (useCallback).
 
-function HearingRow({
+function HearingRowInner({
   h,
   teams,
   mrStatusOptions,
@@ -171,9 +187,23 @@ function HearingRow({
     { month: "short", day: "numeric" },
   );
 
+  // Whole-row tint by credited state — mirrors the MR Pivot's pattern so the
+  // visual cue is consistent across the page. Light mode uses pale 50-shade;
+  // dark mode uses 500-shade at low opacity (900-shade reads as invisible
+  // against the near-black surface).
+  const creditedRowCls =
+    h.credited === true
+      ? "bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-500/20 dark:hover:bg-emerald-500/30"
+      : h.credited === false
+        ? "bg-rose-50 hover:bg-rose-100 dark:bg-rose-500/20 dark:hover:bg-rose-500/30"
+        : "hover:bg-muted/40";
+
   return (
     <div
-      className="grid gap-3 px-4 py-2 border-b border-border/50 hover:bg-muted/40 transition-colors text-xs items-center"
+      className={cn(
+        "grid gap-3 px-4 py-2 border-b border-border/50 transition-colors text-xs items-center",
+        creditedRowCls,
+      )}
       style={{
         gridTemplateColumns:
           "minmax(180px,2fr) minmax(120px,1.4fr) minmax(40px,0.4fr) minmax(90px,1fr) minmax(160px,1.8fr) minmax(55px,0.5fr) minmax(130px,1.4fr) minmax(100px,1.1fr) minmax(50px,0.5fr) minmax(80px,0.9fr) minmax(90px,1fr)",
@@ -478,6 +508,11 @@ function HearingRow({
   );
 }
 
+// Memoized export — shallow-compares props so unrelated rows skip re-render
+// when the parent's expand-state changes. Stable `onUpdate` (useCallback in
+// HearingsModal) is what makes this effective.
+const HearingRow = memo(HearingRowInner);
+
 // ─── StatsBar ─────────────────────────────────────────────────────────────────
 
 function StatsBar({
@@ -547,9 +582,20 @@ export function HearingsModal({
   const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set());
   const [postHrgHearing, setPostHrgHearing] = useState<Hearing | null>(null);
 
+  // Derive the Year dropdown options from the existing availableMonths prop
+  // (each entry's month_value is "YYYY-MM"). Unique, descending — newest first.
+  const availableYears = Array.from(
+    new Set(
+      availableMonths
+        .map((m) => m.month_value.slice(0, 4))
+        .filter((y) => /^\d{4}$/.test(y)),
+    ),
+  ).sort((a, b) => b.localeCompare(a));
+
   const [filters, setFilters] = useState<HearingFilters>({
     search: "",
-    month_filter: "",
+    month: "",
+    year: "",
     team_filter: "",
     status_filter: "",
     assignment_filter: "",
@@ -609,28 +655,33 @@ export function HearingsModal({
     load(next);
   }
 
-  async function handleUpdate(id: number, field: string, value: unknown) {
-    // Special signal: open the Post HRG modal for a specific hearing
-    if (field === "__open_post_hrg") {
-      setPostHrgHearing(value as Hearing);
-      return;
-    }
+  // Stable reference — memoized HearingRow relies on this not changing
+  // identity each render, otherwise the memo never hits.
+  const handleUpdate = useCallback(
+    async (id: number, field: string, value: unknown) => {
+      // Special signal: open the Post HRG modal for a specific hearing
+      if (field === "__open_post_hrg") {
+        setPostHrgHearing(value as Hearing);
+        return;
+      }
 
-    const actions: Record<string, (v: unknown) => Promise<unknown>> = {
-      medical_record_status: (v) => updateMrStatus(id, v as string),
-      hearing_decision_status: (v) =>
-        updateHearingDecisionStatus(id, v as string),
-      mr_team: (v) => updateMrTeam(id, v as number | null),
-      task_assigned: (v) => toggleTaskAssigned(id, v as boolean),
-      credited: (v) => toggleCredited(id, v as boolean | null),
-      manner_of_appearance: (v) => updateMoa(id, v as string),
-      five_day_notice: (v) => toggleFiveDayNotice(id, v as boolean),
-    };
-    await actions[field]?.(value);
-    setHearings((prev) =>
-      prev.map((h) => (h.id === id ? { ...h, [field]: value } : h)),
-    );
-  }
+      const actions: Record<string, (v: unknown) => Promise<unknown>> = {
+        medical_record_status: (v) => updateMrStatus(id, v as string),
+        hearing_decision_status: (v) =>
+          updateHearingDecisionStatus(id, v as string),
+        mr_team: (v) => updateMrTeam(id, v as number | null),
+        task_assigned: (v) => toggleTaskAssigned(id, v as boolean),
+        credited: (v) => toggleCredited(id, v as boolean | null),
+        manner_of_appearance: (v) => updateMoa(id, v as string),
+        five_day_notice: (v) => toggleFiveDayNotice(id, v as boolean),
+      };
+      await actions[field]?.(value);
+      setHearings((prev) =>
+        prev.map((h) => (h.id === id ? { ...h, [field]: value } : h)),
+      );
+    },
+    [],
+  );
 
   const grouped = hearings.reduce<Record<string, Hearing[]>>((acc, h) => {
     const key = h.hearing_date.slice(0, 7);
@@ -714,15 +765,38 @@ export function HearingsModal({
               />
             </div>
           )}
+          {filters.date_range === "specific" && (
+            <input
+              type="date"
+              value={filters.date_from}
+              onChange={(e) =>
+                applyFilter({ date_from: e.target.value, date_to: "" })
+              }
+              className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground"
+              aria-label="Specific hearing date"
+            />
+          )}
           <select
-            value={filters.month_filter}
-            onChange={(e) => applyFilter({ month_filter: e.target.value })}
+            value={filters.month || ""}
+            onChange={(e) => applyFilter({ month: e.target.value })}
             className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer"
           >
             <option value="">All Months</option>
-            {availableMonths.map((m) => (
-              <option key={m.month_value} value={m.month_value}>
-                {m.month_label}
+            {MONTH_OPTIONS.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+          <select
+            value={filters.year || ""}
+            onChange={(e) => applyFilter({ year: e.target.value })}
+            className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer"
+          >
+            <option value="">All Years</option>
+            {availableYears.map((y) => (
+              <option key={y} value={y}>
+                {y}
               </option>
             ))}
           </select>
@@ -762,11 +836,39 @@ export function HearingsModal({
             <option value="no_task">No Task Assigned</option>
             <option value="no_both">No Specialist &amp; No Task</option>
           </select>
+          {/* Expand / Collapse all month groups on the current page. Pure
+              client-side state — does not refetch. Wrapped in startTransition
+              so the click feels instant; React renders the (potentially many)
+              rows as a low-priority update without blocking the button. */}
+          <button
+            onClick={() =>
+              startTransition(() =>
+                setExpandedMonths(new Set(Object.keys(grouped))),
+              )
+            }
+            disabled={
+              Object.keys(grouped).length === 0 ||
+              Object.keys(grouped).every((k) => expandedMonths.has(k))
+            }
+            title="Expand all month groups"
+            className="text-xs px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Expand All
+          </button>
+          <button
+            onClick={() => startTransition(() => setExpandedMonths(new Set()))}
+            disabled={expandedMonths.size === 0}
+            title="Collapse all month groups"
+            className="text-xs px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Collapse All
+          </button>
           <button
             onClick={() =>
               applyFilter({
                 search: "",
-                month_filter: "",
+                month: "",
+                year: "",
                 team_filter: "",
                 status_filter: "",
                 assignment_filter: "",
@@ -824,15 +926,17 @@ export function HearingsModal({
                 <div
                   className="flex items-center gap-3 px-4 py-2 bg-muted/40 border-b border-border cursor-pointer hover:bg-muted/60 transition-colors select-none"
                   onClick={() =>
-                    setExpandedMonths((p) => {
-                      const n = new Set(p);
-                      if (n.has(monthKey)) {
-                        n.delete(monthKey);
-                      } else {
-                        n.add(monthKey);
-                      }
-                      return n;
-                    })
+                    startTransition(() =>
+                      setExpandedMonths((p) => {
+                        const n = new Set(p);
+                        if (n.has(monthKey)) {
+                          n.delete(monthKey);
+                        } else {
+                          n.add(monthKey);
+                        }
+                        return n;
+                      }),
+                    )
                   }
                 >
                   <span className="w-5 h-5 flex items-center justify-center bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 rounded text-sm font-bold shrink-0">

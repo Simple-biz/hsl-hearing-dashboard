@@ -304,7 +304,14 @@ export interface MrPivotPageData {
 
 export interface HearingFilters {
   search?: string;
+  /** Legacy "YYYY-MM" string used by the MR Pivot's single-dropdown month filter. */
   month_filter?: string;
+  /** Month abbreviation ("Jan"…"Dec") — independent of year. Used by the
+   *  Hearings — Detail View modal. */
+  month?: string;
+  /** 4-digit year string — independent of month. Used by the
+   *  Hearings — Detail View modal. */
+  year?: string;
   team_filter?: string;
   status_filter?: string;
   assignment_filter?: string;

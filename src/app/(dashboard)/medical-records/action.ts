@@ -575,7 +575,11 @@ export async function getHearingsPaginated(
   }
 
   // Date range (takes priority over month_filter)
-  if (filters.date_range && filters.date_range !== "custom") {
+  if (
+    filters.date_range &&
+    filters.date_range !== "custom" &&
+    filters.date_range !== "specific"
+  ) {
     const ranges: Record<string, string> = {
       today: `h.hearing_date = CURRENT_DATE`,
       this_week: `h.hearing_date BETWEEN date_trunc('week', CURRENT_DATE) AND date_trunc('week', CURRENT_DATE) + INTERVAL '6 days'`,
@@ -584,6 +588,9 @@ export async function getHearingsPaginated(
       next_month: `h.hearing_date BETWEEN date_trunc('month', CURRENT_DATE) + INTERVAL '1 month' AND date_trunc('month', CURRENT_DATE) + INTERVAL '2 months' - INTERVAL '1 day'`,
     };
     if (ranges[filters.date_range]) where.push(ranges[filters.date_range]);
+  } else if (filters.date_range === "specific" && filters.date_from) {
+    params.push(filters.date_from);
+    where.push(`h.hearing_date = $${params.length}::date`);
   } else if (filters.date_range === "custom") {
     if (filters.date_from && filters.date_to) {
       params.push(filters.date_from); where.push(`h.hearing_date >= $${params.length}`);
@@ -596,6 +603,25 @@ export async function getHearingsPaginated(
   } else if (filters.month_filter) {
     params.push(filters.month_filter);
     where.push(`TO_CHAR(h.hearing_date, 'YYYY-MM') = $${params.length}`);
+  }
+
+  // Independent month/year filters (used by the Hearings — Detail View modal,
+  // which splits month and year into two dropdowns). Either or both may be
+  // set; numeric values are inlined as SQL literals after validation, so no
+  // params are consumed.
+  if (filters.month) {
+    const MONTH_NUM: Record<string, number> = {
+      Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6,
+      Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12,
+    };
+    const mm = MONTH_NUM[filters.month];
+    if (mm) where.push(`EXTRACT(MONTH FROM h.hearing_date) = ${mm}`);
+  }
+  if (filters.year) {
+    const yr = parseInt(filters.year, 10);
+    if (Number.isFinite(yr) && yr >= 1900 && yr <= 9999) {
+      where.push(`EXTRACT(YEAR FROM h.hearing_date) = ${yr}`);
+    }
   }
 
   // Team filter
