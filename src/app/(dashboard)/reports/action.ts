@@ -45,10 +45,27 @@ export interface StatCardData {
 }
 
 export interface ReportsFilters {
-  /** Preset date range bucket */
-  quickSelect?: "All Time" | "Last 30 Days" | "Last 90 Days" | "This Year" | "";
-  /** Single month string matching MonthlyTrend.month, e.g. "Jan '25" */
+  /** Preset date range bucket. "Specific Date" / "Custom Range" pair with the
+   *  `specificDate` / `dateFrom`+`dateTo` fields respectively. */
+  quickSelect?:
+    | "All Time"
+    | "Last 30 Days"
+    | "Last 90 Days"
+    | "This Year"
+    | "Specific Date"
+    | "Custom Range"
+    | "";
+  /** Month abbreviation: "Jan" | "Feb" | ... | "Dec" or "". Independent of
+   *  year, so "Jan" alone filters every January in the dataset. */
   month?: string;
+  /** 4-digit year as string: "2024" | "2025" | ... or "". Independent of
+   *  month, so "2025" alone filters all months in 2025. */
+  year?: string;
+  /** ISO YYYY-MM-DD — only meaningful when quickSelect = "Specific Date". */
+  specificDate?: string;
+  /** ISO YYYY-MM-DD — only meaningful when quickSelect = "Custom Range". */
+  dateFrom?: string;
+  dateTo?: string;
   /** Rep name matching AssignedRep.name */
   rep?: string;
 }
@@ -61,11 +78,22 @@ export interface ReportsData {
   statCards: StatCardData[];
   /** Total withdrawal hearing count — used in the Assigned Cases modal withdrawal row */
   withdrawalTotal: number;
-  /** All unique month labels across the full dataset — used to populate the Month filter */
-  allMonths: string[];
+  /** All distinct years present in the dataset, descending — populates the Year filter */
+  allYears: string[];
   /** All rep names across the full dataset — used to populate the Rep filter */
   allReps: string[];
 }
+
+/** Subset of ReportsFilters that drives the SQL date constraint. Passed as one
+ *  bundle so the per-fetcher signatures don't grow with each new date control. */
+type DateFilterInput = {
+  qs: ReportsFilters["quickSelect"];
+  month: string | undefined;
+  year: string | undefined;
+  specificDate: string | undefined;
+  dateFrom: string | undefined;
+  dateTo: string | undefined;
+};
 
 // ─── Color map for hearing decision statuses (UI-only, not stored in DB) ──────
 
@@ -99,56 +127,84 @@ async function resolveRepId(repName?: string): Promise<number | null> {
 }
 
 /**
- * Converts a quickSelect preset to a SQL date condition fragment + params.
- * Returns an object with the WHERE clause snippet and any bound values.
+ * Builds the combined date-range WHERE fragments for every date-style filter:
+ *  - quickSelect presets (Last 30 / 90, This Year)
+ *  - quickSelect = "Specific Date" → bound `specificDate`
+ *  - quickSelect = "Custom Range"  → bound `dateFrom` / `dateTo`
+ *  - independent `month` name (Jan…Dec) and/or `year` (4-digit)
+ *
+ * All clauses are AND'd by the caller. Numeric month / year are inlined as
+ * SQL literals after validation — no params consumed for those. Pass
+ * `prefix=""` when the query has no alias on hearings (e.g. fetchStatCards
+ * uses `FROM hearings` without `h`).
  */
-function quickSelectToDateRange(
-  quickSelect: ReportsFilters["quickSelect"],
-): { clause: string; params: unknown[] } {
-  switch (quickSelect) {
-    case "Last 30 Days":
-      return { clause: `AND h.hearing_date >= CURRENT_DATE - INTERVAL '30 days'`, params: [] };
-    case "Last 90 Days":
-      return { clause: `AND h.hearing_date >= CURRENT_DATE - INTERVAL '90 days'`, params: [] };
-    case "This Year":
-      return { clause: `AND EXTRACT(YEAR FROM h.hearing_date) = EXTRACT(YEAR FROM CURRENT_DATE)`, params: [] };
-    default:
-      return { clause: "", params: [] };
-  }
-}
-
-/**
- * Converts a month label like "Jan '25" to a SQL date range condition.
- * Returns an object with the WHERE clause snippet and bound values.
- */
-function monthLabelToDateRange(
-  month: string | undefined,
+function buildDateRangeFilter(
+  date: DateFilterInput,
   startIdx: number,
-): { clause: string; params: unknown[] } {
-  if (!month) return { clause: "", params: [] };
-  // Parse "Jan '25" → first/last day of that calendar month
-  const match = month.match(/^(\w{3})\s+'(\d{2})$/);
-  if (!match) return { clause: "", params: [] };
-  const MONTH_NUM: Record<string, string> = {
-    Jan: "01", Feb: "02", Mar: "03", Apr: "04",
-    May: "05", Jun: "06", Jul: "07", Aug: "08",
-    Sep: "09", Oct: "10", Nov: "11", Dec: "12",
-  };
-  const [, abbr, yr] = match;
-  const mm = MONTH_NUM[abbr] ?? "01";
-  const fullYear = `20${yr}`;
-  const firstDay = `${fullYear}-${mm}-01`;
-  return {
-    clause: `AND h.hearing_date >= $${startIdx}::date AND h.hearing_date < ($${startIdx}::date + INTERVAL '1 month')`,
-    params: [firstDay],
-  };
+  prefix: string = "h.",
+): { clauses: string[]; params: unknown[] } {
+  const { qs, month, year, specificDate, dateFrom, dateTo } = date;
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+  let idx = startIdx;
+
+  switch (qs) {
+    case "Last 30 Days":
+      clauses.push(`${prefix}hearing_date >= CURRENT_DATE - INTERVAL '30 days'`);
+      break;
+    case "Last 90 Days":
+      clauses.push(`${prefix}hearing_date >= CURRENT_DATE - INTERVAL '90 days'`);
+      break;
+    case "This Year":
+      clauses.push(`EXTRACT(YEAR FROM ${prefix}hearing_date) = EXTRACT(YEAR FROM CURRENT_DATE)`);
+      break;
+    case "Specific Date":
+      if (specificDate) {
+        clauses.push(`${prefix}hearing_date = $${idx}::date`);
+        params.push(specificDate);
+        idx++;
+      }
+      break;
+    case "Custom Range":
+      if (dateFrom) {
+        clauses.push(`${prefix}hearing_date >= $${idx}::date`);
+        params.push(dateFrom);
+        idx++;
+      }
+      if (dateTo) {
+        clauses.push(`${prefix}hearing_date <= $${idx}::date`);
+        params.push(dateTo);
+        idx++;
+      }
+      break;
+  }
+
+  if (month) {
+    const MONTH_NUM: Record<string, number> = {
+      Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6,
+      Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12,
+    };
+    const mm = MONTH_NUM[month];
+    if (mm) {
+      clauses.push(`EXTRACT(MONTH FROM ${prefix}hearing_date) = ${mm}`);
+    }
+  }
+
+  if (year) {
+    const yr = parseInt(year, 10);
+    if (Number.isFinite(yr) && yr >= 1900 && yr <= 9999) {
+      clauses.push(`EXTRACT(YEAR FROM ${prefix}hearing_date) = ${yr}`);
+    }
+  }
+
+  return { clauses, params };
 }
 
 // ─── DB fetch helpers ─────────────────────────────────────────────────────────
 
 async function fetchAllMonthly(
   repId: number | null,
-  qs: ReportsFilters["quickSelect"],
+  date: DateFilterInput,
 ): Promise<MonthlyTrend[]> {
   const conditions: string[] = ["h.hearing_date IS NOT NULL"];
   const params: unknown[] = [];
@@ -160,12 +216,10 @@ async function fetchAllMonthly(
     idx++;
   }
 
-  const { clause: qsClause, params: qsParams } = quickSelectToDateRange(qs);
-  if (qsClause) {
-    conditions.push(qsClause.replace(/^AND /, ""));
-    params.push(...qsParams);
-    idx += qsParams.length;
-  }
+  const { clauses: dateClauses, params: dateParams } = buildDateRangeFilter(date, idx);
+  conditions.push(...dateClauses);
+  params.push(...dateParams);
+  idx += dateParams.length;
 
   const where = `WHERE ${conditions.join(" AND ")}`;
 
@@ -186,7 +240,7 @@ async function fetchAllMonthly(
 
 async function fetchAllHearingStatuses(
   repId: number | null,
-  qs: ReportsFilters["quickSelect"],
+  date: DateFilterInput,
 ): Promise<HearingStatus[]> {
   const conditions: string[] = [
     "h.hearing_decision_status IS NOT NULL",
@@ -201,11 +255,10 @@ async function fetchAllHearingStatuses(
     idx++;
   }
 
-  const { clause: qsClause, params: qsParams } = quickSelectToDateRange(qs);
-  if (qsClause) {
-    conditions.push(qsClause.replace(/^AND /, ""));
-    params.push(...qsParams);
-  }
+  const { clauses: dateClauses, params: dateParams } = buildDateRangeFilter(date, idx);
+  conditions.push(...dateClauses);
+  params.push(...dateParams);
+  idx += dateParams.length;
 
   const { rows } = await db.query(
     `SELECT
@@ -226,16 +279,17 @@ async function fetchAllHearingStatuses(
 }
 
 async function fetchAllAssignedReps(
-  qs: ReportsFilters["quickSelect"],
+  date: DateFilterInput,
 ): Promise<AssignedRep[]> {
   const conditions: string[] = ["r.is_active = true"];
   const params: unknown[] = [];
 
-  const { clause: qsClause, params: qsParams } = quickSelectToDateRange(qs);
-  if (qsClause) {
-    conditions.push(qsClause.replace(/^AND h\./, "h.").replace(/^AND /, ""));
-    params.push(...qsParams);
-  }
+  const { clauses: dateClauses, params: dateParams } = buildDateRangeFilter(
+    date,
+    params.length + 1,
+  );
+  conditions.push(...dateClauses);
+  params.push(...dateParams);
 
   const { rows } = await db.query(
     `SELECT r.name, COUNT(h.id)::int AS hearings
@@ -252,7 +306,7 @@ async function fetchAllAssignedReps(
 
 async function fetchAllRepStatusRows(
   repId: number | null,
-  qs: ReportsFilters["quickSelect"],
+  date: DateFilterInput,
 ): Promise<RepStatusRow[]> {
   const conditions: string[] = ["r.is_active = true"];
   const params: unknown[] = [];
@@ -264,11 +318,10 @@ async function fetchAllRepStatusRows(
     idx++;
   }
 
-  const { clause: qsClause, params: qsParams } = quickSelectToDateRange(qs);
-  if (qsClause) {
-    conditions.push(qsClause.replace(/^AND h\./, "h.").replace(/^AND /, ""));
-    params.push(...qsParams);
-  }
+  const { clauses: dateClauses, params: dateParams } = buildDateRangeFilter(date, idx);
+  conditions.push(...dateClauses);
+  params.push(...dateParams);
+  idx += dateParams.length;
 
   const { rows } = await db.query(
     `SELECT
@@ -298,7 +351,7 @@ async function fetchAllRepStatusRows(
 
 async function fetchStatCards(
   repId: number | null,
-  qs: ReportsFilters["quickSelect"],
+  date: DateFilterInput,
 ): Promise<StatCardData[]> {
   const conditions: string[] = [];
   const params: unknown[] = [];
@@ -310,11 +363,11 @@ async function fetchStatCards(
     idx++;
   }
 
-  const { clause: qsClause, params: qsParams } = quickSelectToDateRange(qs);
-  if (qsClause) {
-    conditions.push(qsClause.replace(/^AND h\./, "").replace(/^AND /, ""));
-    params.push(...qsParams);
-  }
+  // No alias on hearings in this query — pass prefix="" so column refs stay bare.
+  const { clauses: dateClauses, params: dateParams } = buildDateRangeFilter(date, idx, "");
+  conditions.push(...dateClauses);
+  params.push(...dateParams);
+  idx += dateParams.length;
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
@@ -445,10 +498,17 @@ export async function getReportsData(
 ): Promise<ReportsData> {
   // Resolve rep name → ID once; all queries reuse the same ID.
   const repId = await resolveRepId(filters.rep);
-  const qs    = filters.quickSelect;
+  const date: DateFilterInput = {
+    qs:           filters.quickSelect,
+    month:        filters.month,
+    year:         filters.year,
+    specificDate: filters.specificDate,
+    dateFrom:     filters.dateFrom,
+    dateTo:       filters.dateTo,
+  };
 
   // Fetch unfiltered option lists in parallel with filtered data.
-  // allMonths and allReps are always the full set so dropdowns don't shrink.
+  // allYears and allReps are always the full set so dropdowns don't shrink.
   const [
     monthly,
     hearingStatus,
@@ -456,34 +516,25 @@ export async function getReportsData(
     repStatusRows,
     statCards,
     allRepsRows,
-    allMonthsRows,
+    allYearsRows,
   ] = await Promise.all([
-    fetchAllMonthly(repId, qs),
-    fetchAllHearingStatuses(repId, qs),
-    fetchAllAssignedReps(qs),
-    fetchAllRepStatusRows(repId, qs),
-    fetchStatCards(repId, qs),
+    fetchAllMonthly(repId, date),
+    fetchAllHearingStatuses(repId, date),
+    fetchAllAssignedReps(date),
+    fetchAllRepStatusRows(repId, date),
+    fetchStatCards(repId, date),
     // Full unfiltered rep list for the dropdown
     db.query(
       "SELECT name FROM representatives WHERE is_active = true ORDER BY name",
     ),
-    // Full unfiltered month list for the dropdown
+    // Full unfiltered year list for the dropdown (descending — newest first).
     db.query(
-      `SELECT DISTINCT TO_CHAR(hearing_date, 'Mon ''YY') AS month,
-              DATE_TRUNC('month', hearing_date) AS sort_key
+      `SELECT DISTINCT EXTRACT(YEAR FROM hearing_date)::int AS year
        FROM hearings
        WHERE hearing_date IS NOT NULL
-       ORDER BY sort_key`,
+       ORDER BY year DESC`,
     ),
   ]);
-
-  // Apply month filter in-memory after fetching (month is already pushed to SQL
-  // for the trend chart query; the other queries use repId/qs only).
-  // When all filters are pushed to SQL, remove this block.
-  const { clause: mClause } = monthLabelToDateRange(filters.month, 1);
-  const filteredMonthly = filters.month && !mClause
-    ? monthly.filter((m) => m.month === filters.month)
-    : monthly;
 
   // Derive withdrawalTotal from hearingStatus — sum all withdrawal-type statuses
   const WITHDRAWAL_STATUSES = [
@@ -498,13 +549,13 @@ export async function getReportsData(
     .reduce((sum, s) => sum + s.count, 0);
 
   return {
-    monthly:      filteredMonthly,
+    monthly,
     hearingStatus,
     assignedReps,
     repStatusRows,
     statCards,
     withdrawalTotal,
-    allMonths: allMonthsRows.rows.map((r) => r.month as string),
-    allReps:   allRepsRows.rows.map((r)   => r.name  as string),
+    allYears: allYearsRows.rows.map((r) => String(r.year)),
+    allReps:  allRepsRows.rows.map((r) => r.name as string),
   };
 }
