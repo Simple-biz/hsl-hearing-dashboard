@@ -25,7 +25,14 @@ export interface PortalPermissions {
   canManage: boolean; // system_admin | admin | manager | mr_admin | mr_lead | hearings_admin
   canEdit: boolean; // system_admin | admin | manager | mr_admin | mr_lead | mr_agent | hearings_admin
   canAssignSpecialist: boolean; // system_admin | admin | manager | mr_admin | mr_lead | mr_agent
+  /** Approved by TL flip — tighter than canEdit by design. Only the highest
+   *  admin tier can mark entries as TL-approved (or un-approve them). */
+  canSetApproval: boolean; // system_admin | admin | mr_admin
 }
+
+/** Source of truth for `canSetApproval` — kept as a const so the server
+ *  guards in action.ts and the UI gates in the client agree on the list. */
+export const APPROVAL_ROLES = ["system_admin", "admin", "mr_admin"] as const;
 
 export function derivePortalPermissions(
   role: PortalUserRole,
@@ -56,6 +63,7 @@ export function derivePortalPermissions(
       "mr_lead",
       "mr_agent",
     ].includes(role),
+    canSetApproval: (APPROVAL_ROLES as readonly string[]).includes(role),
   };
 }
 
@@ -87,6 +95,10 @@ export interface PortalEntry {
   portal_password: string | null;
   got_mr: boolean;
   approved_by_tl: boolean;
+  /** ISO timestamp stamped when approved_by_tl was toggled to true; cleared
+   *  (null) when toggled back to false. NULL for legacy rows approved before
+   *  the column was added. */
+  approved_by_tl_at: string | null;
   mr_specialist_id: number | null;
   hearing_id: number | null;
   username_notes: PortalNote[];
@@ -115,7 +127,20 @@ export interface PortalStats {
 export interface PortalFilters {
   search?: string;
   mr_status?: "got" | "pending" | "";
+  /** Month abbreviation: "Jan" | "Feb" | ... | "Dec" or "". Filters on
+   *  `created_at`. Independent of year, so "Jan" alone matches every January. */
   month?: string;
+  /** 4-digit year string. Filters on `created_at`. */
+  year?: string;
+  /** Date-range preset matching the post-hrg-development pattern:
+   *  "" | "yesterday" | "today" | "tomorrow" | "this-week" | "next-week"
+   *  | "this-month" | "next-30" | "specific" | "custom". */
+  date_preset?: string;
+  /** ISO YYYY-MM-DD — used by `specific` (date_from holds the day) and
+   *  `custom` (date_from is the start). */
+  date_from?: string;
+  /** ISO YYYY-MM-DD — used by `custom` (end of range). */
+  date_to?: string;
   specialist?: string;
   sort_order?: "asc" | "desc";
   page?: number;

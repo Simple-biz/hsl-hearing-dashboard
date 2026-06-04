@@ -41,18 +41,22 @@ import type {
 import { db } from "@/lib/db";
 import { getSession } from "@/lib/session";
 
-// ─── Internal helper — writes to activity_log, matching PHP's logActivity() ──
+// ─── Internal helper — writes to activity_log ────────────────────────────────
+// Column note: must be `description` (matches @/lib/activity-log and the
+// activity log modal's SELECT). An earlier version wrote to a non-existent
+// `details` column, which silently no-op'd the INSERT (caught by the
+// try/catch) — so medical-records mutations never reached the activity log.
 async function logActivity(
   action: string,
-  details: string,
+  description: string,
 ): Promise<void> {
   try {
     const session = await getSession();
     const userId = session?.user?.id;
     if (!userId) return;
     await db.query(
-      `INSERT INTO activity_log (user_id, action, details) VALUES ($1, $2, $3)`,
-      [userId, action, details],
+      `INSERT INTO activity_log (user_id, action, description) VALUES ($1, $2, $3)`,
+      [userId, action, description],
     );
   } catch {
     // Never let logging failures break the mutation
@@ -731,7 +735,7 @@ export async function updateMrStatus(
     `UPDATE hearings SET medical_record_status = $1 WHERE id = $2`,
     [status, hearingId],
   );
-  await logActivity("mr_status_updated", `MR status updated to "${status}" for hearing #${hearingId}`);
+  await logActivity("mr_status_updated", `MR status updated to "${status}" for Hearing #${hearingId}`);
   return { success: true };
 }
 
@@ -745,7 +749,7 @@ export async function updateHearingDecisionStatus(
     `UPDATE hearings SET hearing_decision_status = $1 WHERE id = $2`,
     [status, hearingId],
   );
-  await logActivity("decision_status_updated", `Decision status updated to "${status}" for hearing #${hearingId}`);
+  await logActivity("decision_status_updated", `Decision status updated to "${status}" for Hearing #${hearingId}`);
 
   // If this is a withdrawal-type decision, push a notification for the MR bell
   const isWithdrawal = status.startsWith("Withdrawal") || status === "WD CLMT DECEASED" || status === "Dismissal";
@@ -787,7 +791,7 @@ export async function toggleTaskAssigned(
     `UPDATE hearings SET task_assigned = $1 WHERE id = $2`,
     [value, hearingId],
   );
-  await logActivity("five_day_notice_updated", `Task assigned set to ${value} for hearing #${hearingId}`);
+  await logActivity("task_assigned_updated", `Task assigned set to ${value} for Hearing #${hearingId}`);
   return { success: true };
 }
 
@@ -804,7 +808,7 @@ export async function toggleCredited(
   const label = value === null ? "unverified" : value ? "credited" : "not credited";
   await logActivity(
     "credited_updated",
-    `Credited set to ${label} for hearing #${hearingId}`,
+    `Credited set to ${label} for Hearing #${hearingId}`,
   );
   return { success: true };
 }
@@ -824,7 +828,7 @@ export async function toggleFiveDayNotice(
       WHERE id = $2`,
     [value, hearingId],
   );
-  await logActivity("five_day_notice_updated", `5-Day Notice set to ${value} for hearing #${hearingId}`);
+  await logActivity("five_day_notice_updated", `5-Day Notice set to ${value} for Hearing #${hearingId}`);
   return { success: true };
 }
 
@@ -838,7 +842,7 @@ export async function updateMoa(
     `UPDATE hearings SET manner_of_appearance = $1 WHERE id = $2`,
     [manner, hearingId],
   );
-  await logActivity("moa_updated", `MOA updated to "${manner}" for hearing #${hearingId}`);
+  await logActivity("moa_updated", `MOA updated to "${manner}" for Hearing #${hearingId}`);
   return { success: true };
 }
 
@@ -852,7 +856,7 @@ export async function updateWorksheetLink(
     `UPDATE hearings SET medical_record_link = $1 WHERE id = $2`,
     [link, hearingId],
   );
-  await logActivity("mr_link_updated", `Worksheet link updated for hearing #${hearingId}`);
+  await logActivity("mr_link_updated", `Worksheet link updated for Hearing #${hearingId}`);
   return { success: true };
 }
 
@@ -1118,7 +1122,7 @@ export async function getActivityLog(params: {
   excludeSystemAdmin?: boolean;
 }): Promise<{ items: ActivityLogItem[]; total: number }> {
   const where: string[] = [
-    `a.action IN ('mr_status_updated','mr_team_assigned','mr_link_updated','decision_status_updated','moa_updated','five_day_notice_updated','credited_updated','bulk_mr_team_assigned','bulk_mr_status_updated','urgent_team_assigned')`,
+    `a.action IN ('mr_status_updated','mr_team_assigned','mr_link_updated','decision_status_updated','moa_updated','five_day_notice_updated','task_assigned_updated','credited_updated','bulk_mr_team_assigned','bulk_mr_status_updated','urgent_team_assigned','post_hrg_deadline_updated')`,
   ];
   const qParams: unknown[] = [];
 
@@ -1253,7 +1257,7 @@ export async function addPostHrgNote(
     [newNote, hearingId],
   );
 
-  await logActivity("post_hrg_note_added", `Post HRG note added for hearing #${hearingId}`);
+  await logActivity("post_hrg_note_added", `Post HRG note added for Hearing #${hearingId}`);
   return { success: true };
 }
 
@@ -1264,6 +1268,10 @@ export async function updatePostHrgDeadline(
   await db.query(
     `UPDATE hearings SET post_hrg_deadline = $1 WHERE id = $2`,
     [deadline, hearingId],
+  );
+  await logActivity(
+    "post_hrg_deadline_updated",
+    `Post HRG deadline ${deadline ? `set to "${deadline}"` : "cleared"} for Hearing #${hearingId}`,
   );
   return { success: true };
 }

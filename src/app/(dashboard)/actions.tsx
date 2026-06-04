@@ -1922,11 +1922,14 @@ export async function fetchActivityLog(params: {
     db.query(
       `
       SELECT a.id, a.action,
+             -- Case-insensitive: matches both "Hearing #N" and "hearing #N"
+             -- so historical lowercase entries (from earlier medical-records
+             -- writes) also get the claimant-name substitution.
              CASE
-               WHEN a.description ~ 'Hearing #[0-9]+' THEN
-                 regexp_replace(a.description, 'Hearing #([0-9]+)', COALESCE((
-                   SELECT h.claimant FROM hearings h WHERE h.id = (regexp_match(a.description, 'Hearing #([0-9]+)'))[1]::int
-                 ), 'Unknown'))
+               WHEN a.description ~* 'hearing #[0-9]+' THEN
+                 regexp_replace(a.description, 'hearing #([0-9]+)', COALESCE((
+                   SELECT h.claimant FROM hearings h WHERE h.id = (regexp_match(a.description, 'hearing #([0-9]+)', 'i'))[1]::int
+                 ), 'Unknown'), 'i')
                ELSE a.description
              END AS description,
              u.full_name AS user_name,

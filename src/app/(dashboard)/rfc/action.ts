@@ -167,10 +167,28 @@ export async function getRfcEntries(
     where.push("(r.filed_to_oho = false OR r.filed_to_oho IS NULL)");
   if (filters.status === "approved") where.push("r.approved_by_tl = true");
 
-  // Month (on hearing_date)
+  // Month (abbreviation Jan–Dec) on hearing_date — independent of year.
   if (filters.month) {
-    params.push(filters.month);
-    where.push(`TO_CHAR(r.hearing_date, 'YYYY-MM') = $${params.length}`);
+    const MONTH_NUM: Record<string, number> = {
+      Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6,
+      Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12,
+    };
+    const mm = MONTH_NUM[filters.month];
+    if (mm) where.push(`EXTRACT(MONTH FROM r.hearing_date) = ${mm}`);
+  }
+
+  // Year (4-digit) on hearing_date — independent of month.
+  if (filters.year) {
+    const yr = parseInt(filters.year, 10);
+    if (Number.isFinite(yr) && yr >= 1900 && yr <= 9999) {
+      where.push(`EXTRACT(YEAR FROM r.hearing_date) = ${yr}`);
+    }
+  }
+
+  // Specific date — single calendar input matches the exact hearing day.
+  if (filters.hearing_date) {
+    params.push(filters.hearing_date);
+    where.push(`r.hearing_date = $${params.length}::date`);
   }
 
   // Team

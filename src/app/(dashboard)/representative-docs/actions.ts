@@ -979,11 +979,14 @@ export async function fetchRepDocsAckLog(params: {
               ack.user_id AS ack_user_id,
               u.full_name AS ack_user_name,
               a.action,
+              -- Case-insensitive: matches both "Hearing #N" and "hearing #N".
+              -- Mirrors the regex in fetchActivityLog (actions.tsx) so the two
+              -- activity-log surfaces render claimant names consistently.
               CASE
-                WHEN a.description ~ 'Hearing #[0-9]+' THEN
-                  regexp_replace(a.description, 'Hearing #([0-9]+)', COALESCE((
-                    SELECT h.claimant FROM hearings h WHERE h.id = (regexp_match(a.description, 'Hearing #([0-9]+)'))[1]::int
-                  ), 'Unknown'))
+                WHEN a.description ~* 'hearing #[0-9]+' THEN
+                  regexp_replace(a.description, 'hearing #([0-9]+)', COALESCE((
+                    SELECT h.claimant FROM hearings h WHERE h.id = (regexp_match(a.description, 'hearing #([0-9]+)', 'i'))[1]::int
+                  ), 'Unknown'), 'i')
                 ELSE a.description
               END AS description,
               ack.acknowledged_at::text AS acknowledged_at
