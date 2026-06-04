@@ -206,13 +206,20 @@ export function PostHrgCompletedModal({
                       </span>
                     </td>
                     <td className="px-3 py-2 text-muted-foreground tabular-nums text-[10px]">
-                      {r.updated_at
-                        ? new Date(r.updated_at).toLocaleDateString("en-US", {
-                            month: "short",
-                            day: "numeric",
-                            year: "numeric",
-                          })
-                        : "—"}
+                      {/* Prefer completed_at — set by the DB trigger when
+                          status moved to Completed. Falls back to updated_at
+                          for rows that pre-date the migration or didn't get
+                          backfilled (defensive; should be rare). */}
+                      {(() => {
+                        const at = r.completed_at ?? r.updated_at;
+                        return at
+                          ? new Date(at).toLocaleDateString("en-US", {
+                              month: "short",
+                              day: "numeric",
+                              year: "numeric",
+                            })
+                          : "—";
+                      })()}
                     </td>
                     <td className="px-3 py-2 text-right">
                       <button

@@ -256,6 +256,11 @@ export function PostHrgModal({ open, onClose, teams, mrStatusOptions, hearingId,
                 <th className="px-3 py-2.5 text-left whitespace-nowrap">MR Status</th>
                 <th className="px-3 py-2.5 text-center whitespace-nowrap">Credited</th>
                 <th className="px-3 py-2.5 text-left whitespace-nowrap">Status</th>
+                <th className="px-3 py-2.5 text-left whitespace-nowrap text-[9px] leading-tight">
+                  Post HRG
+                  <br />
+                  Dev Status
+                </th>
                 <th className="px-3 py-2.5 text-center whitespace-nowrap">MOA</th>
                 <th className="px-3 py-2.5 text-center whitespace-nowrap">5-Day</th>
                 <th className="px-3 py-2.5 text-center whitespace-nowrap">Post HRG</th>
@@ -377,6 +382,17 @@ export function PostHrgModal({ open, onClose, teams, mrStatusOptions, hearingId,
                   {/* Hearing Decision Status */}
                   <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">
                     {h.hearing_decision_status ?? "—"}
+                  </td>
+                  {/* Dev Status — status from this hearing's linked MR
+                      post_hrg_development row (NULL if no MR PHD row). */}
+                  <td className="px-3 py-2 text-[10px] whitespace-nowrap">
+                    {h.phd_mr_status ? (
+                      <span className="text-foreground/90">
+                        {h.phd_mr_status}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground/50">—</span>
+                    )}
                   </td>
                   {/* MOA */}
                   <td className="px-3 py-2 text-center">

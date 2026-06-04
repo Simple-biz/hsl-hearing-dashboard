@@ -828,6 +828,64 @@ export async function updateHearing(
         hearingId,
       );
     }
+
+    // Auto-close the PHD workflow when a terminal decision is reached.
+    // Favorable / Unfavorable means the hearing's outcome is decided and
+    // the post-HRG documentation phase is done — flip linked PHD rows'
+    // status to 'Records Closed' so they drop out of the active grid and
+    // into the Records Closed modal. Partially Favorable is intentionally
+    // NOT included per the post-HRG team — those stay open for review.
+    const TERMINAL_DECISIONS = new Set(["favorable", "unfavorable"]);
+    const newVal = value ? String(value).toLowerCase().trim() : "";
+    const oldVal = oldValue ? String(oldValue).toLowerCase().trim() : "";
+    const isNewTerminal = TERMINAL_DECISIONS.has(newVal);
+    const wasTerminal = TERMINAL_DECISIONS.has(oldVal);
+
+    // Only act on the transition INTO a terminal decision. Skip rows that
+    // are already at Completed / Records Closed so we don't undo a manual
+    // status the team has already settled on.
+    if (isNewTerminal && !wasTerminal) {
+      const closeRes = await db.query(
+        `UPDATE post_hrg_development
+            SET status = 'Records Closed',
+                updated_at = NOW()
+          WHERE hearing_id = $1
+            AND (status IS NULL
+                 OR LOWER(status) NOT IN ('completed', 'records closed'))
+          RETURNING id, record_type`,
+        [hearingId],
+      );
+      if ((closeRes.rowCount ?? 0) > 0) {
+        // Mirror back to hearings.post_hrg_dev_status so the dashboard's
+        // "Post Hrg Dev" column reflects the auto-close. This matches the
+        // mirror in updatePostHrgDevField (PHD status → hearings col,
+        // scoped to MR record_type). Only fires if an MR PHD row was
+        // among the closed ones.
+        const closedMrRows = closeRes.rows.filter(
+          (r: { record_type: string }) =>
+            String(r.record_type ?? "") === "MR",
+        );
+        if (closedMrRows.length > 0) {
+          try {
+            await db.query(
+              `UPDATE hearings SET post_hrg_dev_status = 'Records Closed' WHERE id = $1`,
+              [hearingId],
+            );
+          } catch (e) {
+            console.error(
+              "Auto-close → hearings.post_hrg_dev_status mirror failed",
+              e,
+            );
+          }
+        }
+
+        await logAction(
+          "post_hrg_dev_status_synced",
+          `Auto-closed ${closeRes.rowCount} Post HRG record(s) for ${claimant} after decision set to '${value}'`,
+          hearingId,
+        );
+      }
+    }
   }
 
   // Keep rep-docs "Assigned To" in sync with the dashboard "Docs Assigned"
