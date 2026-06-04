@@ -32,6 +32,27 @@ import type {
 } from "./action";
 import { RfcCommentModal } from "@/components/modals";
 
+// ─── Filter constants ─────────────────────────────────────────────────────────
+// Static Month options (Jan–Dec). Shared by both filter bars in this file.
+const MONTH_OPTIONS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+] as const;
+
+/** Derive distinct 4-digit years from the existing `availableMonths` prop
+ *  (each value is "YYYY-MM"). Descending so newest year sits at the top. */
+function deriveAvailableYears(
+  availableMonths: ReadonlyArray<{ val: string }>,
+): string[] {
+  return Array.from(
+    new Set(
+      availableMonths
+        .map((m) => m.val.slice(0, 4))
+        .filter((y) => /^\d{4}$/.test(y)),
+    ),
+  ).sort((a, b) => b.localeCompare(a));
+}
+
 // ─── Color helpers ────────────────────────────────────────────────────────────
 
 function isLight(hex: string): boolean {
@@ -1178,6 +1199,8 @@ function ViewDetailsModal({
     sort_order: "desc",
     status: "",
     month: "",
+    year: "",
+    hearing_date: "",
     team: "",
     doc_type: "",
     page: 1,
@@ -1274,17 +1297,37 @@ function ViewDetailsModal({
             <option value="approved">✓ Approved by TL</option>
           </select>
           <select
-            value={filters.month}
+            value={filters.month || ""}
             onChange={(e) => applyFilter({ month: e.target.value })}
             className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer"
           >
             <option value="">All Months</option>
-            {data.availableMonths.map((m) => (
-              <option key={m.val} value={m.val}>
-                {m.label}
+            {MONTH_OPTIONS.map((m) => (
+              <option key={m} value={m}>
+                {m}
               </option>
             ))}
           </select>
+          <select
+            value={filters.year || ""}
+            onChange={(e) => applyFilter({ year: e.target.value })}
+            className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer"
+          >
+            <option value="">All Years</option>
+            {deriveAvailableYears(data.availableMonths).map((y) => (
+              <option key={y} value={y}>
+                {y}
+              </option>
+            ))}
+          </select>
+          <input
+            type="date"
+            value={filters.hearing_date || ""}
+            onChange={(e) => applyFilter({ hearing_date: e.target.value })}
+            aria-label="Filter by hearing date"
+            title="Filter to entries with this exact hearing date"
+            className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer"
+          />
           <select
             value={filters.team}
             onChange={(e) => applyFilter({ team: e.target.value })}
@@ -1317,6 +1360,8 @@ function ViewDetailsModal({
                 sort_order: "desc",
                 status: "",
                 month: "",
+                year: "",
+                hearing_date: "",
                 team: "",
                 doc_type: "",
               })
@@ -1467,6 +1512,8 @@ export function RfcClient(data: RfcPageData) {
     sort_order: "desc",
     status: "",
     month: "",
+    year: "",
+    hearing_date: "",
     team: "",
     doc_type: "",
     page: 1,
@@ -1664,17 +1711,37 @@ export function RfcClient(data: RfcPageData) {
                 <option value="approved">✓ Approved by TL</option>
               </select>
               <select
-                value={filters.month}
+                value={filters.month || ""}
                 onChange={(e) => applyFilter({ month: e.target.value })}
                 className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer w-full sm:w-auto"
               >
                 <option value="">All Months</option>
-                {data.availableMonths.map((m) => (
-                  <option key={m.val} value={m.val}>
-                    {m.label}
+                {MONTH_OPTIONS.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
                   </option>
                 ))}
               </select>
+              <select
+                value={filters.year || ""}
+                onChange={(e) => applyFilter({ year: e.target.value })}
+                className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer w-full sm:w-auto"
+              >
+                <option value="">All Years</option>
+                {deriveAvailableYears(data.availableMonths).map((y) => (
+                  <option key={y} value={y}>
+                    {y}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="date"
+                value={filters.hearing_date || ""}
+                onChange={(e) => applyFilter({ hearing_date: e.target.value })}
+                aria-label="Filter by hearing date"
+                title="Filter to entries with this exact hearing date"
+                className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer w-full sm:w-auto"
+              />
               <select
                 value={filters.team}
                 onChange={(e) => applyFilter({ team: e.target.value })}
@@ -1707,6 +1774,8 @@ export function RfcClient(data: RfcPageData) {
                     sort_order: "desc",
                     status: "",
                     month: "",
+                    year: "",
+                    hearing_date: "",
                     team: "",
                     doc_type: "",
                   })

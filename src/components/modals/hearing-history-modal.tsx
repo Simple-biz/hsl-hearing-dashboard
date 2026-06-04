@@ -8,6 +8,11 @@ import {
   fetchHearingHistory,
   type HearingHistoryEntry,
 } from "@/app/(dashboard)/hearing-history-actions";
+
+// Re-export so wrapper modals (e.g. PortalEntryAuditTrailModal) can implement
+// the `customFetcher` prop without importing from the server-actions file
+// directly — keeps the modal layer as the single import surface.
+export type { HearingHistoryEntry };
 import {
   avatarColor,
   getInitials,

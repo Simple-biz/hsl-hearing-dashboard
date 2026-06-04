@@ -139,7 +139,14 @@ export interface RfcMrTeam {
 export interface RfcFilters {
   search?: string;
   status?: "filed" | "pending" | "approved" | "";
+  /** Month abbreviation: "Jan" | "Feb" | ... | "Dec" or "". Independent of
+   *  year, so "Jan" alone matches every January in the dataset. */
   month?: string;
+  /** 4-digit year string: "2024" | "2025" | ... or "". Independent of month. */
+  year?: string;
+  /** ISO YYYY-MM-DD — single calendar input. Filters to entries whose
+   *  hearing_date matches this exact day. */
+  hearing_date?: string;
   team?: string;
   doc_type?: string;
   sort_order?: "asc" | "desc";
