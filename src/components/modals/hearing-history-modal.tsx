@@ -8,6 +8,11 @@ import {
   fetchHearingHistory,
   type HearingHistoryEntry,
 } from "@/app/(dashboard)/hearing-history-actions";
+
+// Re-export so wrapper modals (e.g. PortalEntryAuditTrailModal) can implement
+// the `customFetcher` prop without importing from the server-actions file
+// directly — keeps the modal layer as the single import surface.
+export type { HearingHistoryEntry };
 import {
   avatarColor,
   getInitials,
@@ -55,14 +60,24 @@ function dateRangeBounds(
 }
 
 export interface HearingHistoryModalProps {
+  /** Hearing scope. Required unless `customFetcher` is provided (in which
+   *  case the caller handles entity scoping and this may be 0). */
   hearingId: number;
+  /** Entity name shown under the title (claimant, portal client, etc.). */
   claimant: string;
   /** Modal heading, e.g. "Rep History" / "Decision History". */
   title: string;
-  /** Action allow-list passed to fetchHearingHistory. Omit for full trail. */
+  /** Action allow-list passed to fetchHearingHistory. Omit for full trail.
+   *  Ignored when `customFetcher` is provided. */
   actions?: string[];
-  /** Optional description ILIKE filter, e.g. "Decision:%". */
+  /** Optional description ILIKE filter, e.g. "Decision:%". Ignored when
+   *  `customFetcher` is provided. */
   descriptionLike?: string;
+  /** Override the default fetchHearingHistory call. When provided, the
+   *  modal uses this to load entries — useful for entities that don't live
+   *  in the hearings table (e.g. patient-portal). Must return an array of
+   *  HearingHistoryEntry-shaped objects, sorted newest first. */
+  customFetcher?: () => Promise<HearingHistoryEntry[]>;
   /** Per-action chip color classes. */
   actionColors?: Record<string, string>;
   /** Per-action human label for the chip. Falls back to the raw action. */
@@ -84,6 +99,7 @@ export function HearingHistoryModal({
   title,
   actions,
   descriptionLike,
+  customFetcher,
   actionColors,
   actionLabels,
   footerNote,
@@ -100,14 +116,18 @@ export function HearingHistoryModal({
 
   useEffect(() => {
     let cancelled = false;
-    fetchHearingHistory(hearingId, { actions, descriptionLike }).then((res) => {
+    const fetcher = customFetcher
+      ? customFetcher()
+      : fetchHearingHistory(hearingId, { actions, descriptionLike });
+    fetcher.then((res) => {
       if (!cancelled) setEntries(res);
     });
     return () => {
       cancelled = true;
     };
-    // actions / descriptionLike are config props — stable per caller, so a
-    // hearingId-only dep is intentional (avoids array-identity refetch loops).
+    // actions / descriptionLike / customFetcher are config props — stable
+    // per caller, so the hearingId-only dep is intentional (avoids
+    // array-identity / function-identity refetch loops).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hearingId]);
 

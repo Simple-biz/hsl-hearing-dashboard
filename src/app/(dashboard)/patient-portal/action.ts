@@ -18,6 +18,7 @@ export type {
 import {
   derivePortalPermissions,
   PORTAL_ACTIONS,
+  APPROVAL_ROLES,
 } from "../patient-portal/types";
 import type {
   PortalUserRole,
@@ -75,6 +76,7 @@ function mapRow(row: Record<string, any>): PortalEntry {
     portal_password: row.portal_password ?? null,
     got_mr: Boolean(row.got_mr),
     approved_by_tl: Boolean(row.approved_by_tl),
+    approved_by_tl_at: row.approved_by_tl_at ?? null,
     mr_specialist_id: row.mr_specialist_id ?? null,
     hearing_id: row.hearing_id ?? null,
     username_notes: parseNotes(row.username_notes),
@@ -214,11 +216,77 @@ export async function getPortalEntries(
     conditions.push("p.got_mr = false");
   }
 
-  // Month filter (YYYY-MM on created_at) — matches the Newest First sort.
+  // Month filter (Jan–Dec name) on created_at — independent of year.
   if (filters.month) {
-    p++;
-    conditions.push(`TO_CHAR(p.created_at, 'YYYY-MM') = $${p}`);
-    params.push(filters.month);
+    const MONTH_NUM: Record<string, number> = {
+      Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6,
+      Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12,
+    };
+    const mm = MONTH_NUM[filters.month];
+    if (mm) conditions.push(`EXTRACT(MONTH FROM p.created_at) = ${mm}`);
+  }
+
+  // Year filter (4-digit) on created_at — independent of month.
+  if (filters.year) {
+    const yr = parseInt(filters.year, 10);
+    if (Number.isFinite(yr) && yr >= 1900 && yr <= 9999) {
+      conditions.push(`EXTRACT(YEAR FROM p.created_at) = ${yr}`);
+    }
+  }
+
+  // Date-range preset on created_at. Mirrors the post-hrg-development page's
+  // value set. Future-leaning options ("tomorrow", "next-week", "next-30")
+  // intentionally return zero rows here since created_at is always in the
+  // past — the dropdown matches the screenshot the user requested.
+  switch (filters.date_preset) {
+    case "yesterday":
+      conditions.push("DATE(p.created_at) = CURRENT_DATE - INTERVAL '1 day'");
+      break;
+    case "today":
+      conditions.push("DATE(p.created_at) = CURRENT_DATE");
+      break;
+    case "tomorrow":
+      conditions.push("DATE(p.created_at) = CURRENT_DATE + INTERVAL '1 day'");
+      break;
+    case "this-week":
+      conditions.push(
+        "p.created_at >= date_trunc('week', CURRENT_DATE) AND p.created_at < date_trunc('week', CURRENT_DATE) + INTERVAL '7 days'",
+      );
+      break;
+    case "next-week":
+      conditions.push(
+        "p.created_at >= date_trunc('week', CURRENT_DATE) + INTERVAL '7 days' AND p.created_at < date_trunc('week', CURRENT_DATE) + INTERVAL '14 days'",
+      );
+      break;
+    case "this-month":
+      conditions.push(
+        "p.created_at >= date_trunc('month', CURRENT_DATE) AND p.created_at < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'",
+      );
+      break;
+    case "next-30":
+      conditions.push(
+        "p.created_at >= CURRENT_DATE AND p.created_at < CURRENT_DATE + INTERVAL '30 days'",
+      );
+      break;
+    case "specific":
+      if (filters.date_from) {
+        p++;
+        conditions.push(`DATE(p.created_at) = $${p}::date`);
+        params.push(filters.date_from);
+      }
+      break;
+    case "custom":
+      if (filters.date_from) {
+        p++;
+        conditions.push(`p.created_at >= $${p}::date`);
+        params.push(filters.date_from);
+      }
+      if (filters.date_to) {
+        p++;
+        conditions.push(`p.created_at < $${p}::date + INTERVAL '1 day'`);
+        params.push(filters.date_to);
+      }
+      break;
   }
 
   // Specialist filter
@@ -322,6 +390,18 @@ export async function addPortalEntry(
     specialistId = Number(input.mr_specialist_id);
   }
 
+  // Permission-gate the Approved by TL flag at create time. Restricted roles
+  // are silently downgraded to approved=false rather than erroring — they may
+  // legitimately want to create the row without setting approval at all, and
+  // we don't want to block the create over a side field they couldn't toggle.
+  let approvedAtCreate = Boolean(input.approved_by_tl);
+  if (approvedAtCreate) {
+    const role = session.user.role ?? "";
+    if (!(APPROVAL_ROLES as readonly string[]).includes(role)) {
+      approvedAtCreate = false;
+    }
+  }
+
   const hearingId =
     input.hearing_id === undefined || input.hearing_id === null
       ? null
@@ -333,12 +413,17 @@ export async function addPortalEntry(
     // use America/New_York (not literal 'EST') so DST is handled correctly.
     // Neon sessions run in UTC by default, so a raw CURRENT_DATE would roll
     // over at 7pm/8pm Eastern — not what users expect.
+    // approved_by_tl_at mirrors $9: stamped on insert when approved=true,
+    // otherwise NULL. Keeps the stamp aligned with the boolean from row birth.
     `INSERT INTO mr_patient_portal
        (entry_date, hearing_date, client_name, provider, mycase_link,
         portal_link, portal_username, portal_password, got_mr, approved_by_tl,
+        approved_by_tl_at,
         mr_specialist_id, hearing_id, created_by)
      VALUES ((NOW() AT TIME ZONE 'America/New_York')::date,
-             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+             $1,$2,$3,$4,$5,$6,$7,$8,$9,
+             CASE WHEN $9 THEN NOW() ELSE NULL END,
+             $10,$11,$12)
      RETURNING id`,
     [
       input.hearing_date || null,
@@ -349,7 +434,7 @@ export async function addPortalEntry(
       input.portal_username || null,
       input.portal_password || null,
       Boolean(input.got_mr),
-      Boolean(input.approved_by_tl),
+      approvedAtCreate,
       specialistId,
       hearingId,
       Number(session.user.id),
@@ -373,16 +458,17 @@ export async function updatePortalEntry(
 
   const session = await requireAuth();
 
-  // Fetch current specialist so we can decide whether the input represents
-  // an actual change. Only changes are gated — a non-permitted user editing
-  // other fields can still save (their disabled dropdown carries the same
-  // value back, which we treat as a no-op).
+  // Fetch current specialist + approval flag so we can decide whether the
+  // input represents an actual change. Only changes are gated — a
+  // non-permitted user editing other fields can still save (their disabled
+  // controls carry the same value back, which we treat as a no-op).
   const { rows: cur } = await db.query(
-    "SELECT mr_specialist_id FROM mr_patient_portal WHERE id = $1",
+    "SELECT mr_specialist_id, approved_by_tl FROM mr_patient_portal WHERE id = $1",
     [id],
   );
   const currentSpecialist: number | null =
     (cur[0]?.mr_specialist_id as number | null) ?? null;
+  const currentApproved = Boolean(cur[0]?.approved_by_tl);
 
   let nextSpecialist: number | null = currentSpecialist;
   if (input.mr_specialist_id !== undefined) {
@@ -413,6 +499,26 @@ export async function updatePortalEntry(
     nextSpecialist = proposed;
   }
 
+  // Approval gate — same change-detection pattern as specialist. Only changes
+  // are gated, so non-permitted users editing other fields don't get blocked
+  // by their disabled select carrying the same value back. If the proposed
+  // value differs from current and the role isn't allowed, silently fall
+  // back to the current value (less hostile than throwing).
+  let nextApproved = currentApproved;
+  if (input.approved_by_tl !== undefined) {
+    const proposed = Boolean(input.approved_by_tl);
+    if (proposed !== currentApproved) {
+      const role = session.user.role ?? "";
+      if (!(APPROVAL_ROLES as readonly string[]).includes(role)) {
+        return {
+          success: false,
+          message: "Only Admin or MR Admin can change the Approved by TL flag",
+        };
+      }
+    }
+    nextApproved = proposed;
+  }
+
   const hearingId =
     input.hearing_id === undefined || input.hearing_id === null
       ? null
@@ -421,10 +527,24 @@ export async function updatePortalEntry(
   await db.query(
     // entry_date is intentionally omitted — it's set at INSERT time and
     // immutable thereafter (the modal shows it as read-only).
+    // approved_by_tl_at stamp policy on modal save:
+    //   • false → true  : stamp NOW() (newly approved)
+    //   • true  → false : clear to NULL (un-approved)
+    //   • unchanged     : preserve the existing stamp (don't bump on side
+    //     edits like Provider/Username changes)
+    // PostgreSQL SET expressions evaluate against pre-update row values,
+    // so `approved_by_tl` inside the CASE refers to the OLD value, not $9.
     `UPDATE mr_patient_portal SET
        hearing_date = $1, client_name = $2, provider = $3,
        mycase_link = $4, portal_link = $5, portal_username = $6, portal_password = $7,
-       got_mr = $8, approved_by_tl = $9, mr_specialist_id = $10, hearing_id = $11,
+       got_mr = $8,
+       approved_by_tl = $9,
+       approved_by_tl_at = CASE
+         WHEN $9 = true  AND approved_by_tl = false THEN NOW()
+         WHEN $9 = false                            THEN NULL
+         ELSE approved_by_tl_at
+       END,
+       mr_specialist_id = $10, hearing_id = $11,
        updated_at = NOW()
      WHERE id = $12`,
     [
@@ -436,7 +556,7 @@ export async function updatePortalEntry(
       input.portal_username || null,
       input.portal_password || null,
       Boolean(input.got_mr),
-      Boolean(input.approved_by_tl),
+      nextApproved,
       nextSpecialist,
       hearingId,
       id,
@@ -528,15 +648,42 @@ export async function updatePortalField(
       };
   }
 
+  // Server-side permission guard for approval flips. Tighter than canEdit:
+  // only the top admin tier (system_admin / admin / mr_admin) can mark or
+  // un-mark an entry as TL-approved. Mirrors APPROVAL_ROLES in types.ts.
+  if (field === "approved_by_tl") {
+    const role = session.user.role ?? "";
+    if (!(APPROVAL_ROLES as readonly string[]).includes(role)) {
+      return {
+        success: false,
+        message: "Only Admin or MR Admin can change the Approved by TL flag",
+      };
+    }
+  }
+
   // Normalise empty specialist to null
   let dbValue: string | number | boolean | null = value;
   if (field === "mr_specialist_id" && (value === "" || value === 0))
     dbValue = null;
 
-  await db.query(
-    `UPDATE mr_patient_portal SET ${field as AllowedField} = $1, updated_at = NOW() WHERE id = $2`,
-    [dbValue, id],
-  );
+  // approved_by_tl carries a companion `_at` timestamp column — stamp NOW()
+  // when flipping to true, clear to NULL when flipping to false. Mirrors the
+  // dashboard's CHECKBOX_STAMP_FIELDS pattern.
+  if (field === "approved_by_tl") {
+    await db.query(
+      `UPDATE mr_patient_portal
+          SET approved_by_tl = $1,
+              approved_by_tl_at = CASE WHEN $1 THEN NOW() ELSE NULL END,
+              updated_at = NOW()
+        WHERE id = $2`,
+      [dbValue, id],
+    );
+  } else {
+    await db.query(
+      `UPDATE mr_patient_portal SET ${field as AllowedField} = $1, updated_at = NOW() WHERE id = $2`,
+      [dbValue, id],
+    );
+  }
 
   // Fetch client name for activity log
   const { rows } = await db.query(
