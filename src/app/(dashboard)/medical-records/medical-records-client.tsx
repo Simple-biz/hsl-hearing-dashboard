@@ -45,6 +45,7 @@ import {
   updateMrTeam,
   toggleTaskAssigned,
   toggleCredited,
+  toggleFiveDayNotice,
   updateMoa,
   updateWorksheetLink,
   assignJeromeUrgent,
@@ -1848,6 +1849,7 @@ export function MrPivotClient({ userRole, userName, ...data }: Props) {
       mr_team: (v) => updateMrTeam(id, v as number | null),
       task_assigned: (v) => toggleTaskAssigned(id, v as boolean),
       credited: (v) => toggleCredited(id, v as boolean | null),
+      five_day_notice: (v) => toggleFiveDayNotice(id, v as boolean),
       manner_of_appearance: (v) => updateMoa(id, v as string),
       medical_record_link: (v) => updateWorksheetLink(id, v as string),
     };
