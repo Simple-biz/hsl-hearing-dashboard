@@ -1288,6 +1288,7 @@ export async function getPostHrgHearings(
          h.medical_record_status, h.hearing_decision_status,
          h.manner_of_appearance, h.five_day_notice, h.five_day_notice_at::text, h.task_assigned,
          h.credited, h.post_hrg_review, h.post_hrg_deadline, h.post_hrg_notes,
+         h.post_hrg_requirements,
          h.medical_record_link, h.claimant_link, h.chronicle_link, h.claim_type, h.mr_team_id,
          r.name       AS rep_name,
          t.team_name  AS mr_team_name,

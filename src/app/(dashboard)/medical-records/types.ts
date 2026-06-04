@@ -162,6 +162,7 @@ export interface Hearing {
   credited: boolean | null;
   post_hrg_review: string | null;
   post_hrg_deadline: string | null;
+  post_hrg_requirements: string | null;
   medical_record_link: string | null;
   claimant_link: string | null;
   chronicle_link: string | null;
