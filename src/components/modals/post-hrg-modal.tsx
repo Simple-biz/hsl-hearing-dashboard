@@ -510,7 +510,7 @@ export function PostHrgModal({ open, onClose, teams, mrStatusOptions, hearingId,
         userRole={userRole}
         initialNotes={null}
         initialDeadline={reviewHearing.post_hrg_deadline}
-        initialRequirements={null}
+        initialRequirements={reviewHearing.post_hrg_requirements}
         initialDeadlinePrev={null}
         initialDeadlineChangedBy={null}
         onClose={() => setReviewHearing(null)}
@@ -521,6 +521,9 @@ export function PostHrgModal({ open, onClose, teams, mrStatusOptions, hearingId,
           }
           if (patch.post_hrg_review !== undefined) {
             mrPatch.post_hrg_review = patch.post_hrg_review ? "true" : null;
+          }
+          if (patch.post_hrg_requirements !== undefined) {
+            mrPatch.post_hrg_requirements = patch.post_hrg_requirements;
           }
           setHearings((prev) =>
             prev.map((h) =>
