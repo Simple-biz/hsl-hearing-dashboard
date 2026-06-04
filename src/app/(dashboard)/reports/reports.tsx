@@ -61,11 +61,22 @@ const QUICK_SELECT_OPTIONS = [
   "Last 30 Days",
   "Last 90 Days",
   "This Year",
+  "Specific Date",
+  "Custom Range",
+] as const;
+
+const MONTH_OPTIONS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ] as const;
 
 const EMPTY_FILTERS: ReportsFilters = {
   quickSelect: "",
   month: "",
+  year: "",
+  specificDate: "",
+  dateFrom: "",
+  dateTo: "",
   rep: "",
 };
 
@@ -375,7 +386,7 @@ export function ReportsClient({
   repStatusRows: initialRepStatusRows,
   statCards: initialStatCards,
   withdrawalTotal: initialWithdrawalTotal,
-  allMonths,
+  allYears,
   allReps,
   userRole,
 }: Props) {
@@ -386,7 +397,7 @@ export function ReportsClient({
     repStatusRows: initialRepStatusRows,
     statCards: initialStatCards,
     withdrawalTotal: initialWithdrawalTotal,
-    allMonths,
+    allYears,
     allReps,
   });
 
@@ -402,7 +413,10 @@ export function ReportsClient({
   const [winRateModalOpen, setWinRateModalOpen] = useState(false);
 
   const isFiltered =
-    !!activeFilters.quickSelect || !!activeFilters.month || !!activeFilters.rep;
+    !!activeFilters.quickSelect ||
+    !!activeFilters.month ||
+    !!activeFilters.year ||
+    !!activeFilters.rep;
   const maxHearings = Math.max(1, ...data.assignedReps.map((r) => r.hearings));
   const winRate = computeWinRate(data.statCards);
 
@@ -490,16 +504,63 @@ export function ReportsClient({
             ))}
           </select>
 
+          {/* Conditional date inputs — only shown when their quickSelect mode is active. */}
+          {pending.quickSelect === "Specific Date" && (
+            <input
+              type="date"
+              className={SEL + " w-full sm:w-auto sm:min-w-36"}
+              value={pending.specificDate || ""}
+              onChange={(e) => updatePending("specificDate", e.target.value)}
+              disabled={isPending}
+              aria-label="Specific date"
+            />
+          )}
+          {pending.quickSelect === "Custom Range" && (
+            <>
+              <input
+                type="date"
+                className={SEL + " w-full sm:w-auto sm:min-w-32"}
+                value={pending.dateFrom || ""}
+                onChange={(e) => updatePending("dateFrom", e.target.value)}
+                disabled={isPending}
+                aria-label="From date"
+              />
+              <span className="text-xs text-muted-foreground hidden sm:inline">to</span>
+              <input
+                type="date"
+                className={SEL + " w-full sm:w-auto sm:min-w-32"}
+                value={pending.dateTo || ""}
+                onChange={(e) => updatePending("dateTo", e.target.value)}
+                disabled={isPending}
+                aria-label="To date"
+              />
+            </>
+          )}
+
           <select
-            className={SEL + " w-full sm:w-auto sm:min-w-36"}
+            className={SEL + " w-full sm:w-auto sm:min-w-28"}
             value={pending.month || ""}
             onChange={(e) => updatePending("month", e.target.value)}
             disabled={isPending}
           >
             <option value="">All Months</option>
-            {allMonths.map((m) => (
+            {MONTH_OPTIONS.map((m) => (
               <option key={m} value={m}>
                 {m}
+              </option>
+            ))}
+          </select>
+
+          <select
+            className={SEL + " w-full sm:w-auto sm:min-w-28"}
+            value={pending.year || ""}
+            onChange={(e) => updatePending("year", e.target.value)}
+            disabled={isPending}
+          >
+            <option value="">All Years</option>
+            {allYears.map((y) => (
+              <option key={y} value={y}>
+                {y}
               </option>
             ))}
           </select>
