@@ -1929,6 +1929,10 @@ export function PostHrgClient({
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [phStatusFilter, setPhStatusFilter] = useState<string>("all");
   const [indicatorFilter, setIndicatorFilter] = useState<string>("all");
+  // "Responsible" filter — threaded via ref so we don't have to widen
+  // fetchPage / handleFilterChange's signature for one more value.
+  const [responsibleFilter, setResponsibleFilter] = useState<string>("all");
+  const responsibleFilterRef = useRef<string>("all");
   // "Show NEW only" toggle — when ON, only unacknowledged rows are returned.
   // Threaded via ref so the existing fetchPage signature stays stable.
   const [showNewOnly, setShowNewOnly] = useState<boolean>(false);
@@ -1949,10 +1953,12 @@ export function PostHrgClient({
   // Which column the date filter targets. "hearing_date" preserves the
   // existing meaning of presets like "This Week" = hearings in that week.
   // Flip to "created_at" to filter by when each PHD row was added.
-  const [dateField, setDateField] = useState<"hearing_date" | "created_at">(
+  const [dateField, setDateField] = useState<
+    "hearing_date" | "created_at" | "deadline"
+  >("hearing_date");
+  const dateFieldRef = useRef<"hearing_date" | "created_at" | "deadline">(
     "hearing_date",
   );
-  const dateFieldRef = useRef<"hearing_date" | "created_at">("hearing_date");
   // Tab state — which record_type bucket is active (MR / POST_HRG / REP / all).
   // Read by fetchPage via ref so we don't have to thread it through every caller.
   const [recordType, setRecordType] = useState<PostHrgRecordType | "all">(
@@ -2197,6 +2203,10 @@ export function PostHrgClient({
           status: status !== "all" ? status : undefined,
           phStatus: phStatus !== "all" ? phStatus : undefined,
           indicator: indicator !== "all" ? indicator : undefined,
+          responsible:
+            responsibleFilterRef.current !== "all"
+              ? responsibleFilterRef.current
+              : undefined,
           recordType: recordTypeRef.current,
           hearingDateFrom: dateRangeRef.current.from || undefined,
           hearingDateTo: dateRangeRef.current.to || undefined,
@@ -2339,7 +2349,9 @@ export function PostHrgClient({
   const handleDatePresetChange = useCallback(
     (preset: string) => {
       setDatePreset(preset);
-      if (preset === "custom") return; // wait for user to pick from/to
+      // Both "custom" and "specific" wait for the user to enter dates via
+      // the date pickers that conditionally render below.
+      if (preset === "custom" || preset === "specific") return;
       const r = computeDateRange(preset);
       setDateFrom(r.from);
       setDateTo(r.to);
@@ -2347,6 +2359,18 @@ export function PostHrgClient({
       refetchWithCurrentFilters();
     },
     [computeDateRange, refetchWithCurrentFilters],
+  );
+
+  // Specific Date — single date picker; sets both from and to to the same
+  // day so the existing range-based SQL naturally filters to that exact day.
+  const handleSpecificDateChange = useCallback(
+    (val: string) => {
+      setDateFrom(val);
+      setDateTo(val);
+      dateRangeRef.current = { from: val, to: val };
+      refetchWithCurrentFilters();
+    },
+    [refetchWithCurrentFilters],
   );
 
   const handleDateFromChange = useCallback(
@@ -2375,8 +2399,17 @@ export function PostHrgClient({
     refetchWithCurrentFilters();
   }, [refetchWithCurrentFilters]);
 
+  const handleResponsibleFilterChange = useCallback(
+    (next: string) => {
+      responsibleFilterRef.current = next;
+      setResponsibleFilter(next);
+      refetchWithCurrentFilters();
+    },
+    [refetchWithCurrentFilters],
+  );
+
   const handleDateFieldChange = useCallback(
-    (next: "hearing_date" | "created_at") => {
+    (next: "hearing_date" | "created_at" | "deadline") => {
       dateFieldRef.current = next;
       setDateField(next);
       // Only refetch if there's an active date range — otherwise the toggle
@@ -3664,6 +3697,21 @@ export function PostHrgClient({
                       </option>
                     ))}
                   </select>
+                  <select
+                    className={cn(SELECT_CLS, "flex-1 sm:w-44")}
+                    value={responsibleFilter}
+                    onChange={(e) =>
+                      handleResponsibleFilterChange(e.target.value)
+                    }
+                  >
+                    <option value="all">All Responsible</option>
+                    <option value="unassigned">— Unassigned —</option>
+                    {responsibleOptions.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.value}
+                      </option>
+                    ))}
+                  </select>
                   <div className="relative flex items-center gap-1.5">
                     <select
                       className={cn(SELECT_CLS, "flex-1 sm:w-44")}
@@ -3691,13 +3739,17 @@ export function PostHrgClient({
                       value={dateField}
                       onChange={(e) =>
                         handleDateFieldChange(
-                          e.target.value as "hearing_date" | "created_at",
+                          e.target.value as
+                            | "hearing_date"
+                            | "created_at"
+                            | "deadline",
                         )
                       }
                       title="Which column the date range filters on"
                     >
                       <option value="hearing_date">Hearing Date</option>
                       <option value="created_at">Date Added</option>
+                      <option value="deadline">Deadline Date</option>
                     </select>
 
                     <select
@@ -3713,8 +3765,20 @@ export function PostHrgClient({
                       <option value="next-week">Next Week</option>
                       <option value="this-month">This Month</option>
                       <option value="next-30">Next 30 Days</option>
+                      <option value="specific">Specific Date...</option>
                       <option value="custom">Custom Range...</option>
                     </select>
+
+                    {datePreset === "specific" && (
+                      <input
+                        type="date"
+                        value={dateFrom}
+                        onChange={(e) =>
+                          handleSpecificDateChange(e.target.value)
+                        }
+                        className="h-8 w-31.25 rounded-md border bg-card px-2 text-xs"
+                      />
+                    )}
 
                     {datePreset === "custom" && (
                       <div className="flex items-center gap-1.5">
@@ -4743,17 +4807,15 @@ export function PostHrgClient({
             readOnly={TERMINAL_STATUSES.includes(
               (postHrgModal.status || "").toLowerCase(),
             )}
-            // MR rows: Requirements mirrors the row's Details Content, so
-            // it's shown read-only here (Details Content is the source) and
-            // seeded directly from `details`.
-            readOnlyRequirements={postHrgModal.record_type === "MR"}
+            // All PHD record types (MR / POST_HRG / REP) mirror Details
+            // Content → hearings.post_hrg_requirements via the server-side
+            // mirror in updatePostHrgDevField. Requirements is therefore
+            // shown read-only in this modal regardless of record_type, and
+            // seeded directly from the row's `details` column.
+            readOnlyRequirements={true}
             initialNotes={postHrgModal.post_hrg_notes}
             initialDeadline={postHrgModal.post_hrg_deadline}
-            initialRequirements={
-              postHrgModal.record_type === "MR"
-                ? postHrgModal.details
-                : null
-            }
+            initialRequirements={postHrgModal.details}
             initialDeadlinePrev={null}
             initialDeadlineChangedBy={null}
             onClose={() => setPostHrgModal(null)}

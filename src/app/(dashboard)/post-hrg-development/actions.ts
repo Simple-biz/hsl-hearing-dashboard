@@ -40,6 +40,9 @@ export interface PostHrgDevRow {
   ssn_last_4: string | null;
   created_at: string;
   updated_at: string;
+  /** Set by the DB trigger when status transitions to 'Completed'. Cleared
+   *  when status transitions away. NULL if the row has never been Completed. */
+  completed_at: string | null;
   created_by: number | null;
   updated_by: number | null;
   post_hrg_notes: string | null;
@@ -204,14 +207,18 @@ export interface FetchPostHrgPageParams {
   status?: string;
   phStatus?: string;
   indicator?: string;
+  /** Match exact value of person_responsible (case-insensitive).
+   *  "unassigned" filters to rows where person_responsible IS NULL / empty. */
+  responsible?: string;
   recordType?: PostHrgRecordType | "all";
   hearingDateFrom?: string | null;
   hearingDateTo?: string | null;
   // Which column the date range targets. Defaults to "hearing_date" (the
   // historical meaning of "This Week" / "Today" presets). Set to "created_at"
   // when the user flips the UI toggle to "Date Added" — filters by when the
-  // PHD row was created instead of when the hearing is/was.
-  dateField?: "hearing_date" | "created_at";
+  // PHD row was created. Set to "deadline" to filter by the row's Post HRG
+  // deadline (matches what the Post HRG Review modal displays).
+  dateField?: "hearing_date" | "created_at" | "deadline";
   sortKey?: string;
   sortDir?: "asc" | "desc";
   // When true, restrict results to rows that have not yet been acknowledged.
@@ -265,6 +272,18 @@ export async function fetchPostHrgDevPage(
     }
   }
 
+  if (params.responsible && params.responsible !== "all") {
+    if (params.responsible === "unassigned") {
+      conditions.push(
+        `(p.person_responsible IS NULL OR TRIM(p.person_responsible) = '')`,
+      );
+    } else {
+      conditions.push(`LOWER(p.person_responsible) = LOWER($${idx})`);
+      values.push(params.responsible);
+      idx++;
+    }
+  }
+
   if (params.recordType && params.recordType !== "all") {
     conditions.push(`p.record_type = $${idx}`);
     values.push(params.recordType);
@@ -272,10 +291,14 @@ export async function fetchPostHrgDevPage(
   }
 
   // Whitelist the date column so an unexpected dateField value can't smuggle
-  // SQL. hearing_date is DATE; created_at is TIMESTAMP so cast to date for
-  // a same-day inclusive compare against the YYYY-MM-DD bounds.
+  // SQL. hearing_date and deadline are DATE columns; created_at is TIMESTAMP
+  // so cast to date for a same-day inclusive compare against YYYY-MM-DD bounds.
   const dateCol =
-    params.dateField === "created_at" ? "p.created_at::date" : "p.hearing_date";
+    params.dateField === "created_at"
+      ? "p.created_at::date"
+      : params.dateField === "deadline"
+        ? "p.deadline"
+        : "p.hearing_date";
 
   if (params.hearingDateFrom) {
     conditions.push(`${dateCol} >= $${idx}::date`);
@@ -354,7 +377,7 @@ export async function fetchPostHrgDevPage(
         p.details_notes, p.person_responsible_notes,
         p.em_sent_task_created_notes, p.ext_letter_sent_notes,
         p.status_notes,
-        p.created_at::text, p.updated_at::text,
+        p.created_at::text, p.updated_at::text, p.completed_at::text,
         p.created_by, p.updated_by,
         p.acknowledged_at::text AS acknowledged_at,
         p.acknowledged_by_name,
@@ -396,7 +419,7 @@ export async function fetchPostHrgDevRecords(): Promise<PostHrgDevRow[]> {
       p.details_notes, p.person_responsible_notes,
       p.em_sent_task_created_notes, p.ext_letter_sent_notes,
       p.status_notes,
-      p.created_at::text, p.updated_at::text,
+      p.created_at::text, p.updated_at::text, p.completed_at::text,
       p.created_by, p.updated_by,
       p.acknowledged_at::text AS acknowledged_at,
       p.acknowledged_by_name,
@@ -516,7 +539,7 @@ export async function fetchPostHrgCompletedRecords(
         p.details_notes, p.person_responsible_notes,
         p.em_sent_task_created_notes, p.ext_letter_sent_notes,
         p.status_notes,
-        p.created_at::text, p.updated_at::text,
+        p.created_at::text, p.updated_at::text, p.completed_at::text,
         p.created_by, p.updated_by,
         p.acknowledged_at::text AS acknowledged_at,
         p.acknowledged_by_name,
@@ -881,18 +904,23 @@ export async function updatePostHrgDevField(
     );
   }
 
-  // Mirror an MR row's Details Content into the linked hearing's
-  // post_hrg_requirements so the MR-mode Post HRG Review modal reflects it.
-  // One-way (Details → Requirements); the modal shows Requirements read-only
-  // for MR rows, so Details Content is the single source of truth.
-  if (field === "details" && recordType === "MR" && linkedHearingId) {
+  // Mirror Details Content into the linked hearing's post_hrg_requirements
+  // so the Post HRG Review modal reflects it. Applies to all PHD record
+  // types (MR, POST_HRG, REP) per the post-HRG team's policy — Details
+  // Content is the single source of truth for Requirements across the
+  // board. One-way mirror (Details → Requirements); the modal shows
+  // Requirements read-only for any record_type that has this mirror.
+  if (field === "details" && linkedHearingId) {
     try {
       await db.query(
         `UPDATE hearings SET post_hrg_requirements = $1 WHERE id = $2`,
         [value ?? null, linkedHearingId],
       );
     } catch (e) {
-      console.error("MR details → post_hrg_requirements mirror failed", e);
+      console.error(
+        `PHD details → post_hrg_requirements mirror failed (record_type=${recordType})`,
+        e,
+      );
     }
   }
 
