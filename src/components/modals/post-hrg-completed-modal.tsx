@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useTransition } from "react";
 import { createPortal } from "react-dom";
 import { X as XIcon, Search, Loader2, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ClaimantCopyButton } from "@/components/ui/claimant-copy-button";
 import {
   fetchPostHrgCompletedRecords,
   reopenPostHrgDevRecord,
@@ -180,7 +181,45 @@ export function PostHrgCompletedModal({
               <tbody className="divide-y">
                 {filtered.map((r) => (
                   <tr key={r.id} className="hover:bg-muted/30">
-                    <td className="px-3 py-2 font-medium">{r.claimant}</td>
+                    <td className="px-3 py-2 min-w-0">
+                      <div className="flex items-center gap-1 min-w-0">
+                        {r.claimant_link ? (
+                          <a
+                            href={r.claimant_link}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="truncate text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+                          >
+                            {r.claimant}
+                          </a>
+                        ) : (
+                          <span className="truncate text-xs font-medium text-foreground">
+                            {r.claimant}
+                          </span>
+                        )}
+                        <ClaimantCopyButton
+                          name={r.claimant}
+                          link={r.claimant_link}
+                        />
+                      </div>
+                      {(r.claim_type || r.chronicle_link) && (
+                        <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-muted-foreground">
+                          {r.claim_type && (
+                            <span className="truncate">{r.claim_type}</span>
+                          )}
+                          {r.chronicle_link && (
+                            <a
+                              href={r.chronicle_link}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="font-medium text-violet-600 hover:underline dark:text-violet-400"
+                            >
+                              Chronicle
+                            </a>
+                          )}
+                        </div>
+                      )}
+                    </td>
                     <td className="px-3 py-2">
                       <span
                         className={cn(
