@@ -52,6 +52,7 @@ function resolveRoleDefault(
       // Mirror of RFC_PAGE_ACTIONS in roles.ts (action-style keys).
       switch (fieldKey) {
         case "create_entry":
+        case "assign_team":
           return [
             "system_admin",
             "admin",

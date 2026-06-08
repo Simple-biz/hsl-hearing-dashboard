@@ -79,6 +79,15 @@ export function resolveRoleDefault(
             "mr_lead",
             "mr_agent",
           ].includes(role);
+        case "assign_team":
+          // Mirror of canAssignTeam in deriveRfcPermissions (types.ts).
+          return [
+            "system_admin",
+            "admin",
+            "manager",
+            "mr_admin",
+            "mr_lead",
+          ].includes(role);
         default:
           return false;
       }

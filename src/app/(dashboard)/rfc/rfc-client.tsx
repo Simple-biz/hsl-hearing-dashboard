@@ -630,6 +630,10 @@ function RfcRow({
       ? teamHex(team.team_color)
       : undefined;
 
+  // Tracks whether the MR Team dropdown is open so we can strip the
+  // colored background while the OS option list is visible.
+  const [teamOpen, setTeamOpen] = useState(false);
+
   function fmtDate(d: string | null) {
     if (!d) return "—";
     return new Date(d + "T00:00:00").toLocaleDateString("en-US", {
@@ -660,27 +664,34 @@ function RfcRow({
         <span className="text-foreground">{fmtDate(entry.entry_date)}</span>
       </div>
 
-      {/* MR Team */}
+      {/* MR Team — colored pill when read-only OR when closed editable.
+          While the dropdown is open we strip the background colour so the
+          OS-rendered option list isn't overlaid on a coloured surface
+          (some browsers inherit the select's bg into the popup, which
+          makes options unreadable against the team colour). */}
       <div className="px-3 py-1.5 whitespace-nowrap text-center">
         {p.canAssignTeam ? (
           <select
             value={entry.mr_team_id ?? ""}
             className="text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer font-medium w-full"
             style={
-              teamColor
+              teamColor && !teamOpen
                 ? {
                     backgroundColor: teamColor,
                     color: isLight(teamColor) ? "#1f2937" : "#fff",
                   }
                 : { backgroundColor: "#e5e7eb", color: "#374151" }
             }
-            onChange={(e) =>
+            onMouseDown={() => setTeamOpen(true)}
+            onBlur={() => setTeamOpen(false)}
+            onChange={(e) => {
+              setTeamOpen(false);
               onUpdate(
                 entry.id,
                 "mr_team_id",
                 e.target.value ? Number(e.target.value) : null,
-              )
-            }
+              );
+            }}
           >
             <option value="">—</option>
             {mrTeams.map((t) => (
@@ -991,6 +1002,10 @@ function RfcMobileCard({
       ? teamHex(team.team_color)
       : undefined;
 
+  // Tracks whether the MR Team dropdown is open so we can strip the
+  // colored background while the OS option list is visible.
+  const [teamOpen, setTeamOpen] = useState(false);
+
   function fmtDate(d: string | null) {
     if (!d) return "—";
     return new Date(d + "T00:00:00").toLocaleDateString("en-US", {
@@ -1057,20 +1072,23 @@ function RfcMobileCard({
             value={entry.mr_team_id ?? ""}
             className="text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer font-medium"
             style={
-              teamColor
+              teamColor && !teamOpen
                 ? {
                     backgroundColor: teamColor,
                     color: isLight(teamColor) ? "#1f2937" : "#fff",
                   }
                 : { backgroundColor: "#e5e7eb", color: "#374151" }
             }
-            onChange={(e) =>
+            onMouseDown={() => setTeamOpen(true)}
+            onBlur={() => setTeamOpen(false)}
+            onChange={(e) => {
+              setTeamOpen(false);
               onUpdate(
                 entry.id,
                 "mr_team_id",
                 e.target.value ? Number(e.target.value) : null,
-              )
-            }
+              );
+            }}
           >
             <option value="">—</option>
             {mrTeams.map((t) => (
@@ -1310,7 +1328,19 @@ function ViewDetailsModal({
   function handleUpdate(id: number, field: string, value: unknown) {
     updateRfcField(id, field, value as string | number | boolean | null);
     setEntries((prev) =>
-      prev.map((e) => (e.id === id ? { ...e, [field]: value } : e)),
+      prev.map((e) => {
+        if (e.id !== id) return e;
+        const next = { ...e, [field]: value };
+        // Same team-color sync as the main client's handleUpdate. Keep these
+        // two in lockstep so the optimistic pill background updates the
+        // moment the user picks a new team.
+        if (field === "mr_team_id") {
+          const team = data.mrTeams.find((t) => t.id === value);
+          next.team_color = team?.team_color ?? null;
+          next.team_name = team?.team_name ?? null;
+        }
+        return next;
+      }),
     );
   }
 
@@ -1639,7 +1669,21 @@ export function RfcClient(data: RfcPageData) {
   async function handleUpdate(id: number, field: string, value: unknown) {
     await updateRfcField(id, field, value as string | number | boolean | null);
     setEntries((prev) =>
-      prev.map((e) => (e.id === id ? { ...e, [field]: value } : e)),
+      prev.map((e) => {
+        if (e.id !== id) return e;
+        const next = { ...e, [field]: value };
+        // When mr_team_id changes, also patch team_color and team_name so
+        // the optimistic UI updates the pill background — not just the
+        // dropdown text. Without this, entry.team_color stays at its
+        // pre-change value (set by the server JOIN on initial fetch) and
+        // the `teamColor` derivation in RfcRow keeps using the stale color.
+        if (field === "mr_team_id") {
+          const team = data.mrTeams.find((t) => t.id === value);
+          next.team_color = team?.team_color ?? null;
+          next.team_name = team?.team_name ?? null;
+        }
+        return next;
+      }),
     );
   }
 

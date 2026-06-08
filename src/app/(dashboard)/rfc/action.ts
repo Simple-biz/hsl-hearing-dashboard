@@ -85,6 +85,9 @@ export async function getRfcPageData(
     if (Object.prototype.hasOwnProperty.call(overrides, "delete_entry")) {
       permissions.canDelete = overrides["delete_entry"] === true;
     }
+    if (Object.prototype.hasOwnProperty.call(overrides, "assign_team")) {
+      permissions.canAssignTeam = overrides["assign_team"] === true;
+    }
     // `update_status` is granular per-field (status / filed_to_oho /
     // approved_by_tl) so it stays gated at the server only — there is no
     // single permissions flag for it on the client today. The buttons that
@@ -304,7 +307,9 @@ export async function addRfcEntry(
 ): Promise<{ success: boolean; id?: number; message?: string }> {
   // Admin-overridable action gate. Throws if denied — client surfaces as
   // "Save failed".
-  const { requireFieldAccess } = await import("@/lib/field-access");
+  const { requireFieldAccess, canUserEditField } = await import(
+    "@/lib/field-access"
+  );
   await requireFieldAccess("rfc", "create_entry");
   if (!input.client_name?.trim()) {
     return { success: false, message: "Client name is required" };
@@ -312,6 +317,24 @@ export async function addRfcEntry(
 
   const session = await getSession();
   const createdBy = session?.user?.id ?? null;
+
+  // Silent-downgrade: if the user can create entries but lacks `assign_team`,
+  // a supplied mr_team_id is dropped to null rather than throwing. Matches
+  // the patient-portal approved_by_tl pattern — the create still succeeds,
+  // the side field they couldn't toggle simply goes unset.
+  let teamId = input.mr_team_id ?? null;
+  if (teamId != null && session?.user?.id) {
+    const role = (session.user.role ?? "mr_agent") as Parameters<
+      typeof canUserEditField
+    >[1];
+    const canAssign = await canUserEditField(
+      Number(session.user.id),
+      role,
+      "rfc",
+      "assign_team",
+    );
+    if (!canAssign) teamId = null;
+  }
 
   // Convert initial comment text to JSON array format
   let commentsJson: string | null = null;
@@ -348,7 +371,7 @@ export async function addRfcEntry(
              $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
      RETURNING id`,
     [
-      input.mr_team_id || null,
+      teamId,
       input.hearing_date || null,
       input.client_name.trim(),
       input.document_type || null,
@@ -380,11 +403,32 @@ export async function updateRfcEntry(
   input: Partial<RfcAddEntryInput>,
 ): Promise<{ success: boolean; message?: string }> {
   // Admin-overridable action gate. Throws if denied.
-  const { requireFieldAccess } = await import("@/lib/field-access");
+  const { requireFieldAccess, canUserEditField } = await import(
+    "@/lib/field-access"
+  );
   await requireFieldAccess("rfc", "edit_entry");
 
   if (input.client_name !== undefined && !input.client_name.trim()) {
     return { success: false, message: "Client name is required" };
+  }
+
+  // Silent-downgrade: if mr_team_id is being changed but the user lacks
+  // `assign_team`, strip it from the input so the rest of the edit goes
+  // through. Same pattern as addRfcEntry above.
+  if (input.mr_team_id !== undefined) {
+    const session = await getSession();
+    if (session?.user?.id) {
+      const role = (session.user.role ?? "mr_agent") as Parameters<
+        typeof canUserEditField
+      >[1];
+      const canAssign = await canUserEditField(
+        Number(session.user.id),
+        role,
+        "rfc",
+        "assign_team",
+      );
+      if (!canAssign) input = { ...input, mr_team_id: undefined };
+    }
   }
 
   // Convert comments → JSON if changed (mirrors addRfcEntry's logic).
@@ -470,15 +514,18 @@ export async function updateRfcField(
   field: string,
   value: string | number | boolean | null,
 ): Promise<{ success: boolean; message?: string }> {
-  // Admin-overridable action gate. Status edits go through `update_status`
-  // (workflow grant); every other field falls under `edit_entry`.
+  // Admin-overridable action gate. Three buckets:
+  //   - status fields → `update_status`
+  //   - mr_team_id   → `assign_team`
+  //   - everything else → `edit_entry`
   const { requireFieldAccess } = await import("@/lib/field-access");
-  await requireFieldAccess(
-    "rfc",
+  const actionKey =
     field === "status" || field === "filed_to_oho" || field === "approved_by_tl"
       ? "update_status"
-      : "edit_entry",
-  );
+      : field === "mr_team_id"
+        ? "assign_team"
+        : "edit_entry";
+  await requireFieldAccess("rfc", actionKey);
   // entry_date is intentionally OMITTED — it's server-enforced to the row's
   // actual creation date and is immutable thereafter (mirrors patient-portal).
   const allowed = [

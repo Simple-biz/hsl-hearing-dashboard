@@ -220,6 +220,7 @@ export const FIELD_ACCESS_CATALOG: FieldAccessPage[] = [
       { key: "edit_entry", label: "Edit RFC Entry", group: "Entries" },
       { key: "delete_entry", label: "Delete RFC Entry", group: "Entries" },
       { key: "update_status", label: "Update RFC Status", group: "Workflow" },
+      { key: "assign_team", label: "Assign MR Team", group: "Assignment" },
     ],
   },
   // ── Patient Portal ────────────────────────────────────────────────────
