@@ -16,9 +16,9 @@ export type FieldAccessPageKey =
   | "dashboard"
   | "medical_records"
   | "post_hrg_development"
-  | "representative_docs";
-  // | "rfc"               // future
-  // | "patient_portal"    // future
+  | "representative_docs"
+  | "rfc"
+  | "patient_portal";
 
 export interface FieldAccessField {
   /** DB-level field key — must match what server-side gate uses. */
@@ -206,6 +206,39 @@ export const FIELD_ACCESS_CATALOG: FieldAccessPage[] = [
         key: "checker_contact_ltr",
         label: "Checker — Contact Letter",
         group: "Checker",
+      },
+    ],
+  },
+  // ── RFC Documents ─────────────────────────────────────────────────────
+  // Action-style toggles (not per-DB-field) — gate the high-leverage
+  // workflow operations on the RFC page.
+  {
+    key: "rfc",
+    label: "RFC Documents",
+    fields: [
+      { key: "create_entry", label: "Create RFC Entry", group: "Entries" },
+      { key: "edit_entry", label: "Edit RFC Entry", group: "Entries" },
+      { key: "delete_entry", label: "Delete RFC Entry", group: "Entries" },
+      { key: "update_status", label: "Update RFC Status", group: "Workflow" },
+      { key: "assign_team", label: "Assign MR Team", group: "Assignment" },
+    ],
+  },
+  // ── Patient Portal ────────────────────────────────────────────────────
+  // Same action-style toggle approach as RFC. `set_approval` is intentionally
+  // NOT listed here — it has its own tighter role gate (canSetApproval =
+  // system_admin / admin / mr_admin only) enforced both client- and
+  // server-side, and is not currently admin-overridable.
+  {
+    key: "patient_portal",
+    label: "Patient Portal",
+    fields: [
+      { key: "create_entry", label: "Create Portal Entry", group: "Entries" },
+      { key: "edit_entry", label: "Edit Portal Entry", group: "Entries" },
+      { key: "delete_entry", label: "Delete Portal Entry", group: "Entries" },
+      {
+        key: "assign_specialist",
+        label: "Assign MR Specialist",
+        group: "Assignment",
       },
     ],
   },

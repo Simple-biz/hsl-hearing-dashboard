@@ -1,13 +1,13 @@
 "use client";
 
 import { useState, useEffect, useTransition, useCallback, useRef } from "react";
-import { useRouter } from "next/navigation";
 import { AppHeader } from "@/components/layout/app-header";
 import {
   Download,
   Loader2,
   Plus,
   Trash2,
+  Pencil,
   ExternalLink,
   ClipboardList,
   X,
@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 import {
   getRfcEntries,
   addRfcEntry,
+  updateRfcEntry,
   updateRfcField,
   deleteRfcEntry,
   getRfcActivityLog,
@@ -182,30 +183,39 @@ function StatCard({
 
 // ─── Add Entry Modal ──────────────────────────────────────────────────────────
 
-function AddEntryModal({
+function AddEditModal({
   data,
+  entry,
   onClose,
   onSaved,
 }: {
   data: RfcPageData;
+  /** null = add mode, RfcEntry = edit mode. */
+  entry: RfcEntry | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const isEdit = !!entry;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [form, setForm] = useState({
-    entry_date: new Date().toISOString().slice(0, 10),
-    mr_team_id: "",
-    hearing_date: "",
-    client_name: "",
-    document_type: "",
-    provider_name: "",
-    date_signed: "",
-    mycase_link: "",
-    method_received: "",
-    date_received: "",
-    filed_to_oho: false,
-    approved_by_tl: false,
+    // entry_date is read-only — shows today's date as a preview for new
+    // entries, or the original creation date when editing an existing row.
+    entry_date:
+      entry?.entry_date?.slice(0, 10) ??
+      new Date().toISOString().slice(0, 10),
+    mr_team_id: entry?.mr_team_id != null ? String(entry.mr_team_id) : "",
+    hearing_date: entry?.hearing_date?.slice(0, 10) ?? "",
+    client_name: entry?.client_name ?? "",
+    document_type: entry?.document_type ?? "",
+    provider_name: entry?.provider_name ?? "",
+    date_signed: entry?.date_signed?.slice(0, 10) ?? "",
+    mycase_link: entry?.mycase_link ?? "",
+    method_received: entry?.method_received ?? "",
+    date_received: entry?.date_received?.slice(0, 10) ?? "",
+    filed_to_oho: entry?.filed_to_oho ?? false,
+    approved_by_tl: entry?.approved_by_tl ?? false,
+    // Comments: always a fresh-input field on save (we append, not replace).
     comments: "",
   });
 
@@ -218,19 +228,38 @@ function AddEntryModal({
       return;
     }
     setSaving(true);
-    const res = await addRfcEntry({
-      ...form,
+    setError("");
+    const payload = {
       mr_team_id: form.mr_team_id ? Number(form.mr_team_id) : null,
-      entry_date: form.entry_date || null,
       hearing_date: form.hearing_date || null,
+      client_name: form.client_name,
+      document_type: form.document_type,
+      provider_name: form.provider_name,
       date_signed: form.date_signed || null,
+      mycase_link: form.mycase_link,
+      method_received: form.method_received,
       date_received: form.date_received || null,
-    });
-    setSaving(false);
-    if (res.success) {
-      onSaved();
-      onClose();
-    } else setError(res.message ?? "Save failed");
+      filed_to_oho: form.filed_to_oho,
+      approved_by_tl: form.approved_by_tl,
+      comments: form.comments,
+    };
+    try {
+      const res = isEdit
+        ? await updateRfcEntry(entry!.id, payload)
+        : await addRfcEntry(payload);
+      if (res.success) {
+        onSaved();
+        onClose();
+      } else {
+        setError(res.message ?? "Save failed");
+      }
+    } catch (err) {
+      // requireFieldAccess throws on permission denial — surface message
+      // instead of leaving the spinner spinning forever.
+      setError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
   }
 
   const inputCls =
@@ -248,7 +277,9 @@ function AddEntryModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b bg-muted/50 px-5 py-4 shrink-0">
-          <h2 className="text-sm font-semibold">➕ Add RFC Entry</h2>
+          <h2 className="text-sm font-semibold">
+            {isEdit ? "✎ Edit RFC Entry" : "➕ Add RFC Entry"}
+          </h2>
           <button onClick={onClose}>
             <X className="h-5 w-5 text-muted-foreground hover:text-foreground" />
           </button>
@@ -263,11 +294,17 @@ function AddEntryModal({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className={labelCls}>Date</label>
+              {/* Read-only — entry_date is server-enforced to the creation
+                  day in Eastern time on INSERT. Showing today's date here
+                  is just a preview; the server's NOW() wins. Matches the
+                  patient-portal pattern. */}
               <input
                 type="date"
-                className={inputCls}
+                className={cn(inputCls, "cursor-not-allowed opacity-70 bg-muted")}
                 value={form.entry_date}
-                onChange={(e) => set("entry_date", e.target.value)}
+                readOnly
+                disabled
+                title="Set automatically when the entry is saved"
               />
             </div>
             {data.permissions.canAssignTeam && (
@@ -433,7 +470,8 @@ function AddEntryModal({
             disabled={saving}
             className="text-xs px-4 py-2 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground transition-colors disabled:opacity-60 flex items-center gap-1.5"
           >
-            {saving && <Loader2 size={12} className="animate-spin" />}Save
+            {saving && <Loader2 size={12} className="animate-spin" />}
+            {isEdit ? "Update Entry" : "Save Entry"}
           </button>
         </div>
       </div>
@@ -568,12 +606,18 @@ function RfcRow({
   data,
   onUpdate,
   onDelete,
+  onEdit,
   onComment,
 }: {
   entry: RfcEntry;
   data: RfcPageData;
   onUpdate: (id: number, field: string, value: unknown) => void;
   onDelete: (id: number) => void;
+  /** Optional — when present, renders a Pencil button next to the Trash
+   *  that opens the AddEditModal pre-filled with this row. Callers that
+   *  haven't wired up an edit modal (e.g. ViewDetailsModal) simply omit it
+   *  and only the inline cell-edits + Trash remain available. */
+  onEdit?: (entry: RfcEntry) => void;
   onComment: (entry: RfcEntry) => void;
 }) {
   const { permissions: p, documentTypes, methodOptions, mrTeams } = data;
@@ -586,6 +630,10 @@ function RfcRow({
       ? teamHex(team.team_color)
       : undefined;
 
+  // Tracks whether the MR Team dropdown is open so we can strip the
+  // colored background while the OS option list is visible.
+  const [teamOpen, setTeamOpen] = useState(false);
+
   function fmtDate(d: string | null) {
     if (!d) return "—";
     return new Date(d + "T00:00:00").toLocaleDateString("en-US", {
@@ -595,8 +643,14 @@ function RfcRow({
     });
   }
 
-  const gridCols = p.canDelete
-    ? "115px 120px 115px 155px 110px 155px 115px 65px 120px 120px 80px 95px 45px"
+  // Actions column shows when EITHER edit (pencil, requires onEdit wired)
+  // OR delete (trash) is available. Previously it was canDelete-only, which
+  // meant an edit-only user (admin-overridden, no delete) had a pencil but
+  // no column to place it in — the pencil would wrap to a new line below
+  // the row instead of aligning with the other actions on the right.
+  const showActions = (p.canEdit && !!onEdit) || p.canDelete;
+  const gridCols = showActions
+    ? "115px 120px 115px 155px 110px 155px 115px 65px 120px 120px 80px 95px 60px"
     : "115px 120px 115px 155px 110px 155px 115px 65px 120px 120px 80px 95px";
 
   return (
@@ -604,41 +658,40 @@ function RfcRow({
       className="grid gap-0 border-b border-border/40 hover:bg-muted/30 transition-colors text-[11px] items-center"
       style={{ gridTemplateColumns: gridCols }}
     >
-      {/* Entry Date */}
+      {/* Entry Date — read-only. Set server-side on INSERT; cannot be
+          changed after creation. */}
       <div className="px-3 py-1.5 whitespace-nowrap">
-        {p.canEdit ? (
-          <input
-            type="date"
-            value={entry.entry_date ?? ""}
-            className="text-[10px] border border-border rounded px-1.5 py-0.5 bg-card text-foreground w-full max-w-28"
-            onChange={(e) => onUpdate(entry.id, "entry_date", e.target.value)}
-          />
-        ) : (
-          <span className="text-foreground">{fmtDate(entry.entry_date)}</span>
-        )}
+        <span className="text-foreground">{fmtDate(entry.entry_date)}</span>
       </div>
 
-      {/* MR Team */}
+      {/* MR Team — colored pill when read-only OR when closed editable.
+          While the dropdown is open we strip the background colour so the
+          OS-rendered option list isn't overlaid on a coloured surface
+          (some browsers inherit the select's bg into the popup, which
+          makes options unreadable against the team colour). */}
       <div className="px-3 py-1.5 whitespace-nowrap text-center">
         {p.canAssignTeam ? (
           <select
             value={entry.mr_team_id ?? ""}
             className="text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer font-medium w-full"
             style={
-              teamColor
+              teamColor && !teamOpen
                 ? {
                     backgroundColor: teamColor,
                     color: isLight(teamColor) ? "#1f2937" : "#fff",
                   }
                 : { backgroundColor: "#e5e7eb", color: "#374151" }
             }
-            onChange={(e) =>
+            onMouseDown={() => setTeamOpen(true)}
+            onBlur={() => setTeamOpen(false)}
+            onChange={(e) => {
+              setTeamOpen(false);
               onUpdate(
                 entry.id,
                 "mr_team_id",
                 e.target.value ? Number(e.target.value) : null,
-              )
-            }
+              );
+            }}
           >
             <option value="">—</option>
             {mrTeams.map((t) => (
@@ -885,18 +938,35 @@ function RfcRow({
         </button>
       </div>
 
-      {/* Actions */}
-      {p.canDelete && (
-        <div className="px-3 py-1.5 text-center">
-          <button
-            onClick={() => {
-              if (confirm(`Delete entry for "${entry.client_name}"?`))
-                onDelete(entry.id);
-            }}
-            className="text-red-500 hover:text-red-700 transition-colors p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20"
-          >
-            <Trash2 size={13} />
-          </button>
+      {/* Actions — Edit (pencil, when onEdit provided) + Delete (trash).
+          Pencil opens the AddEditModal pre-filled with this row's data;
+          gated by both permissions.canEdit (reflects the edit_entry admin
+          override) AND the caller supplying an onEdit handler. */}
+      {((p.canEdit && onEdit) || p.canDelete) && (
+        <div className="px-3 py-1.5 flex items-center justify-center gap-1">
+          {p.canEdit && onEdit && (
+            <button
+              onClick={() => onEdit(entry)}
+              className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded hover:bg-muted"
+              title="Edit entry"
+              aria-label="Edit entry"
+            >
+              <Pencil size={13} />
+            </button>
+          )}
+          {p.canDelete && (
+            <button
+              onClick={() => {
+                if (confirm(`Delete entry for "${entry.client_name}"?`))
+                  onDelete(entry.id);
+              }}
+              className="text-red-500 hover:text-red-700 transition-colors p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20"
+              title="Delete entry"
+              aria-label="Delete entry"
+            >
+              <Trash2 size={13} />
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -910,12 +980,16 @@ function RfcMobileCard({
   data,
   onUpdate,
   onDelete,
+  onEdit,
   onComment,
 }: {
   entry: RfcEntry;
   data: RfcPageData;
   onUpdate: (id: number, field: string, value: unknown) => void;
   onDelete: (id: number) => void;
+  /** Optional — opens the AddEditModal pre-filled with this row. Same
+   *  contract as RfcRow.onEdit. */
+  onEdit?: (entry: RfcEntry) => void;
   onComment: (entry: RfcEntry) => void;
 }) {
   const { permissions: p, documentTypes, methodOptions, mrTeams } = data;
@@ -927,6 +1001,10 @@ function RfcMobileCard({
     : team?.team_color
       ? teamHex(team.team_color)
       : undefined;
+
+  // Tracks whether the MR Team dropdown is open so we can strip the
+  // colored background while the OS option list is visible.
+  const [teamOpen, setTeamOpen] = useState(false);
 
   function fmtDate(d: string | null) {
     if (!d) return "—";
@@ -994,20 +1072,23 @@ function RfcMobileCard({
             value={entry.mr_team_id ?? ""}
             className="text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer font-medium"
             style={
-              teamColor
+              teamColor && !teamOpen
                 ? {
                     backgroundColor: teamColor,
                     color: isLight(teamColor) ? "#1f2937" : "#fff",
                   }
                 : { backgroundColor: "#e5e7eb", color: "#374151" }
             }
-            onChange={(e) =>
+            onMouseDown={() => setTeamOpen(true)}
+            onBlur={() => setTeamOpen(false)}
+            onChange={(e) => {
+              setTeamOpen(false);
               onUpdate(
                 entry.id,
                 "mr_team_id",
                 e.target.value ? Number(e.target.value) : null,
-              )
-            }
+              );
+            }}
           >
             <option value="">—</option>
             {mrTeams.map((t) => (
@@ -1163,13 +1244,29 @@ function RfcMobileCard({
             + Link
           </button>
         ) : null}
+        {p.canEdit && onEdit && (
+          <button
+            onClick={() => onEdit(entry)}
+            className="ml-auto text-muted-foreground hover:text-foreground p-1 rounded hover:bg-muted"
+            title="Edit entry"
+            aria-label="Edit entry"
+          >
+            <Pencil size={13} />
+          </button>
+        )}
         {p.canDelete && (
           <button
             onClick={() => {
               if (confirm(`Delete entry for "${entry.client_name}"?`))
                 onDelete(entry.id);
             }}
-            className="ml-auto text-red-500 hover:text-red-700 p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20"
+            className={cn(
+              "text-red-500 hover:text-red-700 p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20",
+              // Only push to the right when there's no Pencil to anchor first.
+              !(p.canEdit && onEdit) && "ml-auto",
+            )}
+            title="Delete entry"
+            aria-label="Delete entry"
           >
             <Trash2 size={13} />
           </button>
@@ -1200,7 +1297,7 @@ function ViewDetailsModal({
     status: "",
     month: "",
     year: "",
-    hearing_date: "",
+    entry_date: "",
     team: "",
     doc_type: "",
     page: 1,
@@ -1231,7 +1328,19 @@ function ViewDetailsModal({
   function handleUpdate(id: number, field: string, value: unknown) {
     updateRfcField(id, field, value as string | number | boolean | null);
     setEntries((prev) =>
-      prev.map((e) => (e.id === id ? { ...e, [field]: value } : e)),
+      prev.map((e) => {
+        if (e.id !== id) return e;
+        const next = { ...e, [field]: value };
+        // Same team-color sync as the main client's handleUpdate. Keep these
+        // two in lockstep so the optimistic pill background updates the
+        // moment the user picks a new team.
+        if (field === "mr_team_id") {
+          const team = data.mrTeams.find((t) => t.id === value);
+          next.team_color = team?.team_color ?? null;
+          next.team_name = team?.team_name ?? null;
+        }
+        return next;
+      }),
     );
   }
 
@@ -1322,10 +1431,10 @@ function ViewDetailsModal({
           </select>
           <input
             type="date"
-            value={filters.hearing_date || ""}
-            onChange={(e) => applyFilter({ hearing_date: e.target.value })}
-            aria-label="Filter by hearing date"
-            title="Filter to entries with this exact hearing date"
+            value={filters.entry_date || ""}
+            onChange={(e) => applyFilter({ entry_date: e.target.value })}
+            aria-label="Filter by entry date"
+            title="Filter to entries created on this exact day"
             className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer"
           />
           <select
@@ -1361,7 +1470,7 @@ function ViewDetailsModal({
                 status: "",
                 month: "",
                 year: "",
-                hearing_date: "",
+                entry_date: "",
                 team: "",
                 doc_type: "",
               })
@@ -1387,8 +1496,11 @@ function ViewDetailsModal({
             <div
               className="grid gap-0 bg-muted border-b border-border sticky top-0 z-2"
               style={{
+                // ViewDetailsModal — only Trash is wired (no onEdit), so the
+                // Actions column is canDelete-only here. Matches RfcRow's
+                // gridCols when called without an onEdit prop.
                 gridTemplateColumns: data.permissions.canDelete
-                  ? "115px 120px 115px 155px 110px 155px 115px 65px 120px 120px 80px 95px 45px"
+                  ? "115px 120px 115px 155px 110px 155px 115px 65px 120px 120px 80px 95px 60px"
                   : "115px 120px 115px 155px 110px 155px 115px 65px 120px 120px 80px 95px",
               }}
             >
@@ -1499,7 +1611,6 @@ function ViewDetailsModal({
 // ─── Main Client Component ────────────────────────────────────────────────────
 
 export function RfcClient(data: RfcPageData) {
-  const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
   const [entries, setEntries] = useState<RfcEntry[]>([]);
@@ -1513,7 +1624,7 @@ export function RfcClient(data: RfcPageData) {
     status: "",
     month: "",
     year: "",
-    hearing_date: "",
+    entry_date: "",
     team: "",
     doc_type: "",
     page: 1,
@@ -1521,6 +1632,8 @@ export function RfcClient(data: RfcPageData) {
   });
 
   const [showAdd, setShowAdd] = useState(false);
+  // null = no modal open; RfcEntry = edit modal open with that row
+  const [editEntry, setEditEntry] = useState<RfcEntry | null>(null);
   const [showActivity, setShowActivity] = useState(false);
   const [showViewDetails, setShowViewDetails] = useState(false);
   const [commentEntry, setCommentEntry] = useState<RfcEntry | null>(null);
@@ -1556,7 +1669,21 @@ export function RfcClient(data: RfcPageData) {
   async function handleUpdate(id: number, field: string, value: unknown) {
     await updateRfcField(id, field, value as string | number | boolean | null);
     setEntries((prev) =>
-      prev.map((e) => (e.id === id ? { ...e, [field]: value } : e)),
+      prev.map((e) => {
+        if (e.id !== id) return e;
+        const next = { ...e, [field]: value };
+        // When mr_team_id changes, also patch team_color and team_name so
+        // the optimistic UI updates the pill background — not just the
+        // dropdown text. Without this, entry.team_color stays at its
+        // pre-change value (set by the server JOIN on initial fetch) and
+        // the `teamColor` derivation in RfcRow keeps using the stale color.
+        if (field === "mr_team_id") {
+          const team = data.mrTeams.find((t) => t.id === value);
+          next.team_color = team?.team_color ?? null;
+          next.team_name = team?.team_name ?? null;
+        }
+        return next;
+      }),
     );
   }
 
@@ -1583,12 +1710,12 @@ export function RfcClient(data: RfcPageData) {
 
       <div className="max-w-450 mx-auto px-6 py-6 space-y-5">
         {/* ── Back navigation ──────────────────────────────────────────────── */}
-        <button
-          onClick={() => router.push("/medical-records")}
-          className="flex items-center gap-1 text-[12px] font-semibold text-muted-foreground hover:text-foreground transition-colors"
+        <a
+          href="/medical-records"
+          className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground font-semibold transition-colors w-fit"
         >
           ← Back to MR Pivot
-        </button>
+        </a>
 
         {/* ── Stat Cards ──────────────────────────────────────────────── */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -1736,10 +1863,10 @@ export function RfcClient(data: RfcPageData) {
               </select>
               <input
                 type="date"
-                value={filters.hearing_date || ""}
-                onChange={(e) => applyFilter({ hearing_date: e.target.value })}
-                aria-label="Filter by hearing date"
-                title="Filter to entries with this exact hearing date"
+                value={filters.entry_date || ""}
+                onChange={(e) => applyFilter({ entry_date: e.target.value })}
+                aria-label="Filter by entry date"
+                title="Filter to entries created on this exact day"
                 className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer w-full sm:w-auto"
               />
               <select
@@ -1775,7 +1902,7 @@ export function RfcClient(data: RfcPageData) {
                     status: "",
                     month: "",
                     year: "",
-                    hearing_date: "",
+                    entry_date: "",
                     team: "",
                     doc_type: "",
                   })
@@ -1806,6 +1933,7 @@ export function RfcClient(data: RfcPageData) {
                   data={data}
                   onUpdate={handleUpdate}
                   onDelete={handleDelete}
+                  onEdit={setEditEntry}
                   onComment={setCommentEntry}
                 />
               ))
@@ -1821,13 +1949,16 @@ export function RfcClient(data: RfcPageData) {
                   <Loader2 size={28} className="animate-spin text-primary" />
                 </div>
               )}
-              {/* Column headers — sticky */}
+              {/* Column headers — sticky. Actions column appears when EITHER
+                  canEdit (pencil) or canDelete (trash) is available so an
+                  edit-only user doesn't see the pencil wrap below the row. */}
               <div
                 className="grid gap-0 bg-muted border-b border-border sticky top-0 z-2 text-[9px] font-semibold uppercase tracking-wide"
                 style={{
-                  gridTemplateColumns: data.permissions.canDelete
-                    ? "115px 120px 115px 155px 110px 155px 115px 65px 120px 120px 80px 95px 45px"
-                    : "115px 120px 115px 155px 110px 155px 115px 65px 120px 120px 80px 95px",
+                  gridTemplateColumns:
+                    data.permissions.canEdit || data.permissions.canDelete
+                      ? "115px 120px 115px 155px 110px 155px 115px 65px 120px 120px 80px 95px 60px"
+                      : "115px 120px 115px 155px 110px 155px 115px 65px 120px 120px 80px 95px",
                   minWidth: "1400px",
                 }}
               >
@@ -1867,9 +1998,10 @@ export function RfcClient(data: RfcPageData) {
                 <div className="px-3 py-2.5 text-center text-foreground whitespace-nowrap">
                   Appr. TL
                 </div>
-                {data.permissions.canDelete && (
+                {(data.permissions.canEdit ||
+                  data.permissions.canDelete) && (
                   <div className="px-3 py-2.5 text-center text-foreground whitespace-nowrap">
-                    Del
+                    Actions
                   </div>
                 )}
               </div>
@@ -1887,6 +2019,7 @@ export function RfcClient(data: RfcPageData) {
                       data={data}
                       onUpdate={handleUpdate}
                       onDelete={handleDelete}
+                      onEdit={setEditEntry}
                       onComment={setCommentEntry}
                     />
                   ))
@@ -1936,10 +2069,14 @@ export function RfcClient(data: RfcPageData) {
       </div>
 
       {/* ── Modals ──────────────────────────────────────────────────────── */}
-      {showAdd && (
-        <AddEntryModal
+      {(showAdd || editEntry) && (
+        <AddEditModal
           data={data}
-          onClose={() => setShowAdd(false)}
+          entry={editEntry}
+          onClose={() => {
+            setShowAdd(false);
+            setEditEntry(null);
+          }}
           onSaved={() => load(filters)}
         />
       )}

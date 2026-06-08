@@ -145,8 +145,9 @@ export interface RfcFilters {
   /** 4-digit year string: "2024" | "2025" | ... or "". Independent of month. */
   year?: string;
   /** ISO YYYY-MM-DD — single calendar input. Filters to entries whose
-   *  hearing_date matches this exact day. */
-  hearing_date?: string;
+   *  `entry_date` (the row creation date) matches this exact day. Month
+   *  and year filters above also resolve against `entry_date`. */
+  entry_date?: string;
   team?: string;
   doc_type?: string;
   sort_order?: "asc" | "desc";
