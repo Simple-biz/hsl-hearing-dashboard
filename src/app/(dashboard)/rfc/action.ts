@@ -65,8 +65,32 @@ const FALLBACK_METHODS: RfcMethodOption[] = [
 
 export async function getRfcPageData(
   userRole: RfcUserRole = "mr_agent",
+  userId?: number,
 ): Promise<RfcPageData> {
   const permissions = deriveRfcPermissions(userRole);
+
+  // Layer admin per-user overrides on top of the role default. An override
+  // row for the matching action key wins; missing rows fall back to the
+  // role default already in `permissions`. Mirrors the resolver in
+  // lib/field-access.ts so the UI matches what the server will accept.
+  if (userId) {
+    const { getUserFieldOverridesPlain } = await import("@/lib/field-access");
+    const overrides = await getUserFieldOverridesPlain(userId, "rfc");
+    if (Object.prototype.hasOwnProperty.call(overrides, "create_entry")) {
+      permissions.canCreate = overrides["create_entry"] === true;
+    }
+    if (Object.prototype.hasOwnProperty.call(overrides, "edit_entry")) {
+      permissions.canEdit = overrides["edit_entry"] === true;
+    }
+    if (Object.prototype.hasOwnProperty.call(overrides, "delete_entry")) {
+      permissions.canDelete = overrides["delete_entry"] === true;
+    }
+    // `update_status` is granular per-field (status / filed_to_oho /
+    // approved_by_tl) so it stays gated at the server only — there is no
+    // single permissions flag for it on the client today. The buttons that
+    // edit those fields are governed by canEdit; the server gate enforces
+    // the tighter update_status check when relevant.
+  }
 
   const [statsRows, docTypeRows, methodRows, teamRows, monthRows] =
     await Promise.all([
@@ -273,6 +297,10 @@ export async function getRfcEntries(
 export async function addRfcEntry(
   input: RfcAddEntryInput,
 ): Promise<{ success: boolean; id?: number; message?: string }> {
+  // Admin-overridable action gate. Throws if denied — client surfaces as
+  // "Save failed".
+  const { requireFieldAccess } = await import("@/lib/field-access");
+  await requireFieldAccess("rfc", "create_entry");
   if (!input.client_name?.trim()) {
     return { success: false, message: "Client name is required" };
   }
@@ -333,6 +361,15 @@ export async function updateRfcField(
   field: string,
   value: string | number | boolean | null,
 ): Promise<{ success: boolean; message?: string }> {
+  // Admin-overridable action gate. Status edits go through `update_status`
+  // (workflow grant); every other field falls under `edit_entry`.
+  const { requireFieldAccess } = await import("@/lib/field-access");
+  await requireFieldAccess(
+    "rfc",
+    field === "status" || field === "filed_to_oho" || field === "approved_by_tl"
+      ? "update_status"
+      : "edit_entry",
+  );
   const allowed = [
     "entry_date",
     "mr_team_id",
@@ -365,6 +402,9 @@ export async function updateRfcField(
 export async function deleteRfcEntry(
   id: number,
 ): Promise<{ success: boolean; message?: string }> {
+  // Admin-overridable action gate. Throws if denied.
+  const { requireFieldAccess } = await import("@/lib/field-access");
+  await requireFieldAccess("rfc", "delete_entry");
   await db.query(`DELETE FROM mr_rfc WHERE id = $1`, [id]);
   return { success: true };
 }

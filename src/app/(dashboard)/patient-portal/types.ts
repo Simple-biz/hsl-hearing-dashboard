@@ -28,6 +28,18 @@ export interface PortalPermissions {
   /** Approved by TL flip — tighter than canEdit by design. Only the highest
    *  admin tier can mark entries as TL-approved (or un-approve them). */
   canSetApproval: boolean; // system_admin | admin | mr_admin
+  // ── Per-action gates (admin-overridable via Field Access modal) ────────
+  // These default to the broader canEdit / canManage flags above, so the
+  // existing UX is preserved when no override exists. Admin overrides
+  // (user_field_access rows with page_key="patient_portal") flip each
+  // independently — e.g. an mr_agent can be denied "Create Portal Entry"
+  // while keeping "Edit Portal Entry".
+  /** Add Entry button + addPortalEntry mutation. Defaults to canEdit. */
+  canCreateEntry: boolean;
+  /** Pencil edit + updatePortalEntry mutation. Defaults to canEdit. */
+  canEditEntry: boolean;
+  /** Trash delete + deletePortalEntry mutation. Defaults to canManage. */
+  canDeleteEntry: boolean;
 }
 
 /** Source of truth for `canSetApproval` — kept as a const so the server
@@ -64,6 +76,34 @@ export function derivePortalPermissions(
       "mr_agent",
     ].includes(role),
     canSetApproval: (APPROVAL_ROLES as readonly string[]).includes(role),
+    // Per-action defaults — recomputed locally so they don't depend on
+    // property order. Admin overrides flip these in getPortalPageData().
+    canCreateEntry: [
+      "system_admin",
+      "admin",
+      "manager",
+      "mr_admin",
+      "mr_lead",
+      "mr_agent",
+      "hearings_admin",
+    ].includes(role),
+    canEditEntry: [
+      "system_admin",
+      "admin",
+      "manager",
+      "mr_admin",
+      "mr_lead",
+      "mr_agent",
+      "hearings_admin",
+    ].includes(role),
+    canDeleteEntry: [
+      "system_admin",
+      "admin",
+      "manager",
+      "mr_admin",
+      "mr_lead",
+      "hearings_admin",
+    ].includes(role),
   };
 }
 

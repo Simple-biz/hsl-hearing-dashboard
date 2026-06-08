@@ -48,6 +48,67 @@ function resolveRoleDefault(
       return PAGE_ACCESS.post_hrg_development.includes(role);
     case "representative_docs":
       return PAGE_ACCESS.representative_docs.includes(role);
+    case "rfc":
+      // Mirror of RFC_PAGE_ACTIONS in roles.ts (action-style keys).
+      switch (fieldKey) {
+        case "create_entry":
+          return [
+            "system_admin",
+            "admin",
+            "manager",
+            "mr_admin",
+            "mr_lead",
+          ].includes(role);
+        case "edit_entry":
+        case "update_status":
+          return [
+            "system_admin",
+            "admin",
+            "manager",
+            "mr_admin",
+            "mr_lead",
+            "mr_agent",
+          ].includes(role);
+        case "delete_entry":
+          return ["system_admin", "admin", "manager"].includes(role);
+        default:
+          return false;
+      }
+    case "patient_portal":
+      // Mirror of derivePortalPermissions in patient-portal/types.ts.
+      switch (fieldKey) {
+        case "create_entry":
+        case "edit_entry":
+          return [
+            "system_admin",
+            "admin",
+            "manager",
+            "mr_admin",
+            "mr_lead",
+            "mr_agent",
+            "hearings_admin",
+          ].includes(role);
+        case "delete_entry":
+          return [
+            "system_admin",
+            "admin",
+            "manager",
+            "mr_admin",
+            "mr_lead",
+            "hearings_admin",
+          ].includes(role);
+        case "assign_specialist":
+          return [
+            "system_admin",
+            "admin",
+            "manager",
+            "mr_admin",
+            "mr_lead",
+            "mr_agent",
+          ].includes(role);
+        default:
+          return false;
+      }
     default:
       return false;
   }

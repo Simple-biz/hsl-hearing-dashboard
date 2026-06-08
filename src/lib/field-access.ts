@@ -47,6 +47,80 @@ export function resolveRoleDefault(
     case "representative_docs":
       // Same flat model as PHD.
       return PAGE_ACCESS.representative_docs.includes(role);
+    case "rfc":
+      // Action-style keys mirror RFC_PAGE_ACTIONS in roles.ts so default
+      // behavior is identical to what existed before the override layer.
+      switch (fieldKey) {
+        case "create_entry":
+          return [
+            "system_admin",
+            "admin",
+            "manager",
+            "mr_admin",
+            "mr_lead",
+          ].includes(role);
+        case "edit_entry":
+          return [
+            "system_admin",
+            "admin",
+            "manager",
+            "mr_admin",
+            "mr_lead",
+            "mr_agent",
+          ].includes(role);
+        case "delete_entry":
+          return ["system_admin", "admin", "manager"].includes(role);
+        case "update_status":
+          return [
+            "system_admin",
+            "admin",
+            "manager",
+            "mr_admin",
+            "mr_lead",
+            "mr_agent",
+          ].includes(role);
+        default:
+          return false;
+      }
+    case "patient_portal":
+      // Mirrors derivePortalPermissions in patient-portal/types.ts so the
+      // role default is identical to today's behavior.
+      switch (fieldKey) {
+        case "create_entry":
+        case "edit_entry":
+          // canEdit list
+          return [
+            "system_admin",
+            "admin",
+            "manager",
+            "mr_admin",
+            "mr_lead",
+            "mr_agent",
+            "hearings_admin",
+          ].includes(role);
+        case "delete_entry":
+          // canManage list — excludes mr_agent
+          return [
+            "system_admin",
+            "admin",
+            "manager",
+            "mr_admin",
+            "mr_lead",
+            "hearings_admin",
+          ].includes(role);
+        case "assign_specialist":
+          // canAssignSpecialist list — includes mr_agent, excludes hearings_admin
+          return [
+            "system_admin",
+            "admin",
+            "manager",
+            "mr_admin",
+            "mr_lead",
+            "mr_agent",
+          ].includes(role);
+        default:
+          return false;
+      }
     default:
       return false;
   }

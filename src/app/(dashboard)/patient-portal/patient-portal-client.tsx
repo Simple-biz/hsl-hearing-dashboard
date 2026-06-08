@@ -832,7 +832,7 @@ const PortalMobileCard = memo(function PortalMobileCard({
     provider: string | null,
   ) => void;
 }) {
-  const { canEdit, canManage } = permissions;
+  const { canEditEntry, canDeleteEntry } = permissions;
   const specColor = entry.specialist_color;
 
   return (
@@ -850,7 +850,7 @@ const PortalMobileCard = memo(function PortalMobileCard({
           )}
         </div>
         <div className="flex items-center gap-1 shrink-0">
-          {canEdit && (
+          {canEditEntry && (
             <button
               onClick={() => onEdit(entry)}
               className="p-1.5 rounded hover:bg-muted text-muted-foreground"
@@ -859,7 +859,7 @@ const PortalMobileCard = memo(function PortalMobileCard({
               <Pencil size={14} />
             </button>
           )}
-          {canManage && (
+          {canDeleteEntry && (
             <button
               onClick={() => onDelete(entry.id)}
               className="p-1.5 rounded hover:bg-red-50 text-red-500"
@@ -1208,7 +1208,7 @@ function PortalRowInner({
   onToggleApproved?: (id: number, next: boolean) => void;
   onOpenHistory?: (e: PortalEntry) => void;
 }) {
-  const { canEdit, canManage } = permissions;
+  const { canEditEntry, canDeleteEntry } = permissions;
   const specColor = entry.specialist_color;
   // Per-row reveal state — resets when the row unmounts (e.g. virtualizer
   // scrolls it off-screen), so passwords don't stay visible indefinitely.
@@ -1473,7 +1473,7 @@ function PortalRowInner({
             <History size={13} />
           </button>
         )}
-        {canEdit && (
+        {canEditEntry && (
           <button
             onClick={() => onEdit(entry)}
             className="text-[10px] p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
@@ -1483,7 +1483,7 @@ function PortalRowInner({
             <Pencil size={13} />
           </button>
         )}
-        {canManage && (
+        {canDeleteEntry && (
           <button
             onClick={() => onDelete(entry.id)}
             className="text-[10px] p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 hover:text-red-700"
@@ -1901,7 +1901,7 @@ export function PatientPortalClient(data: PortalPageData) {
                 <Download size={12} />
                 <span className="hidden sm:inline">Export CSV</span>
               </button>
-              {data.permissions.canEdit && (
+              {data.permissions.canCreateEntry && (
                 <button
                   onClick={() => setShowAdd(true)}
                   className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground font-semibold transition-colors"
