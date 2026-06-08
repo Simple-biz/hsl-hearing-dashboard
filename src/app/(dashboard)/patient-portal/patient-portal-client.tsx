@@ -55,10 +55,21 @@ import { PortalEntryAuditTrailModal } from "@/components/modals/portal-entry-aud
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function fmtDate(d: string | null | undefined) {
+function fmtDate(d: string | Date | null | undefined) {
   if (!d) return "—";
-  // Postgres DATE columns may come back as full ISO timestamp — take only the date part
-  const datePart = d.slice(0, 10);
+  // The Neon driver returns Postgres DATE / TIMESTAMP / TIMESTAMPTZ columns
+  // as JS Date objects unless the column is cast to ::text in SELECT. Handle
+  // both shapes defensively so a missed cast can't crash the whole page.
+  let datePart: string;
+  if (d instanceof Date) {
+    if (Number.isNaN(d.getTime())) return "—";
+    // toISOString() yields YYYY-MM-DDT... — slice off the date portion.
+    datePart = d.toISOString().slice(0, 10);
+  } else if (typeof d === "string") {
+    datePart = d.slice(0, 10);
+  } else {
+    return "—";
+  }
   return new Date(datePart + "T00:00:00").toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",

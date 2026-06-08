@@ -328,6 +328,10 @@ export async function getPortalEntries(
             -- p.hearing_date; falls back to the stored value for legacy
             -- entries with no hearing_id (or a deleted hearing).
             COALESCE(h.hearing_date::text, p.hearing_date::text) AS hearing_date,
+            -- Cast TIMESTAMPTZ to text so the client receives an ISO string
+            -- (without this the Neon driver returns a JS Date object, which
+            -- breaks fmtDate slice on the client).
+            p.approved_by_tl_at::text AS approved_by_tl_at,
             s.name     AS specialist_name,
             s.bg_color AS specialist_color,
             h.chronicle_link AS chronicle_link,
