@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useTransition, useCallback, useRef } from "react";
-import { useRouter } from "next/navigation";
 import { AppHeader } from "@/components/layout/app-header";
 import {
   Download,
@@ -1499,7 +1498,6 @@ function ViewDetailsModal({
 // ─── Main Client Component ────────────────────────────────────────────────────
 
 export function RfcClient(data: RfcPageData) {
-  const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
   const [entries, setEntries] = useState<RfcEntry[]>([]);
@@ -1583,12 +1581,12 @@ export function RfcClient(data: RfcPageData) {
 
       <div className="max-w-450 mx-auto px-6 py-6 space-y-5">
         {/* ── Back navigation ──────────────────────────────────────────────── */}
-        <button
-          onClick={() => router.push("/medical-records")}
-          className="flex items-center gap-1 text-[12px] font-semibold text-muted-foreground hover:text-foreground transition-colors"
+        <a
+          href="/medical-records"
+          className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-foreground font-semibold transition-colors w-fit"
         >
           ← Back to MR Pivot
-        </button>
+        </a>
 
         {/* ── Stat Cards ──────────────────────────────────────────────── */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

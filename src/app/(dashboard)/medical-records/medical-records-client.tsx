@@ -2381,16 +2381,19 @@ export function MrPivotClient({ userRole, userName, ...data }: Props) {
                 </a>
               )}
 
-              {/* RFC Documents */}
+              {/* RFC Documents — uses an `<a href>` rather than
+                  router.push so the button supports middle-click / right-
+                  click → "Open in new tab", matching the Patient Portal
+                  link right above it. */}
               {!isPostHearingAdmin && (
-                <button
-                  onClick={() => router.push("/rfc")}
+                <a
+                  href="/rfc"
                   className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg bg-[#6A4C93] hover:bg-[#5a3d80] text-white font-semibold transition-colors"
                 >
                   <ClipboardList size={12} />
                   <span className="hidden sm:inline">RFC Docs</span>
                   <span className="sm:hidden">RFC</span>
-                </button>
+                </a>
               )}
               <button
                 onClick={handleRefresh}
