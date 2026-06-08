@@ -128,13 +128,13 @@ export async function getRfcPageData(
       ORDER BY display_order ASC
     `),
 
-      // ── Available months (from hearing_date, last 12) ─────────────────────────
+      // ── Available months (from entry_date, last 12) ──────────────────────────
       db.query(`
       SELECT DISTINCT
-        TO_CHAR(hearing_date, 'YYYY-MM')    AS val,
-        TO_CHAR(hearing_date, 'Month YYYY') AS label
+        TO_CHAR(entry_date, 'YYYY-MM')    AS val,
+        TO_CHAR(entry_date, 'Month YYYY') AS label
       FROM mr_rfc
-      WHERE hearing_date IS NOT NULL
+      WHERE entry_date IS NOT NULL
       ORDER BY val DESC
       LIMIT 12
     `),
@@ -191,28 +191,33 @@ export async function getRfcEntries(
     where.push("(r.filed_to_oho = false OR r.filed_to_oho IS NULL)");
   if (filters.status === "approved") where.push("r.approved_by_tl = true");
 
-  // Month (abbreviation Jan–Dec) on hearing_date — independent of year.
+  // All date-style filters resolve against `entry_date` (the row's creation
+  // date — when it was added to the system). Switched from hearing_date so
+  // the UI's calendar picker and Month/Year dropdowns track when the entry
+  // was logged, not the underlying hearing's date.
+
+  // Month (abbreviation Jan–Dec) on entry_date — independent of year.
   if (filters.month) {
     const MONTH_NUM: Record<string, number> = {
       Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6,
       Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12,
     };
     const mm = MONTH_NUM[filters.month];
-    if (mm) where.push(`EXTRACT(MONTH FROM r.hearing_date) = ${mm}`);
+    if (mm) where.push(`EXTRACT(MONTH FROM r.entry_date) = ${mm}`);
   }
 
-  // Year (4-digit) on hearing_date — independent of month.
+  // Year (4-digit) on entry_date — independent of month.
   if (filters.year) {
     const yr = parseInt(filters.year, 10);
     if (Number.isFinite(yr) && yr >= 1900 && yr <= 9999) {
-      where.push(`EXTRACT(YEAR FROM r.hearing_date) = ${yr}`);
+      where.push(`EXTRACT(YEAR FROM r.entry_date) = ${yr}`);
     }
   }
 
-  // Specific date — single calendar input matches the exact hearing day.
-  if (filters.hearing_date) {
-    params.push(filters.hearing_date);
-    where.push(`r.hearing_date = $${params.length}::date`);
+  // Specific date — single calendar input matches the exact entry day.
+  if (filters.entry_date) {
+    params.push(filters.entry_date);
+    where.push(`r.entry_date = $${params.length}::date`);
   }
 
   // Team
@@ -328,15 +333,21 @@ export async function addRfcEntry(
     ]);
   }
 
+  // entry_date is server-enforced to "today in Eastern time" — client input
+  // is ignored so the row's creation date matches the actual creation moment
+  // and can't be tampered with. Mirrors the patient-portal pattern. We use
+  // America/New_York (not literal 'EST') so DST flips correctly; Neon
+  // sessions default to UTC, so a raw CURRENT_DATE would roll over at
+  // 7pm/8pm Eastern — not what users expect.
   const result = await db.query(
     `INSERT INTO mr_rfc
        (entry_date, mr_team_id, hearing_date, client_name, document_type,
         provider_name, date_signed, mycase_link, method_received, date_received,
         filed_to_oho, approved_by_tl, comments, created_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+     VALUES ((NOW() AT TIME ZONE 'America/New_York')::date,
+             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
      RETURNING id`,
     [
-      input.entry_date || null,
       input.mr_team_id || null,
       input.hearing_date || null,
       input.client_name.trim(),
@@ -356,6 +367,104 @@ export async function addRfcEntry(
   return { success: true, id: result.rows[0]?.id };
 }
 
+/**
+ * Bulk-update all editable fields on an RFC entry in one call. Used by the
+ * Edit modal so the user can change multiple fields and save together
+ * without per-field round-trips. Mirrors patient-portal's updatePortalEntry.
+ *
+ * `entry_date` is intentionally OMITTED — it's the immutable creation date,
+ * server-enforced on INSERT.
+ */
+export async function updateRfcEntry(
+  id: number,
+  input: Partial<RfcAddEntryInput>,
+): Promise<{ success: boolean; message?: string }> {
+  // Admin-overridable action gate. Throws if denied.
+  const { requireFieldAccess } = await import("@/lib/field-access");
+  await requireFieldAccess("rfc", "edit_entry");
+
+  if (input.client_name !== undefined && !input.client_name.trim()) {
+    return { success: false, message: "Client name is required" };
+  }
+
+  // Convert comments → JSON if changed (mirrors addRfcEntry's logic).
+  let commentsJson: string | null | undefined = undefined;
+  if (input.comments !== undefined) {
+    const trimmed = (input.comments ?? "").trim();
+    if (trimmed) {
+      const session = await getSession();
+      const author = session?.user?.name ?? "Unknown";
+      // Read existing comments first so we APPEND rather than replace.
+      const { rows } = await db.query(
+        "SELECT comments FROM mr_rfc WHERE id = $1",
+        [id],
+      );
+      let existing: Array<{ author: string; date: string; content: string }> =
+        [];
+      try {
+        const raw = rows[0]?.comments;
+        if (typeof raw === "string" && raw.trim().startsWith("[")) {
+          existing = JSON.parse(raw);
+        }
+      } catch {
+        /* fallback: ignore parse error, start fresh */
+      }
+      existing.push({
+        author,
+        date: new Date().toISOString(),
+        content: trimmed,
+      });
+      commentsJson = JSON.stringify(existing);
+    } else {
+      // Empty input means "don't append" — keep existing as-is.
+      commentsJson = undefined;
+    }
+  }
+
+  // Build dynamic UPDATE — only set fields the caller actually passed.
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  const push = (col: string, val: unknown) => {
+    values.push(val);
+    sets.push(`${col} = $${values.length}`);
+  };
+
+  if (input.mr_team_id !== undefined) push("mr_team_id", input.mr_team_id);
+  if (input.hearing_date !== undefined)
+    push("hearing_date", input.hearing_date || null);
+  if (input.client_name !== undefined)
+    push("client_name", input.client_name.trim());
+  if (input.document_type !== undefined)
+    push("document_type", input.document_type || null);
+  if (input.provider_name !== undefined)
+    push("provider_name", input.provider_name || null);
+  if (input.date_signed !== undefined)
+    push("date_signed", input.date_signed || null);
+  if (input.mycase_link !== undefined)
+    push("mycase_link", input.mycase_link || null);
+  if (input.method_received !== undefined)
+    push("method_received", input.method_received || null);
+  if (input.date_received !== undefined)
+    push("date_received", input.date_received || null);
+  if (input.filed_to_oho !== undefined)
+    push("filed_to_oho", input.filed_to_oho);
+  if (input.approved_by_tl !== undefined)
+    push("approved_by_tl", input.approved_by_tl);
+  if (commentsJson !== undefined) push("comments", commentsJson);
+
+  if (sets.length === 0) {
+    return { success: true }; // nothing to update — treat as success no-op
+  }
+
+  values.push(id);
+  await db.query(
+    `UPDATE mr_rfc SET ${sets.join(", ")}, updated_at = NOW() WHERE id = $${values.length}`,
+    values,
+  );
+
+  return { success: true };
+}
+
 export async function updateRfcField(
   id: number,
   field: string,
@@ -370,8 +479,9 @@ export async function updateRfcField(
       ? "update_status"
       : "edit_entry",
   );
+  // entry_date is intentionally OMITTED — it's server-enforced to the row's
+  // actual creation date and is immutable thereafter (mirrors patient-portal).
   const allowed = [
-    "entry_date",
     "mr_team_id",
     "hearing_date",
     "client_name",
