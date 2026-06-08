@@ -183,11 +183,35 @@ export async function getPortalPageData(): Promise<PortalPageData> {
     }),
   }));
 
+  // Layer admin per-user overrides on top of the role default permissions.
+  // Mirrors the same pattern in /rfc and the resolver in lib/field-access.ts.
+  // Override row wins; missing rows fall back to the role default already
+  // derived in derivePortalPermissions().
+  const permissions = derivePortalPermissions(role);
+  const userId = Number(session.user.id);
+  if (userId) {
+    const { getUserFieldOverridesPlain } = await import("@/lib/field-access");
+    const overrides = await getUserFieldOverridesPlain(userId, "patient_portal");
+    if (Object.prototype.hasOwnProperty.call(overrides, "create_entry")) {
+      permissions.canCreateEntry = overrides["create_entry"] === true;
+    }
+    if (Object.prototype.hasOwnProperty.call(overrides, "edit_entry")) {
+      permissions.canEditEntry = overrides["edit_entry"] === true;
+    }
+    if (Object.prototype.hasOwnProperty.call(overrides, "delete_entry")) {
+      permissions.canDeleteEntry = overrides["delete_entry"] === true;
+    }
+    if (Object.prototype.hasOwnProperty.call(overrides, "assign_specialist")) {
+      permissions.canAssignSpecialist =
+        overrides["assign_specialist"] === true;
+    }
+  }
+
   return {
     stats,
     specialists,
     availableMonths,
-    permissions: derivePortalPermissions(role),
+    permissions,
   };
 }
 
@@ -359,6 +383,10 @@ export async function getPortalEntries(
 export async function addPortalEntry(
   input: PortalAddEntryInput,
 ): Promise<{ success: boolean; id?: number; message?: string }> {
+  // Admin-overridable action gate. Throws if denied (no permission, no admin
+  // grant). The client surfaces this as "Save failed".
+  const { requireFieldAccess } = await import("@/lib/field-access");
+  await requireFieldAccess("patient_portal", "create_entry");
   if (!input.client_name?.trim())
     return { success: false, message: "Client name is required" };
 
@@ -457,6 +485,9 @@ export async function updatePortalEntry(
   id: number,
   input: Partial<PortalAddEntryInput>,
 ): Promise<{ success: boolean; message?: string }> {
+  // Admin-overridable action gate. Throws if denied.
+  const { requireFieldAccess } = await import("@/lib/field-access");
+  await requireFieldAccess("patient_portal", "edit_entry");
   if (!input.client_name?.trim())
     return { success: false, message: "Client name is required" };
 
@@ -632,24 +663,26 @@ export async function updatePortalField(
 
   const session = await requireAuth();
 
-  // Server-side permission guard for specialist assignment
+  // Admin-overridable action gate for specialist assignment. Uses the
+  // central resolver so admin per-user grants/revokes from the Field
+  // Access modal apply. Defaults to the same role list as before.
   if (field === "mr_specialist_id") {
-    const role = session.user.role ?? "";
-    if (
-      ![
-        "system_admin",
-        "admin",
-        "manager",
-        "mr_admin",
-        "mr_lead",
-        "mr_agent",
-      ].includes(role)
-    )
+    const { canUserEditField } = await import("@/lib/field-access");
+    const role = (session.user.role ?? "mr_agent") as Parameters<
+      typeof canUserEditField
+    >[1];
+    const allowed = await canUserEditField(
+      Number(session.user.id),
+      role,
+      "patient_portal",
+      "assign_specialist",
+    );
+    if (!allowed) {
       return {
         success: false,
-        message:
-          "Only Admin, Manager, MR Admin, MR Lead, or MR Agent can assign specialists",
+        message: "You do not have permission to assign specialists",
       };
+    }
   }
 
   // Server-side permission guard for approval flips. Tighter than canEdit:
@@ -720,6 +753,9 @@ export async function updatePortalField(
 export async function deletePortalEntry(
   id: number,
 ): Promise<{ success: boolean; message?: string }> {
+  // Admin-overridable action gate. Throws if denied.
+  const { requireFieldAccess } = await import("@/lib/field-access");
+  await requireFieldAccess("patient_portal", "delete_entry");
   // Fetch client name before deleting for the activity log
   const { rows } = await db.query(
     "SELECT client_name FROM mr_patient_portal WHERE id = $1",

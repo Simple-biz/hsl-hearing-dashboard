@@ -23,6 +23,6 @@ export default async function RfcPage() {
     redirect("/");
   }
 
-  const data = await getRfcPageData(userRole);
+  const data = await getRfcPageData(userRole, Number(session.user.id));
   return <RfcClient {...data} />;
 }
