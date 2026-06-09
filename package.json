@@ -16,6 +16,7 @@
     "@base-ui/react": "^1.2.0",
     "@hookform/resolvers": "^5.2.2",
     "@neondatabase/serverless": "^1.0.2",
+    "@scalar/api-reference-react": "^0.9.38",
     "@tanstack/react-virtual": "^3.13.23",
     "apexcharts": "^5.10.4",
     "bcryptjs": "^3.0.3",
