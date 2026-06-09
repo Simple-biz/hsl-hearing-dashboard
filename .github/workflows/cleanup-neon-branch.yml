@@ -1,0 +1,26 @@
+name: Cleanup Neon PR Branch
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - feature/mr-pivot-to-google-sheet-sync
+    types:
+      - closed
+
+permissions:
+  contents: read
+
+jobs:
+  delete-branch:
+    name: Delete Neon PR branch
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Delete Neon branch
+        continue-on-error: true
+        uses: neondatabase/delete-branch-action@v3
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch: pr-${{ github.event.number }}
+          api_key: ${{ secrets.NEON_API_KEY }}
