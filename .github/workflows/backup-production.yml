@@ -1,0 +1,138 @@
+name: Backup Production Database
+
+on:
+  schedule:
+    # 11:55 PM Asia/Manila = 3:55 PM UTC.
+    # GitHub cron schedules run in UTC.
+    - cron: "55 15 * * *"
+
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Reason for manual production backup"
+        required: false
+        default: "Manual production backup"
+
+permissions:
+  contents: read
+
+jobs:
+  backup-production:
+    name: Create daily production backup branch
+    runs-on: ubuntu-latest
+
+    concurrency:
+      group: production-database-daily-backup
+      cancel-in-progress: false
+
+    steps:
+      - name: Prepare backup metadata
+        id: meta
+        env:
+          INPUT_REASON: ${{ github.event.inputs.reason }}
+        
+        # The backup metadata includes the backup branch name, expiration time, and reason for the backup.
+        # This prepares all the necessary information for creating the backup branch and also for auditing purposes.
+        # The metadata is written to both GitHub Actions outputs (for use in later steps) and to a text file (for archival as an artifact).
+        # The backup branch name is generated using a timestamp to ensure uniqueness and to indicate when the backup was taken.
+        run: |
+          set -euo pipefail
+
+          BACKUP_STAMP="$(TZ=Asia/Manila date +'%Y%m%d-%H%M%S-pht')"
+          BRANCH_NAME="backup-prod-daily-${BACKUP_STAMP}"
+          EXPIRES_AT="$(date -u -d '+14 days' +'%Y-%m-%dT%H:%M:%SZ')"
+          RUN_REASON="${INPUT_REASON:-Scheduled daily production backup}"
+
+          mkdir -p backup-audit
+
+          {
+            echo "backup_stamp=${BACKUP_STAMP}"
+            echo "branch_name=${BRANCH_NAME}"
+            echo "expires_at=${EXPIRES_AT}"
+            echo "run_reason=${RUN_REASON}"
+          } >> "$GITHUB_OUTPUT"
+
+          cat > backup-audit/backup-metadata.txt <<EOF
+          backup_type=daily-production-backup
+          branch_name=${BRANCH_NAME}
+          parent_branch=production
+          expires_at=${EXPIRES_AT}
+          retention_days=14
+          workflow=${{ github.workflow }}
+          run_id=${{ github.run_id }}
+          run_number=${{ github.run_number }}
+          actor=${{ github.actor }}
+          sha=${{ github.sha }}
+          ref=${{ github.ref }}
+          reason=${RUN_REASON}
+          workflow_run_url=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+
+      - name: Create daily production backup branch
+        id: create-backup
+        uses: neondatabase/create-branch-action@v6
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch_name: ${{ steps.meta.outputs.branch_name }}
+          parent_branch: production
+          api_key: ${{ secrets.NEON_API_KEY }}
+          expires_at: ${{ steps.meta.outputs.expires_at }}
+
+      - name: Verify daily backup branch
+        env:
+          BACKUP_BRANCH_NAME: ${{ steps.meta.outputs.branch_name }}
+          BACKUP_BRANCH_ID: ${{ steps.create-backup.outputs.branch_id }}
+          BACKUP_CREATED: ${{ steps.create-backup.outputs.created }}
+        
+        # This step verifies that the backup branch was successfully created. 
+        # It checks that the branch ID is present and that the branch was newly created (as opposed to already existing). 
+        #If either of these conditions is not met, it logs an error and exits with a non-zero status to indicate failure.
+        run: |
+          set -euo pipefail
+
+          if [ -z "${BACKUP_BRANCH_ID:-}" ]; then
+            echo "::error::Daily production backup branch ID is missing."
+            exit 1
+          fi
+
+          if [ "${BACKUP_CREATED:-}" != "true" ]; then
+            echo "::error::Daily production backup branch was not newly created."
+            exit 1
+          fi
+
+          cat > backup-audit/neon-branch-result.txt <<EOF
+          backup_branch=${BACKUP_BRANCH_NAME}
+          backup_branch_id=${BACKUP_BRANCH_ID}
+          backup_created=${BACKUP_CREATED}
+          parent_branch=production
+          expires_at=${{ steps.meta.outputs.expires_at }}
+          EOF
+
+      - name: Write backup summary
+        if: always()
+        # This step writes a summary of the backup branch creation to the GitHub Actions summary. 
+        # It includes details such as the backup branch name, branch ID, parent branch, expiration
+        # time, retention period, actor who triggered the backup, run ID, and reason for the backup.
+        run: |
+          {
+            echo "## Production Daily Backup"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Backup branch | \`${{ steps.meta.outputs.branch_name }}\` |"
+            echo "| Backup branch ID | \`${{ steps.create-backup.outputs.branch_id }}\` |"
+            echo "| Parent branch | \`production\` |"
+            echo "| Expires at | \`${{ steps.meta.outputs.expires_at }}\` |"
+            echo "| Retention | \`14 days\` |"
+            echo "| Actor | \`${{ github.actor }}\` |"
+            echo "| Run ID | \`${{ github.run_id }}\` |"
+            echo "| Reason | \`${{ steps.meta.outputs.run_reason }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload production backup audit artifact
+        if: ${{ always() && hashFiles('backup-audit/**') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-daily-backup-audit-${{ steps.meta.outputs.backup_stamp }}-${{ github.run_id }}
+          path: backup-audit/
+          retention-days: 30

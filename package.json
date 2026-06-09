@@ -6,13 +6,16 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "db:migrate": "dbmate --migrations-dir ./src/migrations --no-dump-schema migrate",
+    "db:status": "dbmate --migrations-dir ./src/migrations --no-dump-schema status",
+    "db:new": "dbmate --migrations-dir ./src/migrations --no-dump-schema new"
   },
   "dependencies": {
     "@base-ui/react": "^1.2.0",
     "@hookform/resolvers": "^5.2.2",
     "@neondatabase/serverless": "^1.0.2",
-    "@scalar/api-reference-react": "^0.9.38",
     "@tanstack/react-virtual": "^3.13.23",
     "apexcharts": "^5.10.4",
     "bcryptjs": "^3.0.3",
@@ -49,6 +52,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "dbmate": "^2.33.0",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "shadcn": "^3.8.5",
