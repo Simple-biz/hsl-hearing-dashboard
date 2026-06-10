@@ -2069,6 +2069,10 @@ interface MemoRowProps {
   lastFrozenKey: string;
   renderCell: (h: HearingRow, col: ColumnDef) => React.ReactNode;
   columns: ColumnDef[];
+  // Virtualizer ref + index — pass through from the parent so the
+  // virtualizer can measure this row's real height after mount.
+  rowRef?: (el: HTMLTableRowElement | null) => void;
+  dataIndex: number;
 }
 
 const MemoRow = memo(
@@ -2083,6 +2087,8 @@ const MemoRow = memo(
     lastFrozenKey,
     renderCell,
     columns,
+    rowRef,
+    dataIndex,
   }: MemoRowProps) {
     // Mirror the rep-docs page: any withdrawal/dismissal decision tints the
     // whole row red so users can spot dropped hearings at a glance. Predicate
@@ -2102,6 +2108,8 @@ const MemoRow = memo(
         : oddBg;
     return (
       <tr
+        ref={rowRef}
+        data-index={dataIndex}
         className={cn(
           "group border-b border-border/40 last:border-0",
           rb,
@@ -2727,6 +2735,13 @@ const HearingTable = memo(function HearingTable({
     getScrollElement: () => parentRef.current,
     estimateSize: () => ROW_H,
     overscan: 8,
+    // Real row heights diverge from ROW_H (36px) when rows wrap (long
+    // claimant names, multi-line representative, etc.). Without
+    // measureElement, the virtualizer keeps the 36px estimate and the
+    // position deltas cascade as new rows mount during scroll — the
+    // visible "shake." This callback hands real heights back so positions
+    // stabilize after the first measurement.
+    measureElement: (el) => el?.getBoundingClientRect().height ?? ROW_H,
   });
 
   return (
@@ -2850,6 +2865,8 @@ const HearingTable = memo(function HearingTable({
                         key={h.id}
                         hearing={h}
                         ri={vRow.index}
+                        rowRef={virtualizer.measureElement}
+                        dataIndex={vRow.index}
                         isSelected={false}
                         isAdmin={isAdmin}
                         evenBg={evenBg}

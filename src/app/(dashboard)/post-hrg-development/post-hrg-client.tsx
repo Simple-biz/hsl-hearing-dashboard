@@ -1751,6 +1751,10 @@ interface MemoRowProps {
   tintColor: string | null;
   unacknowledged: boolean;
   completed: boolean;
+  // Virtualizer ref + index — pass through from the parent so the
+  // virtualizer can measure this row's real height after mount.
+  rowRef?: (el: HTMLTableRowElement | null) => void;
+  dataIndex: number;
 }
 
 const MemoRow = memo(
@@ -1768,12 +1772,16 @@ const MemoRow = memo(
     tintColor,
     unacknowledged,
     completed,
+    rowRef,
+    dataIndex,
   }: MemoRowProps) {
     const rb = ri % 2 === 0 ? evenBg : oddBg;
     // Translucent fill (~24% alpha) so text stays readable on any indicator color
     const tintBg = tintColor ? `${tintColor}3D` : undefined;
     return (
       <tr
+        ref={rowRef}
+        data-index={dataIndex}
         className={cn(
           "group border-b border-border/40 last:border-0 cursor-pointer",
           overdue && "bg-red-50/50! dark:bg-red-950/10!",
@@ -3361,6 +3369,13 @@ export function PostHrgClient({
     getScrollElement: () => parentRef.current,
     estimateSize: () => ROW_H,
     overscan: 8,
+    // Real row heights diverge from ROW_H (36px) when rows contain
+    // multi-line content (wrapped Remarks / Type of Docs Needed /
+    // Person Responsible chips). Without measureElement, the virtualizer
+    // keeps the 36px estimate and the position deltas cascade as new rows
+    // mount during scroll — the visible "shake." This callback hands real
+    // heights back so positions stabilize after the first measurement.
+    measureElement: (el) => el?.getBoundingClientRect().height ?? ROW_H,
   });
 
   // Manual refresh — pulls the current page from the server using ALL active
@@ -3996,6 +4011,8 @@ export function PostHrgClient({
                                 key={r.id}
                                 record={r}
                                 ri={vRow.index}
+                                rowRef={virtualizer.measureElement}
+                                dataIndex={vRow.index}
                                 evenBg={evenBg}
                                 oddBg={oddBg}
                                 getLeftPosFn={getLeftPos}
