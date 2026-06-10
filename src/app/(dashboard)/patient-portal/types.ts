@@ -182,9 +182,45 @@ export interface PortalFilters {
   /** ISO YYYY-MM-DD — used by `custom` (end of range). */
   date_to?: string;
   specialist?: string;
-  sort_order?: "asc" | "desc";
+  /** "asc" / "desc" sort by created_at (Newest / Oldest First).
+   *  "specialist_asc" / "specialist_desc" group rows by MR Specialist
+   *  alphabetically (A→Z / Z→A) so entries with the same specialist appear
+   *  consecutively. Unassigned rows always go to the bottom. Secondary sort
+   *  is created_at DESC for stability. */
+  sort_order?: "asc" | "desc" | "specialist_asc" | "specialist_desc";
   page?: number;
   per_page?: number | "all";
+}
+
+// ─── Report (per-MR-Specialist breakdown) ────────────────────────────────────
+
+/** One row in the report modal's table — one per specialist plus an
+ *  "unassigned" row (specialist_id IS NULL). Counts respect whatever filters
+ *  are currently applied on the main page, EXCEPT the specialist filter
+ *  (which would defeat the purpose of a per-specialist breakdown). */
+export interface PortalReportRow {
+  /** null = the (Unassigned) row. */
+  specialist_id: number | null;
+  /** null when specialist_id is null OR when the FK references a deleted
+   *  specialist (defensive against historical orphans). */
+  specialist_name: string | null;
+  specialist_color: string | null;
+  /** is_active flag from mr_specialists — surfaces inactive specialists who
+   *  still have entries assigned. null when unassigned. */
+  specialist_active: boolean | null;
+  total: number;
+  /** got_mr = true. */
+  got_mr: number;
+  /** got_mr = false. */
+  pending_mr: number;
+  /** Both portal_username AND portal_password are set (non-null, non-empty). */
+  portal_set: number;
+  /** approved_by_tl = true. */
+  approved: number;
+}
+
+export interface PortalReportData {
+  rows: PortalReportRow[];
 }
 
 export interface PortalPaginatedResult {
