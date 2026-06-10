@@ -206,6 +206,7 @@ function UsersTab({
   onBulkCreate: () => void;
 }) {
   const [search, setSearch] = useState("");
+  const [roleFilter, setRoleFilter] = useState<string>("");
   const [showAddModal, setShowAddModal] = useState(false);
   const [showResetModal, setShowResetModal] = useState<AdminUser | null>(null);
   const [editing, setEditing] = useState<AdminUser | null>(null);
@@ -216,10 +217,21 @@ function UsersTab({
   const inactive = visible.filter((u) => !u.is_active);
   const filtered = [...active, ...inactive].filter(
     (u) =>
-      !search ||
-      u.full_name.toLowerCase().includes(search.toLowerCase()) ||
-      u.email.toLowerCase().includes(search.toLowerCase()),
+      (!search ||
+        u.full_name.toLowerCase().includes(search.toLowerCase()) ||
+        u.email.toLowerCase().includes(search.toLowerCase())) &&
+      (!roleFilter || u.role === roleFilter),
   );
+
+  // Group ALL_ROLES by their `group` field so the dropdown can render them
+  // under <optgroup> headers (Administration / Hearings / MR / Staff / Reps).
+  // Done in render order so identical groups stay together.
+  const rolesByGroup = ALL_ROLES.reduce<
+    Record<string, typeof ALL_ROLES>
+  >((acc, r) => {
+    (acc[r.group] ??= []).push(r);
+    return acc;
+  }, {});
 
   return (
     <div className="space-y-4">
@@ -241,8 +253,8 @@ function UsersTab({
         />
       </StatCardGrid>
 
-      <div className="flex items-center gap-3">
-        <div className="relative max-w-xs flex-1">
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative max-w-xs flex-1 min-w-50">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder="Search by name or email..."
@@ -251,6 +263,36 @@ function UsersTab({
             className="h-9 pl-9 text-sm"
           />
         </div>
+        <select
+          value={roleFilter}
+          onChange={(e) => setRoleFilter(e.target.value)}
+          className="h-9 text-sm px-3 rounded-md border border-input bg-background text-foreground cursor-pointer min-w-45"
+          title="Filter users by role"
+        >
+          <option value="">All Roles</option>
+          {Object.entries(rolesByGroup).map(([group, roles]) => (
+            <optgroup key={group} label={group}>
+              {roles.map((r) => (
+                <option key={r.value} value={r.value}>
+                  {r.label}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+        {(search || roleFilter) && (
+          <button
+            type="button"
+            onClick={() => {
+              setSearch("");
+              setRoleFilter("");
+            }}
+            className="h-9 text-xs px-3 rounded-md border border-border bg-card hover:bg-muted text-muted-foreground font-medium transition-colors"
+            title="Clear search and role filters"
+          >
+            Clear
+          </button>
+        )}
         <Button
           size="sm"
           className="h-9 gap-2"
