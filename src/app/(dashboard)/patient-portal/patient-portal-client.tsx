@@ -26,6 +26,7 @@ import {
   Eye,
   EyeOff,
   History,
+  BarChart3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -51,6 +52,7 @@ import type {
 import { PORTAL_ACTIONS } from "./types";
 import { ActivityLogModal } from "@/components/modals";
 import { PortalEntryAuditTrailModal } from "@/components/modals/portal-entry-audit-trail-modal";
+import { PortalReportModal } from "@/components/modals/portal-report-modal";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1539,6 +1541,11 @@ export function PatientPortalClient(data: PortalPageData) {
   const [showAdd, setShowAdd] = useState(false);
   const [editEntry, setEditEntry] = useState<PortalEntry | null>(null);
   const [showActivity, setShowActivity] = useState(false);
+  // Snapshot of the page's filters at the moment the modal was opened.
+  // Stable across page re-renders so the user's modal-local edits aren't
+  // wiped if the page state happens to update behind the open modal.
+  const [reportInitialFilters, setReportInitialFilters] =
+    useState<PortalFilters | null>(null);
   const [notesState, setNotesState] = useState<{
     open: boolean;
     id: number;
@@ -1759,16 +1766,27 @@ export function PatientPortalClient(data: PortalPageData) {
               }}
             />
 
-            {/* Sort */}
+            {/* Sort — Newest/Oldest run against created_at; the two
+             *  Specialist modes cluster rows by MR Specialist name
+             *  (A→Z / Z→A) so entries for the same specialist appear
+             *  together. Unassigned rows always sit at the bottom. */}
             <select
               value={filters.sort_order}
               onChange={(e) =>
-                applyFilter({ sort_order: e.target.value as "asc" | "desc" })
+                applyFilter({
+                  sort_order: e.target.value as
+                    | "asc"
+                    | "desc"
+                    | "specialist_asc"
+                    | "specialist_desc",
+                })
               }
               className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer"
             >
               <option value="desc">🆕 Newest First</option>
               <option value="asc">📜 Oldest First</option>
+              <option value="specialist_asc">👥 MR Specialist (A→Z)</option>
+              <option value="specialist_desc">👥 MR Specialist (Z→A)</option>
             </select>
 
             {/* MR Status */}
@@ -1884,6 +1902,14 @@ export function PatientPortalClient(data: PortalPageData) {
                 <span className="hidden sm:inline">
                   {refreshing ? "Refreshing…" : "Refresh"}
                 </span>
+              </button>
+              <button
+                onClick={() => setReportInitialFilters({ ...filters })}
+                title="Per-MR-Specialist breakdown with its own filter bar (opens with the page's current filters)"
+                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border font-semibold transition-colors bg-violet-50 text-violet-700 border-violet-200 hover:bg-violet-100 hover:border-violet-300 dark:bg-violet-950/30 dark:text-violet-300 dark:border-violet-800 dark:hover:bg-violet-950/50"
+              >
+                <BarChart3 size={12} />
+                <span className="hidden sm:inline">Report</span>
               </button>
               <button
                 onClick={() => setShowActivity(true)}
@@ -2119,6 +2145,22 @@ export function PatientPortalClient(data: PortalPageData) {
           onClose={() => setShowActivity(false)}
         />
       )}
+      <PortalReportModal
+        initialFilters={reportInitialFilters}
+        specialists={data.specialists}
+        availableYears={availableYears}
+        onClose={() => setReportInitialFilters(null)}
+        onDrillIn={(specialistId) => {
+          // Set the page-level specialist filter to the drilled value and
+          // close the modal. "unassigned" matches the sentinel used by the
+          // page's filter select.
+          applyFilter({
+            specialist:
+              specialistId === null ? "unassigned" : String(specialistId),
+          });
+          setReportInitialFilters(null);
+        }}
+      />
       {historyEntry && (
         <PortalEntryAuditTrailModal
           entryId={historyEntry.id}
