@@ -12,6 +12,8 @@ export type {
   PortalPageData,
   PortalAddEntryInput,
   PortalActivityEntry,
+  PortalReportData,
+  PortalReportRow,
   ClaimantSearchResult,
 } from "../patient-portal/types";
 
@@ -30,6 +32,7 @@ import type {
   PortalPageData,
   PortalAddEntryInput,
   PortalActivityEntry,
+  PortalReportData,
   ClaimantSearchResult,
 } from "../patient-portal/types";
 
@@ -325,7 +328,21 @@ export async function getPortalEntries(
   }
 
   const where = conditions.join(" AND ");
-  const dir = filters.sort_order === "asc" ? "ASC" : "DESC";
+  // Sort mode: created_at (asc/desc) OR specialist name (alphabetical group).
+  // Specialist modes cluster entries with the same specialist consecutively;
+  // NULLS LAST keeps Unassigned rows at the bottom regardless of direction.
+  // Secondary sort by created_at DESC keeps within-group order stable.
+  let orderClause: string;
+  if (filters.sort_order === "specialist_asc") {
+    orderClause =
+      "ORDER BY s.name ASC NULLS LAST, p.created_at DESC NULLS LAST, p.id DESC";
+  } else if (filters.sort_order === "specialist_desc") {
+    orderClause =
+      "ORDER BY s.name DESC NULLS LAST, p.created_at DESC NULLS LAST, p.id DESC";
+  } else {
+    const dir = filters.sort_order === "asc" ? "ASC" : "DESC";
+    orderClause = `ORDER BY p.created_at ${dir} NULLS LAST, p.id ${dir}`;
+  }
   const page = Math.max(1, filters.page ?? 1);
   const isAll = filters.per_page === "all";
   // Cap matches the largest option in the page-size dropdown.
@@ -364,7 +381,7 @@ export async function getPortalEntries(
      LEFT JOIN mr_specialists s ON s.id = p.mr_specialist_id
      LEFT JOIN hearings h        ON h.id = p.hearing_id
      WHERE ${where}
-     ORDER BY p.created_at ${dir} NULLS LAST, p.id ${dir}
+     ${orderClause}
      ${limitClause}`,
     dataParams,
   );
@@ -375,6 +392,179 @@ export async function getPortalEntries(
     page,
     per_page: perPage,
     total_pages: isAll ? 1 : Math.max(1, Math.ceil(total / perPage)),
+  };
+}
+
+// ─── Per-Specialist Report ────────────────────────────────────────────────────
+
+/**
+ * Aggregate counts grouped by MR Specialist for the report modal.
+ *
+ * Respects every filter that getPortalEntries respects. The `specialist`
+ * filter, when set, narrows the report to one specialist's row (or
+ * "unassigned"). When unset (the default), the full per-specialist
+ * breakdown is returned.
+ *
+ * Returns one row per specialist that has at least one matching entry,
+ * plus a single "unassigned" row (specialist_id IS NULL) when applicable.
+ * Specialists with zero matching entries are intentionally NOT returned —
+ * the report shows only specialists with actual workload to compare.
+ *
+ * IMPORTANT: The WHERE-clause building below is duplicated from
+ * getPortalEntries to avoid an extraction refactor on a working query.
+ * Keep these two condition blocks in sync — any new filter added to
+ * getPortalEntries should also be added here.
+ */
+export async function getPortalReport(
+  filters: PortalFilters,
+): Promise<PortalReportData> {
+  const conditions: string[] = ["1=1"];
+  const params: unknown[] = [];
+  let p = 0;
+
+  // Search
+  if (filters.search?.trim()) {
+    p += 2;
+    conditions.push(
+      `(p.client_name ILIKE $${p - 1} OR p.provider ILIKE $${p})`,
+    );
+    params.push(`%${filters.search.trim()}%`, `%${filters.search.trim()}%`);
+  }
+
+  // MR status
+  if (filters.mr_status === "got") {
+    conditions.push("p.got_mr = true");
+  } else if (filters.mr_status === "pending") {
+    conditions.push("p.got_mr = false");
+  }
+
+  // Month filter (Jan–Dec name) on created_at — independent of year.
+  if (filters.month) {
+    const MONTH_NUM: Record<string, number> = {
+      Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6,
+      Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12,
+    };
+    const mm = MONTH_NUM[filters.month];
+    if (mm) conditions.push(`EXTRACT(MONTH FROM p.created_at) = ${mm}`);
+  }
+
+  // Year filter (4-digit) on created_at — independent of month.
+  if (filters.year) {
+    const yr = parseInt(filters.year, 10);
+    if (Number.isFinite(yr) && yr >= 1900 && yr <= 9999) {
+      conditions.push(`EXTRACT(YEAR FROM p.created_at) = ${yr}`);
+    }
+  }
+
+  // Date-range preset on created_at — mirrors getPortalEntries exactly.
+  switch (filters.date_preset) {
+    case "yesterday":
+      conditions.push("DATE(p.created_at) = CURRENT_DATE - INTERVAL '1 day'");
+      break;
+    case "today":
+      conditions.push("DATE(p.created_at) = CURRENT_DATE");
+      break;
+    case "tomorrow":
+      conditions.push("DATE(p.created_at) = CURRENT_DATE + INTERVAL '1 day'");
+      break;
+    case "this-week":
+      conditions.push(
+        "p.created_at >= date_trunc('week', CURRENT_DATE) AND p.created_at < date_trunc('week', CURRENT_DATE) + INTERVAL '7 days'",
+      );
+      break;
+    case "next-week":
+      conditions.push(
+        "p.created_at >= date_trunc('week', CURRENT_DATE) + INTERVAL '7 days' AND p.created_at < date_trunc('week', CURRENT_DATE) + INTERVAL '14 days'",
+      );
+      break;
+    case "this-month":
+      conditions.push(
+        "p.created_at >= date_trunc('month', CURRENT_DATE) AND p.created_at < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'",
+      );
+      break;
+    case "next-30":
+      conditions.push(
+        "p.created_at >= CURRENT_DATE AND p.created_at < CURRENT_DATE + INTERVAL '30 days'",
+      );
+      break;
+    case "specific":
+      if (filters.date_from) {
+        p++;
+        conditions.push(`DATE(p.created_at) = $${p}::date`);
+        params.push(filters.date_from);
+      }
+      break;
+    case "custom":
+      if (filters.date_from) {
+        p++;
+        conditions.push(`p.created_at >= $${p}::date`);
+        params.push(filters.date_from);
+      }
+      if (filters.date_to) {
+        p++;
+        conditions.push(`p.created_at < $${p}::date + INTERVAL '1 day'`);
+        params.push(filters.date_to);
+      }
+      break;
+  }
+
+  // Specialist filter — when set, the report narrows to a single specialist
+  // (or "unassigned"). Useful for focusing on one person's queue. When
+  // cleared (the default), the full per-specialist breakdown is returned.
+  if (filters.specialist) {
+    if (filters.specialist === "unassigned") {
+      conditions.push("p.mr_specialist_id IS NULL");
+    } else {
+      p++;
+      conditions.push(`p.mr_specialist_id = $${p}`);
+      params.push(Number(filters.specialist));
+    }
+  }
+
+  const where = conditions.join(" AND ");
+
+  // Single grouped aggregation. FILTER (WHERE …) gives per-condition counts
+  // without multiple table scans. Portal-set requires both username and
+  // password to be present and non-empty (matches the eye-icon view rule).
+  const { rows } = await db.query(
+    `SELECT
+       p.mr_specialist_id            AS specialist_id,
+       s.name                        AS specialist_name,
+       s.bg_color                    AS specialist_color,
+       s.is_active                   AS specialist_active,
+       COUNT(*)::int                                                                      AS total,
+       COUNT(*) FILTER (WHERE p.got_mr = true)::int                                       AS got_mr,
+       COUNT(*) FILTER (WHERE p.got_mr = false)::int                                      AS pending_mr,
+       COUNT(*) FILTER (
+         WHERE COALESCE(p.portal_username, '') <> ''
+           AND COALESCE(p.portal_password, '') <> ''
+       )::int                                                                              AS portal_set,
+       COUNT(*) FILTER (WHERE p.approved_by_tl = true)::int                               AS approved
+     FROM mr_patient_portal p
+     LEFT JOIN mr_specialists s ON s.id = p.mr_specialist_id
+     LEFT JOIN hearings h        ON h.id = p.hearing_id
+     WHERE ${where}
+     GROUP BY p.mr_specialist_id, s.name, s.bg_color, s.is_active, s.display_order
+     ORDER BY
+       CASE WHEN p.mr_specialist_id IS NULL THEN 1 ELSE 0 END,
+       total DESC,
+       s.display_order ASC NULLS LAST,
+       s.name ASC NULLS LAST`,
+    params,
+  );
+
+  return {
+    rows: rows.map((r) => ({
+      specialist_id: r.specialist_id ?? null,
+      specialist_name: r.specialist_name ?? null,
+      specialist_color: r.specialist_color ?? null,
+      specialist_active: r.specialist_active ?? null,
+      total: r.total ?? 0,
+      got_mr: r.got_mr ?? 0,
+      pending_mr: r.pending_mr ?? 0,
+      portal_set: r.portal_set ?? 0,
+      approved: r.approved ?? 0,
+    })),
   };
 }
 
