@@ -1541,7 +1541,11 @@ export function PatientPortalClient(data: PortalPageData) {
   const [showAdd, setShowAdd] = useState(false);
   const [editEntry, setEditEntry] = useState<PortalEntry | null>(null);
   const [showActivity, setShowActivity] = useState(false);
-  const [showReport, setShowReport] = useState(false);
+  // Snapshot of the page's filters at the moment the modal was opened.
+  // Stable across page re-renders so the user's modal-local edits aren't
+  // wiped if the page state happens to update behind the open modal.
+  const [reportInitialFilters, setReportInitialFilters] =
+    useState<PortalFilters | null>(null);
   const [notesState, setNotesState] = useState<{
     open: boolean;
     id: number;
@@ -1900,8 +1904,8 @@ export function PatientPortalClient(data: PortalPageData) {
                 </span>
               </button>
               <button
-                onClick={() => setShowReport(true)}
-                title="Per-MR-Specialist breakdown (respects active filters)"
+                onClick={() => setReportInitialFilters({ ...filters })}
+                title="Per-MR-Specialist breakdown with its own filter bar (opens with the page's current filters)"
                 className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded-lg border font-semibold transition-colors bg-violet-50 text-violet-700 border-violet-200 hover:bg-violet-100 hover:border-violet-300 dark:bg-violet-950/30 dark:text-violet-300 dark:border-violet-800 dark:hover:bg-violet-950/50"
               >
                 <BarChart3 size={12} />
@@ -2142,16 +2146,19 @@ export function PatientPortalClient(data: PortalPageData) {
         />
       )}
       <PortalReportModal
-        filters={showReport ? filters : null}
-        onClose={() => setShowReport(false)}
+        initialFilters={reportInitialFilters}
+        specialists={data.specialists}
+        availableYears={availableYears}
+        onClose={() => setReportInitialFilters(null)}
         onDrillIn={(specialistId) => {
-          // Set the specialist filter to the drilled value and close the modal.
-          // "unassigned" matches the special sentinel used by the filter select.
+          // Set the page-level specialist filter to the drilled value and
+          // close the modal. "unassigned" matches the sentinel used by the
+          // page's filter select.
           applyFilter({
             specialist:
               specialistId === null ? "unassigned" : String(specialistId),
           });
-          setShowReport(false);
+          setReportInitialFilters(null);
         }}
       />
       {historyEntry && (

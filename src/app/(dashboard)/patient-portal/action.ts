@@ -400,9 +400,10 @@ export async function getPortalEntries(
 /**
  * Aggregate counts grouped by MR Specialist for the report modal.
  *
- * Respects every filter that getPortalEntries respects EXCEPT `specialist` —
- * the report IS the per-specialist breakdown, so filtering to one would
- * defeat the purpose. Search, mr_status, month/year, date_preset all apply.
+ * Respects every filter that getPortalEntries respects. The `specialist`
+ * filter, when set, narrows the report to one specialist's row (or
+ * "unassigned"). When unset (the default), the full per-specialist
+ * breakdown is returned.
  *
  * Returns one row per specialist that has at least one matching entry,
  * plus a single "unassigned" row (specialist_id IS NULL) when applicable.
@@ -507,8 +508,18 @@ export async function getPortalReport(
       break;
   }
 
-  // NOTE: specialist filter intentionally OMITTED — the report is the
-  // per-specialist breakdown, so filtering to one would defeat the point.
+  // Specialist filter — when set, the report narrows to a single specialist
+  // (or "unassigned"). Useful for focusing on one person's queue. When
+  // cleared (the default), the full per-specialist breakdown is returned.
+  if (filters.specialist) {
+    if (filters.specialist === "unassigned") {
+      conditions.push("p.mr_specialist_id IS NULL");
+    } else {
+      p++;
+      conditions.push(`p.mr_specialist_id = $${p}`);
+      params.push(Number(filters.specialist));
+    }
+  }
 
   const where = conditions.join(" AND ");
 

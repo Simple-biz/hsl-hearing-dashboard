@@ -1,21 +1,42 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
-import { X, BarChart3, RefreshCw, Download, Users } from "lucide-react";
+import {
+  X,
+  BarChart3,
+  RefreshCw,
+  Download,
+  Users,
+  RotateCcw,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getPortalReport } from "@/app/(dashboard)/patient-portal/action";
 import type {
   PortalFilters,
   PortalReportRow,
+  MrSpecialist,
 } from "@/app/(dashboard)/patient-portal/types";
 
+const MONTH_OPTIONS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+] as const;
+
 interface PortalReportModalProps {
-  /** When non-null, modal is open and report is fetched with these filters. */
-  filters: PortalFilters | null;
+  /** Snapshot of the page's filters at the moment the modal opened.
+   *  Used as the initial value for the modal's internal filter state.
+   *  Stable across modal renders — only changes when modal is re-opened. */
+  initialFilters: PortalFilters | null;
   onClose: () => void;
   /** Called when the user clicks a specialist row — should set the
    *  page-level specialist filter and close the modal. null = unassigned. */
   onDrillIn: (specialistId: number | null) => void;
+  /** Specialists list to populate the modal's specialist dropdown.
+   *  Comes from PortalPageData.specialists. */
+  specialists: MrSpecialist[];
+  /** Years to populate the modal's year dropdown. Mirrors the main page's
+   *  availableYears (derived from data.availableMonths YYYY-MM values). */
+  availableYears: string[];
 }
 
 /** Format a count safely (never `NaN` or `undefined`). */
@@ -23,8 +44,6 @@ function fmt(n: number | null | undefined): string {
   return typeof n === "number" && Number.isFinite(n) ? n.toLocaleString() : "0";
 }
 
-/** Convert a specialist bg_color (hex like "#A78BFA" or null) to a small
- *  swatch + soft pill — mirrors how the main table renders the chip. */
 function SpecialistChip({
   name,
   color,
@@ -56,26 +75,37 @@ function SpecialistChip({
 }
 
 export function PortalReportModal({
-  filters,
+  initialFilters,
   onClose,
   onDrillIn,
+  specialists,
+  availableYears,
 }: PortalReportModalProps) {
+  const [localFilters, setLocalFilters] = useState<PortalFilters | null>(null);
   const [rows, setRows] = useState<PortalReportRow[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch on open + whenever the filter snapshot changes. We pass a fresh
-  // PortalFilters object each open, so identity-equality on the filters
-  // ref is enough to detect "filters changed since last fetch."
+  // Sync localFilters from initialFilters when the modal opens / re-opens.
+  // We only reset when the initialFilters REFERENCE changes — the parent
+  // takes a snapshot at open time, so identity equality is the right signal.
+  // Without this gate, every page re-render would wipe modal-internal edits.
   useEffect(() => {
-    if (!filters) {
+    setLocalFilters(initialFilters ? { ...initialFilters } : null);
+  }, [initialFilters]);
+
+  // Fetch whenever localFilters changes. The cancelled flag prevents a stale
+  // request from late-arriving and overwriting newer state when the user
+  // changes filters quickly.
+  useEffect(() => {
+    if (!localFilters) {
       setRows(null);
       return;
     }
     let cancelled = false;
     setLoading(true);
     setError(null);
-    getPortalReport(filters)
+    getPortalReport(localFilters)
       .then((data) => {
         if (cancelled) return;
         setRows(data.rows);
@@ -90,7 +120,7 @@ export function PortalReportModal({
     return () => {
       cancelled = true;
     };
-  }, [filters]);
+  }, [localFilters]);
 
   const totals = useMemo(() => {
     const acc = { total: 0, got_mr: 0, pending_mr: 0, portal_set: 0, approved: 0 };
@@ -105,24 +135,20 @@ export function PortalReportModal({
     return acc;
   }, [rows]);
 
-  if (!filters) return null;
+  if (!initialFilters || !localFilters) return null;
+
+  const patchFilter = (patch: Partial<PortalFilters>) => {
+    setLocalFilters((prev) => (prev ? { ...prev, ...patch } : prev));
+  };
 
   const refetch = () => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    getPortalReport(filters)
-      .then((data) => {
-        if (cancelled) return;
-        setRows(data.rows);
-      })
-      .catch((e) => {
-        if (cancelled) return;
-        setError(e instanceof Error ? e.message : "Failed to load report");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    if (!localFilters) return;
+    // Trigger the effect by handing it a new object reference.
+    setLocalFilters({ ...localFilters });
+  };
+
+  const resetToPageFilters = () => {
+    setLocalFilters({ ...initialFilters });
   };
 
   const exportCsv = () => {
@@ -157,15 +183,6 @@ export function PortalReportModal({
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
-
-  // Indicates whether any non-specialist filter is currently restricting the
-  // result set — informs the "filtered view" hint at the top of the modal.
-  const hasActiveFilters =
-    !!filters.search ||
-    !!filters.mr_status ||
-    !!filters.month ||
-    !!filters.year ||
-    (!!filters.date_preset && filters.date_preset !== "");
 
   return (
     <div
@@ -211,14 +228,82 @@ export function PortalReportModal({
           </div>
         </div>
 
-        {/* Filter hint */}
-        {hasActiveFilters && (
-          <div className="px-5 py-2 text-[11px] bg-amber-50 text-amber-800 border-b border-amber-200 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-900/50">
-            Counts reflect the filters currently applied to the main page
-            (search / status / dates). The specialist filter is intentionally
-            ignored so all specialists appear.
-          </div>
-        )}
+        {/* Filter bar — modal-local state, does NOT touch page filters. */}
+        <div className="border-b bg-muted/20 px-5 py-3 flex flex-wrap items-center gap-2 shrink-0">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mr-1">
+            Filters
+          </span>
+
+          {/* Specialist */}
+          <select
+            value={localFilters.specialist ?? ""}
+            onChange={(e) => patchFilter({ specialist: e.target.value })}
+            className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer"
+            title="Narrow the report to one specialist (or unassigned)"
+          >
+            <option value="">All Specialists</option>
+            <option value="unassigned">— Unassigned —</option>
+            {specialists.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+
+          {/* Month */}
+          <select
+            value={localFilters.month ?? ""}
+            onChange={(e) => patchFilter({ month: e.target.value })}
+            className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer"
+          >
+            <option value="">All Months</option>
+            {MONTH_OPTIONS.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+
+          {/* Year */}
+          <select
+            value={localFilters.year ?? ""}
+            onChange={(e) => patchFilter({ year: e.target.value })}
+            className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer"
+          >
+            <option value="">All Years</option>
+            {availableYears.map((y) => (
+              <option key={y} value={y}>
+                {y}
+              </option>
+            ))}
+          </select>
+
+          {/* Date — same single-day picker pattern as the main page. */}
+          <input
+            type="date"
+            value={localFilters.date_from ?? ""}
+            onChange={(e) =>
+              patchFilter({
+                date_preset: e.target.value ? "specific" : "",
+                date_from: e.target.value,
+                date_to: "",
+              })
+            }
+            aria-label="Filter by date created"
+            title="Filter entries created on this date"
+            className="text-xs px-2 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer"
+          />
+
+          {/* Reset — restores filters to the page's snapshot taken at open. */}
+          <button
+            onClick={resetToPageFilters}
+            title="Reset modal filters to the values the page had when this modal opened"
+            className="flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded-lg border border-border bg-card hover:bg-muted text-muted-foreground font-medium transition-colors ml-auto"
+          >
+            <RotateCcw size={11} />
+            Reset
+          </button>
+        </div>
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-5 py-4">
@@ -316,8 +401,9 @@ export function PortalReportModal({
 
         {/* Footer */}
         <div className="border-t bg-muted/30 px-5 py-2.5 text-[10px] text-muted-foreground shrink-0">
-          Click any specialist row to filter the main table to that specialist
-          and close the report.
+          Filters here only affect this modal — the main page is unchanged.
+          Click any specialist row to filter the main table and close the
+          report.
         </div>
       </div>
     </div>
