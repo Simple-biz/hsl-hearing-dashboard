@@ -1471,6 +1471,13 @@ function RepDocsTable({
     getScrollElement: () => parentRef.current,
     estimateSize: () => ROW_H,
     overscan: 10,
+    // Real row heights diverge from ROW_H (44px) when rows wrap (long
+    // claimant names, multi-line acknowledge badges, etc.). Without
+    // measureElement, the virtualizer keeps the 44px estimate and the
+    // position deltas cascade as new rows mount during scroll — the
+    // visible "shake." This callback hands real heights back so positions
+    // stabilize after the first measurement.
+    measureElement: (el) => el?.getBoundingClientRect().height ?? ROW_H,
   });
 
   const totalWidth =
@@ -1645,6 +1652,8 @@ function RepDocsTable({
                       key={r.id}
                       row={r}
                       ri={vRow.index}
+                      rowRef={virtualizer.measureElement}
+                      dataIndex={vRow.index}
                       assignees={assignees}
                       ohoAssignees={ohoAssignees}
                       onField={onField}
@@ -1699,6 +1708,8 @@ const RepDocsRowView = memo(
     onAcknowledge,
     onRowClick,
     onNotesClick,
+    rowRef,
+    dataIndex,
   }: {
     row: RepDocsRow;
     ri: number;
@@ -1713,6 +1724,10 @@ const RepDocsRowView = memo(
     onAcknowledge: (id: number) => void;
     onRowClick: (row: RepDocsRow) => void;
     onNotesClick: (row: RepDocsRow, rect: DOMRect) => void;
+    // Virtualizer ref + index — pass through from the parent so the
+    // virtualizer can measure this row's real height after mount.
+    rowRef?: (el: HTMLTableRowElement | null) => void;
+    dataIndex: number;
   }) {
     const isWithdrawn =
       (row.overall_status || "").toLowerCase() === "withdrawn";
@@ -1747,6 +1762,8 @@ const RepDocsRowView = memo(
 
     return (
       <tr
+        ref={rowRef}
+        data-index={dataIndex}
         className={cn(
           "border-b border-border/40 last:border-0 cursor-pointer",
           evenBg,
