@@ -260,12 +260,30 @@ export function CsvCompareModal({
     return d;
   };
 
+  // Chronicle's new export wraps the datetime in quotes with a comma and a
+  // trailing timezone, e.g. "09/24/2026, 10:30 AM EDT". The old export was
+  // "09/24/26 10:15 AM". Handle both: strip a trailing comma off the date and
+  // drop the timezone abbreviation off the time (matching ignores it anyway).
   const parseChronicleDateTime = (dt: string) => {
     if (!dt) return { date: "", time: "" };
     const parts = dt.trim().split(/\s+/);
-    const datePart = normalizeDate(parts[0] || "");
-    const timePart = parts.slice(1).join(" ");
+    const datePart = normalizeDate((parts[0] || "").replace(/,$/, ""));
+    const timePart = parts
+      .slice(1)
+      .join(" ")
+      .replace(/\s*[A-Z]{3,4}$/, "")
+      .trim();
     return { date: datePart, time: timePart };
+  };
+
+  // The new export emits status/request dates as DD/MM/YYYY, while the old
+  // export and the rest of the app use MM/DD/YYYY. Swap so stored values stay
+  // consistent. (Hearing dates are unaffected — those stay MM/DD in the new
+  // export and are handled by normalizeDate.)
+  const swapDayMonth = (d: string) => {
+    const m = d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+    if (!m) return d;
+    return `${m[2].padStart(2, "0")}/${m[1].padStart(2, "0")}/${m[3]}`;
   };
 
   const handleCompare = async () => {
@@ -340,12 +358,45 @@ export function CsvCompareModal({
         return result;
       };
 
-      const col = (row: string[], name: string) => {
-        const idx = headers.findIndex((h) =>
-          h.toLowerCase().includes(name.toLowerCase()),
-        );
-        return idx >= 0 ? (row[idx] || "").trim().replace(/^"|"$/g, "") : "";
+      // Resolve each logical field to a column index once, supporting both the
+      // legacy headers (client_firstName, statusReport_*) and the new export
+      // headers (First, Last, SSN, Claim Type, …). Exact (case-insensitive)
+      // matching avoids "Claim Type" colliding with "Claimant Location".
+      const headerLower = headers.map((h) => h.trim().toLowerCase());
+      const findCol = (...candidates: string[]) => {
+        for (const cand of candidates) {
+          const idx = headerLower.indexOf(cand.toLowerCase());
+          if (idx >= 0) return idx;
+        }
+        return -1;
       };
+      // The legacy export prefixes every header with client_/statusReport_;
+      // the new export has none of those underscores.
+      const isNewFormat = !headerLower.some((h) => h.includes("_"));
+      const idxFirst = findCol("client_firstName", "First");
+      const idxLast = findCol("client_lastName", "Last");
+      const idxSsn = findCol("client_last4Ssn", "SSN");
+      const idxSched = findCol(
+        "statusReport_hearingScheduledDatetime",
+        "Hearing Scheduled",
+      );
+      const idxClaimType = findCol("statusReport_claimType", "Claim Type");
+      const idxAljLoc = findCol("statusReport_aljLocation", "ALJ Location");
+      const idxClaimantLoc = findCol("Claimant Location");
+      const idxRepLoc = findCol("Rep Location");
+      const idxAlj = findCol("statusReport_aljFullName", "ALJ Name");
+      const idxMed = findCol("statusReport_medicalExpert", "Medical Expert");
+      const idxVoc = findCol(
+        "statusReport_vocationalExpert",
+        "Vocational Expert",
+      );
+      const idxStatusDate = findCol("statusReport_statusDate", "Status Date");
+      const idxReqDate = findCol(
+        "statusReport_hearingRequestDate",
+        "Hearing Request Date",
+      );
+      const cell = (row: string[], idx: number) =>
+        idx >= 0 ? (row[idx] || "").trim().replace(/^"|"$/g, "") : "";
 
       const newEntries: (ChronicleEntry & { _cat: "new" })[] = [];
       const rescheduled: (ChronicleEntry & {
@@ -364,24 +415,33 @@ export function CsvCompareModal({
         if (!lines[i].trim()) continue;
         const row = parseCsvRow(lines[i]);
 
-        const firstName = col(row, "client_firstName");
-        const lastName = col(row, "client_lastName");
+        const firstName = cell(row, idxFirst);
+        const lastName = cell(row, idxLast);
         const fullName = `${firstName} ${lastName}`.trim();
         if (!fullName || fullName === " ") continue;
-        const ssn = col(row, "client_last4Ssn")
+        const ssn = cell(row, idxSsn)
           .replace(/\D/g, "")
           .slice(-4)
           .padStart(4, "0");
         const { date: hDate, time: hTime } = parseChronicleDateTime(
-          col(row, "hearingScheduledDatetime"),
+          cell(row, idxSched),
         );
 
-        let claimType = col(row, "claimType");
-        if (claimType.includes("TITLE 2") && claimType.includes("TITLE 16"))
-          claimType = "Concurrent";
-        else if (claimType.includes("TITLE 2")) claimType = "Title II";
-        else if (claimType.includes("TITLE 16")) claimType = "Title XVI";
+        // Old export used "TITLE 2 / TITLE 16 - DISABILITY"; the new export
+        // uses "SSDI_T2", "SSI_T16", or "SSDI_T2, SSI_T16" (concurrent).
+        let claimType = cell(row, idxClaimType);
+        const ct = claimType.toUpperCase();
+        const hasT2 =
+          ct.includes("TITLE 2") || ct.includes("SSDI") || ct.includes("T2");
+        const hasT16 =
+          ct.includes("TITLE 16") || ct.includes("SSI") || ct.includes("T16");
+        if (hasT2 && hasT16) claimType = "Concurrent";
+        else if (hasT2) claimType = "Title II";
+        else if (hasT16) claimType = "Title XVI";
 
+        // Old export had a single ALJ Location used for both; the new export
+        // has separate Claimant Location / Rep Location columns.
+        const aljLoc = cell(row, idxAljLoc);
         const entry: ChronicleEntry = {
           claimant: fullName,
           ssn,
@@ -389,13 +449,17 @@ export function CsvCompareModal({
           hearingDate: hDate,
           time: hTime,
           timeZone: "ET",
-          claimantLocation: col(row, "aljLocation") || "By Phone",
-          repLocation: col(row, "aljLocation") || "By Phone",
-          alj: col(row, "aljFullName"),
-          medExpert: col(row, "medicalExpert"),
-          vocExpert: col(row, "vocationalExpert"),
-          statusDate: col(row, "statusDate"),
-          enteredDate: col(row, "hearingRequestDate"),
+          claimantLocation: cell(row, idxClaimantLoc) || aljLoc || "By Phone",
+          repLocation: cell(row, idxRepLoc) || aljLoc || "By Phone",
+          alj: cell(row, idxAlj),
+          medExpert: cell(row, idxMed),
+          vocExpert: cell(row, idxVoc),
+          statusDate: isNewFormat
+            ? swapDayMonth(cell(row, idxStatusDate))
+            : cell(row, idxStatusDate),
+          enteredDate: isNewFormat
+            ? swapDayMonth(cell(row, idxReqDate))
+            : cell(row, idxReqDate),
         };
 
         const nameLower = fullName.toLowerCase();
