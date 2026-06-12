@@ -425,6 +425,30 @@ const MR_STATUS_COLORS: Record<string, string> = {
     "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400",
   Missing: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
 };
+// Build per-option hex colours from config (Settings → status options). Keyed by
+// option_value → {bg, color}; text colour is chosen by perceived brightness. This
+// lets the Decision / MR Status columns inherit the same colours as the Medical
+// Records page and the Hearings modal — single source of truth in config_options.
+function buildOptionHexColors(
+  configOptions: ConfigOptionRow[],
+  optionType: string,
+): Record<string, { bg: string; color: string }> {
+  const map: Record<string, { bg: string; color: string }> = {};
+  for (const o of configOptions) {
+    if (o.option_type !== optionType || !o.option_color) continue;
+    const hex = o.option_color.replace("#", "");
+    if (!/^[0-9a-fA-F]{6}$/.test(hex)) continue;
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    const isLight = (r * 299 + g * 587 + b * 114) / 1000 > 128;
+    map[o.option_value] = {
+      bg: `#${hex}`,
+      color: isLight ? "#1f2937" : "#ffffff",
+    };
+  }
+  return map;
+}
 const TEAM_COLORS: Record<string, string> = {
   blue: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
   orange:
@@ -455,16 +479,20 @@ const MOA_COLORS: Record<string, string> = {
 function StatusBadge({
   value,
   colorMap,
+  hexColorMap,
 }: {
   value: string | null;
   colorMap: Record<string, string>;
+  hexColorMap?: Record<string, { bg: string; color: string }>;
 }) {
   if (!value) return <span className="text-xs text-muted-foreground">-</span>;
+  const hex = hexColorMap?.[value];
   return (
     <span
+      style={hex ? { backgroundColor: hex.bg, color: hex.color } : undefined}
       className={cn(
         "inline-flex shrink-0 items-center rounded-md px-2 py-0.5 text-[10px] font-semibold",
-        colorMap[value] || "bg-muted text-muted-foreground",
+        !hex && (colorMap[value] || "bg-muted text-muted-foreground"),
       )}
     >
       {value}
@@ -1949,13 +1977,23 @@ function HearingCard({
   fieldOverrides,
   onUpdate,
   onOpenPostHrg,
+  configOptions = [],
 }: {
   hearing: HearingRow;
   userRole: UserRole;
   fieldOverrides: Record<string, boolean>;
   onUpdate: (id: number, field: string, value: UpdateValue) => void;
   onOpenPostHrg: (h: HearingRow) => void;
+  configOptions?: ConfigOptionRow[];
 }) {
+  const decisionHexColors = {
+    ...DECISION_HEX,
+    ...buildOptionHexColors(configOptions, "hearing_decision_status"),
+  };
+  const mrStatusHexColors = buildOptionHexColors(
+    configOptions,
+    "medical_record_status",
+  );
   return (
     <Card className="shadow-none">
       <CardContent className="space-y-2 p-3">
@@ -1982,6 +2020,7 @@ function HearingCard({
           <StatusBadge
             value={hearing.hearing_decision_status}
             colorMap={DECISION_COLORS}
+            hexColorMap={decisionHexColors}
           />
         </div>
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -2003,6 +2042,7 @@ function HearingCard({
           <StatusBadge
             value={hearing.medical_record_status}
             colorMap={MR_STATUS_COLORS}
+            hexColorMap={mrStatusHexColors}
           />
           <PostHrgCell
             hearing={hearing}
@@ -2339,6 +2379,17 @@ const HearingTable = memo(function HearingTable({
       };
     }
   }
+  // Config-driven colours for the Decision + MR Status columns. Config colour
+  // wins; the hardcoded DECISION_HEX / DECISION_COLORS / MR_STATUS_COLORS maps
+  // remain as fallbacks for options that have no colour set in Settings.
+  const decisionHexColors = {
+    ...DECISION_HEX,
+    ...buildOptionHexColors(configOptions, "hearing_decision_status"),
+  };
+  const mrStatusHexColors = buildOptionHexColors(
+    configOptions,
+    "medical_record_status",
+  );
   const docsAssigneeOptions = repDocsAssignees.map((d) => ({
     value: d.name,
     label: d.name,
@@ -2631,6 +2682,7 @@ const HearingTable = memo(function HearingTable({
             onSave={(v) => onUpdate(hearing.id, "medical_record_status", v)}
             editable={editable}
             colorMap={MR_STATUS_COLORS}
+            hexColorMap={mrStatusHexColors}
           />
         );
       case "rfc_status":
@@ -2669,7 +2721,7 @@ const HearingTable = memo(function HearingTable({
             onSave={(v) => onUpdate(hearing.id, "hearing_decision_status", v)}
             editable={editable}
             colorMap={DECISION_COLORS}
-            hexColorMap={DECISION_HEX}
+            hexColorMap={decisionHexColors}
           />
         );
       case "post_hrg_review":
@@ -4065,6 +4117,7 @@ export function DashboardClient({
                 fieldOverrides={fieldOverrides}
                 onUpdate={handleUpdate}
                 onOpenPostHrg={setPostHrgHearing}
+                configOptions={configOptions}
               />
             ))}
             {hearings.length === 0 && !loading && (

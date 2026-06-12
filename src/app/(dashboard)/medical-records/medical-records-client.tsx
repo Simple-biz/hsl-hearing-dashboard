@@ -67,6 +67,7 @@ import { TeamStatsModal } from "@/components/modals/team-stats-modal";
 import { ActivityLogModal } from "@/components/modals/activity-log-modal";
 import { PAGE_ACTION_SCOPES } from "@/lib/activity-avatar";
 import { MedicalRecordsDetailPanel } from "./medical-records-detail-panel";
+import { optionColorStyle } from "@/lib/option-color";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -150,7 +151,7 @@ const HRG_STATUS_CLS: Record<string, string> = {
   Continued: "bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-300",
   "Pending Decision":
     "bg-yellow-50 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300",
-  "OTR at Hrg": "bg-green-700 text-white",
+  "OTR AT HRG": "bg-green-700 text-white",
   Dismissal: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
 };
 
@@ -1265,6 +1266,8 @@ function HearingRow({
   teams,
   mrStatusOptions,
   hearingDecisionOptions,
+  mrStatusColors,
+  hearingDecisionColors,
   mannerOptions,
   permissions,
   onUpdate,
@@ -1276,6 +1279,8 @@ function HearingRow({
   teams: MrPivotPageData["medical_teams"];
   mrStatusOptions: string[];
   hearingDecisionOptions: string[];
+  mrStatusColors: Record<string, string>;
+  hearingDecisionColors: Record<string, string>;
   mannerOptions: string[];
   permissions: MrPivotPageData["permissions"];
   onUpdate: (id: number, field: string, value: unknown) => void;
@@ -1294,6 +1299,14 @@ function HearingRow({
   const hrgCls =
     HRG_STATUS_CLS[h.hearing_decision_status ?? ""] ??
     "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300";
+  // Config-driven colours (Settings) take precedence; fall back to the
+  // hardcoded class maps above when an option has no colour configured.
+  const mrStyle = h.medical_record_status
+    ? optionColorStyle(mrStatusColors[h.medical_record_status])
+    : undefined;
+  const hrgStyle = h.hearing_decision_status
+    ? optionColorStyle(hearingDecisionColors[h.hearing_decision_status])
+    : undefined;
   const moaCls =
     MOA_CLS[h.manner_of_appearance ?? ""] ??
     "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300";
@@ -1457,9 +1470,13 @@ function HearingRow({
       {permissions.canEditMrStatus ? (
         <select
           value={h.medical_record_status ?? ""}
+          style={mrStyle}
           className={cn(
             "w-full text-[9px] px-1.5 py-1 rounded border-0 cursor-pointer [&>option]:bg-white [&>option]:text-black dark:[&>option]:bg-zinc-800 dark:[&>option]:text-zinc-100",
-            h.medical_record_status ? mrCls : "bg-card text-muted-foreground",
+            !mrStyle &&
+              (h.medical_record_status
+                ? mrCls
+                : "bg-card text-muted-foreground"),
           )}
           onChange={(e) =>
             onUpdate(h.id, "medical_record_status", e.target.value)
@@ -1476,7 +1493,11 @@ function HearingRow({
         </select>
       ) : (
         <span
-          className={cn("inline-block text-[9px] px-1.5 py-0.5 rounded", mrCls)}
+          style={mrStyle}
+          className={cn(
+            "inline-block text-[9px] px-1.5 py-0.5 rounded",
+            !mrStyle && mrCls,
+          )}
         >
           {h.medical_record_status ?? "No Status"}
         </span>
@@ -1534,11 +1555,13 @@ function HearingRow({
       {permissions.canEditDecisionStatus ? (
         <select
           value={h.hearing_decision_status ?? ""}
+          style={hrgStyle}
           className={cn(
             "w-full text-[9px] px-1.5 py-1 rounded border-0 cursor-pointer [&>option]:bg-white [&>option]:text-black dark:[&>option]:bg-zinc-800 dark:[&>option]:text-zinc-100",
-            h.hearing_decision_status
-              ? hrgCls
-              : "bg-card text-muted-foreground",
+            !hrgStyle &&
+              (h.hearing_decision_status
+                ? hrgCls
+                : "bg-card text-muted-foreground"),
           )}
           onChange={(e) =>
             onUpdate(h.id, "hearing_decision_status", e.target.value)
@@ -1555,9 +1578,10 @@ function HearingRow({
         </select>
       ) : (
         <span
+          style={hrgStyle}
           className={cn(
             "inline-block text-[9px] px-1.5 py-0.5 rounded",
-            hrgCls,
+            !hrgStyle && hrgCls,
           )}
         >
           {h.hearing_decision_status ?? "—"}
@@ -2647,6 +2671,10 @@ export function MrPivotClient({ userRole, userName, ...data }: Props) {
                         hearingDecisionOptions={
                           data.hearing_decision_status_options
                         }
+                        mrStatusColors={data.medical_record_status_colors}
+                        hearingDecisionColors={
+                          data.hearing_decision_status_colors
+                        }
                         mannerOptions={data.manner_options}
                         permissions={data.permissions}
                         onUpdate={handleUpdate}
@@ -2759,6 +2787,8 @@ export function MrPivotClient({ userRole, userName, ...data }: Props) {
         teams={data.medical_teams}
         mrStatusOptions={data.medical_record_status_options}
         hearingDecisionOptions={data.hearing_decision_status_options}
+        mrStatusColors={data.medical_record_status_colors}
+        hearingDecisionColors={data.hearing_decision_status_colors}
         mannerOptions={data.manner_options}
         availableMonths={data.availableMonths}
         permissions={data.permissions}
