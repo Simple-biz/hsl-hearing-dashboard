@@ -18,6 +18,7 @@ import {
   FileText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { optionColorStyle } from "@/lib/option-color";
 import { ClaimantCopyButton } from "@/components/ui/claimant-copy-button";
 import { ModalShell } from "@/components/modals/modal-shell";
 import { PostHrgReviewModal } from "@/components/modals/post-hrg-review-modal";
@@ -114,12 +115,18 @@ const HRG_STATUS_COLOURS: Record<string, string> = {
   Continued: "bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-300",
   "Pending Decision":
     "bg-yellow-50 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300",
-  "OTR at Hrg": "bg-green-700 text-white",
+  "OTR AT HRG": "bg-green-700 text-white",
   Dismissal: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
 };
 
 function hrgStatusCls(s: string | null): string {
-  return HRG_STATUS_COLOURS[s ?? ""] ?? "bg-red-500 text-white";
+  // Neutral fallback (matches mrStatusCls) — an unconfigured/unknown decision
+  // shows the same grey here as on the dashboard and MR pages, instead of an
+  // alarming red. Real options get their colour from config_options.
+  return (
+    HRG_STATUS_COLOURS[s ?? ""] ??
+    "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+  );
 }
 
 const MOA_COLOURS: Record<string, string> = {
@@ -149,6 +156,8 @@ interface Props {
   teams: MrTeam[];
   mrStatusOptions: string[];
   hearingDecisionOptions: string[];
+  mrStatusColors: Record<string, string>;
+  hearingDecisionColors: Record<string, string>;
   mannerOptions: string[];
   availableMonths: Array<{ month_value: string; month_label: string }>;
   permissions: Permissions;
@@ -183,6 +192,8 @@ function HearingRowInner({
   teams,
   mrStatusOptions,
   hearingDecisionOptions,
+  mrStatusColors,
+  hearingDecisionColors,
   mannerOptions,
   permissions,
   onUpdate,
@@ -191,6 +202,8 @@ function HearingRowInner({
   teams: MrTeam[];
   mrStatusOptions: string[];
   hearingDecisionOptions: string[];
+  mrStatusColors: Record<string, string>;
+  hearingDecisionColors: Record<string, string>;
   mannerOptions: string[];
   permissions: Permissions;
   onUpdate: (id: number, field: string, value: unknown) => void;
@@ -199,6 +212,16 @@ function HearingRowInner({
     "en-US",
     { month: "short", day: "numeric" },
   );
+
+  // Config-driven colours (Settings) take precedence; fall back to the
+  // hardcoded class helpers (mrStatusCls / hrgStatusCls) when an option has
+  // no colour configured.
+  const mrStyle = h.medical_record_status
+    ? optionColorStyle(mrStatusColors[h.medical_record_status])
+    : undefined;
+  const hrgStyle = h.hearing_decision_status
+    ? optionColorStyle(hearingDecisionColors[h.hearing_decision_status])
+    : undefined;
 
   // Whole-row tint by credited state — mirrors the MR Pivot's pattern so the
   // visual cue is consistent across the page. Light mode uses pale 50-shade;
@@ -337,9 +360,10 @@ function HearingRowInner({
       <div className="text-center">
         {permissions.canEditMrStatus ? (
           <select
+            style={mrStyle}
             className={cn(
               "w-full text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer [&>option]:bg-white [&>option]:text-black dark:[&>option]:bg-zinc-800 dark:[&>option]:text-zinc-100",
-              mrStatusCls(h.medical_record_status),
+              !mrStyle && mrStatusCls(h.medical_record_status),
             )}
             value={h.medical_record_status ?? ""}
             onChange={(e) =>
@@ -355,9 +379,10 @@ function HearingRowInner({
           </select>
         ) : (
           <span
+            style={mrStyle}
             className={cn(
               "inline-block text-[10px] px-2 py-0.5 rounded font-medium",
-              mrStatusCls(h.medical_record_status),
+              !mrStyle && mrStatusCls(h.medical_record_status),
             )}
           >
             {h.medical_record_status ?? "No Status"}
@@ -404,9 +429,10 @@ function HearingRowInner({
       <div className="text-center">
         {permissions.canEditDecisionStatus ? (
           <select
+            style={hrgStyle}
             className={cn(
               "w-full text-[10px] px-1.5 py-1 rounded border-0 cursor-pointer [&>option]:bg-white [&>option]:text-black dark:[&>option]:bg-zinc-800 dark:[&>option]:text-zinc-100",
-              hrgStatusCls(h.hearing_decision_status),
+              !hrgStyle && hrgStatusCls(h.hearing_decision_status),
             )}
             value={h.hearing_decision_status ?? ""}
             onChange={(e) =>
@@ -422,9 +448,10 @@ function HearingRowInner({
           </select>
         ) : (
           <span
+            style={hrgStyle}
             className={cn(
               "inline-block text-[10px] px-2 py-0.5 rounded font-medium",
-              hrgStatusCls(h.hearing_decision_status),
+              !hrgStyle && hrgStatusCls(h.hearing_decision_status),
             )}
           >
             {h.hearing_decision_status ?? "—"}
@@ -570,6 +597,8 @@ export function HearingsModal({
   teams,
   mrStatusOptions,
   hearingDecisionOptions,
+  mrStatusColors,
+  hearingDecisionColors,
   mannerOptions,
   availableMonths,
   permissions,
@@ -996,6 +1025,8 @@ export function HearingsModal({
                       teams={teams}
                       mrStatusOptions={mrStatusOptions}
                       hearingDecisionOptions={hearingDecisionOptions}
+                      mrStatusColors={mrStatusColors}
+                      hearingDecisionColors={hearingDecisionColors}
                       mannerOptions={mannerOptions}
                       permissions={permissions}
                       onUpdate={handleUpdate}

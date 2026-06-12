@@ -309,7 +309,7 @@ export async function getMrPivotPageData(
 
     // ── Medical record status options from config ─────────────────────────────
     db.query(`
-      SELECT option_value
+      SELECT option_value, option_color
       FROM config_options
       WHERE option_type = 'medical_record_status' AND is_active = true
       ORDER BY display_order ASC
@@ -317,7 +317,7 @@ export async function getMrPivotPageData(
 
     // ── Hearing decision status options from config ───────────────────────────
     db.query(`
-      SELECT option_value
+      SELECT option_value, option_color
       FROM config_options
       WHERE option_type = 'hearing_decision_status' AND is_active = true
       ORDER BY display_order ASC
@@ -539,6 +539,20 @@ export async function getMrPivotPageData(
     ? mannerOptions.rows.map((r: Record<string, unknown>) => r.option_value as string)
     : ["Get Phone Permission", "Case is Ready", "In Person Florida", "Phone", "OVH"];
 
+  // Per-option colours from config (Settings → MR Status / Decision Status).
+  // Keyed by option_value → hex; only options with a colour set are included.
+  const buildColorMap = (rows: Record<string, unknown>[]): Record<string, string> => {
+    const map: Record<string, string> = {};
+    for (const r of rows) {
+      const value = r.option_value as string;
+      const color = r.option_color as string | null;
+      if (value && color) map[value] = color;
+    }
+    return map;
+  };
+  const mrStatusColors = buildColorMap(mrStatusOptions.rows as Record<string, unknown>[]);
+  const decisionStatusColors = buildColorMap(decisionStatusOptions.rows as Record<string, unknown>[]);
+
   const jerome = jeromeTeamRow.rows[0] as { id: number; team_name: string; team_color: string } | undefined;
 
   return {
@@ -555,6 +569,8 @@ export async function getMrPivotPageData(
     medical_teams: medicalTeams,
     medical_record_status_options: mrStatusOptionsList,
     hearing_decision_status_options: decisionStatusList,
+    medical_record_status_colors: mrStatusColors,
+    hearing_decision_status_colors: decisionStatusColors,
     manner_options: mannerOptionsList,
     jeromeTeamInfo: jerome ?? null,
     permissions,
