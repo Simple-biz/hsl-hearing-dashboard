@@ -295,6 +295,11 @@ export interface MrPivotPageData {
   medical_teams: MrTeam[];
   medical_record_status_options: string[];
   hearing_decision_status_options: string[];
+  // Per-option background colours from config (option_value → hex). Empty when
+  // no colour is configured for an option; rendering falls back to its
+  // hardcoded badge class in that case.
+  medical_record_status_colors: Record<string, string>;
+  hearing_decision_status_colors: Record<string, string>;
   manner_options: string[];
   jeromeTeamInfo: { id: number; team_name: string; team_color: string } | null;
   permissions: Permissions;
