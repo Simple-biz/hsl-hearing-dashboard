@@ -1,0 +1,252 @@
+name: Migrate Production Database
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "src/migrations/**"
+
+permissions:
+  contents: read
+
+jobs:
+  migrate-production:
+    name: Apply migrations to production
+    runs-on: ubuntu-latest
+
+    environment:
+      name: production
+
+    concurrency:
+      group: production-database-migrations
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Preflight production migration safety checks
+        env:
+          NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          PRODUCTION_DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+        # This step performs a series of safety checks before applying migrations to the production database.
+        # It validates the presence and format of necessary environment variables, checks that the database URL is
+        # not pointing to a local database or a pooled Neon URL, and ensures that the migration files have the required structure.
+        run: |
+          set -euo pipefail
+
+          fail() {
+            echo "::error::$1"
+            exit 1
+          }
+
+          [ -n "${NEON_PROJECT_ID:-}" ] || fail "NEON_PROJECT_ID is missing."
+          [ -n "${NEON_API_KEY:-}" ] || fail "NEON_API_KEY is missing."
+          [ -n "${PRODUCTION_DATABASE_URL:-}" ] || fail "PRODUCTION_DATABASE_URL is missing."
+
+          node <<'NODE'
+          const requiredScripts = ["db:status", "db:migrate"];
+          const packageJson = require("./package.json");
+
+          for (const script of requiredScripts) {
+            if (!packageJson.scripts?.[script]) {
+              throw new Error(`Missing package.json script: ${script}`);
+            }
+          }
+
+          const rawUrl = process.env.PRODUCTION_DATABASE_URL;
+
+          let url;
+          try {
+            url = new URL(rawUrl);
+          } catch {
+            throw new Error("PRODUCTION_DATABASE_URL is not a valid URL.");
+          }
+
+          if (!["postgres:", "postgresql:"].includes(url.protocol)) {
+            throw new Error("PRODUCTION_DATABASE_URL must start with postgres:// or postgresql://.");
+          }
+
+          if (url.hostname.includes("-pooler")) {
+            throw new Error("PRODUCTION_DATABASE_URL appears to be a pooled Neon URL. Use the direct non-pooler URL for migrations.");
+          }
+
+          if (["localhost", "127.0.0.1"].includes(url.hostname)) {
+            throw new Error("PRODUCTION_DATABASE_URL points to a local database. Refusing to run production migrations.");
+          }
+
+          const sslMode = url.searchParams.get("sslmode");
+          if (sslMode !== "require") {
+            throw new Error("PRODUCTION_DATABASE_URL must include sslmode=require.");
+          }
+
+          console.log("Production database URL shape looks safe.");
+          NODE
+
+          mapfile -t migration_files < <(find src/migrations -maxdepth 1 -type f -name "*.sql" | sort)
+
+          if [ "${#migration_files[@]}" -eq 0 ]; then
+            fail "No active migration files found in src/migrations."
+          fi
+
+          for file in "${migration_files[@]}"; do
+            grep -q '^-- migrate:up' "$file" || fail "$file is missing -- migrate:up."
+            grep -q '^-- migrate:down' "$file" || fail "$file is missing -- migrate:down."
+          done
+
+          echo "Preflight production migration safety checks passed."
+
+      - name: Prepare migration audit metadata
+        id: meta
+        # This step prepares metadata for auditing the production migration. It generates a timestamp, 
+        # constructs a backup branch name based on the current date and time, and calculates an expiration time for the backup branch. 
+        # It also records various details about the GitHub Actions run, such as the actor, commit SHA, and reason for the migration, 
+        # and saves this information to both the step outputs and a file in the migration-audit directory.
+        run: |
+          set -euo pipefail
+
+          STAMP="$(TZ=Asia/Manila date +'%Y%m%d-%H%M%S-pht')"
+          BACKUP_BRANCH="backup-prod-pre-migration-${STAMP}-run-${{ github.run_id }}"
+          EXPIRES_AT="$(date -u -d '+14 days' +'%Y-%m-%dT%H:%M:%SZ')"
+
+          mkdir -p migration-audit
+
+          {
+            echo "stamp=${STAMP}"
+            echo "backup_branch=${BACKUP_BRANCH}"
+            echo "expires_at=${EXPIRES_AT}"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "workflow=${{ github.workflow }}"
+            echo "run_id=${{ github.run_id }}"
+            echo "run_number=${{ github.run_number }}"
+            echo "actor=${{ github.actor }}"
+            echo "sha=${{ github.sha }}"
+            echo "ref=${{ github.ref }}"
+            echo "backup_branch=${BACKUP_BRANCH}"
+            echo "expires_at=${EXPIRES_AT}"
+          } > migration-audit/run-metadata.txt
+
+          git diff --name-only HEAD^ HEAD -- src/migrations > migration-audit/changed-migration-files.txt || true
+
+      - name: Create pre-migration production backup branch
+        id: create-backup
+        uses: neondatabase/create-branch-action@v6
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch_name: ${{ steps.meta.outputs.backup_branch }}
+          parent_branch: production
+          api_key: ${{ secrets.NEON_API_KEY }}
+          expires_at: ${{ steps.meta.outputs.expires_at }}
+
+      - name: Verify pre-migration backup branch
+        id: verify-backup
+        env:
+          BACKUP_BRANCH_NAME: ${{ steps.meta.outputs.backup_branch }}
+          BACKUP_BRANCH_ID: ${{ steps.create-backup.outputs.branch_id }}
+          BACKUP_CREATED: ${{ steps.create-backup.outputs.created }}
+        # This step verifies that the backup branch was successfully created.
+        # It checks that the branch ID is present and that the branch was newly created (as opposed to already existing).
+        # If either of these conditions is not met, it logs an error and exits with a
+        # non-zero status to indicate failure. If the backup branch is verified successfully, it sets an output variable to indicate that the backup is ready.
+        run: |
+          set -euo pipefail
+
+          if [ -z "${BACKUP_BRANCH_ID:-}" ]; then
+            echo "::error::Pre-migration backup branch ID is missing. Refusing to run production migrations."
+            exit 1
+          fi
+
+          if [ "${BACKUP_CREATED:-}" != "true" ]; then
+            echo "::error::Pre-migration backup branch was not newly created. Refusing to run production migrations."
+            exit 1
+          fi
+
+          echo "backup_ready=true" >> "$GITHUB_OUTPUT"
+
+          echo "Verified backup branch:"
+          echo "Branch name: ${BACKUP_BRANCH_NAME}"
+          echo "Branch ID: ${BACKUP_BRANCH_ID}"
+          echo "Created: ${BACKUP_CREATED}"
+
+      - name: Record backup branch details
+        # This step records the details of the pre-migration backup branch to a file in the migration-audit directory.
+        run: |
+          set -euo pipefail
+
+          cat > migration-audit/pre-migration-backup.txt <<EOF
+          backup_branch=${{ steps.meta.outputs.backup_branch }}
+          backup_branch_id=${{ steps.create-backup.outputs.branch_id }}
+          parent_branch=production
+          expires_at=${{ steps.meta.outputs.expires_at }}
+          workflow_run_url=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+
+      - name: Show pending migrations before applying
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          npm run db:status 2>&1 | tee migration-audit/db-status-before.txt
+
+      - name: Apply migrations
+        id: apply-migrations
+        if: ${{ steps.verify-backup.outputs.backup_ready == 'true' }}
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          npm run db:migrate 2>&1 | tee migration-audit/db-migrate.txt
+
+      - name: Confirm migrations applied
+        if: ${{ always() && (steps.apply-migrations.outcome == 'success' || steps.apply-migrations.outcome == 'failure') }}
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          npm run db:status 2>&1 | tee migration-audit/db-status-after.txt
+
+      - name: Write production migration summary
+        if: always()
+        # This step writes a summary of the production migration to the GitHub Actions summary. 
+        # It includes details about the backup branch that was created before the migration, 
+        # as well as a list of the migration files that were changed in the commit that triggered the workflow.  
+        run: |
+          {
+            echo "## Production Migration Audit"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Actor | \`${{ github.actor }}\` |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| Pre-migration backup branch | \`${{ steps.meta.outputs.backup_branch }}\` |"
+            echo "| Backup branch ID | \`${{ steps.create-backup.outputs.branch_id }}\` |"
+            echo "| Parent branch | \`production\` |"
+            echo "| Backup expires at | \`${{ steps.meta.outputs.expires_at }}\` |"
+            echo "| Run ID | \`${{ github.run_id }}\` |"
+            echo ""
+            echo "### Changed migration files"
+            echo ""
+            echo "\`\`\`txt"
+            cat migration-audit/changed-migration-files.txt || true
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload production migration audit artifact
+        if: ${{ always() && hashFiles('migration-audit/**') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-migration-audit-${{ steps.meta.outputs.stamp }}-${{ github.run_id }}
+          path: migration-audit/
+          retention-days: 30
