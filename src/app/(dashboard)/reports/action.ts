@@ -412,6 +412,7 @@ export interface WinRateFilters {
 export interface WinRateRow {
   rep: string;
   favorable: number;
+  partiallyFavorable: number;
   unfavorable: number;
   total: number;
   winRate: number;
@@ -419,7 +420,7 @@ export interface WinRateRow {
 
 export interface WinRateData {
   rows: WinRateRow[];
-  overall: { favorable: number; unfavorable: number; total: number; winRate: number };
+  overall: { favorable: number; partiallyFavorable: number; unfavorable: number; total: number; winRate: number };
 }
 
 export async function fetchWinRateData(
@@ -427,7 +428,7 @@ export async function fetchWinRateData(
 ): Promise<WinRateData> {
   const conditions: string[] = [
     "r.is_active = true",
-    "(h.hearing_decision_status = 'Favorable' OR h.hearing_decision_status = 'Unfavorable')",
+    "h.hearing_decision_status IN ('Favorable', 'Partially Favorable', 'Unfavorable')",
   ];
   const params: unknown[] = [];
   let idx = 1;
@@ -454,6 +455,7 @@ export async function fetchWinRateData(
     `SELECT
        r.name AS rep,
        COUNT(*) FILTER (WHERE h.hearing_decision_status = 'Favorable')::int AS favorable,
+       COUNT(*) FILTER (WHERE h.hearing_decision_status = 'Partially Favorable')::int AS partially_favorable,
        COUNT(*) FILTER (WHERE h.hearing_decision_status = 'Unfavorable')::int AS unfavorable,
        COUNT(*)::int AS total
      FROM representatives r
@@ -463,30 +465,34 @@ export async function fetchWinRateData(
      HAVING COUNT(*) > 0
      ORDER BY
        CASE WHEN COUNT(*) = 0 THEN 0
-            ELSE (COUNT(*) FILTER (WHERE h.hearing_decision_status = 'Favorable')::float / COUNT(*)) END DESC,
+            ELSE ((COUNT(*) FILTER (WHERE h.hearing_decision_status = 'Favorable') +
+                   COUNT(*) FILTER (WHERE h.hearing_decision_status = 'Partially Favorable'))::float / COUNT(*)) END DESC,
        r.name ASC`,
     params,
   );
 
-  const winRateRows: WinRateRow[] = (rows as { rep: string; favorable: number; unfavorable: number; total: number }[]).map((r) => ({
+  const winRateRows: WinRateRow[] = (rows as { rep: string; favorable: number; partially_favorable: number; unfavorable: number; total: number }[]).map((r) => ({
     rep: r.rep,
     favorable: r.favorable,
+    partiallyFavorable: r.partially_favorable,
     unfavorable: r.unfavorable,
     total: r.total,
-    winRate: r.total > 0 ? Math.round((r.favorable / r.total) * 1000) / 10 : 0,
+    winRate: r.total > 0 ? Math.round(((r.favorable + r.partially_favorable) / r.total) * 1000) / 10 : 0,
   }));
 
   const overallFav = winRateRows.reduce((s, r) => s + r.favorable, 0);
+  const overallPartial = winRateRows.reduce((s, r) => s + r.partiallyFavorable, 0);
   const overallUnfav = winRateRows.reduce((s, r) => s + r.unfavorable, 0);
-  const overallTotal = overallFav + overallUnfav;
+  const overallTotal = overallFav + overallPartial + overallUnfav;
 
   return {
     rows: winRateRows,
     overall: {
       favorable: overallFav,
+      partiallyFavorable: overallPartial,
       unfavorable: overallUnfav,
       total: overallTotal,
-      winRate: overallTotal > 0 ? Math.round((overallFav / overallTotal) * 1000) / 10 : 0,
+      winRate: overallTotal > 0 ? Math.round(((overallFav + overallPartial) / overallTotal) * 1000) / 10 : 0,
     },
   };
 }

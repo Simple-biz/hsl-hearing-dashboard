@@ -25,8 +25,9 @@ import { Input } from "@/components/ui/input";
 const SEL =
   "h-8 rounded-md border border-input bg-card px-2 text-xs cursor-pointer focus:outline-none focus:ring-1 focus:ring-ring";
 
-type SortKey = "rep" | "favorable" | "unfavorable" | "total" | "winRate";
+type SortKey = "rep" | "favorable" | "partiallyFavorable" | "unfavorable" | "total" | "winRate";
 type SortDir = "asc" | "desc";
+type QuickMode = "all" | "30d" | "90d" | "custom";
 
 function WinRateBar({ rate }: { rate: number }) {
   const color =
@@ -101,17 +102,32 @@ function OverallCard({
   );
 }
 
-function exportWinRateCsv(rows: WinRateRow[], overall: WinRateData["overall"]) {
+function exportWinRateCsv(
+  rows: WinRateRow[],
+  overall: WinRateData["overall"],
+  quickMode: QuickMode,
+  dateFrom: string,
+  dateTo: string,
+) {
+  const filterLabel =
+    quickMode === "30d" ? "30d" :
+    quickMode === "90d" ? "90d" :
+    quickMode === "custom" && dateFrom && dateTo ? `${dateFrom}-to-${dateTo}` :
+    quickMode === "custom" && dateFrom ? `from-${dateFrom}` :
+    quickMode === "custom" && dateTo ? `to-${dateTo}` :
+    "All-Time";
   const header = [
     "Representative",
-    "Favorable",
-    "Unfavorable",
-    "Total",
+    "Favorable (FFD)",
+    "Partially Favorable (PFD)",
+    "Unfavorable (UFD)",
+    "Total Decided",
     "Win Rate %",
   ];
   const data = rows.map((r) => [
     r.rep,
     r.favorable,
+    r.partiallyFavorable,
     r.unfavorable,
     r.total,
     r.winRate.toFixed(1),
@@ -119,6 +135,7 @@ function exportWinRateCsv(rows: WinRateRow[], overall: WinRateData["overall"]) {
   data.push([
     "OVERALL",
     overall.favorable,
+    overall.partiallyFavorable,
     overall.unfavorable,
     overall.total,
     overall.winRate.toFixed(1),
@@ -128,7 +145,7 @@ function exportWinRateCsv(rows: WinRateRow[], overall: WinRateData["overall"]) {
     .join("\n");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-  a.download = `win-rate-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download = `HSL-Win-Rate-Report-${filterLabel}-${new Date().toISOString().slice(0, 10)}.csv`;
   a.click();
 }
 
@@ -147,6 +164,7 @@ export function WinRateModal({ open, onClose, allReps }: Props) {
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("winRate");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [quickMode, setQuickMode] = useState<QuickMode>("all");
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = (r: string, df: string, dt: string) => {
@@ -170,6 +188,7 @@ export function WinRateModal({ open, onClose, allReps }: Props) {
       setSearch("");
       setSortKey("winRate");
       setSortDir("desc");
+      setQuickMode("all");
       load("", "", "");
     }, 0);
     return () => clearTimeout(timer);
@@ -179,6 +198,25 @@ export function WinRateModal({ open, onClose, allReps }: Props) {
   const triggerLoad = (r: string, df: string, dt: string) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => load(r, df, dt), 300);
+  };
+
+  const handleQuickMode = (mode: QuickMode) => {
+    setQuickMode(mode);
+    if (mode === "all") {
+      setDateFrom("");
+      setDateTo("");
+      load(rep, "", "");
+    } else if (mode === "30d" || mode === "90d") {
+      const days = mode === "30d" ? 30 : 90;
+      const to = new Date();
+      const from = new Date();
+      from.setDate(from.getDate() - days);
+      const fmt = (d: Date) => d.toISOString().slice(0, 10);
+      setDateFrom(fmt(from));
+      setDateTo(fmt(to));
+      load(rep, fmt(from), fmt(to));
+    }
+    // "custom" — just reveal the inputs, user fills them
   };
 
   const handleSort = (key: SortKey) => {
@@ -247,7 +285,7 @@ export function WinRateModal({ open, onClose, allReps }: Props) {
                 variant="outline"
                 size="sm"
                 className="h-7 gap-1.5 text-xs"
-                onClick={() => exportWinRateCsv(sortedRows, data.overall)}
+                onClick={() => exportWinRateCsv(sortedRows, data.overall, quickMode, dateFrom, dateTo)}
               >
                 <Download className="h-3 w-3" />
                 Export
@@ -263,68 +301,85 @@ export function WinRateModal({ open, onClose, allReps }: Props) {
         </div>
 
         {/* Filters */}
-        <div className="flex flex-wrap items-center gap-2 border-b px-6 py-3 shrink-0 bg-muted/20">
-          <select
-            className={SEL + " min-w-40"}
-            value={rep}
-            onChange={(e) => {
-              setRep(e.target.value);
-              triggerLoad(e.target.value, dateFrom, dateTo);
-            }}
-          >
-            <option value="">All Representatives</option>
-            {allReps.map((r) => (
-              <option key={r} value={r}>
-                {r}
-              </option>
-            ))}
-          </select>
-          <div className="flex items-center gap-1.5">
-            <Input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => {
-                setDateFrom(e.target.value);
-                triggerLoad(rep, e.target.value, dateTo);
-              }}
-              className="h-8 w-32 text-xs"
-              placeholder="From"
-            />
-            <span className="text-xs text-muted-foreground">to</span>
-            <Input
-              type="date"
-              value={dateTo}
-              onChange={(e) => {
-                setDateTo(e.target.value);
-                triggerLoad(rep, dateFrom, e.target.value);
-              }}
-              className="h-8 w-32 text-xs"
-              placeholder="To"
-            />
+        <div className="border-b px-6 py-3 shrink-0 bg-muted/20 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <select
+                className={SEL + " min-w-40"}
+                value={rep}
+                onChange={(e) => {
+                  setRep(e.target.value);
+                  triggerLoad(e.target.value, dateFrom, dateTo);
+                }}
+              >
+                <option value="">All Representatives</option>
+                {allReps.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
+              {isPending && (
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+              )}
+            </div>
+            {/* Segmented quick-filter */}
+            <div className="flex items-center rounded-md border border-input bg-background p-0.5 gap-0.5">
+              {(["all", "30d", "90d", "custom"] as QuickMode[]).map((mode) => (
+                <button
+                  key={mode}
+                  onClick={() => handleQuickMode(mode)}
+                  className={cn(
+                    "h-7 px-3 text-xs rounded font-medium transition-colors select-none",
+                    quickMode === mode
+                      ? "bg-orange-500 text-white shadow-sm"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {mode === "all" ? "All time" : mode.charAt(0).toUpperCase() + mode.slice(1)}
+                </button>
+              ))}
+            </div>
           </div>
-          {(rep || dateFrom || dateTo) && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8 gap-1 text-xs text-muted-foreground"
-              onClick={() => {
-                setRep("");
-                setDateFrom("");
-                setDateTo("");
-                load("", "", "");
-              }}
-            >
-              <X className="h-3 w-3" /> Clear
-            </Button>
-          )}
-          {isPending && (
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-          )}
+          {/* Custom date range — only visible when Custom is active */}
+          <div className={cn(
+            "-mx-6 border-t border-border/60 transition-all",
+            quickMode === "custom" ? "opacity-100" : "opacity-0 pointer-events-none",
+          )} />
+          <div className={cn(
+            "flex items-center gap-3 transition-all overflow-hidden",
+            quickMode === "custom" ? "max-h-12 opacity-100" : "max-h-0 opacity-0 pointer-events-none",
+          )}>
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground shrink-0 w-10">
+              Range
+            </span>
+            <div className="flex items-center gap-2">
+              <Input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => {
+                  setDateFrom(e.target.value);
+                  triggerLoad(rep, e.target.value, dateTo);
+                }}
+                className="h-7 w-36 text-xs"
+              />
+              <span className="text-xs text-muted-foreground">to</span>
+              <Input
+                type="date"
+                value={dateTo}
+                onChange={(e) => {
+                  setDateTo(e.target.value);
+                  triggerLoad(rep, dateFrom, e.target.value);
+                }}
+                className="h-7 w-36 text-xs"
+              />
+            </div>
+          </div>
         </div>
 
         {/* Overall cards */}
         {data && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 px-6 py-4 shrink-0 border-b">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 px-6 py-4 shrink-0 border-b">
             <div className="rounded-xl p-4 border-2 border-dashed border-border bg-muted/20 relative overflow-hidden">
               <div className="absolute -right-3 -top-3 h-20 w-20 rounded-full bg-muted/30" />
               <div className="relative z-10">
@@ -332,35 +387,42 @@ export function WinRateModal({ open, onClose, allReps }: Props) {
                   Formula
                 </p>
                 <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400 tabular-nums leading-none">
-                  {data.overall.favorable.toLocaleString()}
+                  {(data.overall.favorable + data.overall.partiallyFavorable).toLocaleString()}
                 </p>
                 <div className="my-1 h-px w-full bg-border" />
                 <p className="text-lg font-bold text-foreground tabular-nums leading-none">
                   {data.overall.total.toLocaleString()}
                 </p>
                 <p className="text-[10px] text-muted-foreground mt-1.5">
-                  Favorable ÷ Decided
+                  (FFD + PFD) ÷ Decided
                 </p>
               </div>
             </div>
             <OverallCard
-              label="Favorable"
+              label="Favorable (FFD)"
               value={data.overall.favorable.toLocaleString()}
-              sub="Won decisions"
+              sub="Fully favorable"
               icon={<TrendingUp className="h-3.5 w-3.5" />}
               color="bg-emerald-600"
             />
             <OverallCard
-              label="Unfavorable"
+              label="Part. Favorable"
+              value={data.overall.partiallyFavorable.toLocaleString()}
+              sub="Partially favorable"
+              icon={<TrendingUp className="h-3.5 w-3.5" />}
+              color="bg-teal-600"
+            />
+            <OverallCard
+              label="Unfavorable (UFD)"
               value={data.overall.unfavorable.toLocaleString()}
               sub="Lost decisions"
               icon={<TrendingDown className="h-3.5 w-3.5" />}
               color="bg-red-500"
             />
             <OverallCard
-              label="Decided"
+              label="Total Decided"
               value={data.overall.total.toLocaleString()}
-              sub="Fav + Unfav only"
+              sub="FFD + PFD + UFD"
               icon={<Minus className="h-3.5 w-3.5" />}
               color="bg-zinc-600"
             />
@@ -398,16 +460,9 @@ export function WinRateModal({ open, onClose, allReps }: Props) {
                     {(
                       [
                         { key: "rep", label: "Representative", align: "left" },
-                        {
-                          key: "favorable",
-                          label: "Favorable",
-                          align: "center",
-                        },
-                        {
-                          key: "unfavorable",
-                          label: "Unfavorable",
-                          align: "center",
-                        },
+                        { key: "favorable", label: "FFD", align: "center" },
+                        { key: "partiallyFavorable", label: "PFD", align: "center" },
+                        { key: "unfavorable", label: "UFD", align: "center" },
                         { key: "total", label: "Decided", align: "center" },
                         { key: "winRate", label: "Win Rate", align: "left" },
                       ] as { key: SortKey; label: string; align: string }[]
@@ -469,6 +524,11 @@ export function WinRateModal({ open, onClose, allReps }: Props) {
                       <td className="px-3 py-2.5 text-center">
                         <span className="font-semibold text-emerald-600 dark:text-emerald-400 tabular-nums">
                           {row.favorable}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2.5 text-center">
+                        <span className="font-semibold text-teal-600 dark:text-teal-400 tabular-nums">
+                          {row.partiallyFavorable}
                         </span>
                       </td>
                       <td className="px-3 py-2.5 text-center">

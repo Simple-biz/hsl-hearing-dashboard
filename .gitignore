@@ -43,3 +43,14 @@ next-env.d.ts
 
 # claude
 .claude
+
+# local dev reference
+CONTEXT.md
+QUERIES.md
+CLAUDE.md
+INHERITANCE_WORKFLOW.md
+
+# local directories — not part of the codebase
+Pre-Hearing-Medical-Records-Manager-main/
+references/
+takeout-20260626T174422Z-3-001/
