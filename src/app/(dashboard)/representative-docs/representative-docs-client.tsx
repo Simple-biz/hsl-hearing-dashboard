@@ -103,6 +103,12 @@ const WORKFLOW_COLUMNS: {
     shortLabel: "Split",
   },
   {
+    key: "oho_ltr",
+    atKey: "oho_ltr_at",
+    label: "OHO Letter",
+    shortLabel: "OHO Ltr.",
+  },
+  {
     key: "repdocs_uploaded_chronicle",
     atKey: "repdocs_uploaded_chronicle_at",
     label: "Uploaded in Chronicle",
@@ -189,6 +195,7 @@ const WORKFLOW_KEYS = [
   "repdocs_signed",
   "contact_ltr",
   "repdocs_split",
+  "oho_ltr",
   "repdocs_uploaded_chronicle",
   "oho_confirmation",
 ] as const;
@@ -238,6 +245,7 @@ const FIELD_LABELS: Record<string, string> = {
   repdocs_split: "Rep Docs Split",
   repdocs_uploaded_chronicle: "Uploaded in Chronicle",
   oho_confirmation: "OHO Confirmation",
+  oho_ltr: "OHO Letter",
   oho_assigned_to: "OHO Assignee",
   checker_calendar: "Checker — Calendar",
   checker_chronicle_claim: "Checker — Chronicle Claim",

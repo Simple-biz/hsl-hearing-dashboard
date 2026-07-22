@@ -32,6 +32,8 @@ export interface RepDocsRow {
   repdocs_uploaded_chronicle_at: string | null;
   oho_confirmation: boolean;
   oho_confirmation_at: string | null;
+  oho_ltr: boolean;
+  oho_ltr_at: string | null;
 
   oho_assigned_to: string | null;
   checker_calendar: boolean;
@@ -86,6 +88,7 @@ const WORKFLOW_FIELDS = [
   "repdocs_signed",
   "contact_ltr",
   "repdocs_split",
+  "oho_ltr",
   "repdocs_uploaded_chronicle",
   "oho_confirmation",
 ] as const;
@@ -119,6 +122,7 @@ const FIELD_LABELS: Record<string, string> = {
   repdocs_split: "RepDocs Split",
   repdocs_uploaded_chronicle: "RepDocs Uploaded to Chronicle",
   oho_confirmation: "OHO Confirmation",
+  oho_ltr: "OHO Letter",
   // Checker checkboxes
   checker_calendar: "Checker — Calendar",
   checker_chronicle_claim: "Checker — Chronicle Claim",
@@ -289,6 +293,7 @@ export async function fetchRepDocsPage(params: FetchParams = {}): Promise<{
         rd.repdocs_split, rd.repdocs_split_at::text,
         rd.repdocs_uploaded_chronicle, rd.repdocs_uploaded_chronicle_at::text,
         rd.oho_confirmation, rd.oho_confirmation_at::text,
+        rd.oho_ltr, rd.oho_ltr_at::text,
         rd.oho_assigned_to,
         rd.checker_calendar, rd.checker_chronicle_claim,
         rd.checker_noh, rd.checker_contact_ltr, rd.checker_status,
@@ -660,6 +665,7 @@ export async function clearRepDocsForRescheduledHearing(hearingId: number) {
        repdocs_split = false, repdocs_split_at = NULL,
        repdocs_uploaded_chronicle = false, repdocs_uploaded_chronicle_at = NULL,
        oho_confirmation = false, oho_confirmation_at = NULL,
+       oho_ltr = false, oho_ltr_at = NULL,
        oho_assigned_to = NULL,
        checker_calendar = false,
        checker_chronicle_claim = false,

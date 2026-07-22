@@ -81,6 +81,7 @@ const WORKFLOW_STEPS = [
   },
   { key: "contact_ltr", atKey: "contact_ltr_at", label: "Contact Letter" },
   { key: "repdocs_split", atKey: "repdocs_split_at", label: "RepDocs Split" },
+  { key: "oho_ltr", atKey: "oho_ltr_at", label: "OHO Letter" },
   {
     key: "repdocs_uploaded_chronicle",
     atKey: "repdocs_uploaded_chronicle_at",
