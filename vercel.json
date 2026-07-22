@@ -10,7 +10,11 @@
     },
     {
       "path": "/api/cron/auto-lock",
-      "schedule": "1 0 * * *"
+      "schedule": "0 22 * * *"
+    },
+    {
+      "path": "/api/cron/send-schedule-invites",
+      "schedule": "0 9 1 * *"
     }
   ]
 }

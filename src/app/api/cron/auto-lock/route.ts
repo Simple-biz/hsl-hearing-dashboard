@@ -5,7 +5,7 @@ import { db } from "@/lib/db";
  * Auto-Lock Schedules Cron
  * Port of cron_auto_lock_schedule.php
  *
- * Automatically locks schedules for reps who didn't lock by 45-day deadline.
+ * Automatically locks schedules for reps who didn't lock by the 20th (2 months prior to scheduling month).
  * Default availability by rep type:
  *   - internal_advocates / in-house → AVAILABLE
  *   - external_advocates / contract → UNAVAILABLE
@@ -17,10 +17,12 @@ import { db } from "@/lib/db";
  */
 
 function getDeadlineForMonth(yearMonth: string): Date {
+  // Deadline is the 20th of 2 months prior to the scheduling month
   const [year, month] = yearMonth.split("-").map(Number);
-  const firstOfMonth = new Date(year, month - 1, 1);
-  firstOfMonth.setDate(firstOfMonth.getDate() - 45);
-  return firstOfMonth;
+  const deadlineMonth = month - 2;
+  const deadlineYear = deadlineMonth <= 0 ? year - 1 : year;
+  const adjustedMonth = deadlineMonth <= 0 ? deadlineMonth + 12 : deadlineMonth;
+  return new Date(deadlineYear, adjustedMonth - 1, 20);
 }
 
 function isDeadlinePassed(yearMonth: string): boolean {
@@ -54,6 +56,7 @@ export async function GET(request: Request) {
   const webhookSecret = process.env.N8N_WEBHOOK_SECRET;
   const dashboardUrl =
     process.env.NEXT_PUBLIC_APP_URL || "https://hearings.hogansmith.com";
+  const testEmail = process.env.CRON_TEST_EMAIL || null;
 
   let autoLocked = 0;
   let alreadyLocked = 0;
@@ -76,7 +79,7 @@ export async function GET(request: Request) {
 
     // Get all active reps
     const { rows: reps } = await db.query(
-      "SELECT id, name, email, rep_type FROM representatives WHERE is_active = true",
+      `SELECT id, name, email, rep_type FROM representatives WHERE is_active = true${testEmail ? " LIMIT 1" : ""}`,
     );
 
     // Get federal holidays for relevant years
@@ -163,7 +166,7 @@ export async function GET(request: Request) {
 
             await db.query(
               `INSERT INTO rep_availability (rep_id, availability_date, is_available, availability_type, schedule_locked, notes)
-               VALUES ($1, $2, $3, 'full_day', true, 'Auto-locked by system (45-day deadline passed)')`,
+               VALUES ($1, $2, $3, 'full_day', true, 'Auto-locked by system (deadline passed)')`,
               [rep.id, dateStr, defaultAvailable],
             );
             datesAdded++;
@@ -204,7 +207,7 @@ export async function GET(request: Request) {
                 headers,
                 body: JSON.stringify({
                   email_type: "auto_lock_minimal",
-                  to_email: rep.email,
+                  to_email: testEmail || rep.email,
                   to_name: rep.name,
                   rep_type: rep.rep_type,
                   month_name: monthName,
