@@ -58,6 +58,7 @@ export interface HearingRow {
   status_date: string | null;
   entered_hearing_level_date: string | null;
   download_type: string | null;
+  client_engagement: string;
 }
 
 export interface RepRow {
@@ -492,6 +493,7 @@ export async function fetchHearingsPage(
         h.claimant_location, h.representative_location,
         h.medical_expert, h.vocational_expert,
         h.status_date::text, h.entered_hearing_level_date::text, h.download_type,
+        h.client_engagement,
         r.name AS rep_name, r.rep_type AS rep_type,
         t.team_name AS mr_team_name, t.team_color AS mr_team_color
       FROM hearings h
@@ -589,6 +591,7 @@ export async function updateHearing(
     "post_hrg_dev_status",
     "post_hrg_requirements",
     "post_hrg_report",
+    "client_engagement",
     // Edit modal fields
     "claimant",
     "ssn_last_4",

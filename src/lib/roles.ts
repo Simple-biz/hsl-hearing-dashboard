@@ -317,6 +317,15 @@ export const EDITABLE_FIELDS: Record<string, UserRole[]> = {
     "post_hearing_admin",
     "post_hearing_staff",
   ],
+  client_engagement: [
+    "system_admin",
+    "admin",
+    "manager",
+    "hearings_admin",
+    "hearings_agent",
+    "hearings_status_moa",
+    "pre_hearing_staff",
+  ],
   chronicle_link: [
     "system_admin",
     "admin",

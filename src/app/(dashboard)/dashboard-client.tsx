@@ -416,6 +416,24 @@ const DECISION_COLORS: Record<string, string> = {
   "OTR AT HRG":
     "bg-cyan-100 text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-400",
 };
+const ENGAGEMENT_COLORS: Record<string, string> = {
+  white: "#e5e7eb",
+  green: "#22c55e",
+  blue: "#3b82f6",
+  yellow: "#eab308",
+  red: "#ef4444",
+  black: "#111827",
+  purple: "#a855f7",
+};
+const ENGAGEMENT_OPTIONS = [
+  { value: "white", label: "Default" },
+  { value: "green", label: "Engaged" },
+  { value: "blue", label: "Initial Contact / None from POC" },
+  { value: "yellow", label: "Attempting / No Contact" },
+  { value: "red", label: "No Contact / Ready for Withdrawal" },
+  { value: "black", label: "Withdrawal" },
+  { value: "purple", label: "Engaged Post-Withdrawal" },
+];
 const MR_STATUS_COLORS: Record<string, string> = {
   Complete:
     "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400",
@@ -1910,6 +1928,7 @@ interface ColumnDef {
 }
 const COL_W = {
   checkbox: 36,
+  client_engagement: 95,
   assigned_rep_id: 155,
   hearing_date: 88,
   hearing_time: 78,
@@ -1920,6 +1939,12 @@ const COL_W = {
 };
 const ALL_COLUMNS: ColumnDef[] = [
   { key: "checkbox", label: "", w: COL_W.checkbox, frozen: true },
+  {
+    key: "client_engagement",
+    label: "Engagement",
+    w: COL_W.client_engagement,
+    frozen: true,
+  },
   {
     key: "assigned_rep_id",
     label: "Representative",
@@ -2146,6 +2171,12 @@ const MemoRow = memo(
       : ri % 2 === 0
         ? evenBg
         : oddBg;
+    // Frozen (sticky) cells must be fully opaque — transparent backgrounds let
+    // scrolled content bleed through. Withdrawn rows use a solid dark-red in
+    // dark mode instead of the semi-transparent /30 overlay used on the tr.
+    const frozenRb = isWithdrawn
+      ? "bg-red-50 dark:bg-red-950"
+      : rb;
     return (
       <tr
         ref={rowRef}
@@ -2164,7 +2195,7 @@ const MemoRow = memo(
               key={col.key}
               className={cn(
                 "px-2 py-1.5 transition-shadow duration-150",
-                col.frozen && cn("sticky z-10 overflow-hidden", rb),
+                col.frozen && cn("sticky z-10 overflow-hidden", frozenRb),
                 isLF &&
                   "border-r-2 border-r-blue-400/40 dark:border-r-blue-500/40",
                 // Hover overlay (matches PHD page). Inset box-shadow paints
@@ -2474,6 +2505,34 @@ const HearingTable = memo(function HearingTable({
     switch (col.key) {
       case "checkbox":
         return null; // Handled directly in MemoRow
+      case "client_engagement": {
+        const engVal = hearing.client_engagement ?? "white";
+        const dotColor = ENGAGEMENT_COLORS[engVal] ?? ENGAGEMENT_COLORS.white;
+        const engLabel = ENGAGEMENT_OPTIONS.find((o) => o.value === engVal)?.label ?? "Default";
+        return (
+          <div className="relative flex items-center justify-center" title={engLabel}>
+            <span
+              className="inline-block h-3.5 w-3.5 rounded-full border border-zinc-400/50"
+              style={{ backgroundColor: dotColor }}
+            />
+            {editable && (
+              <select
+                value={engVal}
+                onChange={(e) =>
+                  onUpdate(hearing.id, "client_engagement", e.target.value)
+                }
+                className="absolute inset-0 cursor-pointer opacity-0"
+              >
+                {ENGAGEMENT_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value} style={{ backgroundColor: "white", color: "#333" }}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        );
+      }
       case "assigned_rep_id":
         return (
           <RepCell
