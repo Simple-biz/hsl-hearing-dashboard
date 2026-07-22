@@ -6,21 +6,22 @@ import { db } from "@/lib/db";
  * Port of cron_schedule_reminder.php
  *
  * Sends reminders to reps who haven't locked their schedule.
- * 45-day rule: Schedules must be submitted 45 days before the 1st of the month.
- * Reminders sent at 10, 5, and 0 days before deadline.
+ * Deadline: 20th of 2 months prior to the scheduling month (e.g., July 20 for September).
+ * Reminders sent at 10, 5, 1, and 0 days before deadline.
  *
  * Schedule: Daily at 9:00 AM via Vercel Cron
  * GET /api/cron/schedule-reminder?cron_key=SECRET
  */
 
-const REMINDER_DAYS = [10, 5, 0];
+const REMINDER_DAYS = [10, 5, 1, 0];
 
 function getDeadlineForMonth(yearMonth: string): Date {
-  // 45 days before the 1st of the scheduling month
+  // Deadline is the 20th of 2 months prior to the scheduling month
   const [year, month] = yearMonth.split("-").map(Number);
-  const firstOfMonth = new Date(year, month - 1, 1);
-  firstOfMonth.setDate(firstOfMonth.getDate() - 45);
-  return firstOfMonth;
+  const deadlineMonth = month - 2;
+  const deadlineYear = deadlineMonth <= 0 ? year - 1 : year;
+  const adjustedMonth = deadlineMonth <= 0 ? deadlineMonth + 12 : deadlineMonth;
+  return new Date(deadlineYear, adjustedMonth - 1, 20);
 }
 
 function getMonthsToRemind(): {
@@ -82,6 +83,7 @@ export async function GET(request: Request) {
   const webhookSecret = process.env.N8N_WEBHOOK_SECRET;
   const dashboardUrl =
     process.env.NEXT_PUBLIC_APP_URL || "https://hearings.hogansmith.com";
+  const testEmail = process.env.CRON_TEST_EMAIL || null;
 
   let sent = 0;
   let alreadyLocked = 0;
@@ -101,7 +103,7 @@ export async function GET(request: Request) {
 
     // Get all active reps with email
     const { rows: reps } = await db.query(
-      "SELECT id, name, email, rep_type FROM representatives WHERE is_active = true AND email IS NOT NULL AND email != ''",
+      `SELECT id, name, email, rep_type FROM representatives WHERE is_active = true AND email IS NOT NULL AND email != ''${testEmail ? " LIMIT 1" : ""}`,
     );
 
     for (const monthData of monthsToRemind) {
@@ -114,6 +116,9 @@ export async function GET(request: Request) {
       if (monthData.daysRemaining === 0) {
         urgencyLevel = "critical";
         urgencyText = "TODAY IS THE DEADLINE";
+      } else if (monthData.daysRemaining === 1) {
+        urgencyLevel = "critical";
+        urgencyText = "Tomorrow is the deadline";
       } else if (monthData.daysRemaining === 5) {
         urgencyLevel = "warning";
         urgencyText = "Only 5 days remaining";
@@ -167,7 +172,7 @@ export async function GET(request: Request) {
               headers,
               body: JSON.stringify({
                 email_type: "schedule_reminder_minimal",
-                to_email: rep.email,
+                to_email: testEmail || rep.email,
                 to_name: rep.name,
                 rep_type: rep.rep_type,
                 month_name: monthData.monthName,
