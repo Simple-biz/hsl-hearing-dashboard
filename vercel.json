@@ -15,6 +15,10 @@
     {
       "path": "/api/cron/send-schedule-invites",
       "schedule": "0 9 1 * *"
+    },
+    {
+      "path": "/api/cron/cleanup-tokens",
+      "schedule": "0 3 * * *"
     }
   ]
 }

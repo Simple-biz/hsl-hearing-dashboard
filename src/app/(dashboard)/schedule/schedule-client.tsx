@@ -26,6 +26,7 @@ import {
   Search,
   ClipboardList,
   Loader2,
+  Download,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { convertTimeFromEST } from "@/lib/timezone";
@@ -33,6 +34,7 @@ import type { UserRole } from "@/lib/roles";
 import {
   getAvailability,
   getHearingsForMonth,
+  getHearingsForRange,
   getFederalHolidays,
   saveAvailability,
   unlockSchedule,
@@ -152,6 +154,12 @@ export function ScheduleClient({
   const [hearings, setHearings] = useState(initialHearings);
   const [holidays, setHolidays] = useState(initialHolidays);
   const [saving, setSaving] = useState(false);
+
+  // Download hearing list as CSV, for a staff-picked month range
+  const [downloadStart, setDownloadStart] = useState(initialMonth);
+  const [downloadEnd, setDownloadEnd] = useState(initialMonth);
+  const [downloading, setDownloading] = useState(false);
+
   const [repSearch, setRepSearch] = useState("");
   const [repLoaded, setRepLoaded] = useState(initialRepId > 0);
   const [showLockStatus, setShowLockStatus] = useState(false);
@@ -239,6 +247,44 @@ export function ScheduleClient({
   const handleMonthPick = async (ym: string) => {
     setSelectedMonth(ym);
     await loadData(selectedRepId, ym);
+  };
+
+  const handleDownloadHearings = async () => {
+    setDownloading(true);
+    try {
+      const rows = await getHearingsForRange(
+        selectedRepId,
+        downloadStart,
+        downloadEnd,
+      );
+      if (!rows.length) {
+        alert("No hearings found for that range");
+        return;
+      }
+      const headers = ["Date", "Claimant", "Time", "ALJ"];
+      const csv = [
+        headers.join(","),
+        ...rows.map((r) =>
+          [r.date, r.claimant, r.time, r.alj || ""]
+            .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+            .join(","),
+        ),
+      ].join("\n");
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const repLabel = selectedRep?.name
+        ? `${selectedRep.name.replace(/\s+/g, "-")}-`
+        : "";
+      a.download = `${repLabel}hearings-${downloadStart}-to-${downloadEnd}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert("Download failed");
+    } finally {
+      setDownloading(false);
+    }
   };
 
   const handleTimezoneChange = async (tz: string) => {
@@ -949,6 +995,34 @@ export function ScheduleClient({
             onClick={() => handleMonthNav(1)}
           >
             <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
+
+        {/* Download hearing list as CSV, for a picked month range */}
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border p-3">
+          <span className="text-sm font-medium">Download hearing list:</span>
+          <Input
+            type="month"
+            value={downloadStart}
+            onChange={(e) => e.target.value && setDownloadStart(e.target.value)}
+            className="h-8 w-auto text-xs"
+          />
+          <span className="text-sm text-muted-foreground">to</span>
+          <Input
+            type="month"
+            value={downloadEnd}
+            onChange={(e) => e.target.value && setDownloadEnd(e.target.value)}
+            className="h-8 w-auto text-xs"
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5 text-xs"
+            onClick={handleDownloadHearings}
+            disabled={downloading}
+          >
+            <Download className="h-3.5 w-3.5" />
+            {downloading ? "Downloading..." : "Download as List"}
           </Button>
         </div>
 

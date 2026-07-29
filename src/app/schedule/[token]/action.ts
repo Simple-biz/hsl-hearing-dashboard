@@ -123,6 +123,36 @@ export async function getPublicHearings(repId: number, yearMonth: string) {
   }[];
 }
 
+// Same shape as getPublicHearings above, but accepts a start/end month
+// range instead of a single month, for reps who want a downloadable list
+// spanning more than one month (e.g. August through September).
+export async function getPublicHearingsRange(
+  repId: number,
+  startYearMonth: string,
+  endYearMonth: string,
+) {
+  const firstDay = `${startYearMonth}-01`;
+  const lastDayDate = new Date(
+    parseInt(endYearMonth.split("-")[0]),
+    parseInt(endYearMonth.split("-")[1]),
+    0,
+  );
+  const lastDay = `${endYearMonth}-${String(lastDayDate.getDate()).padStart(2, "0")}`;
+
+  const { rows } = await db.query(
+    `SELECT hearing_date::text AS date, claimant, converted_time_est::text AS time, alj
+     FROM hearings WHERE assigned_rep_id = $1 AND hearing_date BETWEEN $2 AND $3
+     ORDER BY hearing_date, converted_time_est`,
+    [repId, firstDay, lastDay],
+  );
+  return rows as {
+    date: string;
+    claimant: string;
+    time: string;
+    alj: string | null;
+  }[];
+}
+
 export async function getPublicHolidays(
   yearMonth: string,
 ): Promise<Record<string, string>> {
