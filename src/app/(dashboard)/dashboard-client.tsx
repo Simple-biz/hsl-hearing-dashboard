@@ -419,20 +419,14 @@ const DECISION_COLORS: Record<string, string> = {
 const ENGAGEMENT_COLORS: Record<string, string> = {
   white: "#e5e7eb",
   green: "#22c55e",
-  blue: "#3b82f6",
   yellow: "#eab308",
-  red: "#ef4444",
   black: "#111827",
-  purple: "#a855f7",
 };
 const ENGAGEMENT_OPTIONS = [
   { value: "white", label: "Default" },
-  { value: "green", label: "Engaged" },
-  { value: "blue", label: "Initial Contact / None from POC" },
-  { value: "yellow", label: "Attempting / No Contact" },
-  { value: "red", label: "No Contact / Ready for Withdrawal" },
-  { value: "black", label: "Withdrawal" },
-  { value: "purple", label: "Engaged Post-Withdrawal" },
+  { value: "green", label: "Keep Engaged" },
+  { value: "yellow", label: "No Contact" },
+  { value: "black", label: "Withdraw" },
 ];
 const MR_STATUS_COLORS: Record<string, string> = {
   Complete:
