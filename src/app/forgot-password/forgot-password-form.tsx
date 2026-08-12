@@ -19,12 +19,20 @@ export function ForgotPasswordForm() {
   const [email, setEmail] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
-    await requestPasswordReset(email);
-    setSubmitted(true);
+    setError(null);
+    try {
+      await requestPasswordReset(email);
+      setSubmitted(true);
+    } catch {
+      setError("Something went wrong. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   if (submitted) {
@@ -77,6 +85,9 @@ export function ForgotPasswordForm() {
             />
           </div>
 
+          {error && (
+            <p className="text-sm text-destructive">{error}</p>
+          )}
           <Button
             type="submit"
             className="w-full h-10"
