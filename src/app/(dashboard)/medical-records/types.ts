@@ -36,6 +36,7 @@ export interface Permissions {
   canEditMoa: boolean; // sys_admin | admin | manager  (most restricted)
   canEditTask: boolean; // sys_admin | admin | mr_admin  (no manager on pivot)
   canEditCredited: boolean; // sys_admin | admin only
+  canEditClientEngagement: boolean; // sys_admin | admin | manager | mr_admin | mr_lead | mr_agent
 }
 
 /** Synchronous helper — lives here, NOT in action.ts */
@@ -84,6 +85,14 @@ export function derivePermissions(role: UserRole): Permissions {
     canEditMoa: ["system_admin", "admin", "manager"].includes(role),
     canEditTask: ["system_admin", "admin", "mr_admin"].includes(role),
     canEditCredited: ["system_admin", "admin"].includes(role),
+    canEditClientEngagement: [
+      "system_admin",
+      "admin",
+      "manager",
+      "mr_admin",
+      "mr_lead",
+      "mr_agent",
+    ].includes(role),
   };
 }
 
@@ -123,6 +132,10 @@ export function derivePermissionsWithOverrides(
     canEditMoa: lookup("canEditMoa", "manner_of_appearance"),
     canEditTask: lookup("canEditTask", "task_assigned"),
     canEditCredited: lookup("canEditCredited", "credited"),
+    canEditClientEngagement: lookup(
+      "canEditClientEngagement",
+      "client_engagement",
+    ),
   };
 }
 
@@ -164,6 +177,10 @@ export interface Hearing {
   post_hrg_deadline: string | null;
   post_hrg_requirements: string | null;
   medical_record_link: string | null;
+  /** white = Default, green = Keep Engaged, yellow = No Contact, black = Withdraw.
+   *  Same hearings.client_engagement column the Dashboard's select edits —
+   *  no separate MR Pivot copy, see the MR_PIVOT_EDITABLE note in roles.ts. */
+  client_engagement: string | null;
   claimant_link: string | null;
   chronicle_link: string | null;
   claim_type: string | null;
