@@ -48,6 +48,7 @@ import {
   toggleFiveDayNotice,
   updateMoa,
   updateWorksheetLink,
+  updateClientEngagement,
   assignJeromeUrgent,
   getRoundRobinState,
 } from "./action";
@@ -98,6 +99,22 @@ function teamHex(color: string | null | undefined): string {
   if (!color) return "#9ca3af";
   return TEAM_HEX[color] ?? color;
 }
+
+// Same values as the Dashboard's ENGAGEMENT_COLORS/OPTIONS — one shared
+// hearings.client_engagement column, kept in sync by hand since the two
+// pages don't share a components file.
+const ENGAGEMENT_COLORS: Record<string, string> = {
+  white: "#e5e7eb",
+  green: "#22c55e",
+  yellow: "#eab308",
+  black: "#111827",
+};
+const ENGAGEMENT_OPTIONS = [
+  { value: "white", label: "Default" },
+  { value: "green", label: "Keep Engaged" },
+  { value: "yellow", label: "No Contact" },
+  { value: "black", label: "Withdraw" },
+];
 
 // Compact stamp for the workflow-checkbox completion date — "May 7, 26".
 // Matches fmtCheckStamp in dashboard-client + representative-docs.
@@ -1255,10 +1272,10 @@ function WithdrawnModal({
 // HTML elements intentionally — shadcn Select would break the compact layout.
 
 // Shared grid template — must match columnHeaders exactly.
-// Month(120) | MR Specialist(150) | Task(52) | Date(96) | Claimant(200) |
+// Month(120) | MR Specialist(150) | Task(52) | Date(96) | Claimant(200) | Engagement(48) |
 // MR Status(160) | Credited(60) | Status(120) | MOA(110) | 5Day(48) | Post HRG(110) | MR Worksheet(130)
 const GRID_COLS =
-  "200px 1.2fr 70px 110px 1.5fr 1.2fr 60px 1fr 100px 48px 100px 120px";
+  "200px 1.2fr 70px 110px 240px 48px 1.2fr 60px 1fr 100px 48px 100px 120px";
 const MIN_W = "1280px";
 
 function HearingRow({
@@ -1465,6 +1482,46 @@ function HearingRow({
           </div>
         )}
       </div>
+
+      {/* Engagement — colored dot select, same hearings.client_engagement
+          column the Dashboard edits */}
+      {(() => {
+        const engVal = h.client_engagement ?? "white";
+        const dotColor = ENGAGEMENT_COLORS[engVal] ?? ENGAGEMENT_COLORS.white;
+        const engLabel =
+          ENGAGEMENT_OPTIONS.find((o) => o.value === engVal)?.label ??
+          "Default";
+        return (
+          <div
+            className="relative flex items-center justify-center"
+            title={engLabel}
+          >
+            <span
+              className="inline-block h-3.5 w-3.5 rounded-full border border-zinc-400/50"
+              style={{ backgroundColor: dotColor }}
+            />
+            {permissions.canEditClientEngagement && (
+              <select
+                value={engVal}
+                onChange={(e) =>
+                  onUpdate(h.id, "client_engagement", e.target.value)
+                }
+                className="absolute inset-0 cursor-pointer opacity-0"
+              >
+                {ENGAGEMENT_OPTIONS.map((o) => (
+                  <option
+                    key={o.value}
+                    value={o.value}
+                    style={{ backgroundColor: "white", color: "#333" }}
+                  >
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        );
+      })()}
 
       {/* MR Status — colored pill select */}
       {permissions.canEditMrStatus ? (
@@ -1705,6 +1762,7 @@ export function MrPivotClient({ userRole, userName, ...data }: Props) {
 
   const TOAST_LABELS: Record<string, string> = {
     medical_record_status: "MR Status",
+    client_engagement: "Engagement",
     hearing_decision_status: "Decision",
     mr_team: "MR Team",
     task_assigned: "Task Assigned",
@@ -1868,6 +1926,7 @@ export function MrPivotClient({ userRole, userName, ...data }: Props) {
     // 2) Fire the server action. On failure, revert.
     const actions: Record<string, (v: unknown) => Promise<unknown>> = {
       medical_record_status: (v) => updateMrStatus(id, v as string),
+      client_engagement: (v) => updateClientEngagement(id, v as string),
       hearing_decision_status: (v) =>
         updateHearingDecisionStatus(id, v as string),
       mr_team: (v) => updateMrTeam(id, v as number | null),
@@ -2509,8 +2568,11 @@ export function MrPivotClient({ userRole, userName, ...data }: Props) {
               <div className="text-center font-bold whitespace-nowrap">
                 Hearing Date
               </div>
-              <div className="text-center font-bold whitespace-nowrap">
+              <div className="text-left font-bold whitespace-nowrap">
                 Claimant
+              </div>
+              <div className="text-center font-bold whitespace-nowrap">
+                Engagement
               </div>
               <div className="text-center font-bold whitespace-nowrap">
                 MR Status

@@ -554,6 +554,19 @@ export const MR_PIVOT_EDITABLE: Record<string, UserRole[]> = {
     "mr_agent",
   ],
 
+  // Client Engagement — same field as the Dashboard's client_engagement
+  // column (single hearings row, no separate table); MR roles granted
+  // edit access per [HSLD-05-ST1], matching the dashboard's own MR-role
+  // grant in EDITABLE_FIELDS.client_engagement above.
+  client_engagement: [
+    "system_admin",
+    "admin",
+    "manager",
+    "mr_admin",
+    "mr_lead",
+    "mr_agent",
+  ],
+
   // Claimant Link
   claimant_link: ["system_admin", "admin", "manager", "hearings_admin"],
 

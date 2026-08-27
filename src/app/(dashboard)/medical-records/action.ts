@@ -862,6 +862,20 @@ export async function updateMoa(
   return { success: true };
 }
 
+export async function updateClientEngagement(
+  hearingId: number,
+  value: string,
+): Promise<{ success: boolean }> {
+  const { requireFieldAccess } = await import("@/lib/field-access");
+  await requireFieldAccess("medical_records", "client_engagement");
+  await db.query(
+    `UPDATE hearings SET client_engagement = $1 WHERE id = $2`,
+    [value, hearingId],
+  );
+  await logActivity("client_engagement_updated", `Client engagement updated to "${value}" for Hearing #${hearingId}`);
+  return { success: true };
+}
+
 export async function updateWorksheetLink(
   hearingId: number,
   link: string,
