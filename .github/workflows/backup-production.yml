@@ -55,7 +55,7 @@ jobs:
           cat > backup-audit/backup-metadata.txt <<EOF
           backup_type=daily-production-backup
           branch_name=${BRANCH_NAME}
-          parent_branch=production
+          parent_branch=production backup
           expires_at=${EXPIRES_AT}
           retention_days=14
           workflow=${{ github.workflow }}
@@ -74,7 +74,7 @@ jobs:
         with:
           project_id: ${{ vars.NEON_PROJECT_ID }}
           branch_name: ${{ steps.meta.outputs.branch_name }}
-          parent_branch: production
+          parent_branch: production backup
           api_key: ${{ secrets.NEON_API_KEY }}
           expires_at: ${{ steps.meta.outputs.expires_at }}
 
@@ -104,7 +104,7 @@ jobs:
           backup_branch=${BACKUP_BRANCH_NAME}
           backup_branch_id=${BACKUP_BRANCH_ID}
           backup_created=${BACKUP_CREATED}
-          parent_branch=production
+          parent_branch=production backup
           expires_at=${{ steps.meta.outputs.expires_at }}
           EOF
 
@@ -121,7 +121,7 @@ jobs:
             echo "| --- | --- |"
             echo "| Backup branch | \`${{ steps.meta.outputs.branch_name }}\` |"
             echo "| Backup branch ID | \`${{ steps.create-backup.outputs.branch_id }}\` |"
-            echo "| Parent branch | \`production\` |"
+            echo "| Parent branch | \`production backup\` |"
             echo "| Expires at | \`${{ steps.meta.outputs.expires_at }}\` |"
             echo "| Retention | \`14 days\` |"
             echo "| Actor | \`${{ github.actor }}\` |"

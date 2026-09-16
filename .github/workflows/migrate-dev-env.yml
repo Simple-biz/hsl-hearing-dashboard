@@ -1,9 +1,9 @@
-name: Migrate Develop Database
+name: Migrate Dev-Env Database
 
 on:
   push:
     branches:
-      - develop
+      - dev-env
     paths:
       - "src/migrations/**"
 
@@ -17,13 +17,15 @@ on:
 permissions:
   contents: read
 
+# Uses the existing DEVELOP_DATABASE_URL secret (points at the dev-env Neon branch).
+# Renaming the secret itself is tracked separately under HHD-01 ST4.
 jobs:
-  migrate-develop:
-    name: Apply migrations to develop_testing
+  migrate-dev-env:
+    name: Apply migrations to dev-env
     runs-on: ubuntu-latest
 
     concurrency:
-      group: develop-database-migrations
+      group: dev-env-database-migrations
       cancel-in-progress: false
 
     steps:

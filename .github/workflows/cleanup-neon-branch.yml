@@ -3,8 +3,7 @@ name: Cleanup Neon PR Branch
 on:
   pull_request:
     branches:
-      - develop
-      - feature/mr-pivot-to-google-sheet-sync
+      - dev-env
     types:
       - closed
 

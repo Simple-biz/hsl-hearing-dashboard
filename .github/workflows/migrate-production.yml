@@ -3,7 +3,7 @@ name: Migrate Production Database
 on:
   push:
     branches:
-      - main
+      - hdf-prod
     paths:
       - "src/migrations/**"
 
@@ -146,7 +146,7 @@ jobs:
         with:
           project_id: ${{ vars.NEON_PROJECT_ID }}
           branch_name: ${{ steps.meta.outputs.backup_branch }}
-          parent_branch: production
+          parent_branch: production backup
           api_key: ${{ secrets.NEON_API_KEY }}
           expires_at: ${{ steps.meta.outputs.expires_at }}
 
@@ -188,7 +188,7 @@ jobs:
           cat > migration-audit/pre-migration-backup.txt <<EOF
           backup_branch=${{ steps.meta.outputs.backup_branch }}
           backup_branch_id=${{ steps.create-backup.outputs.branch_id }}
-          parent_branch=production
+          parent_branch=production backup
           expires_at=${{ steps.meta.outputs.expires_at }}
           workflow_run_url=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           EOF
@@ -232,7 +232,7 @@ jobs:
             echo "| Commit | \`${{ github.sha }}\` |"
             echo "| Pre-migration backup branch | \`${{ steps.meta.outputs.backup_branch }}\` |"
             echo "| Backup branch ID | \`${{ steps.create-backup.outputs.branch_id }}\` |"
-            echo "| Parent branch | \`production\` |"
+            echo "| Parent branch | \`production backup\` |"
             echo "| Backup expires at | \`${{ steps.meta.outputs.expires_at }}\` |"
             echo "| Run ID | \`${{ github.run_id }}\` |"
             echo ""

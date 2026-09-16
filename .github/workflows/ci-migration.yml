@@ -3,8 +3,7 @@ name: CI
 on:
   pull_request:
     branches:
-      - develop
-      - feature/mr-pivot-to-google-sheet-sync
+      - dev-env
     paths:
       - "src/**"
       - "package.json"
@@ -115,7 +114,7 @@ jobs:
         with:
           project_id: ${{ vars.NEON_PROJECT_ID }}
           branch_name: pr-${{ github.event.number }}
-          parent_branch: develop_testing
+          parent_branch: dev-env
           api_key: ${{ secrets.NEON_API_KEY }}
 
       - uses: actions/setup-node@v4
