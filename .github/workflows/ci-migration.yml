@@ -125,10 +125,25 @@ jobs:
 
       - run: npm ci
 
+      # A freshly created Neon branch's compute can take a few seconds to
+      # accept connections; the first attempt against a brand-new branch has
+      # been observed to fail with "SCRAM-SHA-256 error: server sent an
+      # invalid SCRAM-SHA-256 iteration count" while the endpoint is still
+      # warming up. create-branch-action has no built-in readiness wait, so
+      # retry here instead of failing the job on a transient cold-start.
       - name: Show pending migrations
         env:
           DATABASE_URL: ${{ steps.create-branch.outputs.db_url }}
-        run: npm run db:status
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if npm run db:status; then
+              exit 0
+            fi
+            echo "Attempt ${attempt} failed, retrying in 5s (new Neon branch compute may still be warming up)..."
+            sleep 5
+          done
+          echo "::error::db:status failed after 5 attempts."
+          exit 1
 
       - name: Apply migrations
         env:
