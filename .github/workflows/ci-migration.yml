@@ -1,0 +1,156 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - dev-env
+    paths:
+      - "src/**"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig.json"
+      - "eslint.config.mjs"
+      - ".sqlfluff"
+      - ".sqlfluffignore"
+      - ".github/workflows/**"
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Code quality
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+  security:
+    name: Security scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Gitleaks - secret scan
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -v "$PWD:/repo:ro" \
+            ghcr.io/gitleaks/gitleaks:latest \
+            dir /repo --redact --verbose --exit-code=1
+
+      - name: OSV-Scanner - dependency vulnerability report
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -v "$PWD:/src:ro" \
+            ghcr.io/google/osv-scanner:latest \
+            scan source --recursive /src
+
+  sql-lint:
+    name: SQL lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install SQLFluff
+        run: python -m pip install sqlfluff
+
+      - name: Lint active migration files
+        continue-on-error: true
+        run: |
+          mapfile -t files < <(find src/migrations -maxdepth 1 -type f -name "*.sql" | sort)
+
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No active migration files found."
+            exit 0
+          fi
+
+          sqlfluff lint "${files[@]}"
+
+  migration-check:
+    name: Test migrations on Neon branch
+    runs-on: ubuntu-latest
+
+    concurrency:
+      group: migration-check-pr-${{ github.event.number }}
+      cancel-in-progress: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Delete existing Neon PR branch
+        continue-on-error: true
+        uses: neondatabase/delete-branch-action@v3
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch: pr-${{ github.event.number }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+
+      - name: Create Neon branch
+        id: create-branch
+        uses: neondatabase/create-branch-action@v6
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch_name: pr-${{ github.event.number }}
+          parent_branch: dev-env
+          api_key: ${{ secrets.NEON_API_KEY }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # A freshly created Neon branch's compute can take a few seconds to
+      # accept connections; the first attempt against a brand-new branch has
+      # been observed to fail with "SCRAM-SHA-256 error: server sent an
+      # invalid SCRAM-SHA-256 iteration count" while the endpoint is still
+      # warming up. create-branch-action has no built-in readiness wait, so
+      # retry here instead of failing the job on a transient cold-start.
+      - name: Show pending migrations
+        env:
+          DATABASE_URL: ${{ steps.create-branch.outputs.db_url }}
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if npm run db:status; then
+              exit 0
+            fi
+            echo "Attempt ${attempt} failed, retrying in 5s (new Neon branch compute may still be warming up)..."
+            sleep 5
+          done
+          echo "::error::db:status failed after 5 attempts."
+          exit 1
+
+      - name: Apply migrations
+        env:
+          DATABASE_URL: ${{ steps.create-branch.outputs.db_url }}
+        run: npm run db:migrate
+
+      - name: Confirm migrations applied
+        env:
+          DATABASE_URL: ${{ steps.create-branch.outputs.db_url }}
+        run: npm run db:status

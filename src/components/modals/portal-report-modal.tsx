@@ -81,7 +81,9 @@ export function PortalReportModal({
   specialists,
   availableYears,
 }: PortalReportModalProps) {
-  const [localFilters, setLocalFilters] = useState<PortalFilters | null>(null);
+  const [localFilters, setLocalFilters] = useState<PortalFilters | null>(
+    initialFilters ? { ...initialFilters } : null,
+  );
   const [rows, setRows] = useState<PortalReportRow[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -90,21 +92,38 @@ export function PortalReportModal({
   // We only reset when the initialFilters REFERENCE changes — the parent
   // takes a snapshot at open time, so identity equality is the right signal.
   // Without this gate, every page re-render would wipe modal-internal edits.
-  useEffect(() => {
+  // Adjusted during render, not in an effect: this is a pure derived-state
+  // reset with no other side effect, the pattern react.dev recommends over
+  // an effect whose entire body is a synchronous setState call.
+  // https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes
+  const [prevInitialFilters, setPrevInitialFilters] = useState(initialFilters);
+  if (initialFilters !== prevInitialFilters) {
+    setPrevInitialFilters(initialFilters);
     setLocalFilters(initialFilters ? { ...initialFilters } : null);
-  }, [initialFilters]);
+  }
+
+  // Same render-time-adjustment pattern for the state resets that used to sit
+  // at the top of the fetch effect below: whichever way localFilters just
+  // changed, either clear rows (filters were cleared) or prep loading/error
+  // for the fetch that's about to start. The effect itself keeps only the
+  // actual side effect (the fetch call and its cancellation cleanup).
+  const [prevLocalFilters, setPrevLocalFilters] = useState(localFilters);
+  if (localFilters !== prevLocalFilters) {
+    setPrevLocalFilters(localFilters);
+    if (!localFilters) {
+      setRows(null);
+    } else {
+      setLoading(true);
+      setError(null);
+    }
+  }
 
   // Fetch whenever localFilters changes. The cancelled flag prevents a stale
   // request from late-arriving and overwriting newer state when the user
   // changes filters quickly.
   useEffect(() => {
-    if (!localFilters) {
-      setRows(null);
-      return;
-    }
+    if (!localFilters) return;
     let cancelled = false;
-    setLoading(true);
-    setError(null);
     getPortalReport(localFilters)
       .then((data) => {
         if (cancelled) return;
