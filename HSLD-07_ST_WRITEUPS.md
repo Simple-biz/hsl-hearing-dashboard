@@ -101,3 +101,31 @@ only.
 *1 SP: no code touched, but real credential handling with a hard constraint (the value must
 never pass through Claude or this session), satisfied by having Benedict run the command
 directly in his own terminal.*
+
+---
+
+ST5: Resolve the Production environment's required reviewer gate | Estimated 2 SP | Actual 2 SP | Completed 2026-09-17
+
+Fetched the `Production` GitHub environment's full protection settings via `gh api
+repos/Simple-biz/hsl-hearing-dashboard/environments/Production` and found two separate
+blockers, not the one originally scoped. First, the `required_reviewers` rule named
+`jerup-dev` as the sole reviewer with `prevent_self_review: true`, meaning even swapping the
+reviewer to Benedict's own account would still deadlock every run, since he would be the one
+pushing to `hdf-prod` and could never approve his own deployment. Per Benedict's decision,
+removed the rule entirely (`PUT` to the environment endpoint with `reviewers: []`), leaving
+the automated safety nets (pre-migration Neon backup, nightly backup, PR-time migration
+dry-run) as the actual protection instead of a human gate that could never fire. Second,
+`deployment_branch_policy.custom_branch_policies` only allowed the `main` branch to deploy to
+`Production`, meaning `migrate-production.yml`'s `push: branches: [hdf-prod]` trigger from ST1
+would have run the workflow but then been silently blocked by the environment itself from ever
+executing the `migrate-production` job. Deleted the `main` branch policy entry (id `48601721`)
+and added `hdf-prod` (new id `60241827`) via the deployment-branch-policies endpoint. Verified
+the final state: only the `branch_policy` protection rule remains, scoped to `hdf-prod`; no
+`required_reviewers` rule present.
+
+Commits: none, this task made no code changes; it was GitHub environment settings
+administration via the API.
+
+*2 SP: a repo-settings change with real production consequences, and a second, independent
+blocker (the branch policy) discovered only by reading the full environment configuration
+rather than trusting the reviewer issue to be the only problem.*
