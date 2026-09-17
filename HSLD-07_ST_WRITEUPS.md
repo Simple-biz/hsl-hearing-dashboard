@@ -129,3 +129,107 @@ administration via the API.
 *2 SP: a repo-settings change with real production consequences, and a second, independent
 blocker (the branch policy) discovered only by reading the full environment configuration
 rather than trusting the reviewer issue to be the only problem.*
+
+---
+
+ST6: End-to-end validation before first real use | Estimated 3 SP | Actual 5 SP | Completed 2026-09-17
+
+Attempted to open a PR from `hhd-01/ci-migration-retarget` into `dev-env` to validate
+`ci-migration.yml`, then discovered a GitHub Actions constraint not accounted for in the
+original scope: a `pull_request`-triggered workflow only runs once that workflow file already
+exists on the pull request's branches, and since none of the five workflow files existed on
+`dev-env` yet, validation genuinely required merging the epic's own branch first (PR #324).
+That merge fired `migrate-dev-env.yml` for the first time ever; confirmed via the run log that
+only `20260101000000_baseline.sql` showed as pending, applied cleanly, `Applied: 1 / Pending: 0`,
+directly confirming ST2's archive reconciliation was correct. With the workflows now live on
+`dev-env`, opened throwaway PR #325 with a no-op migration file
+(`20260918000000_ci_validation_throwaway.sql`), which turned up two real bugs (closed under
+ST7): a lint failure and an intermittent Neon connection error. After both were fixed, PR #325
+re-ran clean end to end: `Code quality`, `SQL lint`, `Security scan`, and `Test migrations on
+Neon branch` all passed, confirming the full `migration-check` loop against a freshly created
+Neon branch. Closed PR #325 without merging and deleted its branch; `cleanup-neon-branch.yml`
+fired successfully on the close event, confirmed via its own run log. Manually deleted the two
+Neon branches identified as leftover during ST1, `pr-304` and `db testing`, directly in the
+Neon console per Benedict's confirmation. The manual `backup-production.yml` dispatch originally
+scoped here turned out to depend on a separate, larger blocker (GitHub's default branch), closed
+instead under ST8.
+
+Commits: none directly; the throwaway commit (`4a18bd7`) lived only on the deleted
+`test/ci-validation-throwaway` branch, viewable via closed PR
+https://github.com/Simple-biz/hsl-hearing-dashboard/pull/325. The dev-env merge is
+https://github.com/Simple-biz/hsl-hearing-dashboard/pull/324.
+
+*5 SP: a scoping assumption (that a PR into dev-env alone would be enough to validate) turned
+out wrong and required merging the epic first, plus a full throwaway PR cycle, plus manual Neon
+console cleanup across two branches, well past the original 3 SP estimate for what looked like
+a single verification pass.*
+
+---
+
+ST7: Fix pre-existing lint failure and migration-check connection flakiness surfaced by ST6 | Estimated (retroactive) 3 SP | Actual 3 SP | Completed 2026-09-17
+
+Two unrelated real bugs, both blocking the CI gates ST6 had just turned on for the first time.
+First, `src/components/modals/portal-report-modal.tsx` had 2 pre-existing
+`react-hooks/set-state-in-effect` errors (lines 94 and 102), invisible until lint started
+running in CI at all. Traced the exact linter heuristic (it flags only the first synchronous
+`setState` call reachable in an effect body, not every one) through two iterations: an initial
+fix moved the wrong call and only shifted which line got flagged, the final fix consolidated
+both resets (`prevInitialFilters`, `prevLocalFilters`) into React's documented
+"adjusting state when a value changes" render-time pattern, verified with `npx eslint` (clean),
+`npm run typecheck`, and `npm run build` (both clean once the untracked, gitignored
+`Pre-Hearing-Medical-Records-Manager-main/` folder was excluded, exactly as any real CI checkout
+already does since that folder was never git-tracked). Second, `ci-migration.yml`'s
+`migration-check` job intermittently failed connecting to a just-created Neon branch with `pq:
+SCRAM-SHA-256 error: server sent an invalid SCRAM-SHA-256 iteration count: "i=1"`, consistent
+with the branch's compute still warming up; `create-branch-action` has no readiness wait, so
+added a 5-attempt, 5-second-interval retry loop around the `Show pending migrations` step,
+scoped only to `migration-check` since `migrate-dev-env.yml` and `migrate-production.yml`
+connect to long-lived, already-warm branches.
+
+Commits: `ad1bca0` (portal-report-modal.tsx fix),
+https://github.com/Simple-biz/hsl-hearing-dashboard/commit/ad1bca0;
+`55d04d4` (migration-check retry logic),
+https://github.com/Simple-biz/hsl-hearing-dashboard/commit/55d04d4;
+merged to dev-env via `f6b110c`,
+https://github.com/Simple-biz/hsl-hearing-dashboard/commit/f6b110c.
+
+*3 SP: two independent root causes in one pass, one requiring two iterations to get right after
+misreading the linter's exact heuristic, verified against a real production build rather than
+assumed fixed from the diff alone.*
+
+---
+
+ST8: Promote to hdf-prod and fix the actual production migration path | Estimated (retroactive) 5 SP | Actual 5 SP | Completed 2026-09-17
+
+Attempting to manually dispatch `backup-production.yml` surfaced a structural blocker outside
+the original scope entirely: GitHub only fires `schedule` and `workflow_dispatch` triggers for
+workflow files present on the repository's default branch, which was still `main`, frozen per
+`CLAUDE.md` and carrying none of these workflows. Per Benedict's decision, changed the
+repository's default branch to `hdf-prod` via the GitHub API (`PATCH /repos/.../` with
+`default_branch`), a settings change, not a `main` content change. That in turn meant the
+workflow files still needed to exist on `hdf-prod` itself, so merged `dev-env` into `hdf-prod`
+(PR #326) per Benedict's call to skip the usual Cloudflare tunnel preview for this infra-only,
+non-UI change. The merge auto-triggered `migrate-production.yml` for the first time ever against
+the real production database; it failed its own pooler-URL preflight check, twice, even after
+Benedict reset the `PRODUCTION_DATABASE_URL` secret with a confirmed-correct, non-pooler
+connection string each time. Added a temporary debug step (PR #327) that printed only the
+hostname (never the credential) and found the workflow was actually reading a completely
+different, stale hostname than either value just set, root cause: a `Production`
+environment-scoped secret of the same name, last updated 2026-05-04, silently overriding the
+repository-level secret every job under `environment: production` reads first. Reset
+`PRODUCTION_DATABASE_URL` at the correct scope (`gh secret set ... --env Production`), reran the
+job, confirmed the debug output now showed the correct hostname and the real migration applied
+cleanly (`Applied: 1 / Pending: 0`, baseline only). Removed the debug step and the temporary
+path-filter widening it needed (PR #328). Flagged to Benedict that the connection string typed
+into this chat mid-diagnosis should be treated as exposed and the Neon role password rotated,
+independent of this task's completion.
+
+Commits: `61cf1e7` (add debug step), `27242de` (remove debug step); PRs
+https://github.com/Simple-biz/hsl-hearing-dashboard/pull/326,
+https://github.com/Simple-biz/hsl-hearing-dashboard/pull/327,
+https://github.com/Simple-biz/hsl-hearing-dashboard/pull/328.
+
+*5 SP: a repo-wide settings change, a production promotion decision made without the usual
+preview gate, two full failed production migration attempts before the actual root cause
+(an environment-scoped secret override, not the connection string itself) was found, and a
+live diagnostic step run against the real production environment to get there.*
