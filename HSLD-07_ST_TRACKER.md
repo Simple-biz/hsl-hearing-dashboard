@@ -26,6 +26,9 @@ Full closeout prose for each closed task lives in `HSLD-07_ST_WRITEUPS.md`.
 | ST8 | Promote to hdf-prod and fix the actual production migration path | Iterating | Retroactive, not sized before starting; unplanned scope surfaced only once production promotion was attempted | 5 | Closed 2026-09-17. Discovered GitHub's schedule and workflow_dispatch triggers only fire from the repository's default branch, changed default branch from the frozen main to hdf-prod. Merged dev-env into hdf-prod (no tunnel preview, infra-only change, no user-facing UI affected). First production migration run failed safely on the pooler-URL preflight check twice, root cause was a stale environment-scoped PRODUCTION_DATABASE_URL secret (dated 2026-05-04) silently overriding the repo-level one of the same name. Fixed at the correct scope, verified with a temporary hostname-only debug step (never printed the credential), confirmed the real production migration applies cleanly (baseline-only, Applied: 1 / Pending: 0), then removed the debug step. See writeups file. |
 
 Epic total: 13 Estimated SP across the original 6 sprint tasks (each 8 SP or under, clearing
-the 8 SP formation floor), plus 8 additional Actual SP across ST7 and ST8, unplanned scope
-surfaced entirely during ST6 validation, authorized by Benedict as it was discovered rather
-than pre-sized.
+the 8 SP formation floor). Actual SP across all 8 tasks (ST1 through ST8) came to 23, a 77
+percent overrun, worse than the doctrine's own recorded estimation bias of 60 to 67 percent.
+ST6 alone ran 2 SP over its own estimate (5 Actual against 3 Estimated) before ST7 and ST8 are
+even counted as unplanned additions. Confirms rather than contradicts the standing bias
+correction: default to sizing higher than first instinct, especially for any task whose scope
+includes "validate this actually works," since that is exactly where hidden problems surface.
