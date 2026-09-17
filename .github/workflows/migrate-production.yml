@@ -6,7 +6,6 @@ on:
       - hdf-prod
     paths:
       - "src/migrations/**"
-      - ".github/workflows/migrate-production.yml"
 
 permissions:
   contents: read
@@ -34,17 +33,6 @@ jobs:
           cache: npm
 
       - run: npm ci
-
-      - name: TEMP DEBUG - print hostname only (HSLD-07, remove after diagnosis)
-        env:
-          PRODUCTION_DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
-        run: |
-          node -e "
-            const u = new URL(process.env.PRODUCTION_DATABASE_URL);
-            console.log('hostname:', u.hostname);
-            console.log('search:', u.search);
-            console.log('raw length:', process.env.PRODUCTION_DATABASE_URL.length);
-          "
 
       - name: Preflight production migration safety checks
         env:
