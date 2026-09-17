@@ -1,0 +1,54 @@
+name: Migrate Dev-Env Database
+
+on:
+  push:
+    branches:
+      - dev-env
+    paths:
+      - "src/migrations/**"
+
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Reason for manual run (e.g. post-weekly-reset)"
+        required: false
+        default: "Manual trigger"
+
+permissions:
+  contents: read
+
+# Uses the existing DEVELOP_DATABASE_URL secret (points at the dev-env Neon branch).
+# Renaming the secret itself is tracked separately under HHD-01 ST4.
+jobs:
+  migrate-dev-env:
+    name: Apply migrations to dev-env
+    runs-on: ubuntu-latest
+
+    concurrency:
+      group: dev-env-database-migrations
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Show pending migrations
+        env:
+          DATABASE_URL: ${{ secrets.DEVELOP_DATABASE_URL }}
+        run: npm run db:status
+
+      - name: Apply migrations
+        env:
+          DATABASE_URL: ${{ secrets.DEVELOP_DATABASE_URL }}
+        run: npm run db:migrate
+
+      - name: Confirm migrations applied
+        env:
+          DATABASE_URL: ${{ secrets.DEVELOP_DATABASE_URL }}
+        run: npm run db:status
