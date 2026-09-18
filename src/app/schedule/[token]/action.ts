@@ -176,11 +176,16 @@ export async function savePublicAvailability(
   }[],
   lockSchedule: boolean,
 ) {
-  // Check deadline
+  // Check deadline. Compared at midnight, same as the client's
+  // isPastDeadline calc, so the deadline day itself still counts as open
+  // instead of the server cutting it off a full day earlier than the UI
+  // shows.
   const [yr, mo] = yearMonth.split("-").map(Number);
   const deadline = new Date(yr, mo - 1, 1);
   deadline.setDate(deadline.getDate() - 45);
-  if (new Date() >= deadline)
+  const todayMidnight = new Date();
+  todayMidnight.setHours(0, 0, 0, 0);
+  if (todayMidnight > deadline)
     throw new Error(
       "The 45-day deadline has passed. Contact your administrator.",
     );
@@ -239,7 +244,9 @@ export async function resetPublicSchedule(repId: number, yearMonth: string) {
   const [yr, mo] = yearMonth.split("-").map(Number);
   const deadline = new Date(yr, mo - 1, 1);
   deadline.setDate(deadline.getDate() - 45);
-  if (new Date() >= deadline)
+  const todayMidnight = new Date();
+  todayMidnight.setHours(0, 0, 0, 0);
+  if (todayMidnight > deadline)
     throw new Error("The 45-day deadline has passed.");
 
   const firstDay = `${yearMonth}-01`;
