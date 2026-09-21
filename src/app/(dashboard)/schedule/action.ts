@@ -158,13 +158,17 @@ export async function saveAvailability(
   );
   const lastDay = `${yearMonth}-${String(lastDayDate.getDate()).padStart(2, "0")}`;
 
-  // Delete-then-rebuild as one CTE statement, matching the codebase's own
-  // atomic bulk-write convention (the archive CTE, and the unnest-based
-  // bulk insert in post-hrg-development/actions.ts) instead of a
-  // hand-rolled multi-statement transaction. The old per-row insert loop
-  // could fail partway through and leave the delete committed with
-  // nothing written back, silently wiping the rep's month; a single
-  // statement can't fail "partway."
+  // Delete, rebuild, and (if locking) fill the remaining unset business
+  // days -- all as one statement via chained writable CTEs, matching the
+  // codebase's own atomic bulk-write convention (the archive CTE, and the
+  // unnest-based bulk insert in post-hrg-development/actions.ts) instead
+  // of a hand-rolled multi-statement transaction. A prior revision of this
+  // fix left the explicit-day write and the lock-fill write as two
+  // separate statements, which could still land the month in a
+  // partially-locked state if a connection dropped between them; folding
+  // both into one statement closes that gap and also removes the need for
+  // a separate setDates array, since the lock-fill now excludes whatever
+  // the `inserted` CTE just wrote directly.
   const dates = days.map((d) => d.date);
   const isAvailableArr = days.map((d) => d.type !== "unavailable");
   const availTypeArr = days.map((d) =>
@@ -179,15 +183,27 @@ export async function saveAvailability(
       ? JSON.stringify(d.timeSlots)
       : null,
   );
+  const todayStr = new Date().toISOString().split("T")[0];
 
   await db.query(
     `WITH deleted AS (
        DELETE FROM rep_availability WHERE rep_id = $1 AND availability_date BETWEEN $2 AND $3
+     ),
+     inserted AS (
+       INSERT INTO rep_availability (rep_id, availability_date, is_available, availability_type, time_slots, schedule_locked)
+       SELECT $1, d.date, d.is_available, d.availability_type, d.time_slots, $4
+       FROM unnest($5::date[], $6::boolean[], $7::availability_type[], $8::text[])
+         AS d(date, is_available, availability_type, time_slots)
+       RETURNING availability_date
      )
-     INSERT INTO rep_availability (rep_id, availability_date, is_available, availability_type, time_slots, schedule_locked)
-     SELECT $1, d.date, d.is_available, d.availability_type, d.time_slots, $4
-     FROM unnest($5::date[], $6::boolean[], $7::availability_type[], $8::text[])
-       AS d(date, is_available, availability_type, time_slots)`,
+     INSERT INTO rep_availability (rep_id, availability_date, is_available, availability_type, schedule_locked)
+     SELECT $1, gs::date, false, 'full_day', true
+     FROM generate_series($2::date, $3::date, interval '1 day') AS gs
+     WHERE $4
+       AND EXTRACT(DOW FROM gs) NOT IN (0, 6)
+       AND gs::date >= $9::date
+       AND gs::date NOT IN (SELECT availability_date FROM inserted)
+     ON CONFLICT (rep_id, availability_date) DO NOTHING`,
     [
       repId,
       firstDay,
@@ -197,25 +213,9 @@ export async function saveAvailability(
       isAvailableArr,
       availTypeArr,
       timeSlotsArr,
+      todayStr,
     ],
   );
-
-  // If locking, also insert unavailable for unset business days
-  if (lockSchedule) {
-    const setDates = days.map((d) => d.date);
-    const todayStr = new Date().toISOString().split("T")[0];
-
-    await db.query(
-      `INSERT INTO rep_availability (rep_id, availability_date, is_available, availability_type, schedule_locked)
-       SELECT $1, gs::date, false, 'full_day', true
-       FROM generate_series($2::date, $3::date, interval '1 day') AS gs
-       WHERE EXTRACT(DOW FROM gs) NOT IN (0, 6)
-         AND gs::date >= $4::date
-         AND NOT (gs::date = ANY($5::date[]))
-       ON CONFLICT (rep_id, availability_date) DO NOTHING`,
-      [repId, firstDay, lastDay, todayStr, setDates],
-    );
-  }
   const { logAction } = await import("@/lib/activity-log");
   const { rows: repRows } = await db.query(
     "SELECT name FROM representatives WHERE id = $1",
