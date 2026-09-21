@@ -166,6 +166,18 @@ export async function getPublicHolidays(
   return map;
 }
 
+/** Staff-granted exception letting a rep submit past the 45-day deadline for one month. */
+export async function getScheduleDeadlineException(
+  repId: number,
+  yearMonth: string,
+): Promise<boolean> {
+  const { rows } = await db.query(
+    "SELECT 1 FROM rep_schedule_deadline_exceptions WHERE rep_id = $1 AND year_month = $2",
+    [repId, yearMonth],
+  );
+  return rows.length > 0;
+}
+
 export async function savePublicAvailability(
   repId: number,
   yearMonth: string,
@@ -179,16 +191,19 @@ export async function savePublicAvailability(
   // Check deadline. Compared at midnight, same as the client's
   // isPastDeadline calc, so the deadline day itself still counts as open
   // instead of the server cutting it off a full day earlier than the UI
-  // shows.
+  // shows. A staff-granted exception bypasses this entirely.
   const [yr, mo] = yearMonth.split("-").map(Number);
   const deadline = new Date(yr, mo - 1, 1);
   deadline.setDate(deadline.getDate() - 45);
   const todayMidnight = new Date();
   todayMidnight.setHours(0, 0, 0, 0);
-  if (todayMidnight > deadline)
-    throw new Error(
-      "The 45-day deadline has passed. Contact your administrator.",
-    );
+  if (todayMidnight > deadline) {
+    const hasException = await getScheduleDeadlineException(repId, yearMonth);
+    if (!hasException)
+      throw new Error(
+        "The 45-day deadline has passed. Contact your administrator.",
+      );
+  }
 
   const firstDay = `${yearMonth}-01`;
   const lastDayDate = new Date(yr, mo, 0);
@@ -246,8 +261,10 @@ export async function resetPublicSchedule(repId: number, yearMonth: string) {
   deadline.setDate(deadline.getDate() - 45);
   const todayMidnight = new Date();
   todayMidnight.setHours(0, 0, 0, 0);
-  if (todayMidnight > deadline)
-    throw new Error("The 45-day deadline has passed.");
+  if (todayMidnight > deadline) {
+    const hasException = await getScheduleDeadlineException(repId, yearMonth);
+    if (!hasException) throw new Error("The 45-day deadline has passed.");
+  }
 
   const firstDay = `${yearMonth}-01`;
   const lastDayDate = new Date(yr, mo, 0);

@@ -28,6 +28,7 @@ import {
   getPublicHearings,
   getPublicHearingsRange,
   getPublicHolidays,
+  getScheduleDeadlineException,
   savePublicAvailability,
   resetPublicSchedule,
   getRepTimezone,
@@ -131,6 +132,10 @@ export function PublicScheduleClient({
   const [availability, setAvailability] = useState<AvailDay[]>([]);
   const [hearings, setHearings] = useState<HearingDay[]>([]);
   const [holidays, setHolidays] = useState<Record<string, string>>({});
+  const [hasDeadlineException, setHasDeadlineException] = useState(false);
+  // Guards the lock/deadline banners from flashing the previous month's
+  // state while a month switch's loadData() call is still in flight.
+  const [monthLoading, setMonthLoading] = useState(false);
   const [edits, setEdits] = useState<Record<string, DayState>>({});
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -186,15 +191,19 @@ export function PublicScheduleClient({
   ).length;
 
   const loadData = useCallback(async (repId: number, ym: string) => {
-    const [avail, hrgs, hols] = await Promise.all([
+    setMonthLoading(true);
+    const [avail, hrgs, hols, exception] = await Promise.all([
       getPublicAvailability(repId, ym),
       getPublicHearings(repId, ym),
       getPublicHolidays(ym),
+      getScheduleDeadlineException(repId, ym),
     ]);
     setAvailability(avail as AvailDay[]);
     setHearings(hrgs);
     setHolidays(hols);
+    setHasDeadlineException(exception);
     setEdits(buildEdits(avail as AvailDay[]));
+    setMonthLoading(false);
   }, []);
 
   // Auth
@@ -341,7 +350,7 @@ export function PublicScheduleClient({
     }
   };
 
-  const canEdit = !isLocked && !isPastDeadline;
+  const canEdit = !isLocked && (!isPastDeadline || hasDeadlineException);
 
   // ═══════ LOGIN SCREEN ═══════
   if (!authenticated || !rep) {
@@ -466,8 +475,10 @@ export function PublicScheduleClient({
           </div>
         )}
 
-        {/* Banners */}
-        {isLocked && (
+        {/* Banners. Gated on !monthLoading so a month switch doesn't flash
+            the previous month's lock/deadline state while loadData() is
+            still in flight. */}
+        {!monthLoading && isLocked && (
           <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 dark:bg-amber-950/30">
             <p className="text-sm font-semibold text-amber-800">
               🔒 Schedule is Locked
@@ -481,23 +492,46 @@ export function PublicScheduleClient({
             </p>
           </div>
         )}
-        {isPastDeadline && !isLocked && (
-          <div className="rounded-lg border border-red-300 bg-red-50 p-3 dark:bg-red-950/30">
-            <p className="text-sm font-semibold text-red-800">
-              ⏰ Deadline Passed
+        {!monthLoading && isPastDeadline && !isLocked && (
+          <div
+            className={cn(
+              "rounded-lg border p-3",
+              hasDeadlineException
+                ? "border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30"
+                : "border-red-300 bg-red-50 dark:bg-red-950/30",
+            )}
+          >
+            <p
+              className={cn(
+                "text-sm font-semibold",
+                hasDeadlineException ? "text-emerald-800" : "text-red-800",
+              )}
+            >
+              {hasDeadlineException
+                ? "✅ Late Submission Allowed"
+                : "⏰ Deadline Passed"}
             </p>
-            <p className="text-xs text-red-600">
+            <p
+              className={cn(
+                "text-xs",
+                hasDeadlineException ? "text-emerald-600" : "text-red-600",
+              )}
+            >
               The 45-day deadline for {monthName} was{" "}
               {deadlineDate.toLocaleDateString("en-US", {
                 month: "long",
                 day: "numeric",
                 year: "numeric",
               })}
-              .
+              .{" "}
+              {hasDeadlineException
+                ? "Staff has given you a one-time exception to submit it now."
+                : ""}
             </p>
           </div>
         )}
-        {!isPastDeadline &&
+        {!monthLoading &&
+          !isPastDeadline &&
           !isLocked &&
           daysUntilDeadline >= 0 &&
           daysUntilDeadline <= 15 && (

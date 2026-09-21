@@ -36,6 +36,8 @@ import {
   getHearingsForMonth,
   getHearingsForRange,
   getFederalHolidays,
+  getScheduleDeadlineException,
+  grantScheduleException,
   saveAvailability,
   unlockSchedule,
   resetSchedule,
@@ -153,6 +155,7 @@ export function ScheduleClient({
   const [availability, setAvailability] = useState(initialAvailability);
   const [hearings, setHearings] = useState(initialHearings);
   const [holidays, setHolidays] = useState(initialHolidays);
+  const [hasDeadlineException, setHasDeadlineException] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // Download hearing list as CSV, for a staff-picked month range
@@ -230,6 +233,20 @@ export function ScheduleClient({
     setHolidays(hols);
     setEdits(buildEdits(avail));
   }, []);
+
+  // Exception status isn't part of the server-provided initial props, so it's
+  // kept in its own effect rather than threaded through loadData's callers.
+  useEffect(() => {
+    let cancelled = false;
+    getScheduleDeadlineException(selectedRepId, selectedMonth).then(
+      (has) => {
+        if (!cancelled) setHasDeadlineException(has);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedRepId, selectedMonth]);
 
   const handleSelectRep = async (repId: number) => {
     setSelectedRepId(repId);
@@ -342,6 +359,10 @@ export function ScheduleClient({
   const handleUnlock = async () => {
     await unlockSchedule(selectedRepId, selectedMonth);
     await loadData(selectedRepId, selectedMonth);
+  };
+  const handleGrantException = async () => {
+    await grantScheduleException(selectedRepId, selectedMonth);
+    setHasDeadlineException(true);
   };
   const handleReset = async () => {
     if (
@@ -911,25 +932,39 @@ export function ScheduleClient({
           </div>
         )}
         {isPastDeadline && !isLocked && (
-          <div className="rounded-lg border border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-900/40 p-3 flex items-center gap-3">
-            <span className="text-lg">⏰</span>
-            <div>
-              <p className="text-sm font-semibold text-blue-800 dark:text-blue-300">
-                Submission Deadline Passed
-              </p>
-              <p className="text-xs text-blue-600 dark:text-blue-400">
-                The 45-day deadline for {monthName} was{" "}
-                {deadlineDate.toLocaleDateString("en-US", {
-                  month: "long",
-                  day: "numeric",
-                  year: "numeric",
-                })}
-                .
-                {isAdmin
-                  ? " You can still edit as admin."
-                  : " Schedule has been unlocked by admin — you can make changes."}
-              </p>
+          <div className="rounded-lg border border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-900/40 p-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <span className="text-lg">⏰</span>
+              <div>
+                <p className="text-sm font-semibold text-blue-800 dark:text-blue-300">
+                  Submission Deadline Passed
+                </p>
+                <p className="text-xs text-blue-600 dark:text-blue-400">
+                  The 45-day deadline for {monthName} was{" "}
+                  {deadlineDate.toLocaleDateString("en-US", {
+                    month: "long",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                  .
+                  {isAdmin
+                    ? " You can still edit as admin."
+                    : " Schedule has been unlocked by admin — you can make changes."}
+                  {hasDeadlineException &&
+                    " This rep has been granted a late-submission exception — their own schedule link is open for this month."}
+                </p>
+              </div>
             </div>
+            {isAdmin && !hasDeadlineException && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs text-blue-700 border-blue-400 shrink-0"
+                onClick={handleGrantException}
+              >
+                Grant Exception
+              </Button>
+            )}
           </div>
         )}
         {daysUntilDeadline >= 0 && daysUntilDeadline <= 15 && !isLocked && (

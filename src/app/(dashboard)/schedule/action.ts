@@ -245,6 +245,43 @@ export async function unlockSchedule(repId: number, yearMonth: string) {
   );
 }
 
+export async function getScheduleDeadlineException(
+  repId: number,
+  yearMonth: string,
+): Promise<boolean> {
+  const { rows } = await db.query(
+    "SELECT 1 FROM rep_schedule_deadline_exceptions WHERE rep_id = $1 AND year_month = $2",
+    [repId, yearMonth],
+  );
+  return rows.length > 0;
+}
+
+/**
+ * Grant a rep a one-time exception to submit their own schedule past the
+ * self-service 45-day deadline for one specific month, instead of staff
+ * entering it on their behalf. No expiry: once the rep locks their
+ * schedule, the normal schedule_locked guard takes back over on its own.
+ */
+export async function grantScheduleException(repId: number, yearMonth: string) {
+  const { requireAuth } = await import("@/lib/session");
+  const session = await requireAuth();
+  await db.query(
+    `INSERT INTO rep_schedule_deadline_exceptions (rep_id, year_month, granted_by)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (rep_id, year_month) DO NOTHING`,
+    [repId, yearMonth, session.user.id ?? null],
+  );
+  const { logAction } = await import("@/lib/activity-log");
+  const { rows } = await db.query(
+    "SELECT name FROM representatives WHERE id = $1",
+    [repId],
+  );
+  await logAction(
+    "schedule_updated",
+    `${rows[0]?.name || "Unknown"} granted a late-submission exception for ${yearMonth}`,
+  );
+}
+
 export async function resetSchedule(repId: number, yearMonth: string) {
   const firstDay = `${yearMonth}-01`;
   const lastDayDate = new Date(
