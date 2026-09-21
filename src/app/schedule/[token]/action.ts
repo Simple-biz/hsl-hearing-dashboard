@@ -1,6 +1,6 @@
 "use server";
 
-import { db } from "@/lib/db";
+import { db, dbTransactionPlain } from "@/lib/db";
 import { compare } from "bcryptjs";
 
 export interface PublicRepInfo {
@@ -209,50 +209,55 @@ export async function savePublicAvailability(
   const lastDayDate = new Date(yr, mo, 0);
   const lastDay = `${yearMonth}-${String(lastDayDate.getDate()).padStart(2, "0")}`;
 
-  await db.query(
-    "DELETE FROM rep_availability WHERE rep_id = $1 AND availability_date BETWEEN $2 AND $3",
-    [repId, firstDay, lastDay],
-  );
-
-  for (const day of days) {
-    const isAvailable = day.type !== "unavailable";
-    const availType =
-      day.type === "unavailable"
-        ? "full_day"
-        : day.type === "custom_time"
-          ? "full_day"
-          : day.type;
-    const timeSlots =
-      day.type === "custom_time" && day.timeSlots
-        ? JSON.stringify(day.timeSlots)
-        : null;
-
-    await db.query(
-      `INSERT INTO rep_availability (rep_id, availability_date, is_available, availability_type, time_slots, schedule_locked)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [repId, day.date, isAvailable, availType, timeSlots, lockSchedule],
+  // Delete-then-rebuild is only safe as one transaction -- otherwise a
+  // failure partway through the inserts (a crash, a bad value) leaves the
+  // month's prior data gone with nothing written to replace it.
+  await dbTransactionPlain(async (tx) => {
+    await tx.query(
+      "DELETE FROM rep_availability WHERE rep_id = $1 AND availability_date BETWEEN $2 AND $3",
+      [repId, firstDay, lastDay],
     );
-  }
 
-  if (lockSchedule) {
-    const daysInMonth = lastDayDate.getDate();
-    const setDates = new Set(days.map((d) => d.date));
-    const todayStr = new Date().toISOString().split("T")[0];
+    for (const day of days) {
+      const isAvailable = day.type !== "unavailable";
+      const availType =
+        day.type === "unavailable"
+          ? "full_day"
+          : day.type === "custom_time"
+            ? "full_day"
+            : day.type;
+      const timeSlots =
+        day.type === "custom_time" && day.timeSlots
+          ? JSON.stringify(day.timeSlots)
+          : null;
 
-    for (let d = 1; d <= daysInMonth; d++) {
-      const dateStr = `${yearMonth}-${String(d).padStart(2, "0")}`;
-      if (setDates.has(dateStr) || dateStr < todayStr) continue;
-      const dow = new Date(yr, mo - 1, d).getDay();
-      if (dow === 0 || dow === 6) continue;
-
-      await db.query(
-        `INSERT INTO rep_availability (rep_id, availability_date, is_available, availability_type, schedule_locked)
-         VALUES ($1, $2, false, 'full_day', true)
-         ON CONFLICT (rep_id, availability_date) DO NOTHING`,
-        [repId, dateStr],
+      await tx.query(
+        `INSERT INTO rep_availability (rep_id, availability_date, is_available, availability_type, time_slots, schedule_locked)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [repId, day.date, isAvailable, availType, timeSlots, lockSchedule],
       );
     }
-  }
+
+    if (lockSchedule) {
+      const daysInMonth = lastDayDate.getDate();
+      const setDates = new Set(days.map((d) => d.date));
+      const todayStr = new Date().toISOString().split("T")[0];
+
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dateStr = `${yearMonth}-${String(d).padStart(2, "0")}`;
+        if (setDates.has(dateStr) || dateStr < todayStr) continue;
+        const dow = new Date(yr, mo - 1, d).getDay();
+        if (dow === 0 || dow === 6) continue;
+
+        await tx.query(
+          `INSERT INTO rep_availability (rep_id, availability_date, is_available, availability_type, schedule_locked)
+           VALUES ($1, $2, false, 'full_day', true)
+           ON CONFLICT (rep_id, availability_date) DO NOTHING`,
+          [repId, dateStr],
+        );
+      }
+    }
+  });
 }
 
 export async function resetPublicSchedule(repId: number, yearMonth: string) {

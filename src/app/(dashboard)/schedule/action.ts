@@ -1,6 +1,6 @@
 "use server";
 
-import { db } from "@/lib/db";
+import { db, dbTransactionPlain } from "@/lib/db";
 import { excludeWithdrawnSql } from "@/lib/hearing-filters";
 
 export interface AvailabilityDay {
@@ -158,57 +158,62 @@ export async function saveAvailability(
   );
   const lastDay = `${yearMonth}-${String(lastDayDate.getDate()).padStart(2, "0")}`;
 
-  // Delete existing records for this month
-  await db.query(
-    "DELETE FROM rep_availability WHERE rep_id = $1 AND availability_date BETWEEN $2 AND $3",
-    [repId, firstDay, lastDay],
-  );
-
-  // Insert new records
-  for (const day of days) {
-    const isAvailable = day.type !== "unavailable";
-    const availType =
-      day.type === "unavailable"
-        ? "full_day"
-        : day.type === "custom_time"
-          ? "full_day"
-          : day.type;
-    const timeSlots =
-      day.type === "custom_time" && day.timeSlots
-        ? JSON.stringify(day.timeSlots)
-        : null;
-
-    await db.query(
-      `INSERT INTO rep_availability (rep_id, availability_date, is_available, availability_type, time_slots, schedule_locked)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [repId, day.date, isAvailable, availType, timeSlots, lockSchedule],
+  // Delete-then-rebuild is only safe as one transaction -- otherwise a
+  // failure partway through the inserts (a crash, a bad value) leaves the
+  // month's prior data gone with nothing written to replace it.
+  await dbTransactionPlain(async (tx) => {
+    // Delete existing records for this month
+    await tx.query(
+      "DELETE FROM rep_availability WHERE rep_id = $1 AND availability_date BETWEEN $2 AND $3",
+      [repId, firstDay, lastDay],
     );
-  }
 
-  // If locking, also insert unavailable for unset business days
-  if (lockSchedule) {
-    const daysInMonth = lastDayDate.getDate();
-    const setDates = new Set(days.map((d) => d.date));
+    // Insert new records
+    for (const day of days) {
+      const isAvailable = day.type !== "unavailable";
+      const availType =
+        day.type === "unavailable"
+          ? "full_day"
+          : day.type === "custom_time"
+            ? "full_day"
+            : day.type;
+      const timeSlots =
+        day.type === "custom_time" && day.timeSlots
+          ? JSON.stringify(day.timeSlots)
+          : null;
 
-    for (let d = 1; d <= daysInMonth; d++) {
-      const dateStr = `${yearMonth}-${String(d).padStart(2, "0")}`;
-      if (setDates.has(dateStr)) continue;
-      const dow = new Date(
-        parseInt(yearMonth.split("-")[0]),
-        parseInt(yearMonth.split("-")[1]) - 1,
-        d,
-      ).getDay();
-      if (dow === 0 || dow === 6) continue; // Skip weekends
-      if (dateStr < new Date().toISOString().split("T")[0]) continue; // Skip past
-
-      await db.query(
-        `INSERT INTO rep_availability (rep_id, availability_date, is_available, availability_type, schedule_locked)
-         VALUES ($1, $2, false, 'full_day', true)
-         ON CONFLICT (rep_id, availability_date) DO NOTHING`,
-        [repId, dateStr],
+      await tx.query(
+        `INSERT INTO rep_availability (rep_id, availability_date, is_available, availability_type, time_slots, schedule_locked)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [repId, day.date, isAvailable, availType, timeSlots, lockSchedule],
       );
     }
-  }
+
+    // If locking, also insert unavailable for unset business days
+    if (lockSchedule) {
+      const daysInMonth = lastDayDate.getDate();
+      const setDates = new Set(days.map((d) => d.date));
+
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dateStr = `${yearMonth}-${String(d).padStart(2, "0")}`;
+        if (setDates.has(dateStr)) continue;
+        const dow = new Date(
+          parseInt(yearMonth.split("-")[0]),
+          parseInt(yearMonth.split("-")[1]) - 1,
+          d,
+        ).getDay();
+        if (dow === 0 || dow === 6) continue; // Skip weekends
+        if (dateStr < new Date().toISOString().split("T")[0]) continue; // Skip past
+
+        await tx.query(
+          `INSERT INTO rep_availability (rep_id, availability_date, is_available, availability_type, schedule_locked)
+           VALUES ($1, $2, false, 'full_day', true)
+           ON CONFLICT (rep_id, availability_date) DO NOTHING`,
+          [repId, dateStr],
+        );
+      }
+    }
+  });
   const { logAction } = await import("@/lib/activity-log");
   const { rows: repRows } = await db.query(
     "SELECT name FROM representatives WHERE id = $1",
