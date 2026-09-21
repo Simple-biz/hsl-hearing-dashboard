@@ -147,34 +147,3 @@ export async function dbTransaction<T>(
     client.release();
   }
 }
-
-/**
- * Run multiple queries in a single transaction, no RLS context. For callers
- * with no authenticated `users` session to scope -- e.g. the rep-token
- * schedule endpoints, which already use plain `db.query()` (RLS bypass) for
- * every other rep_availability read/write.
- *
- * Usage:
- *   await dbTransactionPlain(async (client) => {
- *     await client.query('DELETE FROM rep_availability WHERE ...')
- *     await client.query('INSERT INTO rep_availability ...')
- *   })
- */
-export async function dbTransactionPlain<T>(
-  callback: (client: {
-    query: (text: string, params?: unknown[]) => Promise<{ rows: T[] }>;
-  }) => Promise<T>,
-): Promise<T> {
-  const client = await getPool().connect();
-  try {
-    await client.query("BEGIN");
-    const result = await callback(client);
-    await client.query("COMMIT");
-    return result;
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
-}

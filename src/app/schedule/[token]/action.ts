@@ -1,6 +1,6 @@
 "use server";
 
-import { db, dbTransactionPlain } from "@/lib/db";
+import { db } from "@/lib/db";
 import { compare } from "bcryptjs";
 
 export interface PublicRepInfo {
@@ -209,55 +209,63 @@ export async function savePublicAvailability(
   const lastDayDate = new Date(yr, mo, 0);
   const lastDay = `${yearMonth}-${String(lastDayDate.getDate()).padStart(2, "0")}`;
 
-  // Delete-then-rebuild is only safe as one transaction -- otherwise a
-  // failure partway through the inserts (a crash, a bad value) leaves the
-  // month's prior data gone with nothing written to replace it.
-  await dbTransactionPlain(async (tx) => {
-    await tx.query(
-      "DELETE FROM rep_availability WHERE rep_id = $1 AND availability_date BETWEEN $2 AND $3",
-      [repId, firstDay, lastDay],
+  // Delete-then-rebuild as one CTE statement, matching the codebase's own
+  // atomic bulk-write convention (the archive CTE, and the unnest-based
+  // bulk insert in post-hrg-development/actions.ts) instead of a
+  // hand-rolled multi-statement transaction. The old per-row insert loop
+  // could fail partway through and leave the delete committed with
+  // nothing written back, silently wiping the rep's month; a single
+  // statement can't fail "partway."
+  const dates = days.map((d) => d.date);
+  const isAvailableArr = days.map((d) => d.type !== "unavailable");
+  const availTypeArr = days.map((d) =>
+    d.type === "unavailable"
+      ? "full_day"
+      : d.type === "custom_time"
+        ? "full_day"
+        : d.type,
+  );
+  const timeSlotsArr = days.map((d) =>
+    d.type === "custom_time" && d.timeSlots
+      ? JSON.stringify(d.timeSlots)
+      : null,
+  );
+
+  await db.query(
+    `WITH deleted AS (
+       DELETE FROM rep_availability WHERE rep_id = $1 AND availability_date BETWEEN $2 AND $3
+     )
+     INSERT INTO rep_availability (rep_id, availability_date, is_available, availability_type, time_slots, schedule_locked)
+     SELECT $1, d.date, d.is_available, d.availability_type, d.time_slots, $4
+     FROM unnest($5::date[], $6::boolean[], $7::availability_type[], $8::text[])
+       AS d(date, is_available, availability_type, time_slots)`,
+    [
+      repId,
+      firstDay,
+      lastDay,
+      lockSchedule,
+      dates,
+      isAvailableArr,
+      availTypeArr,
+      timeSlotsArr,
+    ],
+  );
+
+  if (lockSchedule) {
+    const setDates = days.map((d) => d.date);
+    const todayStr = new Date().toISOString().split("T")[0];
+
+    await db.query(
+      `INSERT INTO rep_availability (rep_id, availability_date, is_available, availability_type, schedule_locked)
+       SELECT $1, gs::date, false, 'full_day', true
+       FROM generate_series($2::date, $3::date, interval '1 day') AS gs
+       WHERE EXTRACT(DOW FROM gs) NOT IN (0, 6)
+         AND gs::date >= $4::date
+         AND NOT (gs::date = ANY($5::date[]))
+       ON CONFLICT (rep_id, availability_date) DO NOTHING`,
+      [repId, firstDay, lastDay, todayStr, setDates],
     );
-
-    for (const day of days) {
-      const isAvailable = day.type !== "unavailable";
-      const availType =
-        day.type === "unavailable"
-          ? "full_day"
-          : day.type === "custom_time"
-            ? "full_day"
-            : day.type;
-      const timeSlots =
-        day.type === "custom_time" && day.timeSlots
-          ? JSON.stringify(day.timeSlots)
-          : null;
-
-      await tx.query(
-        `INSERT INTO rep_availability (rep_id, availability_date, is_available, availability_type, time_slots, schedule_locked)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [repId, day.date, isAvailable, availType, timeSlots, lockSchedule],
-      );
-    }
-
-    if (lockSchedule) {
-      const daysInMonth = lastDayDate.getDate();
-      const setDates = new Set(days.map((d) => d.date));
-      const todayStr = new Date().toISOString().split("T")[0];
-
-      for (let d = 1; d <= daysInMonth; d++) {
-        const dateStr = `${yearMonth}-${String(d).padStart(2, "0")}`;
-        if (setDates.has(dateStr) || dateStr < todayStr) continue;
-        const dow = new Date(yr, mo - 1, d).getDay();
-        if (dow === 0 || dow === 6) continue;
-
-        await tx.query(
-          `INSERT INTO rep_availability (rep_id, availability_date, is_available, availability_type, schedule_locked)
-           VALUES ($1, $2, false, 'full_day', true)
-           ON CONFLICT (rep_id, availability_date) DO NOTHING`,
-          [repId, dateStr],
-        );
-      }
-    }
-  });
+  }
 }
 
 export async function resetPublicSchedule(repId: number, yearMonth: string) {
