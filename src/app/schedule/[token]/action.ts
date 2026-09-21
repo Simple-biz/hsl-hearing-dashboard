@@ -239,12 +239,22 @@ export async function savePublicAvailability(
   await db.query(
     `WITH deleted AS (
        DELETE FROM rep_availability WHERE rep_id = $1 AND availability_date BETWEEN $2 AND $3
+       RETURNING 1
      ),
      inserted AS (
        INSERT INTO rep_availability (rep_id, availability_date, is_available, availability_type, time_slots, schedule_locked)
        SELECT $1, d.date, d.is_available, d.availability_type, d.time_slots, $4
        FROM unnest($5::date[], $6::boolean[], $7::availability_type[], $8::text[])
          AS d(date, is_available, availability_type, time_slots)
+       -- Sibling writable CTEs with no data dependency run in an
+       -- unspecified order (per Postgres docs), so without this the
+       -- insert's unique-constraint check can race the delete and throw
+       -- on every re-save of an already-populated month. count(*) is
+       -- always exactly one row, 0 or more, so this never filters out a
+       -- day -- it only forces "deleted" to run first, same as this
+       -- codebase's own archive CTE forcing its DELETE to depend on the
+       -- INSERT it's chained after.
+       WHERE (SELECT count(*) FROM deleted) >= 0
        RETURNING availability_date
      )
      INSERT INTO rep_availability (rep_id, availability_date, is_available, availability_type, schedule_locked)
