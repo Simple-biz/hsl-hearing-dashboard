@@ -207,3 +207,31 @@ directly to `dev-env`, no branch/PR).
 a real collision-risk recon before the first line of code was written, two rounds of user testing
 that each surfaced a genuine issue (a stale-banner-flash bug and a wrong-page mix-up requiring
 log-based diagnosis), and a scope expansion mid-task once the public page's role became clear.*
+
+---
+
+ST11: Extract shared saveRepAvailabilityMonth helper | Estimated 2 SP | Actual 2 SP | Completed 2026-09-22
+
+Closed out the two remaining cleanup findings from PR #332's final review pass. The ~68-line
+atomic-save CTE block landed identically in both `saveAvailability`
+(`(dashboard)/schedule/action.ts`) and `savePublicAvailability` (`[token]/action.ts`), flagged as
+a real risk given the same logic had already taken three review-driven revisions to get right —
+any future fix (a new `availability_type`, a timezone edge case, a schema change) would need to
+be remembered and applied correctly in both places, or the two save paths would silently
+diverge. Extracted into `src/lib/rep-schedule.ts` as `saveRepAvailabilityMonth(repId, yearMonth,
+days, lockSchedule)`, matching this codebase's existing per-domain helper convention
+(`src/lib/auto-assign.ts`: plain `db` import, no `"use server"` directive since it's called from
+server actions rather than being one itself). Both callers now delegate to it; dashboard keeps
+its own `logAction` call after, public keeps its own deadline-check gate (including the
+staff-granted exception check) before. Pure code movement, no logic change — confirmed the
+extracted query text is byte-identical to what was already exhaustively tested in ST9, then
+re-ran the critical case directly against `dev-env` (re-save of an already-populated,
+already-locked month) to confirm the extraction didn't silently introduce a copy-paste error.
+
+Commits: `0c2a256`, https://github.com/Simple-biz/hsl-hearing-dashboard/commit/0c2a256 (pushed
+directly to `dev-env`, no branch/PR — the two findings it closes were review feedback on an
+already-merged PR, not new scope needing its own review cycle).
+
+*2 SP: small, contained refactor across three files with no behavior change, but still re-verified
+against `dev-env` rather than assumed correct from the diff, given how failure-prone this exact
+logic had already proven across ST9's four revisions.*
