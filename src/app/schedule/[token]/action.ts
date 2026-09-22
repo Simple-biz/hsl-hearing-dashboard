@@ -209,50 +209,74 @@ export async function savePublicAvailability(
   const lastDayDate = new Date(yr, mo, 0);
   const lastDay = `${yearMonth}-${String(lastDayDate.getDate()).padStart(2, "0")}`;
 
-  await db.query(
-    "DELETE FROM rep_availability WHERE rep_id = $1 AND availability_date BETWEEN $2 AND $3",
-    [repId, firstDay, lastDay],
-  );
-
-  for (const day of days) {
-    const isAvailable = day.type !== "unavailable";
-    const availType =
-      day.type === "unavailable"
+  // Delete, rebuild, and (if locking) fill the remaining unset business
+  // days -- all as one statement via chained writable CTEs, matching the
+  // codebase's own atomic bulk-write convention (the archive CTE, and the
+  // unnest-based bulk insert in post-hrg-development/actions.ts) instead
+  // of a hand-rolled multi-statement transaction. A prior revision of this
+  // fix left the explicit-day write and the lock-fill write as two
+  // separate statements, which could still land the month in a
+  // partially-locked state if a connection dropped between them; folding
+  // both into one statement closes that gap and also removes the need for
+  // a separate setDates array, since the lock-fill now excludes whatever
+  // the `inserted` CTE just wrote directly.
+  const dates = days.map((d) => d.date);
+  const isAvailableArr = days.map((d) => d.type !== "unavailable");
+  const availTypeArr = days.map((d) =>
+    d.type === "unavailable"
+      ? "full_day"
+      : d.type === "custom_time"
         ? "full_day"
-        : day.type === "custom_time"
-          ? "full_day"
-          : day.type;
-    const timeSlots =
-      day.type === "custom_time" && day.timeSlots
-        ? JSON.stringify(day.timeSlots)
-        : null;
+        : d.type,
+  );
+  const timeSlotsArr = days.map((d) =>
+    d.type === "custom_time" && d.timeSlots
+      ? JSON.stringify(d.timeSlots)
+      : null,
+  );
+  const todayStr = new Date().toISOString().split("T")[0];
 
-    await db.query(
-      `INSERT INTO rep_availability (rep_id, availability_date, is_available, availability_type, time_slots, schedule_locked)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [repId, day.date, isAvailable, availType, timeSlots, lockSchedule],
-    );
-  }
-
-  if (lockSchedule) {
-    const daysInMonth = lastDayDate.getDate();
-    const setDates = new Set(days.map((d) => d.date));
-    const todayStr = new Date().toISOString().split("T")[0];
-
-    for (let d = 1; d <= daysInMonth; d++) {
-      const dateStr = `${yearMonth}-${String(d).padStart(2, "0")}`;
-      if (setDates.has(dateStr) || dateStr < todayStr) continue;
-      const dow = new Date(yr, mo - 1, d).getDay();
-      if (dow === 0 || dow === 6) continue;
-
-      await db.query(
-        `INSERT INTO rep_availability (rep_id, availability_date, is_available, availability_type, schedule_locked)
-         VALUES ($1, $2, false, 'full_day', true)
-         ON CONFLICT (rep_id, availability_date) DO NOTHING`,
-        [repId, dateStr],
-      );
-    }
-  }
+  await db.query(
+    `WITH deleted AS (
+       DELETE FROM rep_availability WHERE rep_id = $1 AND availability_date BETWEEN $2 AND $3
+       RETURNING 1
+     ),
+     inserted AS (
+       INSERT INTO rep_availability (rep_id, availability_date, is_available, availability_type, time_slots, schedule_locked)
+       SELECT $1, d.date, d.is_available, d.availability_type, d.time_slots, $4
+       FROM unnest($5::date[], $6::boolean[], $7::availability_type[], $8::text[])
+         AS d(date, is_available, availability_type, time_slots)
+       -- Sibling writable CTEs with no data dependency run in an
+       -- unspecified order (per Postgres docs), so without this the
+       -- insert's unique-constraint check can race the delete and throw
+       -- on every re-save of an already-populated month. count(*) is
+       -- always exactly one row, 0 or more, so this never filters out a
+       -- day -- it only forces "deleted" to run first, same as this
+       -- codebase's own archive CTE forcing its DELETE to depend on the
+       -- INSERT it's chained after.
+       WHERE (SELECT count(*) FROM deleted) >= 0
+       RETURNING availability_date
+     )
+     INSERT INTO rep_availability (rep_id, availability_date, is_available, availability_type, schedule_locked)
+     SELECT $1, gs::date, false, 'full_day', true
+     FROM generate_series($2::date, $3::date, interval '1 day') AS gs
+     WHERE $4
+       AND EXTRACT(DOW FROM gs) NOT IN (0, 6)
+       AND gs::date >= $9::date
+       AND gs::date NOT IN (SELECT availability_date FROM inserted)
+     ON CONFLICT (rep_id, availability_date) DO NOTHING`,
+    [
+      repId,
+      firstDay,
+      lastDay,
+      lockSchedule,
+      dates,
+      isAvailableArr,
+      availTypeArr,
+      timeSlotsArr,
+      todayStr,
+    ],
+  );
 }
 
 export async function resetPublicSchedule(repId: number, yearMonth: string) {
