@@ -164,3 +164,46 @@ https://github.com/Simple-biz/hsl-hearing-dashboard/pull/332; merge commit `7b07
 which caught a bug that would have broken re-saving any already-populated schedule in production,
 each verified with live queries against `dev-env` rather than trusted from the diff alone —
 exactly the kind of task the doctrine's own bias note says to size higher than first instinct.*
+
+---
+
+ST10: Wire up toast confirmations app-wide | Estimated 3 SP | Actual 3 SP | Completed 2026-09-22
+
+Recon before touching anything found `src/components/ui/sonner.tsx`'s `<Toaster/>` — a themed
+wrapper around the `sonner` package, reading light/dark from `next-themes` — was never mounted
+anywhere in `src/app`, despite two files (`representative-docs-client.tsx`,
+`rep-docs-notes-panel.tsx`) already calling `toast()`/`toast.success()`/`toast.error()`; those
+calls had been silently doing nothing since the Rep Docs page shipped. Also found, before
+mounting anything globally, that `dashboard-client.tsx` already anchors a full-width bulk-action
+bar (`fixed bottom-0 left-0 right-0`) and an auto-assign status box (`fixed bottom-6 right-6`) to
+the bottom of the Hearing Dashboard page — Sonner's default corner — so the Toaster was first
+mounted at `position="top-right"` to sidestep both; per Benedict's explicit follow-up request,
+moved to `position="bottom-right"` instead, accepting that known overlap risk on the Hearing
+Dashboard page specifically. Mounted inside `<ThemeProvider>` in `src/app/layout.tsx`, alongside
+`<AuthProvider>{children}</AuthProvider>`, since the wrapper needs theme context. Dashboard
+Schedule page (`(dashboard)/schedule/schedule-client.tsx`) had no save/action feedback at all;
+wrapped `handleSave`, `handleUnlock`, `handleGrantException`, and `handleReset` in try/catch with
+`toast.success()`/`toast.error()`, matching the Rep Docs page's exact pattern. User testing
+surfaced a second instance of ST8's stale-banner-flash bug, this time on the dashboard side: the
+`hasDeadlineException` fetch (a separate `useEffect` keyed on `[selectedRepId, selectedMonth]`,
+not part of `loadData`) had no loading gate, so switching reps/months could briefly show the
+previous selection's exception banner. Fixed with a new `exceptionLoading` flag, same shape as
+ST8's public-page `monthLoading` guard. A second round of testing revealed the "toasts don't
+appear" report was neither a Toaster-mounting bug nor a positioning issue — dev server terminal
+logs showed the test traffic hitting `/schedule/[token]` (the public rep-facing page, identical
+button labels to the dashboard: "Lock Schedule", "Save Draft", "Reset") rather than `/schedule`
+(dashboard) — confirmed by screenshot. That page was out of the original scope, since it already
+had its own separate inline `message`/`setMessage` banner predating this task; per Benedict's
+explicit call that it should have been in scope from the start, removed that banner system
+entirely (state, JSX block, both `setMessage` call sites) and replaced `handleSave`/`handleReset`
+with the same `toast.success()`/`toast.error()` pattern, for full consistency across every
+action-confirmation surface in the app. Both the dashboard and public paths confirmed working
+directly by the user before commit.
+
+Commits: `6591d67`, https://github.com/Simple-biz/hsl-hearing-dashboard/commit/6591d67 (pushed
+directly to `dev-env`, no branch/PR).
+
+*3 SP: three files touched including a full removal-and-replacement of an existing UI pattern,
+a real collision-risk recon before the first line of code was written, two rounds of user testing
+that each surfaced a genuine issue (a stale-banner-flash bug and a wrong-page mix-up requiring
+log-based diagnosis), and a scope expansion mid-task once the public page's role became clear.*
