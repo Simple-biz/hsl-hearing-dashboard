@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo, useCallback } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -138,7 +139,6 @@ export function PublicScheduleClient({
   const [monthLoading, setMonthLoading] = useState(false);
   const [edits, setEdits] = useState<Record<string, DayState>>({});
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState("");
 
   // Download hearing list as CSV, for a rep-picked month range
   const [downloadStart, setDownloadStart] = useState(selectedMonth);
@@ -320,7 +320,6 @@ export function PublicScheduleClient({
   const handleSave = async (lock: boolean) => {
     if (!rep) return;
     setSaving(true);
-    setMessage("");
     try {
       const days = Object.entries(edits).map(([date, s]) => ({
         date,
@@ -328,14 +327,12 @@ export function PublicScheduleClient({
         timeSlots: s.timeSlots,
       }));
       await savePublicAvailability(rep.id, selectedMonth, days, lock);
-      setMessage(
-        lock
-          ? "🔒 Schedule locked successfully!"
-          : "💾 Schedule saved successfully!",
+      toast.success(
+        lock ? "Schedule locked successfully!" : "Schedule saved successfully!",
       );
       await loadData(rep.id, selectedMonth);
     } catch (e) {
-      setMessage(e instanceof Error ? `⚠️ ${e.message}` : "Error saving");
+      toast.error(e instanceof Error ? e.message : "Error saving schedule");
     }
     setSaving(false);
   };
@@ -344,9 +341,9 @@ export function PublicScheduleClient({
     try {
       await resetPublicSchedule(rep.id, selectedMonth);
       await loadData(rep.id, selectedMonth);
-      setMessage("🔄 Schedule reset");
+      toast.success("Schedule reset");
     } catch (e) {
-      setMessage(e instanceof Error ? `⚠️ ${e.message}` : "Error");
+      toast.error(e instanceof Error ? e.message : "Error resetting schedule");
     }
   };
 
@@ -462,19 +459,6 @@ export function PublicScheduleClient({
             your selected timezone.
           </p>
         </div>
-        {message && (
-          <div
-            className={cn(
-              "rounded-lg border p-3 text-sm",
-              message.startsWith("⚠️")
-                ? "border-red-200 bg-red-50 text-red-700"
-                : "border-emerald-200 bg-emerald-50 text-emerald-700",
-            )}
-          >
-            {message}
-          </div>
-        )}
-
         {/* Banners. Gated on !monthLoading so a month switch doesn't flash
             the previous month's lock/deadline state while loadData() is
             still in flight. */}

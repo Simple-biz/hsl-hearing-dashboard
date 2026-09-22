@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { toast } from "sonner";
 
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { AppHeader } from "@/components/layout/app-header";
@@ -156,6 +157,7 @@ export function ScheduleClient({
   const [hearings, setHearings] = useState(initialHearings);
   const [holidays, setHolidays] = useState(initialHolidays);
   const [hasDeadlineException, setHasDeadlineException] = useState(false);
+  const [exceptionLoading, setExceptionLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // Download hearing list as CSV, for a staff-picked month range
@@ -236,11 +238,18 @@ export function ScheduleClient({
 
   // Exception status isn't part of the server-provided initial props, so it's
   // kept in its own effect rather than threaded through loadData's callers.
+  // Gated behind exceptionLoading so the deadline banner doesn't flash the
+  // previous rep/month's exception state while this fetch is in flight --
+  // same fix as the public schedule page's monthLoading guard.
   useEffect(() => {
     let cancelled = false;
+    setExceptionLoading(true);
     getScheduleDeadlineException(selectedRepId, selectedMonth).then(
       (has) => {
-        if (!cancelled) setHasDeadlineException(has);
+        if (!cancelled) {
+          setHasDeadlineException(has);
+          setExceptionLoading(false);
+        }
       },
     );
     return () => {
@@ -352,25 +361,46 @@ export function ScheduleClient({
       type: s.type === "unset" ? "unavailable" : s.type,
       timeSlots: s.timeSlots,
     }));
-    await saveAvailability(selectedRepId, selectedMonth, days, lock);
-    await loadData(selectedRepId, selectedMonth);
-    setSaving(false);
+    try {
+      await saveAvailability(selectedRepId, selectedMonth, days, lock);
+      await loadData(selectedRepId, selectedMonth);
+      toast.success(lock ? "Schedule locked" : "Schedule saved");
+    } catch {
+      toast.error(lock ? "Failed to lock schedule" : "Failed to save schedule");
+    } finally {
+      setSaving(false);
+    }
   };
   const handleUnlock = async () => {
-    await unlockSchedule(selectedRepId, selectedMonth);
-    await loadData(selectedRepId, selectedMonth);
+    try {
+      await unlockSchedule(selectedRepId, selectedMonth);
+      await loadData(selectedRepId, selectedMonth);
+      toast.success("Schedule unlocked");
+    } catch {
+      toast.error("Failed to unlock schedule");
+    }
   };
   const handleGrantException = async () => {
-    await grantScheduleException(selectedRepId, selectedMonth);
-    setHasDeadlineException(true);
+    try {
+      await grantScheduleException(selectedRepId, selectedMonth);
+      setHasDeadlineException(true);
+      toast.success("Exception granted");
+    } catch {
+      toast.error("Failed to grant exception");
+    }
   };
   const handleReset = async () => {
     if (
       !confirm("Reset all availability for this month? This cannot be undone.")
     )
       return;
-    await resetSchedule(selectedRepId, selectedMonth);
-    await loadData(selectedRepId, selectedMonth);
+    try {
+      await resetSchedule(selectedRepId, selectedMonth);
+      await loadData(selectedRepId, selectedMonth);
+      toast.success("Schedule reset");
+    } catch {
+      toast.error("Failed to reset schedule");
+    }
   };
 
   // ═════════ DEFAULT SCHEDULE TEMPLATE ═════════
@@ -931,7 +961,7 @@ export function ScheduleClient({
             )}
           </div>
         )}
-        {isPastDeadline && !isLocked && (
+        {!exceptionLoading && isPastDeadline && !isLocked && (
           <div className="rounded-lg border border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-900/40 p-3 flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <span className="text-lg">⏰</span>
