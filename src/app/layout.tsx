@@ -3,6 +3,7 @@ import { IBM_Plex_Mono, Inter } from "next/font/google";
 
 import { ThemeProvider } from "@/components/theme-provider";
 import { AuthProvider } from "@/components/auth-provider";
+import { Toaster } from "@/components/ui/sonner";
 import { FONT_SIZE_BOOT_SCRIPT } from "@/lib/font-size";
 
 import "./globals.css";
@@ -46,6 +47,11 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <AuthProvider>{children}</AuthProvider>
+          {/* bottom-right, per explicit request. Note: dashboard-client.tsx
+              already anchors a full-width bulk-action bar and an
+              auto-assign status box to this same corner on the Hearing
+              Dashboard page -- known, accepted overlap risk there. */}
+          <Toaster position="bottom-right" />
         </ThemeProvider>
       </body>
     </html>

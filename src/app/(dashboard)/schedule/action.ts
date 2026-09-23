@@ -2,6 +2,7 @@
 
 import { db } from "@/lib/db";
 import { excludeWithdrawnSql } from "@/lib/hearing-filters";
+import { saveRepAvailabilityMonth } from "@/lib/rep-schedule";
 
 export interface AvailabilityDay {
   date: string;
@@ -150,65 +151,7 @@ export async function saveAvailability(
   }[],
   lockSchedule: boolean,
 ) {
-  const firstDay = `${yearMonth}-01`;
-  const lastDayDate = new Date(
-    parseInt(yearMonth.split("-")[0]),
-    parseInt(yearMonth.split("-")[1]),
-    0,
-  );
-  const lastDay = `${yearMonth}-${String(lastDayDate.getDate()).padStart(2, "0")}`;
-
-  // Delete existing records for this month
-  await db.query(
-    "DELETE FROM rep_availability WHERE rep_id = $1 AND availability_date BETWEEN $2 AND $3",
-    [repId, firstDay, lastDay],
-  );
-
-  // Insert new records
-  for (const day of days) {
-    const isAvailable = day.type !== "unavailable";
-    const availType =
-      day.type === "unavailable"
-        ? "full_day"
-        : day.type === "custom_time"
-          ? "full_day"
-          : day.type;
-    const timeSlots =
-      day.type === "custom_time" && day.timeSlots
-        ? JSON.stringify(day.timeSlots)
-        : null;
-
-    await db.query(
-      `INSERT INTO rep_availability (rep_id, availability_date, is_available, availability_type, time_slots, schedule_locked)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [repId, day.date, isAvailable, availType, timeSlots, lockSchedule],
-    );
-  }
-
-  // If locking, also insert unavailable for unset business days
-  if (lockSchedule) {
-    const daysInMonth = lastDayDate.getDate();
-    const setDates = new Set(days.map((d) => d.date));
-
-    for (let d = 1; d <= daysInMonth; d++) {
-      const dateStr = `${yearMonth}-${String(d).padStart(2, "0")}`;
-      if (setDates.has(dateStr)) continue;
-      const dow = new Date(
-        parseInt(yearMonth.split("-")[0]),
-        parseInt(yearMonth.split("-")[1]) - 1,
-        d,
-      ).getDay();
-      if (dow === 0 || dow === 6) continue; // Skip weekends
-      if (dateStr < new Date().toISOString().split("T")[0]) continue; // Skip past
-
-      await db.query(
-        `INSERT INTO rep_availability (rep_id, availability_date, is_available, availability_type, schedule_locked)
-         VALUES ($1, $2, false, 'full_day', true)
-         ON CONFLICT (rep_id, availability_date) DO NOTHING`,
-        [repId, dateStr],
-      );
-    }
-  }
+  await saveRepAvailabilityMonth(repId, yearMonth, days, lockSchedule);
   const { logAction } = await import("@/lib/activity-log");
   const { rows: repRows } = await db.query(
     "SELECT name FROM representatives WHERE id = $1",
@@ -242,6 +185,43 @@ export async function unlockSchedule(repId: number, yearMonth: string) {
   await logAction(
     "schedule_updated",
     `${rr[0]?.name || "Unknown"} schedule unlocked for ${yearMonth}`,
+  );
+}
+
+export async function getScheduleDeadlineException(
+  repId: number,
+  yearMonth: string,
+): Promise<boolean> {
+  const { rows } = await db.query(
+    "SELECT 1 FROM rep_schedule_deadline_exceptions WHERE rep_id = $1 AND year_month = $2",
+    [repId, yearMonth],
+  );
+  return rows.length > 0;
+}
+
+/**
+ * Grant a rep a one-time exception to submit their own schedule past the
+ * self-service submission deadline for one specific month, instead of
+ * staff entering it on their behalf. No expiry: once the rep locks their
+ * schedule, the normal schedule_locked guard takes back over on its own.
+ */
+export async function grantScheduleException(repId: number, yearMonth: string) {
+  const { requireAuth } = await import("@/lib/session");
+  const session = await requireAuth();
+  await db.query(
+    `INSERT INTO rep_schedule_deadline_exceptions (rep_id, year_month, granted_by)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (rep_id, year_month) DO NOTHING`,
+    [repId, yearMonth, session.user.id ?? null],
+  );
+  const { logAction } = await import("@/lib/activity-log");
+  const { rows } = await db.query(
+    "SELECT name FROM representatives WHERE id = $1",
+    [repId],
+  );
+  await logAction(
+    "schedule_updated",
+    `${rows[0]?.name || "Unknown"} granted a late-submission exception for ${yearMonth}`,
   );
 }
 

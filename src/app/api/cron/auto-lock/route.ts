@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { getScheduleDeadline } from "@/lib/schedule-deadline";
 
 /**
  * Auto-Lock Schedules Cron
@@ -16,20 +17,17 @@ import { db } from "@/lib/db";
  * GET /api/cron/auto-lock?cron_key=SECRET
  */
 
-function getDeadlineForMonth(yearMonth: string): Date {
-  // Deadline is the 20th of 2 months prior to the scheduling month
-  const [year, month] = yearMonth.split("-").map(Number);
-  const deadlineMonth = month - 2;
-  const deadlineYear = deadlineMonth <= 0 ? year - 1 : year;
-  const adjustedMonth = deadlineMonth <= 0 ? deadlineMonth + 12 : deadlineMonth;
-  return new Date(deadlineYear, adjustedMonth - 1, 20);
-}
-
 function isDeadlinePassed(yearMonth: string): boolean {
-  const deadline = getDeadlineForMonth(yearMonth);
+  // Strictly greater-than, matching the rep-facing pages' "the deadline day
+  // itself still counts as open" convention ([token]/action.ts). Before
+  // this PR the cron and the rep pages computed different deadline dates
+  // from different formulas, so a >= vs > mismatch here was invisible --
+  // now that both reference the same day, >= would auto-lock a rep's
+  // schedule hours before the UI itself considers the day closed.
+  const deadline = getScheduleDeadline(yearMonth);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  return today >= deadline;
+  return today > deadline;
 }
 
 function getDefaultAvailable(repType: string): boolean {
@@ -60,6 +58,7 @@ export async function GET(request: Request) {
 
   let autoLocked = 0;
   let alreadyLocked = 0;
+  let exceptionSkipped = 0;
   let emailsSent = 0;
   let failed = 0;
   const errors: string[] = [];
@@ -121,6 +120,20 @@ export async function GET(request: Request) {
 
           if (lockCheck[0]?.locked_count > 0) {
             alreadyLocked++;
+            continue;
+          }
+
+          // Don't auto-lock a rep who's been granted a late-submission
+          // exception for this month -- otherwise the very next nightly
+          // run after staff grants one silently wipes it out, since an
+          // exception is only ever granted once the deadline has already
+          // passed (the same condition that makes isDeadlinePassed true).
+          const { rows: exceptionRows } = await db.query(
+            "SELECT 1 FROM rep_schedule_deadline_exceptions WHERE rep_id = $1 AND year_month = $2",
+            [rep.id, targetMonth],
+          );
+          if (exceptionRows.length > 0) {
+            exceptionSkipped++;
             continue;
           }
 
@@ -236,7 +249,7 @@ export async function GET(request: Request) {
       "INSERT INTO activity_log (user_id, action, description) VALUES (NULL, $1, $2)",
       [
         "auto_lock_cron",
-        `Auto-lock cron: ${autoLocked} locked, ${alreadyLocked} already locked, ${emailsSent} emails, ${failed} failed`,
+        `Auto-lock cron: ${autoLocked} locked, ${alreadyLocked} already locked, ${exceptionSkipped} skipped (exception), ${emailsSent} emails, ${failed} failed`,
       ],
     );
 
@@ -244,6 +257,7 @@ export async function GET(request: Request) {
       success: true,
       autoLocked,
       alreadyLocked,
+      exceptionSkipped,
       emailsSent,
       failed,
       errors: errors.length > 0 ? errors : undefined,

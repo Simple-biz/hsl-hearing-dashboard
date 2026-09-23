@@ -1,6 +1,8 @@
 "use server";
 
 import { db } from "@/lib/db";
+import { saveRepAvailabilityMonth } from "@/lib/rep-schedule";
+import { getScheduleDeadline } from "@/lib/schedule-deadline";
 import { compare } from "bcryptjs";
 
 export interface PublicRepInfo {
@@ -166,6 +168,18 @@ export async function getPublicHolidays(
   return map;
 }
 
+/** Staff-granted exception letting a rep submit past the submission deadline for one month. */
+export async function getScheduleDeadlineException(
+  repId: number,
+  yearMonth: string,
+): Promise<boolean> {
+  const { rows } = await db.query(
+    "SELECT 1 FROM rep_schedule_deadline_exceptions WHERE rep_id = $1 AND year_month = $2",
+    [repId, yearMonth],
+  );
+  return rows.length > 0;
+}
+
 export async function savePublicAvailability(
   repId: number,
   yearMonth: string,
@@ -179,75 +193,31 @@ export async function savePublicAvailability(
   // Check deadline. Compared at midnight, same as the client's
   // isPastDeadline calc, so the deadline day itself still counts as open
   // instead of the server cutting it off a full day earlier than the UI
-  // shows.
-  const [yr, mo] = yearMonth.split("-").map(Number);
-  const deadline = new Date(yr, mo - 1, 1);
-  deadline.setDate(deadline.getDate() - 45);
+  // shows. A staff-granted exception bypasses this entirely.
+  const deadline = getScheduleDeadline(yearMonth);
   const todayMidnight = new Date();
   todayMidnight.setHours(0, 0, 0, 0);
-  if (todayMidnight > deadline)
-    throw new Error(
-      "The 45-day deadline has passed. Contact your administrator.",
-    );
-
-  const firstDay = `${yearMonth}-01`;
-  const lastDayDate = new Date(yr, mo, 0);
-  const lastDay = `${yearMonth}-${String(lastDayDate.getDate()).padStart(2, "0")}`;
-
-  await db.query(
-    "DELETE FROM rep_availability WHERE rep_id = $1 AND availability_date BETWEEN $2 AND $3",
-    [repId, firstDay, lastDay],
-  );
-
-  for (const day of days) {
-    const isAvailable = day.type !== "unavailable";
-    const availType =
-      day.type === "unavailable"
-        ? "full_day"
-        : day.type === "custom_time"
-          ? "full_day"
-          : day.type;
-    const timeSlots =
-      day.type === "custom_time" && day.timeSlots
-        ? JSON.stringify(day.timeSlots)
-        : null;
-
-    await db.query(
-      `INSERT INTO rep_availability (rep_id, availability_date, is_available, availability_type, time_slots, schedule_locked)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [repId, day.date, isAvailable, availType, timeSlots, lockSchedule],
-    );
-  }
-
-  if (lockSchedule) {
-    const daysInMonth = lastDayDate.getDate();
-    const setDates = new Set(days.map((d) => d.date));
-    const todayStr = new Date().toISOString().split("T")[0];
-
-    for (let d = 1; d <= daysInMonth; d++) {
-      const dateStr = `${yearMonth}-${String(d).padStart(2, "0")}`;
-      if (setDates.has(dateStr) || dateStr < todayStr) continue;
-      const dow = new Date(yr, mo - 1, d).getDay();
-      if (dow === 0 || dow === 6) continue;
-
-      await db.query(
-        `INSERT INTO rep_availability (rep_id, availability_date, is_available, availability_type, schedule_locked)
-         VALUES ($1, $2, false, 'full_day', true)
-         ON CONFLICT (rep_id, availability_date) DO NOTHING`,
-        [repId, dateStr],
+  if (todayMidnight > deadline) {
+    const hasException = await getScheduleDeadlineException(repId, yearMonth);
+    if (!hasException)
+      throw new Error(
+        "The submission deadline has passed. Contact your administrator.",
       );
-    }
   }
+
+  await saveRepAvailabilityMonth(repId, yearMonth, days, lockSchedule);
 }
 
 export async function resetPublicSchedule(repId: number, yearMonth: string) {
   const [yr, mo] = yearMonth.split("-").map(Number);
-  const deadline = new Date(yr, mo - 1, 1);
-  deadline.setDate(deadline.getDate() - 45);
+  const deadline = getScheduleDeadline(yearMonth);
   const todayMidnight = new Date();
   todayMidnight.setHours(0, 0, 0, 0);
-  if (todayMidnight > deadline)
-    throw new Error("The 45-day deadline has passed.");
+  if (todayMidnight > deadline) {
+    const hasException = await getScheduleDeadlineException(repId, yearMonth);
+    if (!hasException)
+      throw new Error("The submission deadline has passed.");
+  }
 
   const firstDay = `${yearMonth}-01`;
   const lastDayDate = new Date(yr, mo, 0);

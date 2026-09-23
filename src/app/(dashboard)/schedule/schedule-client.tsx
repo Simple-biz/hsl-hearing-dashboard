@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { toast } from "sonner";
+import { getScheduleDeadline } from "@/lib/schedule-deadline";
 
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { AppHeader } from "@/components/layout/app-header";
@@ -36,6 +38,8 @@ import {
   getHearingsForMonth,
   getHearingsForRange,
   getFederalHolidays,
+  getScheduleDeadlineException,
+  grantScheduleException,
   saveAvailability,
   unlockSchedule,
   resetSchedule,
@@ -153,6 +157,8 @@ export function ScheduleClient({
   const [availability, setAvailability] = useState(initialAvailability);
   const [hearings, setHearings] = useState(initialHearings);
   const [holidays, setHolidays] = useState(initialHolidays);
+  const [hasDeadlineException, setHasDeadlineException] = useState(false);
+  const [exceptionLoading, setExceptionLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // Download hearing list as CSV, for a staff-picked month range
@@ -188,8 +194,7 @@ export function ScheduleClient({
   const daysInMonth = new Date(year, month, 0).getDate();
   const firstDayOfWeek = new Date(year, month - 1, 1).getDay();
   const todayStr = new Date().toISOString().split("T")[0];
-  const deadlineDate = new Date(year, month - 1, 1);
-  deadlineDate.setDate(deadlineDate.getDate() - 45);
+  const deadlineDate = getScheduleDeadline(selectedMonth);
   const daysUntilDeadline = Math.ceil(
     (deadlineDate.getTime() - new Date().setHours(0, 0, 0, 0)) /
       (1000 * 60 * 60 * 24),
@@ -230,6 +235,27 @@ export function ScheduleClient({
     setHolidays(hols);
     setEdits(buildEdits(avail));
   }, []);
+
+  // Exception status isn't part of the server-provided initial props, so it's
+  // kept in its own effect rather than threaded through loadData's callers.
+  // Gated behind exceptionLoading so the deadline banner doesn't flash the
+  // previous rep/month's exception state while this fetch is in flight --
+  // same fix as the public schedule page's monthLoading guard.
+  useEffect(() => {
+    let cancelled = false;
+    setExceptionLoading(true);
+    getScheduleDeadlineException(selectedRepId, selectedMonth).then(
+      (has) => {
+        if (!cancelled) {
+          setHasDeadlineException(has);
+          setExceptionLoading(false);
+        }
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedRepId, selectedMonth]);
 
   const handleSelectRep = async (repId: number) => {
     setSelectedRepId(repId);
@@ -335,21 +361,46 @@ export function ScheduleClient({
       type: s.type === "unset" ? "unavailable" : s.type,
       timeSlots: s.timeSlots,
     }));
-    await saveAvailability(selectedRepId, selectedMonth, days, lock);
-    await loadData(selectedRepId, selectedMonth);
-    setSaving(false);
+    try {
+      await saveAvailability(selectedRepId, selectedMonth, days, lock);
+      await loadData(selectedRepId, selectedMonth);
+      toast.success(lock ? "Schedule locked" : "Schedule saved");
+    } catch {
+      toast.error(lock ? "Failed to lock schedule" : "Failed to save schedule");
+    } finally {
+      setSaving(false);
+    }
   };
   const handleUnlock = async () => {
-    await unlockSchedule(selectedRepId, selectedMonth);
-    await loadData(selectedRepId, selectedMonth);
+    try {
+      await unlockSchedule(selectedRepId, selectedMonth);
+      await loadData(selectedRepId, selectedMonth);
+      toast.success("Schedule unlocked");
+    } catch {
+      toast.error("Failed to unlock schedule");
+    }
+  };
+  const handleGrantException = async () => {
+    try {
+      await grantScheduleException(selectedRepId, selectedMonth);
+      setHasDeadlineException(true);
+      toast.success("Exception granted");
+    } catch {
+      toast.error("Failed to grant exception");
+    }
   };
   const handleReset = async () => {
     if (
       !confirm("Reset all availability for this month? This cannot be undone.")
     )
       return;
-    await resetSchedule(selectedRepId, selectedMonth);
-    await loadData(selectedRepId, selectedMonth);
+    try {
+      await resetSchedule(selectedRepId, selectedMonth);
+      await loadData(selectedRepId, selectedMonth);
+      toast.success("Schedule reset");
+    } catch {
+      toast.error("Failed to reset schedule");
+    }
   };
 
   // ═════════ DEFAULT SCHEDULE TEMPLATE ═════════
@@ -910,26 +961,40 @@ export function ScheduleClient({
             )}
           </div>
         )}
-        {isPastDeadline && !isLocked && (
-          <div className="rounded-lg border border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-900/40 p-3 flex items-center gap-3">
-            <span className="text-lg">⏰</span>
-            <div>
-              <p className="text-sm font-semibold text-blue-800 dark:text-blue-300">
-                Submission Deadline Passed
-              </p>
-              <p className="text-xs text-blue-600 dark:text-blue-400">
-                The 45-day deadline for {monthName} was{" "}
-                {deadlineDate.toLocaleDateString("en-US", {
-                  month: "long",
-                  day: "numeric",
-                  year: "numeric",
-                })}
-                .
-                {isAdmin
-                  ? " You can still edit as admin."
-                  : " Schedule has been unlocked by admin — you can make changes."}
-              </p>
+        {!exceptionLoading && isPastDeadline && !isLocked && (
+          <div className="rounded-lg border border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-900/40 p-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <span className="text-lg">⏰</span>
+              <div>
+                <p className="text-sm font-semibold text-blue-800 dark:text-blue-300">
+                  Submission Deadline Passed
+                </p>
+                <p className="text-xs text-blue-600 dark:text-blue-400">
+                  The submission deadline for {monthName} was{" "}
+                  {deadlineDate.toLocaleDateString("en-US", {
+                    month: "long",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                  .
+                  {isAdmin
+                    ? " You can still edit as admin."
+                    : " Schedule has been unlocked by admin — you can make changes."}
+                  {hasDeadlineException &&
+                    " This rep has been granted a late-submission exception — their own schedule link is open for this month."}
+                </p>
+              </div>
             </div>
+            {isAdmin && !hasDeadlineException && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs text-blue-700 border-blue-400 shrink-0"
+                onClick={handleGrantException}
+              >
+                Grant Exception
+              </Button>
+            )}
           </div>
         )}
         {daysUntilDeadline >= 0 && daysUntilDeadline <= 15 && !isLocked && (

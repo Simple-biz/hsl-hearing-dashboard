@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useMemo, useCallback } from "react";
+import { toast } from "sonner";
+import { getScheduleDeadline } from "@/lib/schedule-deadline";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -28,6 +30,7 @@ import {
   getPublicHearings,
   getPublicHearingsRange,
   getPublicHolidays,
+  getScheduleDeadlineException,
   savePublicAvailability,
   resetPublicSchedule,
   getRepTimezone,
@@ -131,9 +134,12 @@ export function PublicScheduleClient({
   const [availability, setAvailability] = useState<AvailDay[]>([]);
   const [hearings, setHearings] = useState<HearingDay[]>([]);
   const [holidays, setHolidays] = useState<Record<string, string>>({});
+  const [hasDeadlineException, setHasDeadlineException] = useState(false);
+  // Guards the lock/deadline banners from flashing the previous month's
+  // state while a month switch's loadData() call is still in flight.
+  const [monthLoading, setMonthLoading] = useState(false);
   const [edits, setEdits] = useState<Record<string, DayState>>({});
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState("");
 
   // Download hearing list as CSV, for a rep-picked month range
   const [downloadStart, setDownloadStart] = useState(selectedMonth);
@@ -157,8 +163,7 @@ export function PublicScheduleClient({
   const daysInMonth = new Date(year, month, 0).getDate();
   const firstDayOfWeek = new Date(year, month - 1, 1).getDay();
   const todayStr = now.toISOString().split("T")[0];
-  const deadlineDate = new Date(year, month - 1, 1);
-  deadlineDate.setDate(deadlineDate.getDate() - 45);
+  const deadlineDate = getScheduleDeadline(selectedMonth);
   const daysUntilDeadline = Math.ceil(
     (deadlineDate.getTime() - new Date().setHours(0, 0, 0, 0)) /
       (1000 * 60 * 60 * 24),
@@ -186,15 +191,19 @@ export function PublicScheduleClient({
   ).length;
 
   const loadData = useCallback(async (repId: number, ym: string) => {
-    const [avail, hrgs, hols] = await Promise.all([
+    setMonthLoading(true);
+    const [avail, hrgs, hols, exception] = await Promise.all([
       getPublicAvailability(repId, ym),
       getPublicHearings(repId, ym),
       getPublicHolidays(ym),
+      getScheduleDeadlineException(repId, ym),
     ]);
     setAvailability(avail as AvailDay[]);
     setHearings(hrgs);
     setHolidays(hols);
+    setHasDeadlineException(exception);
     setEdits(buildEdits(avail as AvailDay[]));
+    setMonthLoading(false);
   }, []);
 
   // Auth
@@ -311,7 +320,6 @@ export function PublicScheduleClient({
   const handleSave = async (lock: boolean) => {
     if (!rep) return;
     setSaving(true);
-    setMessage("");
     try {
       const days = Object.entries(edits).map(([date, s]) => ({
         date,
@@ -319,14 +327,12 @@ export function PublicScheduleClient({
         timeSlots: s.timeSlots,
       }));
       await savePublicAvailability(rep.id, selectedMonth, days, lock);
-      setMessage(
-        lock
-          ? "🔒 Schedule locked successfully!"
-          : "💾 Schedule saved successfully!",
+      toast.success(
+        lock ? "Schedule locked successfully!" : "Schedule saved successfully!",
       );
       await loadData(rep.id, selectedMonth);
     } catch (e) {
-      setMessage(e instanceof Error ? `⚠️ ${e.message}` : "Error saving");
+      toast.error(e instanceof Error ? e.message : "Error saving schedule");
     }
     setSaving(false);
   };
@@ -335,13 +341,13 @@ export function PublicScheduleClient({
     try {
       await resetPublicSchedule(rep.id, selectedMonth);
       await loadData(rep.id, selectedMonth);
-      setMessage("🔄 Schedule reset");
+      toast.success("Schedule reset");
     } catch (e) {
-      setMessage(e instanceof Error ? `⚠️ ${e.message}` : "Error");
+      toast.error(e instanceof Error ? e.message : "Error resetting schedule");
     }
   };
 
-  const canEdit = !isLocked && !isPastDeadline;
+  const canEdit = !isLocked && (!isPastDeadline || hasDeadlineException);
 
   // ═══════ LOGIN SCREEN ═══════
   if (!authenticated || !rep) {
@@ -453,21 +459,10 @@ export function PublicScheduleClient({
             your selected timezone.
           </p>
         </div>
-        {message && (
-          <div
-            className={cn(
-              "rounded-lg border p-3 text-sm",
-              message.startsWith("⚠️")
-                ? "border-red-200 bg-red-50 text-red-700"
-                : "border-emerald-200 bg-emerald-50 text-emerald-700",
-            )}
-          >
-            {message}
-          </div>
-        )}
-
-        {/* Banners */}
-        {isLocked && (
+        {/* Banners. Gated on !monthLoading so a month switch doesn't flash
+            the previous month's lock/deadline state while loadData() is
+            still in flight. */}
+        {!monthLoading && isLocked && (
           <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 dark:bg-amber-950/30">
             <p className="text-sm font-semibold text-amber-800">
               🔒 Schedule is Locked
@@ -481,23 +476,46 @@ export function PublicScheduleClient({
             </p>
           </div>
         )}
-        {isPastDeadline && !isLocked && (
-          <div className="rounded-lg border border-red-300 bg-red-50 p-3 dark:bg-red-950/30">
-            <p className="text-sm font-semibold text-red-800">
-              ⏰ Deadline Passed
+        {!monthLoading && isPastDeadline && !isLocked && (
+          <div
+            className={cn(
+              "rounded-lg border p-3",
+              hasDeadlineException
+                ? "border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30"
+                : "border-red-300 bg-red-50 dark:bg-red-950/30",
+            )}
+          >
+            <p
+              className={cn(
+                "text-sm font-semibold",
+                hasDeadlineException ? "text-emerald-800" : "text-red-800",
+              )}
+            >
+              {hasDeadlineException
+                ? "✅ Late Submission Allowed"
+                : "⏰ Deadline Passed"}
             </p>
-            <p className="text-xs text-red-600">
-              The 45-day deadline for {monthName} was{" "}
+            <p
+              className={cn(
+                "text-xs",
+                hasDeadlineException ? "text-emerald-600" : "text-red-600",
+              )}
+            >
+              The submission deadline for {monthName} was{" "}
               {deadlineDate.toLocaleDateString("en-US", {
                 month: "long",
                 day: "numeric",
                 year: "numeric",
               })}
-              .
+              .{" "}
+              {hasDeadlineException
+                ? "Staff has given you a one-time exception to submit it now."
+                : ""}
             </p>
           </div>
         )}
-        {!isPastDeadline &&
+        {!monthLoading &&
+          !isPastDeadline &&
           !isLocked &&
           daysUntilDeadline >= 0 &&
           daysUntilDeadline <= 15 && (
