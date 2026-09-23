@@ -238,7 +238,7 @@ logic had already proven across ST9's four revisions.*
 
 ---
 
-ST12: Reconcile the two disagreeing schedule deadline rules | Estimated 3 SP | Actual 3 SP | Opened 2026-09-23, PR pending review
+ST12: Reconcile the two disagreeing schedule deadline rules | Estimated 3 SP | Actual 5 SP | Opened 2026-09-23, PR #333 reviewed clean (3 rounds), ready to merge
 
 Two independent parts of the app decided "is the rep schedule submission deadline passed" using
 two different formulas: the rep-facing pages (`public-schedule-client.tsx`, dashboard
@@ -256,27 +256,77 @@ linked issue explaining why. No trace of "Austin" found anywhere in the repo's f
 GitHub PRs, or GitHub issues — the one hit (`20260514_seed_post_hrg_responsible_options.sql`) is
 an unrelated dropdown config value, a staff name for post-hearing record assignment. Per
 Benedict's decision, standardized on the crons' 20th-of-M-2 rule going forward, since it lands on
-the same calendar day every time rather than shifting with month lengths (the actual number of
-days-before-target varies 39-42 depending on the month either way, so "45 days" was never fully
-literal either). Added `src/lib/schedule-deadline.ts` exporting `getScheduleDeadline(yearMonth):
-Date` — deliberately no `db` import, so it's safe to import from client components without
-pulling server-only dependencies into the client bundle. Both crons now import it instead of
-keeping their own duplicate; `[token]/action.ts`'s `savePublicAvailability`/`resetPublicSchedule`
-enforcement and both schedule pages' display logic (`deadlineDate`, `daysUntilDeadline`,
-`isPastDeadline`) now use it too. Updated "45-day deadline" wording in banners, error messages,
-and doc comments to generic "submission deadline" since the specific number is no longer
-accurate. `send-schedule-invites` was already independently consistent with the 20th rule
-(computed relative to "now" rather than "yearMonth," but equivalent), no change needed there.
+the same calendar day every time rather than shifting with month lengths. Added
+`src/lib/schedule-deadline.ts` exporting `getScheduleDeadline(yearMonth): Date` — deliberately no
+`db` import, so it's safe to import from client components without pulling server-only
+dependencies into the client bundle. Both crons now import it instead of keeping their own
+duplicate; `[token]/action.ts`'s `savePublicAvailability`/`resetPublicSchedule` enforcement and
+both schedule pages' display logic now use it too. Updated "45-day deadline" wording to generic
+"submission deadline" since the specific number is no longer accurate. Opened PR #333 rather than
+pushing directly, per Benedict's explicit request this time (the branch had to be split off after
+the fact: the initial commit had already landed directly on local `dev-env`, so it was moved to
+its own branch and `dev-env` reset back to origin before pushing, to keep the PR diff clean).
+
+Review round 1 (4 parallel angles) caught two real gaps the initial pass missed, both directly on
+this task's own topic. First, the claim that `send-schedule-invites` was "already independently
+consistent" turned out wrong on inspection depth, not on the math — it computed the right *value*
+today but via its own inline `new Date(now.getFullYear(), now.getMonth(), 20)`, a fourth
+independent copy of the formula rather than a call to the new shared function, undermining the
+PR's own "single source of truth" claim; three separate reviewers flagged it as the exact drift
+risk this task exists to close. Migrated it to `getScheduleDeadline(targetMonth)`, confirmed
+algebraically equivalent to what it replaced. Second, and sharper: auto-lock's `isDeadlinePassed`
+compared with `today >= deadline`, while the rep-facing pages use `today > deadline` (the
+deadline day itself still counts as open, the exact convention ST6 established). Before this PR
+the two sides referenced different calendar dates entirely, so this operator mismatch was
+invisible; once both read from `getScheduleDeadline`, `>=` meant auto-lock could fire and lock a
+rep's month hours before the UI itself considered that day closed — the same boundary-bug class
+ST6 fixed once, resurfacing in a new spot the moment the two systems started agreeing on which
+day to compare. Changed to `>`, confirmed via direct simulation that both sides agree on the
+deadline day itself and the day after. Round 2 came back clean on this task's own scope (a
+separate, unrelated bug it surfaced is ST13). Round 3 (final) returned no findings at all.
+
 Verified live in the browser against `dev-env`, not just typechecked: public page (rep
 `BenedictDevTest`, id 132) shows November 2026's deadline as September 20; staff dashboard shows
 September 2026's deadline as July 20 — both correct per the new rule, confirmed on two different
-months rather than just the one already used throughout this epic.
+months. Boundary fix verified via direct date-math simulation rather than a live cron run.
 
-Commits: `6cd00c9` (initially landed directly on `dev-env`, moved to its own branch before
-pushing since this one goes through a PR per Benedict's explicit request this time).
+Commits: `6cd00c9`, `839dedb`, `531c9ba` (the latter is ST13's fix, same branch/PR); PR
+https://github.com/Simple-biz/hsl-hearing-dashboard/pull/333.
 
-*3 SP: real investigative depth (git archaeology across two formulas' full history, an exhaustive
-"Austin" search that came back empty, requiring the finding to be reported honestly as
-undocumented rather than assumed), a genuine design decision presented with tradeoffs before
-implementing, changes across 7 files including the actual enforcement path, and live two-page,
-two-month browser verification rather than trusting the diff.*
+*5 SP: real investigative depth (git archaeology across two formulas' full history, an exhaustive
+"Austin" search that came back empty), a genuine design decision presented with tradeoffs before
+implementing, changes eventually spanning 8 files including the actual enforcement path, live
+browser verification across two pages and two months, plus two full review-driven revisions after
+the initial "done" state — including one that overturned this writeup's own first-pass claim that
+a file didn't need touching.*
+
+---
+
+ST13: Auto-lock cron doesn't respect staff-granted deadline exceptions | Estimated 2 SP | Actual 2 SP | Opened 2026-09-23, part of PR #333, same status as ST12
+
+Surfaced during ST12's review round 2, not part of its original scope: `auto-lock/route.ts`'s
+per-rep loop never checked `rep_schedule_deadline_exceptions` before locking a rep's month with
+default values. Confirmed via `git log -S` that this table name never appeared in this file's
+history at all — a pre-existing gap from when ST8 built the exception feature, not a regression
+from ST12's changes to `isDeadlinePassed`. Severity is what earns this its own ST rather than a
+footnote: a staff-granted exception is only ever relevant once the deadline has already passed,
+which is the exact same condition that makes `isDeadlinePassed` return true and trips the nightly
+auto-lock run. In practice this meant the very first midnight after staff granted an exception,
+the cron would find no `schedule_locked` rows for that rep/month (since the rep hasn't had a
+chance to use the exception yet), and silently default-lock the month anyway — the exception
+feature was close to non-functional for its actual use case. Added a
+`rep_schedule_deadline_exceptions` lookup immediately after the existing "already locked" check,
+skipping auto-lock for that rep/month when an exception row exists; same query shape as ST8's
+`getScheduleDeadlineException`, kept as a local inline query rather than imported, per this file's
+established pattern of not sharing DB-backed helpers across route trees. Added a new
+`exceptionSkipped` counter to the cron's summary log line and JSON response, so this path is
+visible in the activity log rather than silent. Verified the exact query directly against
+`dev-env`: 0 matching rows before granting an exception, 1 after, confirming the skip condition
+fires precisely when intended.
+
+Commits: `531c9ba`, same branch/PR as ST12 — https://github.com/Simple-biz/hsl-hearing-dashboard/pull/333.
+
+*2 SP (retroactive): small, contained fix (one file, one added query, one new counter), but a
+real severity call to make it its own task rather than folding it into ST12's numbers, since it's
+a distinct bug in a different feature (ST8's exception grant) surfaced only incidentally by
+touching the same function.*
