@@ -235,3 +235,48 @@ already-merged PR, not new scope needing its own review cycle).
 *2 SP: small, contained refactor across three files with no behavior change, but still re-verified
 against `dev-env` rather than assumed correct from the diff, given how failure-prone this exact
 logic had already proven across ST9's four revisions.*
+
+---
+
+ST12: Reconcile the two disagreeing schedule deadline rules | Estimated 3 SP | Actual 3 SP | Opened 2026-09-23, PR pending review
+
+Two independent parts of the app decided "is the rep schedule submission deadline passed" using
+two different formulas: the rep-facing pages (`public-schedule-client.tsx`, dashboard
+`schedule-client.tsx`, and `[token]/action.ts`'s enforcement) used "45 days before the 1st of the
+month," while `auto-lock`/`schedule-reminder` crons used "the 20th of the month, two months
+prior." Before picking one, ran git archaeology to find out which came first and why they'd
+diverged: `git log -S` on both formulas' source files, plus a full-history content grep (every
+commit, not just messages) for "Austin" per Benedict's ask about a possible directive behind it.
+Found both rules were the *same* rule at the original 2026-03-05 build (commit `b88e034`, Jeru
+Palma) — the auto-lock cron's own `getDeadlineForMonth` used `firstOfMonth.setDate(getDate() -
+45)`, identical to the pages. A 2026-07-22 commit (`3bbf815`, "automate monthly rep schedule
+invitation cycle") changed only the cron side to the 20th-of-M-2 formula, describing it in the
+commit message as a "fix" to the deadline calculation, with no PR description, code comment, or
+linked issue explaining why. No trace of "Austin" found anywhere in the repo's full history,
+GitHub PRs, or GitHub issues — the one hit (`20260514_seed_post_hrg_responsible_options.sql`) is
+an unrelated dropdown config value, a staff name for post-hearing record assignment. Per
+Benedict's decision, standardized on the crons' 20th-of-M-2 rule going forward, since it lands on
+the same calendar day every time rather than shifting with month lengths (the actual number of
+days-before-target varies 39-42 depending on the month either way, so "45 days" was never fully
+literal either). Added `src/lib/schedule-deadline.ts` exporting `getScheduleDeadline(yearMonth):
+Date` — deliberately no `db` import, so it's safe to import from client components without
+pulling server-only dependencies into the client bundle. Both crons now import it instead of
+keeping their own duplicate; `[token]/action.ts`'s `savePublicAvailability`/`resetPublicSchedule`
+enforcement and both schedule pages' display logic (`deadlineDate`, `daysUntilDeadline`,
+`isPastDeadline`) now use it too. Updated "45-day deadline" wording in banners, error messages,
+and doc comments to generic "submission deadline" since the specific number is no longer
+accurate. `send-schedule-invites` was already independently consistent with the 20th rule
+(computed relative to "now" rather than "yearMonth," but equivalent), no change needed there.
+Verified live in the browser against `dev-env`, not just typechecked: public page (rep
+`BenedictDevTest`, id 132) shows November 2026's deadline as September 20; staff dashboard shows
+September 2026's deadline as July 20 — both correct per the new rule, confirmed on two different
+months rather than just the one already used throughout this epic.
+
+Commits: `6cd00c9` (initially landed directly on `dev-env`, moved to its own branch before
+pushing since this one goes through a PR per Benedict's explicit request this time).
+
+*3 SP: real investigative depth (git archaeology across two formulas' full history, an exhaustive
+"Austin" search that came back empty, requiring the finding to be reported honestly as
+undocumented rather than assumed), a genuine design decision presented with tradeoffs before
+implementing, changes across 7 files including the actual enforcement path, and live two-page,
+two-month browser verification rather than trusting the diff.*
