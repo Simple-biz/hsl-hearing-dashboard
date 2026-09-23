@@ -58,6 +58,7 @@ export async function GET(request: Request) {
 
   let autoLocked = 0;
   let alreadyLocked = 0;
+  let exceptionSkipped = 0;
   let emailsSent = 0;
   let failed = 0;
   const errors: string[] = [];
@@ -119,6 +120,20 @@ export async function GET(request: Request) {
 
           if (lockCheck[0]?.locked_count > 0) {
             alreadyLocked++;
+            continue;
+          }
+
+          // Don't auto-lock a rep who's been granted a late-submission
+          // exception for this month -- otherwise the very next nightly
+          // run after staff grants one silently wipes it out, since an
+          // exception is only ever granted once the deadline has already
+          // passed (the same condition that makes isDeadlinePassed true).
+          const { rows: exceptionRows } = await db.query(
+            "SELECT 1 FROM rep_schedule_deadline_exceptions WHERE rep_id = $1 AND year_month = $2",
+            [rep.id, targetMonth],
+          );
+          if (exceptionRows.length > 0) {
+            exceptionSkipped++;
             continue;
           }
 
@@ -234,7 +249,7 @@ export async function GET(request: Request) {
       "INSERT INTO activity_log (user_id, action, description) VALUES (NULL, $1, $2)",
       [
         "auto_lock_cron",
-        `Auto-lock cron: ${autoLocked} locked, ${alreadyLocked} already locked, ${emailsSent} emails, ${failed} failed`,
+        `Auto-lock cron: ${autoLocked} locked, ${alreadyLocked} already locked, ${exceptionSkipped} skipped (exception), ${emailsSent} emails, ${failed} failed`,
       ],
     );
 
@@ -242,6 +257,7 @@ export async function GET(request: Request) {
       success: true,
       autoLocked,
       alreadyLocked,
+      exceptionSkipped,
       emailsSent,
       failed,
       errors: errors.length > 0 ? errors : undefined,
