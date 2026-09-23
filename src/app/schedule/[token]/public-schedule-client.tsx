@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useCallback } from "react";
 import { toast } from "sonner";
+import { getScheduleDeadline } from "@/lib/schedule-deadline";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -162,8 +163,7 @@ export function PublicScheduleClient({
   const daysInMonth = new Date(year, month, 0).getDate();
   const firstDayOfWeek = new Date(year, month - 1, 1).getDay();
   const todayStr = now.toISOString().split("T")[0];
-  const deadlineDate = new Date(year, month - 1, 1);
-  deadlineDate.setDate(deadlineDate.getDate() - 45);
+  const deadlineDate = getScheduleDeadline(selectedMonth);
   const daysUntilDeadline = Math.ceil(
     (deadlineDate.getTime() - new Date().setHours(0, 0, 0, 0)) /
       (1000 * 60 * 60 * 24),
@@ -501,7 +501,7 @@ export function PublicScheduleClient({
                 hasDeadlineException ? "text-emerald-600" : "text-red-600",
               )}
             >
-              The 45-day deadline for {monthName} was{" "}
+              The submission deadline for {monthName} was{" "}
               {deadlineDate.toLocaleDateString("en-US", {
                 month: "long",
                 day: "numeric",

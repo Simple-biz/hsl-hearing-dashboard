@@ -2,6 +2,7 @@
 
 import { db } from "@/lib/db";
 import { saveRepAvailabilityMonth } from "@/lib/rep-schedule";
+import { getScheduleDeadline } from "@/lib/schedule-deadline";
 import { compare } from "bcryptjs";
 
 export interface PublicRepInfo {
@@ -167,7 +168,7 @@ export async function getPublicHolidays(
   return map;
 }
 
-/** Staff-granted exception letting a rep submit past the 45-day deadline for one month. */
+/** Staff-granted exception letting a rep submit past the submission deadline for one month. */
 export async function getScheduleDeadlineException(
   repId: number,
   yearMonth: string,
@@ -193,16 +194,14 @@ export async function savePublicAvailability(
   // isPastDeadline calc, so the deadline day itself still counts as open
   // instead of the server cutting it off a full day earlier than the UI
   // shows. A staff-granted exception bypasses this entirely.
-  const [yr, mo] = yearMonth.split("-").map(Number);
-  const deadline = new Date(yr, mo - 1, 1);
-  deadline.setDate(deadline.getDate() - 45);
+  const deadline = getScheduleDeadline(yearMonth);
   const todayMidnight = new Date();
   todayMidnight.setHours(0, 0, 0, 0);
   if (todayMidnight > deadline) {
     const hasException = await getScheduleDeadlineException(repId, yearMonth);
     if (!hasException)
       throw new Error(
-        "The 45-day deadline has passed. Contact your administrator.",
+        "The submission deadline has passed. Contact your administrator.",
       );
   }
 
@@ -211,13 +210,13 @@ export async function savePublicAvailability(
 
 export async function resetPublicSchedule(repId: number, yearMonth: string) {
   const [yr, mo] = yearMonth.split("-").map(Number);
-  const deadline = new Date(yr, mo - 1, 1);
-  deadline.setDate(deadline.getDate() - 45);
+  const deadline = getScheduleDeadline(yearMonth);
   const todayMidnight = new Date();
   todayMidnight.setHours(0, 0, 0, 0);
   if (todayMidnight > deadline) {
     const hasException = await getScheduleDeadlineException(repId, yearMonth);
-    if (!hasException) throw new Error("The 45-day deadline has passed.");
+    if (!hasException)
+      throw new Error("The submission deadline has passed.");
   }
 
   const firstDay = `${yearMonth}-01`;

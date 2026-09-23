@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { getScheduleDeadline } from "@/lib/schedule-deadline";
 
 /**
  * Auto-Lock Schedules Cron
@@ -16,17 +17,8 @@ import { db } from "@/lib/db";
  * GET /api/cron/auto-lock?cron_key=SECRET
  */
 
-function getDeadlineForMonth(yearMonth: string): Date {
-  // Deadline is the 20th of 2 months prior to the scheduling month
-  const [year, month] = yearMonth.split("-").map(Number);
-  const deadlineMonth = month - 2;
-  const deadlineYear = deadlineMonth <= 0 ? year - 1 : year;
-  const adjustedMonth = deadlineMonth <= 0 ? deadlineMonth + 12 : deadlineMonth;
-  return new Date(deadlineYear, adjustedMonth - 1, 20);
-}
-
 function isDeadlinePassed(yearMonth: string): boolean {
-  const deadline = getDeadlineForMonth(yearMonth);
+  const deadline = getScheduleDeadline(yearMonth);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   return today >= deadline;

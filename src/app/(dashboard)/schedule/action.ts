@@ -201,8 +201,8 @@ export async function getScheduleDeadlineException(
 
 /**
  * Grant a rep a one-time exception to submit their own schedule past the
- * self-service 45-day deadline for one specific month, instead of staff
- * entering it on their behalf. No expiry: once the rep locks their
+ * self-service submission deadline for one specific month, instead of
+ * staff entering it on their behalf. No expiry: once the rep locks their
  * schedule, the normal schedule_locked guard takes back over on its own.
  */
 export async function grantScheduleException(repId: number, yearMonth: string) {

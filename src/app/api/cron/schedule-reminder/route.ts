@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { getScheduleDeadline } from "@/lib/schedule-deadline";
 
 /**
  * Schedule Lock Reminder Cron
@@ -14,15 +15,6 @@ import { db } from "@/lib/db";
  */
 
 const REMINDER_DAYS = [10, 5, 1, 0];
-
-function getDeadlineForMonth(yearMonth: string): Date {
-  // Deadline is the 20th of 2 months prior to the scheduling month
-  const [year, month] = yearMonth.split("-").map(Number);
-  const deadlineMonth = month - 2;
-  const deadlineYear = deadlineMonth <= 0 ? year - 1 : year;
-  const adjustedMonth = deadlineMonth <= 0 ? deadlineMonth + 12 : deadlineMonth;
-  return new Date(deadlineYear, adjustedMonth - 1, 20);
-}
 
 function getMonthsToRemind(): {
   month: string;
@@ -42,7 +34,7 @@ function getMonthsToRemind(): {
   for (let i = 1; i <= 3; i++) {
     const checkMonth = new Date(today.getFullYear(), today.getMonth() + i, 1);
     const yearMonth = `${checkMonth.getFullYear()}-${String(checkMonth.getMonth() + 1).padStart(2, "0")}`;
-    const deadline = getDeadlineForMonth(yearMonth);
+    const deadline = getScheduleDeadline(yearMonth);
     const daysRemaining = Math.ceil(
       (deadline.getTime() - today.getTime()) / (1000 * 60 * 60 * 24),
     );

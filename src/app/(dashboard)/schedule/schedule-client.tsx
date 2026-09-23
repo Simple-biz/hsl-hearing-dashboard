@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { toast } from "sonner";
+import { getScheduleDeadline } from "@/lib/schedule-deadline";
 
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { AppHeader } from "@/components/layout/app-header";
@@ -193,8 +194,7 @@ export function ScheduleClient({
   const daysInMonth = new Date(year, month, 0).getDate();
   const firstDayOfWeek = new Date(year, month - 1, 1).getDay();
   const todayStr = new Date().toISOString().split("T")[0];
-  const deadlineDate = new Date(year, month - 1, 1);
-  deadlineDate.setDate(deadlineDate.getDate() - 45);
+  const deadlineDate = getScheduleDeadline(selectedMonth);
   const daysUntilDeadline = Math.ceil(
     (deadlineDate.getTime() - new Date().setHours(0, 0, 0, 0)) /
       (1000 * 60 * 60 * 24),
@@ -970,7 +970,7 @@ export function ScheduleClient({
                   Submission Deadline Passed
                 </p>
                 <p className="text-xs text-blue-600 dark:text-blue-400">
-                  The 45-day deadline for {monthName} was{" "}
+                  The submission deadline for {monthName} was{" "}
                   {deadlineDate.toLocaleDateString("en-US", {
                     month: "long",
                     day: "numeric",
