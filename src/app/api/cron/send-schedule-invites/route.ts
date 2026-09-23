@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { getScheduleDeadline } from "@/lib/schedule-deadline";
 
 /**
  * Send Schedule Invites Cron
@@ -54,8 +55,7 @@ export async function GET(request: Request) {
     year: "numeric",
   });
 
-  // Deadline is the 20th of the current month (M-2 relative to target)
-  const deadlineObj = new Date(now.getFullYear(), now.getMonth(), 20);
+  const deadlineObj = getScheduleDeadline(targetMonth);
   const deadlineDate = deadlineObj.toLocaleDateString("en-US", {
     month: "long",
     day: "numeric",

@@ -18,10 +18,16 @@ import { getScheduleDeadline } from "@/lib/schedule-deadline";
  */
 
 function isDeadlinePassed(yearMonth: string): boolean {
+  // Strictly greater-than, matching the rep-facing pages' "the deadline day
+  // itself still counts as open" convention ([token]/action.ts). Before
+  // this PR the cron and the rep pages computed different deadline dates
+  // from different formulas, so a >= vs > mismatch here was invisible --
+  // now that both reference the same day, >= would auto-lock a rep's
+  // schedule hours before the UI itself considers the day closed.
   const deadline = getScheduleDeadline(yearMonth);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  return today >= deadline;
+  return today > deadline;
 }
 
 function getDefaultAvailable(repType: string): boolean {
