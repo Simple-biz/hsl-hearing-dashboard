@@ -735,7 +735,7 @@ export async function sendWelcomeEmail(userId: number, password: string) {
       ? process.env.REP_WELCOME_CC_EMAIL
       : "";
 
-  await fetch(webhookUrl, {
+  const response = await fetch(webhookUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -743,6 +743,13 @@ export async function sendWelcomeEmail(userId: number, password: string) {
     },
     body: JSON.stringify(payload),
   });
+  if (!response.ok) {
+    await logAction(
+      "email_failed",
+      `Welcome email FAILED to send to ${full_name} (${email}): ${response.status}`,
+    );
+    throw new Error(`Email send failed (${response.status})`);
+  }
 
   await logAction(
     "email_sent",
@@ -764,7 +771,7 @@ export async function sendPasswordResetEmail(userId: number, password: string) {
   if (!webhookUrl || !webhookSecret)
     throw new Error("N8N webhook not configured");
 
-  await fetch(webhookUrl, {
+  const response = await fetch(webhookUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -780,6 +787,13 @@ export async function sendPasswordResetEmail(userId: number, password: string) {
       body: `Hello ${full_name},\n\nYour password has been reset.\n\nLogin URL: ${appUrl}\nEmail: ${email}\nNew Password: ${password}\n\nPlease log in and change your password.\n\nHogan Smith Law`,
     }),
   });
+  if (!response.ok) {
+    await logAction(
+      "email_failed",
+      `Password reset email FAILED to send to ${full_name} (${email}): ${response.status}`,
+    );
+    throw new Error(`Email send failed (${response.status})`);
+  }
   await logAction(
     "email_sent",
     `Password reset email sent to ${full_name} (${email})`,
@@ -833,7 +847,7 @@ export async function sendVideoTutorialEmail(userId: number, password: string) {
       ? process.env.REP_WELCOME_CC_EMAIL
       : "";
 
-  await fetch(webhookUrl, {
+  const response = await fetch(webhookUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -841,6 +855,13 @@ export async function sendVideoTutorialEmail(userId: number, password: string) {
     },
     body: JSON.stringify(payload),
   });
+  if (!response.ok) {
+    await logAction(
+      "email_failed",
+      `Scheduling video tutorial FAILED to send to ${full_name} (${email}): ${response.status}`,
+    );
+    throw new Error(`Email send failed (${response.status})`);
+  }
 
   await logAction(
     "email_sent",

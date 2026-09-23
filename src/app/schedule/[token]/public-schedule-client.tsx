@@ -31,6 +31,7 @@ import {
   getPublicHearingsRange,
   getPublicHolidays,
   getScheduleDeadlineException,
+  requestScheduleTokenPasswordReset,
   savePublicAvailability,
   resetPublicSchedule,
   getRepTimezone,
@@ -125,6 +126,12 @@ export function PublicScheduleClient({
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState(initialError || "");
   const [authLoading, setAuthLoading] = useState(false);
+
+  // Forgot-password flow
+  const [forgotMode, setForgotMode] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotSent, setForgotSent] = useState(false);
 
   // Schedule state
   const now = new Date();
@@ -226,6 +233,14 @@ export function PublicScheduleClient({
       setAuthError(res.error || "Authentication failed");
     }
     setAuthLoading(false);
+  };
+
+  const handleForgotPassword = async () => {
+    if (!forgotEmail) return;
+    setForgotLoading(true);
+    await requestScheduleTokenPasswordReset(token, forgotEmail);
+    setForgotLoading(false);
+    setForgotSent(true);
   };
 
   const handleMonthNav = async (dir: number) => {
@@ -377,7 +392,7 @@ export function PublicScheduleClient({
               ⚠️ {authError}
             </div>
           )}
-          {initialValid && (
+          {initialValid && !forgotMode && (
             <div className="space-y-3">
               <Input
                 type="password"
@@ -395,12 +410,77 @@ export function PublicScheduleClient({
               >
                 {authLoading ? "Authenticating..." : "🔓 Access My Schedule"}
               </Button>
+              <button
+                type="button"
+                onClick={() => {
+                  setForgotMode(true);
+                  setForgotSent(false);
+                  setAuthError("");
+                }}
+                className="text-xs text-muted-foreground underline hover:text-foreground"
+              >
+                Forgot your password?
+              </button>
             </div>
           )}
-          <p className="text-[11px] text-muted-foreground">
-            Contact your administrator if you need a new link or forgot your
-            password.
-          </p>
+          {initialValid && forgotMode && !forgotSent && (
+            <div className="space-y-3 text-left">
+              <p className="text-center text-xs text-muted-foreground">
+                Enter the email address on file for your rep account and
+                we&apos;ll send a link to reset the password for this
+                schedule link.
+              </p>
+              <Input
+                type="email"
+                value={forgotEmail}
+                onChange={(e) => setForgotEmail(e.target.value)}
+                onKeyDown={(e) =>
+                  e.key === "Enter" && handleForgotPassword()
+                }
+                placeholder="you@example.com"
+                className="h-11 text-center text-sm"
+                autoFocus
+              />
+              <Button
+                className="h-11 w-full text-sm font-semibold"
+                onClick={handleForgotPassword}
+                disabled={forgotLoading || !forgotEmail}
+              >
+                {forgotLoading ? "Sending..." : "Send Reset Link"}
+              </Button>
+              <button
+                type="button"
+                onClick={() => setForgotMode(false)}
+                className="w-full text-center text-xs text-muted-foreground underline hover:text-foreground"
+              >
+                Back to sign in
+              </button>
+            </div>
+          )}
+          {initialValid && forgotMode && forgotSent && (
+            <div className="space-y-3">
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-400">
+                If that email matches our records, a reset link is on its
+                way. It expires in 1 hour.
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setForgotMode(false);
+                  setForgotSent(false);
+                  setForgotEmail("");
+                }}
+                className="w-full text-center text-xs text-muted-foreground underline hover:text-foreground"
+              >
+                Back to sign in
+              </button>
+            </div>
+          )}
+          {!forgotMode && (
+            <p className="text-[11px] text-muted-foreground">
+              Contact your administrator if you need a new link.
+            </p>
+          )}
         </div>
       </div>
     );
