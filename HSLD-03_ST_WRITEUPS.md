@@ -331,3 +331,82 @@ Commits: `531c9ba`, same branch/PR/merge as ST12 — https://github.com/Simple-b
 real severity call to make it its own task rather than folding it into ST12's numbers, since it's
 a distinct bug in a different feature (ST8's exception grant) surfaced only incidentally by
 touching the same function.*
+
+---
+
+ST14: Rep schedule self-service password reset | Estimated 3 SP | Actual 3 SP | Completed 2026-09-24
+
+Reps had no way to recover a forgotten schedule-link password without going through staff — every
+prior recovery was a manual admin-side reset. Added `rep_schedule_password_reset_tokens`,
+mirroring the existing dashboard `password_reset_tokens` table's shape and 1-hour expiry model
+exactly (SHA-256 token hash, `used_at`/`expires_at`, one active token per link — any prior
+outstanding request is deleted before a new one is issued). `requestScheduleTokenPasswordReset`
+(added to the existing `[token]/action.ts`) requires the submitted email to match the rep's email
+on file, matching the same anti-enumeration convention already established in the dashboard's own
+`forgot-password/actions.ts`: always returns `{ success: true }` regardless of match, and any send
+failure is caught and logged rather than surfaced to the requester. The reset itself
+(`schedule/reset-password/[resetToken]/action.ts`, `page.tsx`,
+`schedule-reset-password-client.tsx`) mirrors the dashboard's existing `reset-password/[token]`
+trio structurally, with two intentional deviations: a 4-character minimum instead of 8 (matching
+the existing `TokenModal` convention for schedule-link passwords, not the dashboard login's own
+minimum) and no router redirect on success, since a schedule-link password has no fixed logged-in
+destination to send the rep back to. Added a "Forgot your password?" link and email-entry flow to
+the public schedule login screen (`public-schedule-client.tsx`). Cron cleanup
+(`api/cron/cleanup-tokens/route.ts`) extended with a second `DELETE` for the new table alongside
+the existing one, on the same daily schedule. Verified live end to end against `dev-env`: request,
+real email delivery, reset, and login with the new password, using a dedicated test rep
+(`BenedictDevTest`).
+
+Commits: `6d016af` (dev-env branch split to `feat/rep-schedule-password-reset`).
+
+*3 SP: new table plus five new/modified files following two already-established patterns exactly
+(the dashboard's own password-reset-token model and its reset-password page trio), no new
+architectural decisions required, but real end-to-end live verification including actual email
+delivery.*
+
+---
+
+ST15: Gmail node false-negative + email failure blind spot | Estimated 3 SP | Actual 4 SP | Completed 2026-09-24
+
+Surfaced during ST14's live testing, not part of its original scope: the shared n8n "Mail - Post
+Workspace Migration" node threw `Cannot read properties of undefined (reading 'split')` on every
+single-send email tested — both a completely unrelated existing flow (an admin-initiated dashboard
+reset for a real staff member) and ST14's new schedule-reset flow itself. Traced the actual n8n
+node source (`GmailV2.node.ts` / its `GenericFunctions.ts`) far enough to rule out the obvious
+candidates — `to`/`cc`/`bcc` recipient parsing, the `from` sender field (defaults to `''`, not
+undefined) — without being able to pin the exact line, since the self-hosted instance's version had
+diverged from what's traceable on `n8n-io/n8n`'s current `master`. Confirmed empirically instead:
+the node's own captured output on the error branch still carried a genuine, successful Gmail API
+response (`id`, `threadId`, `labelIds: ["SENT"]`) alongside the thrown error — proof the send
+completes before whatever internal step then fails, making this a false-negative rather than an
+actual delivery failure. This had been silently affecting the pre-existing admin-initiated
+`sendPasswordResetEmail` flow already, unrelated to anything this session built.
+
+A second, compounding finding: none of the app's five webhook-firing email functions
+(`sendWelcomeEmail`, `sendPasswordResetEmail`, `sendVideoTutorialEmail` in admin/actions.ts;
+`requestPasswordReset`; `requestScheduleTokenPasswordReset`) ever checked the webhook response
+status — `fetch()` only throws on network-level failure, not a non-2xx status — so a genuine send
+failure would be logged as `email_sent` regardless, with zero visibility for staff.
+
+Fixed on both sides. n8n: Mail node's "On Error" set to "Continue (using error output)"; added an
+If node checking whether the error text contains `split` (initial config mistakenly used "is equal
+to" against the full message instead of "contains" — caught by checking which branch a live test
+actually routed to, not by assuming the wiring was correct) — the known false-positive routes to
+the existing Success Response node, any other error routes to a new Error Response node (HTTP 500
+with the error body) plus a parallel Stop-and-Error node, so a genuine failure now shows red in
+n8n's own execution history instead of always green. App-side: all five functions now check
+`response.ok`. The three admin-initiated ones throw on failure, which surfaces immediately through
+`admin-client.tsx`'s existing try/catch (`· Email failed` in the result message) — that UI path
+already existed but had never fired, since nothing ever threw. The two self-service ones route the
+same check into their existing catch blocks, preserving the deliberate anti-enumeration
+design — the requester still always sees success, but the failure is now logged via
+`logAction`/`logSystemActivity` for staff to find.
+
+Commits: `d84a505` (dev-env branch split to `feat/rep-schedule-password-reset`); n8n workflow
+changes made directly in the live "HSL - Hearing Dash Email System" workflow, not tracked in this
+repo.
+
+*4 SP: started as a testing blocker for ST14, expanded into tracing third-party node internals
+across two files with no matching self-hosted source version available, plus a five-function
+app-side fix once the root cause revealed a pre-existing, silent gap affecting features well
+outside ST14's scope — genuinely bigger than its 3 SP estimate once the blast radius became clear.*
