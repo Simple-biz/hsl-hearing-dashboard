@@ -238,7 +238,7 @@ logic had already proven across ST9's four revisions.*
 
 ---
 
-ST12: Reconcile the two disagreeing schedule deadline rules | Estimated 3 SP | Actual 5 SP | Opened 2026-09-23, PR #333 reviewed clean (3 rounds), ready to merge
+ST12: Reconcile the two disagreeing schedule deadline rules | Estimated 3 SP | Actual 5 SP | Completed 2026-09-23
 
 Two independent parts of the app decided "is the rep schedule submission deadline passed" using
 two different formulas: the rep-facing pages (`public-schedule-client.tsx`, dashboard
@@ -291,7 +291,8 @@ September 2026's deadline as July 20 — both correct per the new rule, confirme
 months. Boundary fix verified via direct date-math simulation rather than a live cron run.
 
 Commits: `6cd00c9`, `839dedb`, `531c9ba` (the latter is ST13's fix, same branch/PR); PR
-https://github.com/Simple-biz/hsl-hearing-dashboard/pull/333.
+https://github.com/Simple-biz/hsl-hearing-dashboard/pull/333, merge commit `898e15e`. Branch
+archived under git tag `archive/fix-schedule-deadline-reconciliation` and deleted.
 
 *5 SP: real investigative depth (git archaeology across two formulas' full history, an exhaustive
 "Austin" search that came back empty), a genuine design decision presented with tradeoffs before
@@ -302,7 +303,7 @@ a file didn't need touching.*
 
 ---
 
-ST13: Auto-lock cron doesn't respect staff-granted deadline exceptions | Estimated 2 SP | Actual 2 SP | Opened 2026-09-23, part of PR #333, same status as ST12
+ST13: Auto-lock cron doesn't respect staff-granted deadline exceptions | Estimated 2 SP | Actual 2 SP | Completed 2026-09-23
 
 Surfaced during ST12's review round 2, not part of its original scope: `auto-lock/route.ts`'s
 per-rep loop never checked `rep_schedule_deadline_exceptions` before locking a rep's month with
@@ -324,7 +325,7 @@ visible in the activity log rather than silent. Verified the exact query directl
 `dev-env`: 0 matching rows before granting an exception, 1 after, confirming the skip condition
 fires precisely when intended.
 
-Commits: `531c9ba`, same branch/PR as ST12 — https://github.com/Simple-biz/hsl-hearing-dashboard/pull/333.
+Commits: `531c9ba`, same branch/PR/merge as ST12 — https://github.com/Simple-biz/hsl-hearing-dashboard/pull/333, merge commit `898e15e`.
 
 *2 SP (retroactive): small, contained fix (one file, one added query, one new counter), but a
 real severity call to make it its own task rather than folding it into ST12's numbers, since it's
