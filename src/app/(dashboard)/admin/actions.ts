@@ -744,6 +744,10 @@ export async function sendWelcomeEmail(userId: number, password: string) {
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
+    await logAction(
+      "email_failed",
+      `Welcome email FAILED to send to ${full_name} (${email}): ${response.status}`,
+    );
     throw new Error(`Email send failed (${response.status})`);
   }
 
@@ -784,6 +788,10 @@ export async function sendPasswordResetEmail(userId: number, password: string) {
     }),
   });
   if (!response.ok) {
+    await logAction(
+      "email_failed",
+      `Password reset email FAILED to send to ${full_name} (${email}): ${response.status}`,
+    );
     throw new Error(`Email send failed (${response.status})`);
   }
   await logAction(
@@ -848,6 +856,10 @@ export async function sendVideoTutorialEmail(userId: number, password: string) {
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
+    await logAction(
+      "email_failed",
+      `Scheduling video tutorial FAILED to send to ${full_name} (${email}): ${response.status}`,
+    );
     throw new Error(`Email send failed (${response.status})`);
   }
 

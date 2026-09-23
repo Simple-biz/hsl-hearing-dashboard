@@ -28,12 +28,14 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { rowCount } = await db.query(
-    "DELETE FROM password_reset_tokens WHERE expires_at < NOW() OR used_at IS NOT NULL",
-  );
-  const { rowCount: scheduleRowCount } = await db.query(
-    "DELETE FROM rep_schedule_password_reset_tokens WHERE expires_at < NOW() OR used_at IS NOT NULL",
-  );
+  const [{ rowCount }, { rowCount: scheduleRowCount }] = await Promise.all([
+    db.query(
+      "DELETE FROM password_reset_tokens WHERE expires_at < NOW() OR used_at IS NOT NULL",
+    ),
+    db.query(
+      "DELETE FROM rep_schedule_password_reset_tokens WHERE expires_at < NOW() OR used_at IS NOT NULL",
+    ),
+  ]);
 
   return NextResponse.json({
     deleted: rowCount ?? 0,

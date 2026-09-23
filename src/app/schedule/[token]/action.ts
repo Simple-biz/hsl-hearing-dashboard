@@ -87,7 +87,7 @@ export async function requestScheduleTokenPasswordReset(
      FROM rep_schedule_tokens t
      JOIN representatives r ON t.rep_id = r.id
      WHERE t.token = $1 AND t.is_active = true AND (t.expires_at IS NULL OR t.expires_at > NOW())
-       AND LOWER(r.email) = LOWER($2)`,
+       AND r.email = $2`,
     [token, email],
   );
 
