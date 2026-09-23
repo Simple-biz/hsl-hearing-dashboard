@@ -54,6 +54,9 @@ FEATURE_MAPPING.md
 MEETING_BRIEF.md
 INTEGRATION_DIAGRAMS.md
 MR_DASH_HANDOFF.md
+HSLD-*.md
+HSLD_INDEX.md
+Developer_Doctrine*.md
 
 # local directories — not part of the codebase
 Pre-Hearing-Medical-Records-Manager-main/
