@@ -48,7 +48,7 @@ export async function requestPasswordReset(
 
   if (webhookUrl && webhookSecret) {
     try {
-      await fetch(webhookUrl, {
+      const response = await fetch(webhookUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -64,6 +64,9 @@ export async function requestPasswordReset(
           body: `Hello ${user.full_name},\n\nWe received a request to reset your password. This link expires in 1 hour and can only be used once:\n\n${resetUrl}\n\nIf you didn't request this, you can ignore this email.\n\nHogan Smith Law`,
         }),
       });
+      if (!response.ok) {
+        throw new Error(`Email send failed (${response.status})`);
+      }
     } catch (err) {
       // Never surface send failures to the requester -- that would leak
       // account-existence/system-health signal. Log for admin visibility.
