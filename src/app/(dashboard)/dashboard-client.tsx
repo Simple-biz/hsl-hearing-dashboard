@@ -70,6 +70,7 @@ import {
 } from "@/components/modals";
 import { PAGE_ACTION_SCOPES } from "@/lib/activity-avatar";
 import { CsvCompareModal } from "@/components/modals/csv-compare-modal";
+import { CasewellCompareModal } from "@/components/modals/casewell-compare-modal";
 import { RescheduledHistoryModal } from "@/components/modals/rescheduled-history-modal";
 import { AddToPostHrgModal } from "@/components/modals/add-to-post-hrg-modal";
 import { PostHrgReviewModal } from "@/components/modals/post-hrg-review-modal";
@@ -3117,6 +3118,7 @@ export function DashboardClient({
   const [showRepStats, setShowRepStats] = useState(false);
   const [showRescheduledHistory, setShowRescheduledHistory] = useState(false);
   const [showCsvCompare, setShowCsvCompare] = useState(false);
+  const [showCasewellCompare, setShowCasewellCompare] = useState(false);
   const [showArchivedSheet, setShowArchivedSheet] = useState(false);
   const [archivedHearings, setArchivedHearings] = useState<
     ArchivedHearingRow[]
@@ -3959,6 +3961,16 @@ export function DashboardClient({
               📊 CSV Compare
             </Button>
           )}
+          {canCsvCompare && (
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn("h-7 gap-1.5 text-[11px]", BTN_PRESS)}
+              onClick={() => setShowCasewellCompare(true)}
+            >
+              📊 Casewell Compare
+            </Button>
+          )}
         </DashboardNav>
 
         <StatsRow stats={stats} userRole={effectiveRole} />
@@ -4394,6 +4406,14 @@ export function DashboardClient({
             fetchPage(filters, page, pageSize, sortKey, sortDir);
           }}
           userName={userName}
+        />
+      )}
+      {showCasewellCompare && (
+        <CasewellCompareModal
+          onClose={() => {
+            setShowCasewellCompare(false);
+            fetchPage(filters, page, pageSize, sortKey, sortDir);
+          }}
         />
       )}
 
