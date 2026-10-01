@@ -313,6 +313,11 @@ export async function POST(req: NextRequest) {
       }
 
       if (!fields.claimant || !fields.hearing_date) {
+        errors.push(
+          `Row ${record.row}: missing ${!fields.claimant ? "claimant" : "hearing date"}${
+            fields.claimant ? ` (${fields.claimant})` : ""
+          }`,
+        );
         skipped++;
         continue;
       }
