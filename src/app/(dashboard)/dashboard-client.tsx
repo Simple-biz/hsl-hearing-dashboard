@@ -2160,18 +2160,30 @@ const MemoRow = memo(
       decision.startsWith("withdrawal") ||
       decision === "dismissed" ||
       decision === "dismissal";
+    // Ems's request: "Pending Withdrawal" gets its own muted-yellow row tint,
+    // distinct from the red "already withdrawn" tint above. Deliberately an
+    // exact match, not a startsWith family like "withdrawal" — this is one
+    // specific new Decision value, not a group of variants. Deliberately NOT
+    // added to mapDecisionToRepDocsStatus: it's not a final withdrawal, so it
+    // should not flip a hearing's Rep Docs status to Withdrawn.
+    const isPendingWithdrawal = decision === "pending withdrawal";
 
     const rb = isWithdrawn
       ? "bg-red-50 dark:bg-red-950/30"
-      : ri % 2 === 0
-        ? evenBg
-        : oddBg;
+      : isPendingWithdrawal
+        ? "bg-yellow-50 dark:bg-yellow-950/30"
+        : ri % 2 === 0
+          ? evenBg
+          : oddBg;
     // Frozen (sticky) cells must be fully opaque — transparent backgrounds let
-    // scrolled content bleed through. Withdrawn rows use a solid dark-red in
-    // dark mode instead of the semi-transparent /30 overlay used on the tr.
+    // scrolled content bleed through. Withdrawn/pending-withdrawal rows use a
+    // solid dark background in dark mode instead of the semi-transparent /30
+    // overlay used on the tr.
     const frozenRb = isWithdrawn
       ? "bg-red-50 dark:bg-red-950"
-      : rb;
+      : isPendingWithdrawal
+        ? "bg-yellow-50 dark:bg-yellow-950"
+        : rb;
     return (
       <tr
         ref={rowRef}
