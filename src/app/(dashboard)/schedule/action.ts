@@ -3,6 +3,17 @@
 import { db } from "@/lib/db";
 import { excludeWithdrawnSql } from "@/lib/hearing-filters";
 import { saveRepAvailabilityMonth } from "@/lib/rep-schedule";
+import { SCHEDULE_ACTIONS } from "@/lib/roles";
+
+// Every write below is gated on a SCHEDULE_ACTIONS entry, so a user granted
+// the page through a per-user override (e.g. hearings_agent) stays view-only.
+// Availability writes use edit_availability; unlock/exception use lock_schedule.
+async function requireScheduleAction(
+  action: "edit_availability" | "lock_schedule",
+) {
+  const { requireRole } = await import("@/lib/session");
+  return requireRole(SCHEDULE_ACTIONS[action]);
+}
 
 export interface AvailabilityDay {
   date: string;
@@ -151,6 +162,7 @@ export async function saveAvailability(
   }[],
   lockSchedule: boolean,
 ) {
+  await requireScheduleAction("edit_availability");
   await saveRepAvailabilityMonth(repId, yearMonth, days, lockSchedule);
   const { logAction } = await import("@/lib/activity-log");
   const { rows: repRows } = await db.query(
@@ -165,6 +177,7 @@ export async function saveAvailability(
 }
 
 export async function unlockSchedule(repId: number, yearMonth: string) {
+  await requireScheduleAction("lock_schedule");
   const firstDay = `${yearMonth}-01`;
   const lastDayDate = new Date(
     parseInt(yearMonth.split("-")[0]),
@@ -206,8 +219,7 @@ export async function getScheduleDeadlineException(
  * schedule, the normal schedule_locked guard takes back over on its own.
  */
 export async function grantScheduleException(repId: number, yearMonth: string) {
-  const { requireAuth } = await import("@/lib/session");
-  const session = await requireAuth();
+  const session = await requireScheduleAction("lock_schedule");
   await db.query(
     `INSERT INTO rep_schedule_deadline_exceptions (rep_id, year_month, granted_by)
      VALUES ($1, $2, $3)
@@ -226,6 +238,7 @@ export async function grantScheduleException(repId: number, yearMonth: string) {
 }
 
 export async function resetSchedule(repId: number, yearMonth: string) {
+  await requireScheduleAction("edit_availability");
   const firstDay = `${yearMonth}-01`;
   const lastDayDate = new Date(
     parseInt(yearMonth.split("-")[0]),
@@ -302,6 +315,7 @@ export async function fetchRepLockStatuses(
 }
 
 export async function updateRepTimezone(repId: number, timezone: string) {
+  await requireScheduleAction("edit_availability");
   const valid = [
     "America/New_York",
     "America/Chicago",
