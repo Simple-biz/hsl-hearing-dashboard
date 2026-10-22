@@ -1,5 +1,7 @@
 import { requireAuth } from "@/lib/session";
+import { redirect } from "next/navigation";
 import type { UserRole } from "@/lib/roles";
+import { canUserAccessPage } from "@/lib/page-access";
 import {
   getRepList,
   getAvailability,
@@ -12,6 +14,14 @@ import { db } from "@/lib/db";
 export default async function SchedulePage() {
   const session = await requireAuth();
   const userRole = session.user.role as UserRole;
+
+  // Server-side route protection — role default + per-user page overrides.
+  if (
+    !(await canUserAccessPage(Number(session.user.id), userRole, "schedule"))
+  ) {
+    redirect("/");
+  }
+
   const isAdmin = !["rep", "staff"].includes(userRole);
   const reps = await getRepList();
 

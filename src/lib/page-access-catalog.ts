@@ -21,7 +21,8 @@ export type PageAccessKey =
   | "post_hrg_development"
   | "pre_hearing_mr"
   | "rfc"
-  | "patient_portal";
+  | "patient_portal"
+  | "schedule";
 
 export interface PageAccessEntry {
   /** Must match the key used in PAGE_ACCESS / page route guards. */
@@ -50,6 +51,9 @@ export const PAGE_ACCESS_CATALOG: PageAccessEntry[] = [
   { key: "pre_hearing_mr", label: "Pre Hearing MR (external)" },
   { key: "rfc", label: "RFC Documents" },
   { key: "patient_portal", label: "Patient Portal" },
+  // Edit rights on the page still follow SCHEDULE_ACTIONS.edit_availability,
+  // so a role outside that list granted here gets a view-only calendar.
+  { key: "schedule", label: "Rep Schedule" },
   // Hidden from the admin UI for now — allowlist behavior is unchanged
   // (still user-1/7 only); pending confirmation with the MR Reports /
   // Import RFC users. Listed here so allowlist enforcement keeps working.

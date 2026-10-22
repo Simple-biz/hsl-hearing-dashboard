@@ -32,7 +32,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { convertTimeFromEST } from "@/lib/timezone";
-import type { UserRole } from "@/lib/roles";
+import { canScheduleAction, type UserRole } from "@/lib/roles";
 import {
   getAvailability,
   getHearingsForMonth,
@@ -183,6 +183,9 @@ export function ScheduleClient({
   const [tzSaved, setTzSaved] = useState(false);
 
   const isAdmin = !["rep", "staff"].includes(userRole);
+  // View-only when the role isn't in SCHEDULE_ACTIONS.edit_availability
+  // (e.g. hearings_agent granted the page via a per-user override).
+  const canEdit = canScheduleAction(userRole, "edit_availability");
   const isLocked = availability.some((a) => a.schedule_locked);
   const selectedRep = reps.find((r) => r.id === selectedRepId);
   // const repTz = selectedRep?.timezone || "America/New_York";
@@ -202,7 +205,7 @@ export function ScheduleClient({
   const isPastDeadline = daysUntilDeadline < 0;
   // If deadline passed but schedule is NOT locked (admin explicitly unlocked), rep can edit
   // If deadline passed AND schedule IS locked, only admin can edit
-  const canEditSchedule = isAdmin || !isLocked;
+  const canEditSchedule = canEdit && (isAdmin || !isLocked);
   const monthName = new Date(year, month - 1, 1).toLocaleDateString("en-US", {
     month: "long",
     year: "numeric",
@@ -657,7 +660,11 @@ export function ScheduleClient({
               <label className="text-xs font-medium text-muted-foreground">
                 Timezone:
               </label>
-              <Select value={repTz} onValueChange={handleTimezoneChange}>
+              <Select
+                value={repTz}
+                onValueChange={handleTimezoneChange}
+                disabled={!canEdit}
+              >
                 <SelectTrigger className="h-8 w-auto min-w-40 text-xs">
                   <SelectValue />
                 </SelectTrigger>
@@ -945,11 +952,13 @@ export function ScheduleClient({
                 <p className="text-xs text-amber-600 dark:text-amber-400">
                   {!isAdmin
                     ? "Contact claudia@hogansmith.com for changes."
-                    : "You can unlock as admin to allow the rep to edit."}
+                    : !canEdit
+                      ? "View only."
+                      : "You can unlock as admin to allow the rep to edit."}
                 </p>
               </div>
             </div>
-            {isAdmin && (
+            {isAdmin && canEdit && (
               <Button
                 variant="outline"
                 size="sm"
@@ -978,14 +987,16 @@ export function ScheduleClient({
                   })}
                   .
                   {isAdmin
-                    ? " You can still edit as admin."
+                    ? canEdit
+                      ? " You can still edit as admin."
+                      : ""
                     : " Schedule has been unlocked by admin — you can make changes."}
                   {hasDeadlineException &&
                     " This rep has been granted a late-submission exception — their own schedule link is open for this month."}
                 </p>
               </div>
             </div>
-            {isAdmin && !hasDeadlineException && (
+            {isAdmin && canEdit && !hasDeadlineException && (
               <Button
                 variant="outline"
                 size="sm"
