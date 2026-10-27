@@ -843,11 +843,17 @@ function RepCell({
 
   if (!canEdit) return <RepBadge hearing={hearing} />;
 
+  // Same grouping as the rep stats and auto-assign modal: in-house reps are
+  // internal, contract reps are external.
   const internalReps = representatives.filter(
-    (r) => r.is_active && r.rep_type === "internal_advocates",
+    (r) =>
+      r.is_active &&
+      (r.rep_type === "internal_advocates" || r.rep_type === "in-house"),
   );
   const externalReps = representatives.filter(
-    (r) => r.is_active && r.rep_type === "external_advocates",
+    (r) =>
+      r.is_active &&
+      (r.rep_type === "external_advocates" || r.rep_type === "contract"),
   );
 
   const repSelect = (
