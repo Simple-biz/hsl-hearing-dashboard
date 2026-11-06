@@ -100,7 +100,7 @@ const NAV_GROUPS: NavGroup[] = [
       },
       {
         label: "Pre Hearing MR",
-        href: "https://pre-hearing-medical-records-manager.vercel.app/",
+        href: "https://phmr-rebuild.vercel.app/",
         icon: ClipboardPlus,
         page: "pre_hearing_mr",
         external: true,

@@ -23,6 +23,8 @@ export interface HearingRow {
   medical_record_link: string | null;
   claimant_link: string | null;
   chronicle_link: string | null;
+  /** Casewell assignee, filled by the sync-poc cron. Read-only here. */
+  poc: string | null;
   ovh_link: string | null;
   assignment_status: string | null;
   task_assigned: boolean;
@@ -480,6 +482,7 @@ export async function fetchHearingsPage(
         h.city, h.state, h.alj, h.manner_of_appearance, h.hearing_decision_status,
         h.assigned_rep_id, h.mr_team_id, h.brief_assigned_to, h.medical_record_status,
         h.medical_record_link, h.claimant_link, h.chronicle_link, h.ovh_link,
+        h.poc,
         NULLIF(h.assignment_status::text, '') AS assignment_status,
         h.task_assigned, h.task_assigned_at::text,
         h.rep_docs_complete, h.rep_docs_complete_at::text, h.rep_docs_assigned_to,
