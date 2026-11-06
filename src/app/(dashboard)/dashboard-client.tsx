@@ -1385,7 +1385,7 @@ function ClaimantCell({
                 }
                 className="text-[10px] font-medium text-violet-600 hover:underline dark:text-violet-400"
               >
-                Chronicle
+                Casewell
               </button>
             )}
             {canEditChronicle && (
@@ -1934,6 +1934,7 @@ const COL_W = {
   hearing_date: 88,
   hearing_time: 78,
   claimant: 175,
+  poc: 130,
   ssn_last_4: 62,
   post_hrg_report: 66,
   actions: 44,
@@ -1968,6 +1969,8 @@ const ALL_COLUMNS: ColumnDef[] = [
     sortable: true,
     frozen: true,
   },
+  // Casewell assignee (read-only, synced by /api/cron/sync-poc)
+  { key: "poc", label: "POC", w: COL_W.poc, frozen: true },
   { key: "ssn_last_4", label: "SSN", w: COL_W.ssn_last_4, frozen: true },
   {
     key: "post_hrg_report",
@@ -2586,6 +2589,15 @@ const HearingTable = memo(function HearingTable({
             )}
             onSave={onUpdate}
           />
+        );
+      case "poc":
+        return (
+          <span
+            className="block truncate text-xs"
+            title={hearing.poc ?? undefined}
+          >
+            {hearing.poc || "-"}
+          </span>
         );
       case "ssn_last_4":
         return (
