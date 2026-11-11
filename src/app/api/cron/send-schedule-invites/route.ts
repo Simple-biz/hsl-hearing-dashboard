@@ -2,6 +2,12 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getScheduleDeadline } from "@/lib/schedule-deadline";
 
+// One bcrypt hash plus one webhook call per rep, run one after another,
+// takes ~5s per rep. With ~59 active reps that passes Vercel's 300s
+// default, which cut the 2026-11-01 run off after 30 reps. Fluid compute
+// is on for this project, which allows up to 800s on Pro.
+export const maxDuration = 800;
+
 /**
  * Send Schedule Invites Cron
  *
