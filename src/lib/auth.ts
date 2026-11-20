@@ -2,6 +2,7 @@ import type { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { compare } from "bcryptjs";
 import { db } from "@/lib/db";
+import { normalizeEmail, normalizedEmailSql } from "@/lib/email-match";
 
 // Extend NextAuth types to include our custom fields
 declare module "next-auth" {
@@ -45,10 +46,20 @@ export const authOptions: NextAuthOptions = {
         }
 
         // Look up user by email
-        const { rows } = await db.query(
+        let { rows } = await db.query(
           "SELECT id, email, password_hash, full_name, role, is_active, force_password_change FROM users WHERE email = $1",
-          [credentials.email.toLowerCase()],
+          [credentials.email.trim().toLowerCase()],
         );
+
+        // No exact match: retry ignoring a "+tag" (e.g. name+hogansmith@gmail.com),
+        // same rule as the reset forms. Only accept a single match, never guess.
+        if (rows.length === 0) {
+          const fallback = await db.query(
+            `SELECT id, email, password_hash, full_name, role, is_active, force_password_change FROM users WHERE ${normalizedEmailSql("email")} = $1`,
+            [normalizeEmail(credentials.email)],
+          );
+          if (fallback.rows.length === 1) rows = fallback.rows;
+        }
 
         const user = rows[0];
         if (!user) return null;
