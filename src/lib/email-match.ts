@@ -1,5 +1,6 @@
 /**
- * Email matching for the "Forgot password" forms.
+ * Email matching for the "Forgot password" forms and the login fallback
+ * (src/lib/auth.ts, used only when the exact email finds no account).
  *
  * Both forms only send a reset when the typed email matches the one on
  * file. An exact match missed reps who type a Gmail-style "+tag" address
