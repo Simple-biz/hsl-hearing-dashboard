@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { saveRepAvailabilityMonth } from "@/lib/rep-schedule";
 import { getScheduleDeadline } from "@/lib/schedule-deadline";
 import { logSystemActivity } from "@/lib/activity-log";
+import { normalizeEmail, normalizedEmailSql } from "@/lib/email-match";
 import { compare } from "bcryptjs";
 
 export interface PublicRepInfo {
@@ -87,8 +88,8 @@ export async function requestScheduleTokenPasswordReset(
      FROM rep_schedule_tokens t
      JOIN representatives r ON t.rep_id = r.id
      WHERE t.token = $1 AND t.is_active = true AND (t.expires_at IS NULL OR t.expires_at > NOW())
-       AND r.email = $2`,
-    [token, email],
+       AND ${normalizedEmailSql("r.email")} = $2`,
+    [token, normalizeEmail(email)],
   );
 
   if (rows.length === 0) {

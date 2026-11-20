@@ -3,6 +3,7 @@
 import crypto from "crypto";
 import { db } from "@/lib/db";
 import { logSystemActivity } from "@/lib/activity-log";
+import { normalizeEmail, normalizedEmailSql } from "@/lib/email-match";
 
 const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
 
@@ -14,11 +15,13 @@ export async function requestPasswordReset(
   email: string,
 ): Promise<{ success: true }> {
   const { rows } = await db.query(
-    "SELECT id, full_name, email FROM users WHERE email = $1 AND is_active = true",
-    [email],
+    `SELECT id, full_name, email FROM users WHERE ${normalizedEmailSql("email")} = $1 AND is_active = true`,
+    [normalizeEmail(email)],
   );
 
-  if (rows.length === 0) {
+  // Exactly one match only: if two accounts ever normalize to the same
+  // address, send nothing rather than guess which one was meant.
+  if (rows.length !== 1) {
     return { success: true };
   }
 
