@@ -28,10 +28,17 @@ const BATCH_SIZE = 5;
  * are skipped, so a rerun only reaches reps the earlier run missed.
  *
  * Schedule: 1st of month at 9:00 AM via Vercel Cron
- * GET /api/cron/send-schedule-invites?cron_key=SECRET
+ * Manual: GET /api/cron/send-schedule-invites?cron_key=SECRET&confirm=all
+ * (a manual call without &confirm=all or &rep_id=N is refused)
  *
  * Test mode: set CRON_TEST_EMAIL in env to redirect all emails
  * to a single address without touching the actual rep emails.
+ *
+ * Single-rep run: add &rep_id=N to run the job for that one rep only
+ * (active or not), ignoring the already-sent-this-month skip. Use it with
+ * a test rep whose email is a staff address to check the real n8n send
+ * path end to end without emailing or rotating any real rep's link. Also
+ * avoids CRON_TEST_EMAIL, which the other daily crons read too.
  *
  * Run summary: set SCHEDULE_INVITE_ALERT_EMAIL (comma-separated) to email
  * a summary after every run, listing any reps that failed. Sent through
@@ -67,6 +74,26 @@ export async function GET(request: Request) {
   const baseUrl =
     process.env.NEXT_PUBLIC_APP_URL || "https://hearings.hogansmith.com";
   const testEmail = process.env.CRON_TEST_EMAIL || null;
+  const repIdParam = searchParams.get("rep_id");
+  const onlyRepId = repIdParam ? parseInt(repIdParam, 10) : null;
+  if (repIdParam && !Number.isInteger(onlyRepId)) {
+    return NextResponse.json({ error: "Invalid rep_id" }, { status: 400 });
+  }
+
+  // Vercel Cron authenticates with the Authorization header. A manual call
+  // (cron_key in the URL) that would email every rep must say so with
+  // &confirm=all, so a test call that loses its rep_id to a typo or shell
+  // quoting refuses instead of emailing and rotating links for all reps.
+  const isManualCall = !!searchParams.get("cron_key");
+  if (isManualCall && !onlyRepId && searchParams.get("confirm") !== "all") {
+    return NextResponse.json(
+      {
+        error:
+          "Manual full run refused. Add &rep_id=N to run for one rep, or &confirm=all to send to every active rep.",
+      },
+      { status: 400 },
+    );
+  }
 
   // Target month is 2 months from now
   const now = new Date();
@@ -100,9 +127,20 @@ export async function GET(request: Request) {
     const crypto = await import("crypto");
     const bcryptjs = await import("bcryptjs");
 
-    const { rows: reps } = await db.query(
-      `SELECT id, name, email FROM representatives WHERE is_active = true AND email IS NOT NULL AND email != '' ORDER BY name${testEmail ? " LIMIT 1" : ""}`,
-    );
+    const { rows: reps } = onlyRepId
+      ? await db.query(
+          `SELECT id, name, email FROM representatives WHERE id = $1 AND email IS NOT NULL AND email != ''`,
+          [onlyRepId],
+        )
+      : await db.query(
+          `SELECT id, name, email FROM representatives WHERE is_active = true AND email IS NOT NULL AND email != '' ORDER BY name${testEmail ? " LIMIT 1" : ""}`,
+        );
+    if (onlyRepId && reps.length === 0) {
+      return NextResponse.json(
+        { error: "rep_id not found or has no email" },
+        { status: 404 },
+      );
+    }
 
     // Reps whose invite already went out this month (an earlier run, or an
     // admin-issued link). Tokens only become active after a confirmed send,
@@ -112,8 +150,16 @@ export async function GET(request: Request) {
        WHERE is_active = true AND created_at >= date_trunc('month', NOW())`,
     );
     const doneRepIds = new Set<number>(doneRows.map((r) => r.rep_id));
-    const pendingReps = reps.filter((r) => !doneRepIds.has(r.id));
+    // A single-rep run always sends, so it can be repeated as a check.
+    const pendingReps = onlyRepId
+      ? reps
+      : reps.filter((r) => !doneRepIds.has(r.id));
     alreadySent = reps.length - pendingReps.length;
+    const runTag = onlyRepId
+      ? ` [SINGLE REP: ${reps[0].name}]`
+      : testEmail
+        ? ` [TEST MODE → ${testEmail}]`
+        : "";
 
     // Written up front so a run that gets cut off still leaves a trace:
     // a "started" line with no matching summary line means it never finished.
@@ -121,7 +167,7 @@ export async function GET(request: Request) {
       "INSERT INTO activity_log (user_id, action, description) VALUES (NULL, $1, $2)",
       [
         "schedule_invite_cron_started",
-        `Schedule invite cron started: ${pendingReps.length} to send, ${alreadySent} already sent this month — target: ${monthName}${testEmail ? ` [TEST MODE → ${testEmail}]` : ""}`,
+        `Schedule invite cron started: ${pendingReps.length} to send, ${alreadySent} already sent this month — target: ${monthName}${runTag}`,
       ],
     );
 
@@ -199,7 +245,7 @@ export async function GET(request: Request) {
         "INSERT INTO activity_log (user_id, action, description) VALUES (NULL, $1, $2)",
         [
           "schedule_invite_sent",
-          `Sent schedule invite to ${rep.name} for ${monthName}${testEmail ? " [TEST MODE]" : ""}`,
+          `Sent schedule invite to ${rep.name} for ${monthName}${onlyRepId ? " [SINGLE REP]" : testEmail ? " [TEST MODE]" : ""}`,
         ],
       );
     };
@@ -225,7 +271,7 @@ export async function GET(request: Request) {
       }
     }
 
-    const summary = `Schedule invite cron: ${sent} sent, ${failed} failed, ${skipped} skipped, ${alreadySent} already sent this month — target: ${monthName}${testEmail ? ` [TEST MODE → ${testEmail}]` : ""}`;
+    const summary = `Schedule invite cron: ${sent} sent, ${failed} failed, ${skipped} skipped, ${alreadySent} already sent this month — target: ${monthName}${runTag}`;
     await db.query(
       "INSERT INTO activity_log (user_id, action, description) VALUES (NULL, $1, $2)",
       ["schedule_invite_cron", summary],
